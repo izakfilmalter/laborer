@@ -10,7 +10,7 @@ describe('withInitialAgentPrompt', () => {
     const initialPrompt = 'Fix the bug described by "Slack" and $HOME.'
 
     expect(withInitialAgentPrompt('opencode', initialPrompt)).toEqual({
-      command: 'opencode --prompt "$LABORER_OPENCODE_INITIAL_PROMPT"',
+      command: 'opencode --prompt="$LABORER_OPENCODE_INITIAL_PROMPT"',
       extraEnv: { LABORER_OPENCODE_INITIAL_PROMPT: initialPrompt },
     })
   })
@@ -19,7 +19,20 @@ describe('withInitialAgentPrompt', () => {
     const initialPrompt = 'Investigate the Slack report.'
 
     expect(withInitialAgentPrompt('opencode2', initialPrompt)).toEqual({
-      command: 'opencode2 --prompt "$LABORER_OPENCODE_INITIAL_PROMPT"',
+      command: 'opencode2 --prompt="$LABORER_OPENCODE_INITIAL_PROMPT"',
+      extraEnv: { LABORER_OPENCODE_INITIAL_PROMPT: initialPrompt },
+    })
+  })
+
+  it('binds a prompt that starts with a dash to the flag', () => {
+    // A separate `--prompt <value>` argument whose value starts with `-` is
+    // read as the next flag by both OpenCode CLIs: the launch degrades into a
+    // usage banner and the agent never starts. Card descriptions routinely
+    // open with a markdown bullet, so the `=` form is load-bearing.
+    const initialPrompt = '- fix the failing spawn\n- add a regression test'
+
+    expect(withInitialAgentPrompt('opencode2', initialPrompt)).toEqual({
+      command: 'opencode2 --prompt="$LABORER_OPENCODE_INITIAL_PROMPT"',
       extraEnv: { LABORER_OPENCODE_INITIAL_PROMPT: initialPrompt },
     })
   })
@@ -67,7 +80,7 @@ describe('buildOpenCodeSpawnCommand', () => {
         'Investigate the bug'
       )
     ).toEqual({
-      command: 'opencode2 --prompt "$LABORER_OPENCODE_INITIAL_PROMPT"',
+      command: 'opencode2 --prompt="$LABORER_OPENCODE_INITIAL_PROMPT"',
       extraEnv: {
         LABORER_TERMINAL_ID: 'terminal-123',
         LABORER_HOOK_URL: 'http://localhost:4321/hook/agent-status',

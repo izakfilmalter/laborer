@@ -4,12 +4,10 @@ import {
   dropTargetForElements,
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
-import { reorder } from '@atlaskit/pragmatic-drag-and-drop/reorder'
 import { useAtomValue } from '@effect/atom-react/Hooks'
 import type {
   PanelNode,
   PaneType,
-  SplitDirection,
   WorkspaceTileLeaf,
   WorkspaceTileNode,
   WorkspaceTileSplit,
@@ -52,12 +50,14 @@ import {
 import { PanelManager } from '@/panels/panel-manager'
 import { containsPane, getFirstLeafId } from '@/panels/panel-tree-utils'
 import {
+  computeWorkspaceDropEdge,
   getAllWorkspaceTileLeaves,
+  getWorkspaceDropEdge,
   isWorkspaceFrameData,
   WORKSPACE_FRAME_TYPE,
 } from '@/panels/window-layout-utils'
 import { computeMinimizedTargetLayout } from '@/panels/workspace-minimize-layout'
-import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
+import type { WorkspaceDropEdge } from '@/panels/workspace-tile-utils'
 import { DiffPane } from '@/panes/diff-pane'
 import { TreePane } from '@/panes/tree-pane'
 import {
@@ -101,11 +101,11 @@ export function EmptyWorkspaceState({
   )
 
   return (
-    <div
-      className="flex h-full w-full items-center justify-center bg-background"
+    <ScrollArea
+      className="h-full w-full bg-background"
       data-testid="empty-workspace-state"
     >
-      <Empty>
+      <Empty className="justify-start pt-12">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <Layers />
@@ -120,7 +120,7 @@ export function EmptyWorkspaceState({
           <PanelTypePicker onCancel={noop} onSelect={handleSelect} />
         </EmptyContent>
       </Empty>
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -151,11 +151,11 @@ export function EmptyPanelTabState({
   )
 
   return (
-    <div
-      className="flex h-full w-full items-center justify-center bg-background"
+    <ScrollArea
+      className="h-full w-full bg-background"
       data-testid="empty-panel-tab-state"
     >
-      <Empty>
+      <Empty className="justify-start pt-12">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <PanelTop />
@@ -170,7 +170,7 @@ export function EmptyPanelTabState({
           <PanelTypePicker onCancel={noop} onSelect={handleSelect} />
         </EmptyContent>
       </Empty>
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -267,11 +267,11 @@ export function EmptyWindowTabState() {
   const hasAvailableWorkspaces = groups.some((g) => g.workspaces.length > 0)
 
   return (
-    <div
-      className="flex h-full w-full items-center justify-center bg-background"
+    <ScrollArea
+      className="h-full w-full bg-background"
       data-testid="empty-window-tab-state"
     >
-      <Empty>
+      <Empty className="justify-start pt-12">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <LayoutGrid />
@@ -284,17 +284,15 @@ export function EmptyWindowTabState() {
         </EmptyHeader>
         <EmptyContent className="items-stretch">
           {hasAvailableWorkspaces ? (
-            <ScrollArea className="max-h-48 w-full">
-              <div className="grid gap-3">
-                {groups.map((group) => (
-                  <WorkspacePickerGroup
-                    group={group}
-                    key={group.projectId}
-                    onSelect={handleSelectWorkspace}
-                  />
-                ))}
-              </div>
-            </ScrollArea>
+            <div className="grid w-full gap-3">
+              {groups.map((group) => (
+                <WorkspacePickerGroup
+                  group={group}
+                  key={group.projectId}
+                  onSelect={handleSelectWorkspace}
+                />
+              ))}
+            </div>
           ) : (
             <p className="text-muted-foreground text-xs">
               All workspaces are already open. Create a new one from the
@@ -303,7 +301,7 @@ export function EmptyWindowTabState() {
           )}
         </EmptyContent>
       </Empty>
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -599,7 +597,6 @@ function WorkspaceFrame({
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   tileLeaf,
-  parentDirection,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout: PanelNode
@@ -617,14 +614,11 @@ function WorkspaceFrame({
   readonly diffWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
   readonly tileLeaf?: WorkspaceTileLeaf | undefined
-  readonly parentDirection?: SplitDirection | undefined
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const isHorizontal = parentDirection === 'horizontal'
-  type EdgeType = 'top' | 'bottom' | 'left' | 'right'
-  const [closestEdge, setClosestEdge] = useState<EdgeType | null>(null)
+  const [closestEdge, setClosestEdge] = useState<WorkspaceDropEdge | null>(null)
   const [localMinimized, setLocalMinimized] = useState(false)
   const isMinimized = isMinimizedProp ?? localMinimized
   const actions = usePanelActions()
@@ -664,6 +658,29 @@ function WorkspaceFrame({
       return
     }
 
+    /**
+     * The indicator edge for the current pointer position, or null when
+     * the drop would be a no-op (dropping a frame onto its own top/bottom
+     * half — its own left/right edges still split it into a new column).
+     */
+    const resolveDropIndicatorEdge = (
+      selfData: Record<string, unknown>,
+      sourceData: Record<string, unknown>
+    ): WorkspaceDropEdge | null => {
+      if (!isWorkspaceFrameData(sourceData)) {
+        return null
+      }
+      const edge = getWorkspaceDropEdge(selfData)
+      if (!edge) {
+        return null
+      }
+      const isSelf = sourceData.workspaceId === workspaceId
+      if (isSelf && (edge === 'top' || edge === 'bottom')) {
+        return null
+      }
+      return edge
+    }
+
     return combine(
       draggable({
         element: frameEl,
@@ -679,40 +696,26 @@ function WorkspaceFrame({
       dropTargetForElements({
         element: frameEl,
         canDrop: ({ source }) => isWorkspaceFrameData(source.data),
-        getData: () => ({
+        getData: ({ input, element }) => ({
           type: WORKSPACE_FRAME_TYPE,
           workspaceId,
           index,
+          edge: computeWorkspaceDropEdge(
+            input,
+            element.getBoundingClientRect()
+          ),
         }),
         onDragEnter: ({ self, source }) => {
-          if (!isWorkspaceFrameData(source.data)) {
-            return
-          }
-          const sourceIdx = source.data.index
-          const targetIdx = self.data.index as number
-          if (isHorizontal) {
-            setClosestEdge(sourceIdx < targetIdx ? 'right' : 'left')
-          } else {
-            setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
-          }
+          setClosestEdge(resolveDropIndicatorEdge(self.data, source.data))
         },
         onDrag: ({ self, source }) => {
-          if (!isWorkspaceFrameData(source.data)) {
-            return
-          }
-          const sourceIdx = source.data.index
-          const targetIdx = self.data.index as number
-          if (isHorizontal) {
-            setClosestEdge(sourceIdx < targetIdx ? 'right' : 'left')
-          } else {
-            setClosestEdge(sourceIdx < targetIdx ? 'bottom' : 'top')
-          }
+          setClosestEdge(resolveDropIndicatorEdge(self.data, source.data))
         },
         onDragLeave: () => setClosestEdge(null),
         onDrop: () => setClosestEdge(null),
       })
     )
-  }, [workspaceId, index, isHorizontal])
+  }, [workspaceId, index])
 
   const showDiff =
     workspaceId !== undefined && diffWorkspaceIds.includes(workspaceId)
@@ -951,7 +954,6 @@ function WorkspaceTileLeafFrame({
   index,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  parentDirection,
   isMinimized,
   onToggleMinimize,
 }: {
@@ -960,7 +962,6 @@ function WorkspaceTileLeafFrame({
   readonly index: number
   readonly diffWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
-  readonly parentDirection?: SplitDirection | undefined
   readonly isMinimized?: boolean | undefined
   readonly onToggleMinimize?: (() => void) | undefined
 }) {
@@ -989,7 +990,6 @@ function WorkspaceTileLeafFrame({
       index={index}
       isMinimized={isMinimized}
       onToggleMinimize={onToggleMinimize}
-      parentDirection={parentDirection}
       subLayout={subLayout}
       tileLeaf={leaf}
       treeWorkspaceIds={treeWorkspaceIds}
@@ -1013,7 +1013,6 @@ function WorkspaceTileResizableChild({
   index,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  parentDirection,
   isMinimized = false,
   onToggleMinimize,
   registerPanelHandle,
@@ -1024,7 +1023,6 @@ function WorkspaceTileResizableChild({
   readonly index: number
   readonly diffWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
-  readonly parentDirection?: SplitDirection | undefined
   readonly isMinimized?: boolean
   readonly onToggleMinimize: (tileId: string) => void
   readonly registerPanelHandle: (
@@ -1063,7 +1061,6 @@ function WorkspaceTileResizableChild({
           index={index}
           isMinimized={isLeaf ? isMinimized : undefined}
           onToggleMinimize={isLeaf ? handleToggleMinimize : undefined}
-          parentDirection={parentDirection}
           tileNode={tileNode}
           treeWorkspaceIds={treeWorkspaceIds}
         />
@@ -1271,7 +1268,6 @@ function WorkspaceTileSplitGroup({
             isMinimized={minimizedIds.has(child.id)}
             key={child.id}
             onToggleMinimize={handleToggleMinimize}
-            parentDirection={tileNode.direction}
             registerPanelHandle={registerPanelHandle}
             tileNode={child}
             treeWorkspaceIds={treeWorkspaceIds}
@@ -1299,7 +1295,6 @@ function WorkspaceTileRenderer({
   index = 0,
   diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  parentDirection,
   isMinimized,
   onToggleMinimize,
 }: {
@@ -1308,7 +1303,6 @@ function WorkspaceTileRenderer({
   readonly index?: number
   readonly diffWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
-  readonly parentDirection?: SplitDirection | undefined
   readonly isMinimized?: boolean | undefined
   readonly onToggleMinimize?: (() => void) | undefined
 }) {
@@ -1322,7 +1316,6 @@ function WorkspaceTileRenderer({
           isMinimized={isMinimized}
           leaf={tileNode}
           onToggleMinimize={onToggleMinimize}
-          parentDirection={parentDirection}
           treeWorkspaceIds={treeWorkspaceIds}
         />
       </TabErrorBoundary>
@@ -1369,28 +1362,13 @@ export function WorkspaceFrames({
   readonly diffWorkspaceIds?: readonly string[]
   readonly treeWorkspaceIds?: readonly string[]
 }) {
-  // Wire up a monitor for workspace frame drag-and-drop reordering.
-  // This must run unconditionally (React hooks rule) so it covers both
-  // the hierarchical tile layout path and the legacy flat layout path.
+  // Wire up a monitor for workspace frame drag-and-drop. Drops on a
+  // frame's top/bottom half stack the dragged workspace within the
+  // target's column; drops on the left/right edge strips place it in a
+  // new column beside the target's column.
   const actions = usePanelActions()
 
-  // Build the workspace ID list from whichever layout path is active.
-  const tileWorkspaceIds = useMemo(() => {
-    if (!workspaceTileLayout) {
-      return null
-    }
-    return getWorkspaceTileLeaves(workspaceTileLayout).map(
-      (leaf) => leaf.workspaceId
-    )
-  }, [workspaceTileLayout])
-
   useEffect(() => {
-    // Only monitor when the tile layout path is active — the legacy
-    // path has its own monitor inside LegacyWorkspaceFrames.
-    if (!tileWorkspaceIds) {
-      return
-    }
-
     return monitorForElements({
       canMonitor: ({ source }) => isWorkspaceFrameData(source.data),
       onDrop: ({ source, location }) => {
@@ -1405,19 +1383,24 @@ export function WorkspaceFrames({
         ) {
           return
         }
-        if (sourceData.index === destData.index) {
+        const edge = getWorkspaceDropEdge(destData)
+        if (!edge) {
           return
         }
-
-        const reordered = reorder({
-          list: tileWorkspaceIds,
-          startIndex: sourceData.index,
-          finishIndex: destData.index,
-        })
-        actions?.reorderWorkspaces(reordered)
+        if (
+          sourceData.workspaceId === destData.workspaceId &&
+          (edge === 'top' || edge === 'bottom')
+        ) {
+          return
+        }
+        actions?.moveWorkspaceInTab?.(
+          sourceData.workspaceId,
+          destData.workspaceId,
+          edge
+        )
       },
     })
-  }, [tileWorkspaceIds, actions])
+  }, [actions])
 
   // Hierarchical tile layout — bidirectional workspace tiling
   return (

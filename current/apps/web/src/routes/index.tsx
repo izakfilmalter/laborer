@@ -1224,6 +1224,7 @@ function HomeComponent() {
               <div className="flex h-full flex-col">
                 <PanelHeaderBar
                   boardOpen={boardOverlayOpen}
+                  onCleanUpLayout={panelActions.cleanUpWorkspaceLayout}
                   onCloseWindowTab={gatedPanelActions.closeWindowTab}
                   onNewWindowTab={panelActions.addWindowTab}
                   onRenameWindowTab={panelActions.renameWindowTab}

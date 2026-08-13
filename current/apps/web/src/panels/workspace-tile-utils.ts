@@ -42,6 +42,23 @@ const MIN_TILE_SIZE = 5
 /** Resize step percentage — amount moved per keyboard resize action. */
 const RESIZE_STEP = 5
 
+/**
+ * Minimum vertical space in pixels each workspace frame should receive
+ * after a layout clean-up. Columns are added until every frame in a
+ * column gets at least this much height.
+ */
+const MIN_WORKSPACE_TILE_HEIGHT_PX = 352
+
+/**
+ * Edge of a workspace frame that a dragged workspace can be dropped on.
+ *
+ * - `top` / `bottom` — stack the dragged workspace above/below the target
+ *   within the target's column.
+ * - `left` / `right` — place the dragged workspace in a new column beside
+ *   the target's column.
+ */
+type WorkspaceDropEdge = 'top' | 'bottom' | 'left' | 'right'
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -278,15 +295,52 @@ function addWorkspaceToTab(tab: WindowTab, workspaceId: string): WindowTab {
     }
   }
 
-  // Root is horizontal — wrap in a new vertical split
-  return {
-    ...tab,
-    workspaceLayout: {
+  // Root is horizontal — the tab is laid out as columns. Add the new
+  // workspace to the column with the fewest workspaces so columns stay
+  // balanced, preserving the existing column widths.
+  const leafCounts = root.children.map(
+    (child) => getWorkspaceTileLeaves(child).length
+  )
+  let targetIndex = 0
+  for (let i = 1; i < leafCounts.length; i++) {
+    if ((leafCounts[i] ?? 0) < (leafCounts[targetIndex] ?? 0)) {
+      targetIndex = i
+    }
+  }
+  const targetColumn = root.children[targetIndex]
+  if (!targetColumn) {
+    return tab
+  }
+
+  let newColumn: WorkspaceTileNode
+  if (
+    targetColumn._tag === 'WorkspaceTileSplit' &&
+    targetColumn.direction === 'vertical'
+  ) {
+    const newChildren = [...targetColumn.children, newTile]
+    const equalSize = 100 / newChildren.length
+    newColumn = {
+      ...targetColumn,
+      children: newChildren,
+      sizes: newChildren.map(() => equalSize),
+    }
+  } else {
+    newColumn = {
       _tag: 'WorkspaceTileSplit',
       id: generateTileId('ws-split'),
       direction: 'vertical',
-      children: [root, newTile],
+      children: [targetColumn, newTile],
       sizes: [50, 50],
+    }
+  }
+
+  return {
+    ...tab,
+    workspaceLayout: {
+      ...root,
+      children: root.children.map((child, i) =>
+        i === targetIndex ? newColumn : child
+      ),
     },
   }
 }
@@ -610,14 +664,388 @@ function reorderWorkspaceTiles(
 }
 
 // ---------------------------------------------------------------------------
+// Column-based layout (multi-column tabs)
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize a workspace tile tree into columns.
+ *
+ * A horizontal root split maps each direct child to one column (its DFS
+ * leaves, top to bottom). Any other root shape — a single leaf or a
+ * vertical stack — is one column.
+ */
+function getWorkspaceColumns(root: WorkspaceTileNode): WorkspaceTileLeaf[][] {
+  if (root._tag === 'WorkspaceTileSplit' && root.direction === 'horizontal') {
+    return root.children.map((child) => [...getWorkspaceTileLeaves(child)])
+  }
+  return [[...getWorkspaceTileLeaves(root)]]
+}
+
+/** Stable identity for a column: the ordered tile leaf IDs it contains. */
+function columnSignature(column: readonly WorkspaceTileLeaf[]): string {
+  return JSON.stringify(column.map((leaf) => leaf.id))
+}
+
+/**
+ * Map each existing column's signature to its current tree node so
+ * untouched columns keep their node identity (and therefore their React
+ * keys, panel IDs, and row sizes) when the tree is rebuilt.
+ */
+function buildPreviousColumnIndex(
+  previousRoot: WorkspaceTileNode | undefined
+): ReadonlyMap<string, WorkspaceTileNode> {
+  const index = new Map<string, WorkspaceTileNode>()
+  if (!previousRoot) {
+    return index
+  }
+  const previousColumns = getWorkspaceColumns(previousRoot)
+  const previousNodes =
+    previousRoot._tag === 'WorkspaceTileSplit' &&
+    previousRoot.direction === 'horizontal'
+      ? previousRoot.children
+      : [previousRoot]
+  previousColumns.forEach((column, i) => {
+    const node = previousNodes[i]
+    if (node) {
+      index.set(columnSignature(column), node)
+    }
+  })
+  return index
+}
+
+/**
+ * Build a tree node for a single column. Reuses the previous column node
+ * when the column's leaves are unchanged; otherwise builds a fresh
+ * vertical split with equal row heights.
+ */
+function buildColumnNode(
+  column: readonly WorkspaceTileLeaf[],
+  previousBySignature: ReadonlyMap<string, WorkspaceTileNode>,
+  equalizeRows: boolean
+): WorkspaceTileNode {
+  const first = column[0]
+  if (column.length === 1 && first) {
+    return first
+  }
+  const equalSize = 100 / column.length
+  const equalSizes = column.map(() => equalSize)
+  const previous = previousBySignature.get(columnSignature(column))
+  if (previous && previous._tag === 'WorkspaceTileSplit') {
+    // Same leaves in the same order — keep the node id (stable React keys
+    // and panel IDs avoid terminal remounts) but point it at the current
+    // leaf objects, which may carry newer panel state.
+    return {
+      ...previous,
+      direction: 'vertical',
+      children: [...column],
+      sizes:
+        equalizeRows || previous.sizes.length !== column.length
+          ? equalSizes
+          : previous.sizes,
+    }
+  }
+  return {
+    _tag: 'WorkspaceTileSplit',
+    id: generateTileId('ws-split'),
+    direction: 'vertical',
+    children: [...column],
+    sizes: equalSizes,
+  }
+}
+
+/**
+ * Build a workspace tile tree from columns.
+ *
+ * A single column collapses to that column's node; multiple columns become
+ * a horizontal root split. Column widths use `columnSizes` when it matches
+ * the column count, otherwise widths are equalized.
+ */
+function buildColumnsLayout(
+  columns: readonly (readonly WorkspaceTileLeaf[])[],
+  options?: {
+    readonly columnSizes?: readonly number[] | undefined
+    readonly equalizeRows?: boolean | undefined
+    readonly previousRoot?: WorkspaceTileNode | undefined
+  }
+): WorkspaceTileNode | undefined {
+  const nonEmpty = columns.filter((column) => column.length > 0)
+  if (nonEmpty.length === 0) {
+    return undefined
+  }
+
+  const previousBySignature = buildPreviousColumnIndex(options?.previousRoot)
+  const children = nonEmpty.map((column) =>
+    buildColumnNode(column, previousBySignature, options?.equalizeRows ?? false)
+  )
+
+  const firstChild = children[0]
+  if (children.length === 1 && firstChild) {
+    return firstChild
+  }
+
+  const columnSizes = options?.columnSizes
+  const sizes =
+    columnSizes &&
+    columnSizes.length === children.length &&
+    columnSizes.every((size) => typeof size === 'number' && size > 0)
+      ? [...columnSizes]
+      : children.map(() => 100 / children.length)
+
+  const previousRoot = options?.previousRoot
+  const rootId =
+    previousRoot &&
+    previousRoot._tag === 'WorkspaceTileSplit' &&
+    previousRoot.direction === 'horizontal'
+      ? previousRoot.id
+      : generateTileId('ws-split')
+
+  return {
+    _tag: 'WorkspaceTileSplit',
+    id: rootId,
+    direction: 'horizontal',
+    children,
+    sizes,
+  }
+}
+
+/** Serialize a column arrangement for change detection. */
+function columnsArrangement(
+  columns: readonly (readonly WorkspaceTileLeaf[])[]
+): string {
+  return JSON.stringify(
+    columns.map((column) => column.map((leaf) => leaf.workspaceId))
+  )
+}
+
+/**
+ * Move a workspace tile relative to another workspace's frame edge.
+ *
+ * Dropping on the target's `top`/`bottom` edge stacks the source
+ * above/below the target within the target's column. Dropping on the
+ * `left`/`right` edge places the source in a new column beside the
+ * target's column — this is how additional columns are created.
+ *
+ * Columns emptied by the move are removed. Column widths are preserved
+ * when the column count is unchanged; otherwise they are equalized.
+ * Returns the same tab when the move is a no-op.
+ *
+ * @param tab - The window tab containing both workspaces
+ * @param sourceWorkspaceId - The workspace being dragged
+ * @param targetWorkspaceId - The workspace whose frame was dropped on
+ * @param edge - Which edge of the target frame received the drop
+ * @returns A new WindowTab with the workspace moved
+ */
+function moveWorkspaceTileToEdge(
+  tab: WindowTab,
+  sourceWorkspaceId: string,
+  targetWorkspaceId: string,
+  edge: WorkspaceDropEdge
+): WindowTab {
+  const root = tab.workspaceLayout
+  if (!root) {
+    return tab
+  }
+  if (
+    sourceWorkspaceId === targetWorkspaceId &&
+    (edge === 'top' || edge === 'bottom')
+  ) {
+    return tab
+  }
+
+  const columns = getWorkspaceColumns(root)
+  const working = columns.map((column) => [...column])
+
+  const extraction = extractSourceLeaf(
+    working,
+    columns,
+    sourceWorkspaceId,
+    targetWorkspaceId
+  )
+  if (!extraction) {
+    return tab
+  }
+
+  const inserted = insertLeafAtEdge(
+    working,
+    extraction,
+    targetWorkspaceId,
+    edge
+  )
+  if (!inserted) {
+    return tab
+  }
+
+  const nextColumns = working.filter((column) => column.length > 0)
+  if (columnsArrangement(nextColumns) === columnsArrangement(columns)) {
+    return tab
+  }
+
+  const previousSizes =
+    root._tag === 'WorkspaceTileSplit' &&
+    root.direction === 'horizontal' &&
+    root.children.length === nextColumns.length
+      ? root.sizes
+      : undefined
+
+  const newLayout = buildColumnsLayout(nextColumns, {
+    columnSizes: previousSizes,
+    previousRoot: root,
+  })
+  if (!newLayout) {
+    return tab
+  }
+  return { ...tab, workspaceLayout: newLayout }
+}
+
+/**
+ * Remove the source workspace's leaf from the working columns (mutating
+ * them) and locate the column containing the target workspace.
+ *
+ * For self-drops on a side edge the target column is the (now
+ * source-less) column the source came from, resolved against the
+ * original column arrangement.
+ */
+function extractSourceLeaf(
+  working: WorkspaceTileLeaf[][],
+  originalColumns: readonly (readonly WorkspaceTileLeaf[])[],
+  sourceWorkspaceId: string,
+  targetWorkspaceId: string
+): { sourceLeaf: WorkspaceTileLeaf; targetColumnIndex: number } | undefined {
+  let sourceLeaf: WorkspaceTileLeaf | undefined
+  let targetColumnIndex = -1
+  for (const [columnIndex, column] of working.entries()) {
+    const sourceRow = column.findIndex(
+      (leaf) => leaf.workspaceId === sourceWorkspaceId
+    )
+    if (sourceRow !== -1) {
+      const [removed] = column.splice(sourceRow, 1)
+      sourceLeaf = removed
+    }
+    if (column.some((leaf) => leaf.workspaceId === targetWorkspaceId)) {
+      targetColumnIndex = columnIndex
+    }
+  }
+  if (sourceWorkspaceId === targetWorkspaceId) {
+    targetColumnIndex = originalColumns.findIndex((column) =>
+      column.some((leaf) => leaf.workspaceId === sourceWorkspaceId)
+    )
+  }
+  if (!sourceLeaf || targetColumnIndex === -1) {
+    return undefined
+  }
+  return { sourceLeaf, targetColumnIndex }
+}
+
+/**
+ * Insert the extracted source leaf into the working columns (mutating
+ * them) at the requested edge. Side edges insert a new single-workspace
+ * column beside the target column; top/bottom edges stack the leaf
+ * above/below the target workspace within its column.
+ *
+ * Returns false when the target row cannot be found.
+ */
+function insertLeafAtEdge(
+  working: WorkspaceTileLeaf[][],
+  extraction: { sourceLeaf: WorkspaceTileLeaf; targetColumnIndex: number },
+  targetWorkspaceId: string,
+  edge: WorkspaceDropEdge
+): boolean {
+  const { sourceLeaf, targetColumnIndex } = extraction
+  if (edge === 'left' || edge === 'right') {
+    const insertAt = targetColumnIndex + (edge === 'right' ? 1 : 0)
+    working.splice(insertAt, 0, [sourceLeaf])
+    return true
+  }
+  const targetColumn = working[targetColumnIndex]
+  if (!targetColumn) {
+    return false
+  }
+  const targetRow = targetColumn.findIndex(
+    (leaf) => leaf.workspaceId === targetWorkspaceId
+  )
+  if (targetRow === -1) {
+    return false
+  }
+  targetColumn.splice(
+    edge === 'bottom' ? targetRow + 1 : targetRow,
+    0,
+    sourceLeaf
+  )
+  return true
+}
+
+/**
+ * Repack a window tab's workspaces into balanced columns so every
+ * workspace frame gets at least `minTileHeightPx` of vertical space.
+ *
+ * The number of rows per column is derived from the available content
+ * height; workspaces are distributed across the resulting columns in
+ * reading order (top to bottom, left to right). Row heights and column
+ * widths are equalized.
+ *
+ * @param tab - The window tab to clean up
+ * @param availableHeightPx - The pixel height of the tab's content area
+ * @param minTileHeightPx - Minimum height per workspace frame (default 352)
+ * @returns A new WindowTab with the cleaned-up layout
+ */
+function cleanUpWorkspaceTiles(
+  tab: WindowTab,
+  availableHeightPx: number,
+  minTileHeightPx: number = MIN_WORKSPACE_TILE_HEIGHT_PX
+): WindowTab {
+  const root = tab.workspaceLayout
+  if (!root) {
+    return tab
+  }
+
+  const columns = getWorkspaceColumns(root)
+  const leaves = columns.flat()
+  const count = leaves.length
+  if (count === 0) {
+    return tab
+  }
+
+  const height =
+    Number.isFinite(availableHeightPx) && availableHeightPx > 0
+      ? availableHeightPx
+      : minTileHeightPx
+  const rowsPerColumn = Math.max(1, Math.floor(height / minTileHeightPx))
+  const columnCount = Math.min(count, Math.ceil(count / rowsPerColumn))
+
+  const base = Math.floor(count / columnCount)
+  const extra = count % columnCount
+  const nextColumns: WorkspaceTileLeaf[][] = []
+  let cursor = 0
+  for (let i = 0; i < columnCount; i++) {
+    const size = base + (i < extra ? 1 : 0)
+    nextColumns.push(leaves.slice(cursor, cursor + size))
+    cursor += size
+  }
+
+  const newLayout = buildColumnsLayout(nextColumns, {
+    equalizeRows: true,
+    previousRoot: root,
+  })
+  if (!newLayout) {
+    return tab
+  }
+  return { ...tab, workspaceLayout: newLayout }
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
 export {
   addWorkspaceToTab,
+  cleanUpWorkspaceTiles,
+  getWorkspaceColumns,
   getWorkspaceTileLeaves,
+  MIN_WORKSPACE_TILE_HEIGHT_PX,
+  moveWorkspaceTileToEdge,
   removeWorkspaceFromTab,
   reorderWorkspaceTiles,
   resizeWorkspaceTiles,
   splitWorkspaceTile,
 }
+export type { WorkspaceDropEdge }

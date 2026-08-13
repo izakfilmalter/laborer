@@ -1,5 +1,4 @@
 /** Credential- and state-isolated manual canary over the production runtime. */
-import { fileURLToPath } from 'node:url'
 import { WebClient } from '@slack/web-api'
 import { Effect, Redacted } from 'effect'
 import {
@@ -10,8 +9,9 @@ import { authenticateSlackBot } from '../slack/identity.ts'
 import { loadLaborerConfig } from '../slack/laborer-config.ts'
 import { slackWebApiRequestPolicy } from '../slack/web-api-request-policy.ts'
 import { runAcpChatComposition } from './chat-live.ts'
+import { repositoryRootFromAcpRuntimeModule } from './repository-root.ts'
 
-const DEFAULT_LABORER_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const DEFAULT_LABORER_ROOT = repositoryRootFromAcpRuntimeModule(import.meta.url)
 
 const program = Effect.gen(function* () {
   // This loader rejects production and Chat-canary credential reuse before any

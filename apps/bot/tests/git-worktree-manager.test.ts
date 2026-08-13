@@ -37,13 +37,17 @@ const git = async (
   return result.stdout.trim()
 }
 
-const makeRepository = async (): Promise<RepositoryFixture> => {
+const makeRepository = async (
+  sourceAtRepositoryRoot = false
+): Promise<RepositoryFixture> => {
   const sandbox = await mkdtemp(
     join(await realpath(tmpdir()), 'laborer-git-worktree-')
   )
   sandboxes.add(sandbox)
   const repository = join(sandbox, 'laborer')
-  const sourceDirectory = join(repository, 'app')
+  const sourceDirectory = sourceAtRepositoryRoot
+    ? repository
+    : join(repository, 'app')
   await mkdir(sourceDirectory, { recursive: true })
   await Promise.all([
     writeFile(join(repository, '.gitignore'), '.env.local\n'),
@@ -78,6 +82,28 @@ afterEach(async () => {
 })
 
 describe('Git WorktreeManager', () => {
+  it('copies the root env contract for a flattened repository', async () => {
+    const fixture = await makeRepository(true)
+    const manager = makeGitWorktreeManager({
+      repository: fixture.sourceDirectory,
+    })
+
+    const worktree = await Effect.runPromise(
+      manager.create({
+        conversationId: 'conversation-root-env',
+        executionId: 'execution-root-env',
+        worktreeName: 'flattened-root-env',
+      })
+    )
+
+    expect(worktree.workingDirectory).toBe(
+      join(fixture.sandbox, 'laborer.worktrees', 'flattened-root-env')
+    )
+    expect(
+      await readFile(join(worktree.workingDirectory, '.env.local'), 'utf8')
+    ).toBe('SECRET=value\n')
+  })
+
   it('creates the deterministic sibling worktree and Laborer branch', async () => {
     const fixture = await makeRepository()
     const manager = makeGitWorktreeManager({

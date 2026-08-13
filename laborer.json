@@ -7,7 +7,7 @@
     "type": "reference-coding"
   },
   "devServer": {
-    "startCommand": "bun run --cwd current dev",
+    "startCommand": "bun run dev",
     "provider": "none"
   },
   "setupScripts": [

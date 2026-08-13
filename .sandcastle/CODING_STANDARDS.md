@@ -4,7 +4,7 @@ The reviewer agents load this file during Sandcastle review.
 
 ## Scope and architecture
 
-- Default product work to `next/`; change `current/` only when an issue explicitly concerns the legacy app.
+- Default product work to the Slack-native bot workspace (`apps/bot`; `next/` on pre-flatten branches); change the legacy desktop app (`apps/desktop`, `apps/web`, and shared `packages/*`; formerly `current/`) only when an issue explicitly concerns it.
 - Preserve the ownership boundaries and canonical language in `AGENTS.md`, the nearest implementation `AGENTS.md`, and `CONTEXT.md`.
 - The Runner owns ingestion, durable turn ordering, process supervision, and delivery. Work handlers own workflow meaning, tools, agent choice, continuation state, and repository policy.
 - Keep Slack, ACP, and OpenCode details in adapters or configured handlers rather than the generic core.
@@ -15,7 +15,7 @@ The reviewer agents load this file during Sandcastle review.
 
 - Use Bun commands and existing repository patterns.
 - Avoid `any`, unsafe casts, broad rewrites, and speculative abstractions.
-- Before changing Effect code, follow the nearest implementation `AGENTS.md` and inspect that implementation's installed Effect APIs and existing usage rather than assuming APIs match across `current/` and `next/`.
+- Before changing Effect code, follow the nearest `AGENTS.md` and inspect the affected workspace's installed Effect APIs and existing usage rather than assuming APIs match across workspaces.
 - Use Schema at untrusted and persisted boundaries, schema-tagged expected errors, narrow services, Layers, and scoped resource lifecycles.
 
 ## Security and durability
@@ -28,7 +28,7 @@ The reviewer agents load this file during Sandcastle review.
 ## Verification
 
 - Run targeted checks while iterating.
-- For `next/`, format with `bun run --cwd next format:fix` and run `bun run --cwd next check`. For `current/`, run its corresponding `format:fix` and `check` scripts. Run both when a change crosses the implementation boundary.
+- Format and check each affected workspace with the `format:fix` and `check` scripts declared in that tree's `package.json` (for example `bun run --cwd apps/bot format:fix` then `bun run --cwd apps/bot check`, or the root scripts once the merged root manifest provides them). On pre-flatten branches that still have `current/` and `next/`, use those directories instead. Run every affected workspace when a change crosses workspace boundaries.
 - Add deterministic regression coverage for behavior changes. Use fakes and Emulate instead of live services.
 
 ## Sandcastle workflow

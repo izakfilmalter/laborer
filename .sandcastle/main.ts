@@ -1051,9 +1051,21 @@ async function createIssueSandbox(issue: PlannedIssue) {
   try {
     syncWorktreeWithOrigin(sandbox.worktreePath, issue.branch);
     refreshUnstartedIssueBranch(issue, sandbox.worktreePath);
+    // Dependency setup is best-effort: discover whichever workspace roots the
+    // branch's tree actually has (tracked bun.lock files) and attempt a frozen
+    // install in each. Agents own verification, so a failed or skipped install
+    // must not abort the sandbox.
     const dependencySetup = worktreeIsDirty(sandbox.worktreePath)
-      ? "test -d current/node_modules && test -d next/node_modules"
-      : "bun install --cwd current --frozen-lockfile && bun install --cwd next --frozen-lockfile";
+      ? "echo 'Worktree has local changes; skipping dependency install.'"
+      : [
+          "git ls-files | grep -E '(^|/)bun\\.lock$' | grep -v '^\\.sandcastle/' |",
+          "while IFS= read -r lock; do",
+          '  dir=$(dirname "$lock")',
+          '  echo "Attempting bun install in $dir"',
+          '  bun install --cwd "$dir" --frozen-lockfile ||',
+          '    echo "bun install failed in $dir; continuing without its dependencies."',
+          "done",
+        ].join("\n");
     const setup = await sandbox.exec(
       boundedSandboxCommand(dependencySetup),
       { onLine: (line) => console.log(`  ${line}`) }

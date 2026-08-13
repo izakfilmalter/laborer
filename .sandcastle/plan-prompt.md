@@ -22,7 +22,8 @@ hierarchy. For mixed work, the all-around builder handles architecture and
 plumbing first and the UI builder follows on the same branch. Include a concise
 `uiBrief` when true; omit it when false.
 
-Laborer is Slack-native and `next/` is primary. Do not classify Slack adapters,
+Laborer is Slack-native and the bot workspace (`apps/bot`; `next/` on
+pre-flatten branches) is primary. Do not classify Slack adapters,
 Block Kit plumbing, backend behavior, durability work, or protocol work as UI
 merely because people eventually observe it in Slack.
 

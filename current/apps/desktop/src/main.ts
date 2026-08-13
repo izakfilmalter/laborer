@@ -41,6 +41,10 @@ import {
   setUtilityProcessManager,
   setWorkspacePresenceHandler,
 } from './ipc.js'
+import {
+  laborerMcpBundleScriptPath,
+  refreshLaborerMcpSymlink,
+} from './laborer-mcp-symlink.js'
 import { LifecycleMonitor } from './lifecycle-monitor.js'
 import { configureApplicationMenu } from './menu.js'
 import {
@@ -429,6 +433,12 @@ async function startServerBackend(): Promise<void> {
 app
   .whenReady()
   .then(async () => {
+    if (app.isPackaged) {
+      refreshLaborerMcpSymlink({
+        scriptPath: laborerMcpBundleScriptPath(process.resourcesPath),
+      })
+    }
+
     // In production, register the custom laborer:// protocol handler
     // that serves the built frontend from disk.
     if (!isDev) {

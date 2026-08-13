@@ -33,6 +33,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -666,22 +667,29 @@ function smokeTestPackagedApp(stageAppDir: string): void {
   const markerPath = join(smokeRoot, 'renderer-ready.json')
   const stateRoot = join(smokeRoot, 'state')
   const databasePath = join(stateRoot, 'laborer', 'laborer.sqlite')
+  const mcpCommandPath = join(smokeRoot, '.local', 'bin', 'laborer-mcp')
+  const expectedMcpScriptPath = join(
+    resolvePackagedResourcesDirectory(stageAppDir),
+    MCP_RESOURCE_DIRECTORY,
+    MCP_SCRIPT_NAME
+  )
   const output = VERBOSE ? 'inherit' : 'ignore'
+  const smokeEnv = {
+    HOME: smokeRoot,
+    LANG: process.env.LANG ?? 'en_US.UTF-8',
+    LABORER_DESKTOP_SMOKE_TEST_FILE: markerPath,
+    LABORER_DISABLE_AUTO_UPDATE: '1',
+    PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
+    SHELL: process.env.SHELL ?? '/bin/zsh',
+    TMPDIR: smokeRoot,
+    XDG_CONFIG_HOME: join(smokeRoot, 'config'),
+    XDG_STATE_HOME: stateRoot,
+  }
   let childPid: number | undefined
   try {
     const child = spawn(executablePath, [], {
       detached: true,
-      env: {
-        HOME: smokeRoot,
-        LANG: process.env.LANG ?? 'en_US.UTF-8',
-        LABORER_DESKTOP_SMOKE_TEST_FILE: markerPath,
-        LABORER_DISABLE_AUTO_UPDATE: '1',
-        PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
-        SHELL: process.env.SHELL ?? '/bin/zsh',
-        TMPDIR: smokeRoot,
-        XDG_CONFIG_HOME: join(smokeRoot, 'config'),
-        XDG_STATE_HOME: stateRoot,
-      },
+      env: smokeEnv,
       stdio: ['ignore', output, output],
     })
     // A failed spawn reports both an undefined pid and an asynchronous error.
@@ -699,9 +707,27 @@ function smokeTestPackagedApp(stageAppDir: string): void {
       if (!isProcessRunning(childPid)) {
         throw new Error('Packaged app exited before smoke readiness')
       }
-      if (hasValidSmokeMarker(markerPath) && existsSync(databasePath)) {
+      if (
+        hasValidSmokeMarker(markerPath) &&
+        existsSync(databasePath) &&
+        existsSync(mcpCommandPath)
+      ) {
+        const linkedScriptPath = readlinkSync(mcpCommandPath)
+        if (linkedScriptPath !== expectedMcpScriptPath) {
+          throw new Error(
+            `Packaged app installed MCP command for ${linkedScriptPath}, expected ${expectedMcpScriptPath}`
+          )
+        }
+        run(
+          process.execPath,
+          [
+            join(REPO_ROOT, 'scripts/smoke-test-packaged-mcp.mjs'),
+            mcpCommandPath,
+          ],
+          { env: smokeEnv }
+        )
         log(
-          'Packaged app loaded its renderer against the shared laborer.sqlite'
+          'Packaged app loaded its renderer and installed a working MCP command'
         )
         return
       }

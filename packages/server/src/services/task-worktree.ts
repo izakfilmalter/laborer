@@ -1,15 +1,5 @@
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  openSync,
-  readFileSync,
-  statSync,
-} from 'node:fs'
-import { join } from 'node:path'
-
-const OWNER_MARKER = '.laborer-worktree-owner.json'
-const MAX_OWNER_MARKER_BYTES = 16 * 1024
+import { statSync } from 'node:fs'
+import { readWorktreeOwnerMarkerSync } from '@laborer/worktree-owner'
 
 export interface TaskWorktreeInspection {
   readonly botOwned: boolean
@@ -24,29 +14,10 @@ const markerMatches = (
     return false
   }
 
-  let descriptor: number | undefined
   try {
-    descriptor = openSync(
-      join(worktreePath, OWNER_MARKER),
-      constants.O_RDONLY + constants.O_NOFOLLOW
-    )
-    const metadata = fstatSync(descriptor)
-    if (!(metadata.isFile() && metadata.size <= MAX_OWNER_MARKER_BYTES)) {
-      return false
-    }
-    const marker: unknown = JSON.parse(readFileSync(descriptor, 'utf8'))
-    return (
-      typeof marker === 'object' &&
-      marker !== null &&
-      'executionId' in marker &&
-      marker.executionId === executionId
-    )
+    return readWorktreeOwnerMarkerSync(worktreePath).executionId === executionId
   } catch {
     return false
-  } finally {
-    if (descriptor !== undefined) {
-      closeSync(descriptor)
-    }
   }
 }
 

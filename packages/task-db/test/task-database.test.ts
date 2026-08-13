@@ -1,9 +1,9 @@
-import { Database } from 'bun:sqlite'
-import { afterEach, describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { afterEach, describe, expect, it } from 'vitest'
 import { taskDbMigrations } from '../src/migrations.ts'
 import {
   NativeTaskDatabase,
@@ -31,14 +31,14 @@ const temporaryDatabasePath = (): string => {
 }
 
 const createPreDescriptionDatabase = (path: string): void => {
-  const raw = new Database(path, { create: true, strict: true })
+  const raw = new DatabaseSync(path)
   raw.exec(`CREATE TABLE __drizzle_migrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     hash TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     name TEXT NOT NULL UNIQUE
   )`)
-  const record = raw.query(
+  const record = raw.prepare(
     'INSERT INTO __drizzle_migrations (hash, created_at, name) VALUES (?, ?, ?)'
   )
   for (const migration of taskDbMigrations.slice(0, 2)) {
@@ -50,7 +50,7 @@ const createPreDescriptionDatabase = (path: string): void => {
     )
   }
   raw
-    .query(`INSERT INTO tasks (
+    .prepare(`INSERT INTO tasks (
       id, root_path, title, status, source, initial_prompt, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .run('existing', '/repo', 'Existing', 'todo', 'manual', 'Keep me', 1, 1)
@@ -58,14 +58,14 @@ const createPreDescriptionDatabase = (path: string): void => {
 }
 
 const createPreSharedDbExpansionDatabase = (path: string): void => {
-  const raw = new Database(path, { create: true, strict: true })
+  const raw = new DatabaseSync(path)
   raw.exec(`CREATE TABLE __drizzle_migrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     hash TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     name TEXT NOT NULL UNIQUE
   )`)
-  const record = raw.query(
+  const record = raw.prepare(
     'INSERT INTO __drizzle_migrations (hash, created_at, name) VALUES (?, ?, ?)'
   )
   for (const migration of taskDbMigrations.slice(0, 4)) {
@@ -77,7 +77,7 @@ const createPreSharedDbExpansionDatabase = (path: string): void => {
     )
   }
   raw
-    .query(`INSERT INTO tasks (
+    .prepare(`INSERT INTO tasks (
       id, root_path, title, status, source, worktree_path, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(
@@ -93,7 +93,7 @@ const createPreSharedDbExpansionDatabase = (path: string): void => {
   // Real 0003 databases carry duplicate worktree paths: a cancelled attempt
   // and its retried replacement both keep the same path. Migration 0004+
   // must accept this history instead of failing with a UNIQUE violation.
-  const insertTask = raw.query(`INSERT INTO tasks (
+  const insertTask = raw.prepare(`INSERT INTO tasks (
       id, root_path, title, status, source, worktree_path, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
   insertTask.run(
@@ -148,9 +148,9 @@ describe('NativeTaskDatabase', () => {
     })
     database.close()
 
-    const raw = new Database(path, { strict: true })
+    const raw = new DatabaseSync(path)
     const task = raw
-      .query(`SELECT worktree_status, parent_task_id, pr_is_draft, sort_order
+      .prepare(`SELECT worktree_status, parent_task_id, pr_is_draft, sort_order
         FROM tasks WHERE id = ?`)
       .get('legacy-task')
     expect(task).toMatchObject({
@@ -160,31 +160,31 @@ describe('NativeTaskDatabase', () => {
       worktree_status: null,
     })
     raw
-      .query(`INSERT INTO projects (
+      .prepare(`INSERT INTO projects (
         id, name, root_path, repo_id, canonical_git_common_dir, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run('project', 'Project', '/repo', 'repo-id', '/repo/.git', 1, 1)
     raw
-      .query(`INSERT INTO app_settings (
+      .prepare(`INSERT INTO app_settings (
         key, value, created_at, updated_at
       ) VALUES (?, ?, ?, ?)`)
       .run('github.token', 'test-value', 1, 1)
     raw
-      .query(`INSERT INTO task_changes (
+      .prepare(`INSERT INTO task_changes (
         task_id, changed_at, mutation_id
       ) VALUES (?, ?, ?)`)
       .run('legacy-task', 1, 'task-mutation-1')
     raw
-      .query(`INSERT INTO state_changes (
+      .prepare(`INSERT INTO state_changes (
         table_name, row_id, changed_at, mutation_id
       ) VALUES (?, ?, ?, ?)`)
       .run('app_settings', 'github.token', 1, 'mutation-1')
     expect(
-      raw.query('SELECT mutation_id FROM state_changes').get()
+      raw.prepare('SELECT mutation_id FROM state_changes').get()
     ).toMatchObject({ mutation_id: 'mutation-1' })
     expect(
       raw
-        .query(
+        .prepare(
           'SELECT mutation_id FROM task_changes WHERE mutation_id IS NOT NULL'
         )
         .get()
@@ -213,19 +213,19 @@ describe('NativeTaskDatabase', () => {
     })
     database.close()
 
-    const raw = new Database(path, { strict: true })
+    const raw = new DatabaseSync(path)
     raw.exec('PRAGMA foreign_keys = ON')
     raw
-      .query('UPDATE tasks SET parent_task_id = ? WHERE id = ?')
+      .prepare('UPDATE tasks SET parent_task_id = ? WHERE id = ?')
       .run('parent', 'child')
-    raw.query('DELETE FROM tasks WHERE id = ?').run('parent')
+    raw.prepare('DELETE FROM tasks WHERE id = ?').run('parent')
     expect(
-      raw.query('SELECT parent_task_id FROM tasks WHERE id = ?').get('child')
+      raw.prepare('SELECT parent_task_id FROM tasks WHERE id = ?').get('child')
     ).toMatchObject({ parent_task_id: null })
     // Retried tasks reuse a worktree path, so cancelled history and the
     // replacement task legitimately share the same path in the database.
     raw
-      .query(`INSERT INTO tasks (
+      .prepare(`INSERT INTO tasks (
         id, root_path, title, status, source, worktree_path, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
@@ -240,7 +240,7 @@ describe('NativeTaskDatabase', () => {
       )
     expect(
       raw
-        .query('SELECT COUNT(*) AS count FROM tasks WHERE worktree_path = ?')
+        .prepare('SELECT COUNT(*) AS count FROM tasks WHERE worktree_path = ?')
         .get('/repo/.worktrees/child')
     ).toMatchObject({ count: 2 })
     raw.close()
@@ -274,10 +274,10 @@ describe('NativeTaskDatabase', () => {
     ).toMatchObject({ source: 'agent', description: 'Follow up' })
     database.close()
 
-    const raw = new Database(path, { strict: true })
+    const raw = new DatabaseSync(path)
     expect(() =>
       raw
-        .query(`INSERT INTO tasks (
+        .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
         .run('unknown', '/repo', 'Unknown', 'todo', 'unknown', 1, 1)
@@ -451,10 +451,10 @@ describe('NativeTaskDatabase', () => {
       source: 'manual',
     })
 
-    const raw = new Database(path)
-    raw.query('DELETE FROM task_changes WHERE sequence = 1').run()
+    const raw = new DatabaseSync(path)
+    raw.prepare('DELETE FROM task_changes WHERE sequence = 1').run()
     raw
-      .query(
+      .prepare(
         'INSERT INTO task_changes (sequence, task_id, changed_at) VALUES (?, ?, ?)'
       )
       .run(5, 'task-reset', 50)
@@ -476,10 +476,10 @@ describe('NativeTaskDatabase', () => {
     const path = temporaryDatabasePath()
     const database = NativeTaskDatabase.open(path)
     database.close()
-    const raw = new Database(path)
+    const raw = new DatabaseSync(path)
     expect(() =>
       raw
-        .query(
+        .prepare(
           `INSERT INTO tasks (
             id, root_path, title, status, source, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -493,9 +493,9 @@ describe('NativeTaskDatabase', () => {
     const path = temporaryDatabasePath()
     const database = NativeTaskDatabase.open(path)
     database.close()
-    const raw = new Database(path)
+    const raw = new DatabaseSync(path)
     raw
-      .query(
+      .prepare(
         'INSERT INTO __drizzle_migrations (hash, created_at, name) VALUES (?, ?, ?)'
       )
       .run('future', Date.now(), '9999_future')

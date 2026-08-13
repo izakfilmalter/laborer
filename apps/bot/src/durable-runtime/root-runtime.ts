@@ -27,11 +27,6 @@ import {
 } from '../application.ts'
 import { ThreadId } from '../core/domain.ts'
 import {
-  ExecutionTaskEmission,
-  type ExecutionTaskEmitter,
-  noopExecutionTaskEmitter,
-} from '../task-db/execution-task-emitter.ts'
-import {
   ACTION_NAME_MAX_LENGTH,
   ACTION_REVISION_MAX_LENGTH,
   ActionRegistrationError,
@@ -39,6 +34,11 @@ import {
   type RegisteredActionCatalog,
   type RegisteredActionContext,
 } from './action.ts'
+import {
+  ExecutionTaskEmission,
+  type ExecutionTaskEmitter,
+  noopExecutionTaskEmitter,
+} from './execution-task-emitter.ts'
 
 const RUNTIME_SCHEMA_VERSION = 6
 export const RUNTIME_MAX_CONCURRENT_EXECUTIONS = 8

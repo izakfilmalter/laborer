@@ -20,6 +20,7 @@ import {
   defineApplication,
 } from '../src/durable-runtime/action.ts'
 import { applicationThroughRootConversationRuntime } from '../src/durable-runtime/conversation-application.ts'
+import type { ExecutionTaskProjection } from '../src/durable-runtime/execution-task-emitter.ts'
 import {
   ExecutionEvent,
   makeRootDurableRuntimeLayer,
@@ -28,7 +29,6 @@ import {
   RUNTIME_PAYLOAD_MAX_BYTES,
 } from '../src/durable-runtime/root-runtime.ts'
 import { runConversationRpcLocally } from '../src/durable-runtime/rpc.ts'
-import type { ExecutionTaskProjection } from '../src/task-db/execution-task-emitter.ts'
 import { makeTempDirectoryScoped } from './support/temp-directory.ts'
 
 const waitForTerminal = Effect.fn('waitForTerminal')(function* (

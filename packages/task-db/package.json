@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "exports": {
     ".": "./src/task-database.ts",
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@laborer/config": "workspace:*",
     "@types/bun": "^1.3.5",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.0.17"
   }
 }

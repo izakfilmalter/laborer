@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { ActionTitle } from '@laborer/task-db'
 import { Effect, Schema } from 'effect'
 import type { JsonSchema } from 'effect/JsonSchema'
 import {
@@ -8,7 +9,6 @@ import {
   ACTION_CANONICAL_MAX_ITEMS as SHARED_ACTION_CANONICAL_MAX_ITEMS,
   canonicalCatalogJson as sharedCanonicalCatalogJson,
 } from './bounded-action-value.ts'
-import { ActionTitle } from './task-db/task-schemas.ts'
 export const ACTION_CANONICAL_MAX_BYTES = SHARED_ACTION_CANONICAL_MAX_BYTES
 export const ACTION_CANONICAL_MAX_DEPTH = SHARED_ACTION_CANONICAL_MAX_DEPTH
 export const ACTION_CANONICAL_MAX_ITEMS = SHARED_ACTION_CANONICAL_MAX_ITEMS

@@ -1,6 +1,8 @@
 {
+  "extends": "@laborer/config/tsconfig.base.json",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "declarationMap": false,
     "exactOptionalPropertyTypes": true,
     "jsx": "react-jsx",
     "lib": ["ES2022"],

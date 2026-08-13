@@ -27,7 +27,9 @@
       "!**/.source",
       "!**/convex/_generated",
       "!**/.reference",
-      "!**/.opencode"
+      "!**/.opencode",
+      "!**/.laborer-runtime",
+      "!**/out"
     ]
   },
   "formatter": {

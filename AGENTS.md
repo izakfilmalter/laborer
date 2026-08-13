@@ -2,10 +2,10 @@
 
 This repository contains two implementations with different architectures and dependencies:
 
-- `next/` is the primary Slack-native Laborer and supersedes the legacy app.
-- `current/` is the legacy desktop mission-control app.
+- `apps/bot/` is the primary Slack-native Laborer and supersedes the legacy app.
+- `apps/desktop/` is the legacy desktop mission-control app.
 
-Use the nearest `AGENTS.md` for implementation-specific guidance. Default new product work to `next/`; change `current/` only when the task explicitly concerns the legacy app. Keep changes inside the target implementation unless the task explicitly crosses that boundary.
+Use the nearest `AGENTS.md` for implementation-specific guidance. Default new product work to `apps/bot/`; change `apps/desktop/` only when the task explicitly concerns the legacy app. Keep changes inside the target implementation unless the task explicitly crosses that boundary.
 
 ## Domain and Decisions
 

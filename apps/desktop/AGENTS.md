@@ -1,6 +1,6 @@
 # Current: Legacy Desktop App
 
-`current/` is the legacy Laborer desktop application: a Bun/Turborepo monorepo with React 19, Electron, Effect 4, and integrated Effect RPC. Its service and package map is documented in `README.md`.
+`apps/desktop/` is the legacy Laborer desktop application: a Bun/Turborepo monorepo with React 19, Electron, Effect 4, and integrated Effect RPC. Its service and package map is documented in `README.md`.
 
 ## Commands
 
@@ -26,13 +26,13 @@ Run commands from the repository root:
 
 ## Effect 4
 
-`current/` and `next/` pin their shared Effect 4 beta packages in lockstep. `current/package.json` is authoritative for the packages used by this implementation; compare shared package versions with `next/package.json` and do not bump them independently.
+`apps/desktop/` and `apps/bot/` pin their shared Effect 4 beta packages in lockstep. `package.json` is authoritative for the packages used by this implementation; compare shared package versions with `apps/bot/package.json` and do not bump them independently.
 
 Before writing or reviewing Effect code:
 
 1. Run `effect-solutions list`.
 2. Read the relevant guides with `effect-solutions show <topic>...`.
-3. Verify examples against `current/package.json`, installed types, and existing `current/` and `next/` usage; the guides may lag beta API changes.
+3. Verify examples against `package.json`, installed types, and existing `apps/desktop/` and `apps/bot/` usage; the guides may lag beta API changes.
 4. Search `@effect` for implementations and tests, then reconcile them with the installed version rather than guessing an API.
 
-Where Effect 4 requires a new shape, follow `next/` conventions: narrow named `Context.Service` contracts, explicit `Layer` composition, scoped acquisition and finalization, `Schema` codecs at untrusted or persisted boundaries, `Schema.TaggedError` classes for expected failures, injected and redacted config, and `@effect/vitest` Effect tests. Use only established `effect/unstable/*` imports. Otherwise preserve the existing shape rather than modernizing unrelated code.
+Where Effect 4 requires a new shape, follow `apps/bot/` conventions: narrow named `Context.Service` contracts, explicit `Layer` composition, scoped acquisition and finalization, `Schema` codecs at untrusted or persisted boundaries, `Schema.TaggedError` classes for expected failures, injected and redacted config, and `@effect/vitest` Effect tests. Use only established `effect/unstable/*` imports. Otherwise preserve the existing shape rather than modernizing unrelated code.

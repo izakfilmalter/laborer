@@ -8,7 +8,7 @@ Source inspected: `pingdotgg/t3code` at `963ebf5bd7cce00d40ff60c258b34c12dcab271
 
 T3 Code does **not** synchronize independent SQLite writers. One T3 server process owns SQLite and serializes all orchestration commands through one in-memory queue. Web, Electron-renderer, and mobile clients never open the database; they send commands to that server and receive an initial snapshot plus ordered domain events over a durable WebSocket subscription. SQLite WAL improves the server's local read/write behavior, but it is not the UI notification mechanism.
 
-Laborer therefore cannot copy T3 Code's whole coordination design while retaining the requirement that `next/` and `current/` independently write the same file. It should copy only these ideas:
+Laborer therefore cannot copy T3 Code's whole coordination design while retaining the requirement that `apps/bot/` and `apps/desktop/` independently write the same file. It should copy only these ideas:
 
 1. one canonical database path and an automatically migrated schema;
 2. WAL, foreign keys, short atomic transactions, stable IDs, and idempotent writes;
@@ -101,7 +101,7 @@ The following is a recommendation/inference for Laborer, not a claim about exist
 ### Do not copy
 
 - **Do not add Drizzle or `better-sqlite3` because of T3 Code.** Its persistence path uses neither.
-- **Do not copy T3's custom `NodeSqliteClient`.** `next/` already has the Effect 4 Node SQLite adapter, and `current` is Bun/Effect 3. Use the runtime-appropriate installed adapter or a thin `bun:sqlite` boundary in `current`; share the file format and SQL contract, not the driver implementation.
+- **Do not copy T3's custom `NodeSqliteClient`.** `apps/bot/` already has the Effect 4 Node SQLite adapter, and `current` is Bun/Effect 3. Use the runtime-appropriate installed adapter or a thin `bun:sqlite` boundary in `current`; share the file format and SQL contract, not the driver implementation.
 - **Do not copy the full command/event/projector/read-model architecture.** The board needs one small mutable task model, not an orchestration event store plus nine projections.
 - **Do not copy the WebSocket server solely for local DB invalidation.** T3 needs sockets for remote and multi-surface clients. Laborer's two local independent writers have no always-present owner, so a socket owner would either violate independence or introduce a third service.
 - **Do not use `fs.watch` on `state.sqlite` or its WAL files.** WAL writes can touch `-wal`/`-shm`, checkpointing changes files, events coalesce, and rename/watch behavior is platform-dependent. Polling a monotonic SQL cursor is deterministic and testable.

@@ -120,7 +120,7 @@ export const assertSupportedOpenCodeInitialization = (input: unknown): void => {
   const diagnostic = [
     `OpenCode ACP compatibility check failed for @opencode-ai/cli@${SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli}.`,
     ...failures.map((failure) => `- ${failure}`),
-    'Reinstall with `bun install --frozen-lockfile`; if the failure remains, update next/docs/acp-runtime-matrix.md and its compatibility contract deliberately.',
+    'Reinstall with `bun install --frozen-lockfile`; if the failure remains, update apps/bot/docs/acp-runtime-matrix.md and its compatibility contract deliberately.',
   ].join('\n')
   throw new Error(
     diagnostic.slice(0, ACP_COMPATIBILITY_DIAGNOSTIC_MAX_CHARACTERS)

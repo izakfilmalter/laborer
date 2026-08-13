@@ -43,10 +43,10 @@ const makeRepository = async (): Promise<RepositoryFixture> => {
   )
   sandboxes.add(sandbox)
   const repository = join(sandbox, 'laborer')
-  const sourceDirectory = join(repository, 'next')
+  const sourceDirectory = join(repository, 'app')
   await mkdir(sourceDirectory, { recursive: true })
   await Promise.all([
-    writeFile(join(repository, '.gitignore'), 'next/.env.local\n'),
+    writeFile(join(repository, '.gitignore'), '.env.local\n'),
     writeFile(join(repository, 'README.md'), 'integration fixture\n'),
     writeFile(join(sourceDirectory, 'package.json'), '{}\n'),
     writeFile(join(sourceDirectory, '.env.local'), 'SECRET=value\n', {
@@ -97,7 +97,7 @@ describe('Git WorktreeManager', () => {
       fixture.sandbox,
       'laborer.worktrees',
       'feature-safe-worktree',
-      'next'
+      'app'
     )
     expect(worktree).toEqual({ workingDirectory: expectedPath })
     expect(await git(dirname(expectedPath), ['branch', '--show-current'])).toBe(
@@ -132,9 +132,9 @@ describe('Git WorktreeManager', () => {
       hookPath,
       `#!/bin/sh
 if [ "$(git branch --show-current)" = "laborer/ambiguous-add" ]; then
-  mkdir -p next
-  printf 'CONFLICT=temporary\n' > next/.env.local
-  chmod 600 next/.env.local
+  mkdir -p app
+  printf 'CONFLICT=temporary\n' > app/.env.local
+  chmod 600 app/.env.local
 fi
 `,
       { mode: 0o700 }
@@ -173,7 +173,7 @@ fi
             fixture.sandbox,
             'laborer.worktrees',
             request.worktreeName,
-            'next'
+            'app'
           ),
         })
       )
@@ -384,7 +384,7 @@ fi
       'laborer/recover-existing'
     )
     await expect(
-      readFile(join(expectedPath, 'next', '.env.local'), 'utf8')
+      readFile(join(expectedPath, 'app', '.env.local'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
@@ -410,12 +410,12 @@ fi
       'laborer.worktrees',
       'recover-new'
     )
-    expect(recovered).toEqual({ workingDirectory: join(expectedPath, 'next') })
+    expect(recovered).toEqual({ workingDirectory: join(expectedPath, 'app') })
     expect(await git(expectedPath, ['branch', '--show-current'])).toBe(
       'laborer/recover-new'
     )
     expect(
-      await readFile(join(expectedPath, 'next', '.env.local'), 'utf8')
+      await readFile(join(expectedPath, 'app', '.env.local'), 'utf8')
     ).toBe('SECRET=value\n')
   })
 
@@ -645,7 +645,7 @@ fi
       manager.inspect({
         ...request,
         creationState: 'confirmed',
-        workingDirectory: join(checkout, 'next'),
+        workingDirectory: join(checkout, 'app'),
       })
     )
     expect(outcome).toEqual({
@@ -654,7 +654,7 @@ fi
       status: 'conflicting',
     })
     await expect(
-      readFile(join(checkout, 'next', '.env.local'), 'utf8')
+      readFile(join(checkout, 'app', '.env.local'), 'utf8')
     ).rejects.toMatchObject({
       code: 'ENOENT',
     })

@@ -1,6 +1,6 @@
 # Next: Primary Slack-Native Laborer
 
-`next/` is the primary Laborer implementation. It is an issue-driven Slack-native TypeScript application built from tracer bullets and canaries. `README.md` records what each prototype proves and its remaining scope; do not infer production guarantees beyond that evidence.
+`apps/bot/` is the primary Laborer implementation. It is an issue-driven Slack-native TypeScript application built from tracer bullets and canaries. `README.md` records what each prototype proves and its remaining scope; do not infer production guarantees beyond that evidence.
 
 ## Architectural Boundary
 
@@ -39,7 +39,7 @@ The live Slack entry point runs on Node because the Chat Slack adapter depends o
 This implementation pins Effect 4 beta packages. Before writing Effect code:
 
 1. Run `effect-solutions list` and read relevant guides.
-2. Check the installed package version and existing `next/` usage.
+2. Check the installed package version and existing `apps/bot/` usage.
 3. Search `@effect` for current implementations.
 
 Use `Schema` at untrusted and persisted boundaries, schema-tagged errors for expected failures, narrow `Context.Service` contracts, `Layer` composition, and scoped resource lifecycles.

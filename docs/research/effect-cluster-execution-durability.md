@@ -38,8 +38,8 @@ The repository pins `effect` and its SQLite integration to
 `4.0.0-beta.99`; the installed source is byte-identical to Effect's
 `effect@4.0.0-beta.99` tag at commit
 [`6184a7d`](https://github.com/Effect-TS/effect/tree/6184a7dc53cb9310e299b65ad6d6c712c2cbf202).
-See [`next/package.json`](../../next/package.json) and
-[`next/bun.lock`](../../next/bun.lock).
+See [`apps/bot/package.json`](../../apps/bot/package.json) and
+[`bun.lock`](../../bun.lock).
 
 ## What is persisted
 
@@ -184,7 +184,7 @@ identify and communicate with that child.
 ## Assessment of Laborer's current tracer
 
 The existing
-[`conversation-execution-tracer-prototype`](../../next/src/conversation-execution-tracer-prototype/README.md)
+[`conversation-execution-tracer-prototype`](../../apps/bot/src/conversation-execution-tracer-prototype/README.md)
 proves useful pieces:
 
 - deterministic Workflow execution IDs;
@@ -196,13 +196,13 @@ proves useful pieces:
 
 The proof still co-locates the Conversation runtime, RPC server,
 `SingleRunner`, Workflow handlers, and outbox pump in one Bun process
-([`demo.ts` lines 193–224](../../next/src/conversation-execution-tracer-prototype/demo.ts)).
+([`demo.ts` lines 193–224](../../apps/bot/src/conversation-execution-tracer-prototype/demo.ts)).
 Its Workflow body performs ordinary SQL writes and sleeps directly rather than
 using `Activity`, `DurableDeferred`, or `DurableQueue`
-([`demo.ts` lines 101–139](../../next/src/conversation-execution-tracer-prototype/demo.ts)).
+([`demo.ts` lines 101–139](../../apps/bot/src/conversation-execution-tracer-prototype/demo.ts)).
 It deletes its scratch directory at startup and explicitly reports
 `child-processes=0`
-([`demo.ts` lines 44–49 and 783–786](../../next/src/conversation-execution-tracer-prototype/demo.ts)).
+([`demo.ts` lines 44–49 and 783–786](../../apps/bot/src/conversation-execution-tracer-prototype/demo.ts)).
 
 The prototype passed locally during this research:
 

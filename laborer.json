@@ -11,7 +11,7 @@
     "provider": "none"
   },
   "setupScripts": [
-    "sh ./current/scripts/worktree-setup.sh --no-ports"
+    "sh ./scripts/worktree-setup.sh --no-ports"
   ],
   "agent": "opencode2",
   "worktreeDir": "/Users/izakfilmalter/Projects/izakfilmalter/laborer.worktrees"

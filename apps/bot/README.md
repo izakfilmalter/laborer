@@ -1,6 +1,6 @@
 # Slack-native Laborer
 
-`next/` is Laborer's primary Slack-native implementation, package
+`apps/bot/` is Laborer's primary Slack-native implementation, package
 `@laborer/bot`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
 entire Slack plane: Socket Mode ingestion, normalization, routing, activation,
 subscription, delivery, streaming, and Block Kit permission UI. One Slack

@@ -1,8 +1,8 @@
-# SQLite test strategy for the LiveStore removal in `current/`
+# SQLite test strategy for the LiveStore removal in `apps/desktop/`
 
-How Effect, T3 Code, and OpenCode test code over SQLite, and what `current/` should adopt when
+How Effect, T3 Code, and OpenCode test code over SQLite, and what `apps/desktop/` should adopt when
 `TestLaborerStore` (livestore) is replaced. Repos inspected: `Effect-TS/effect@main` (note: Effect 4
-— architecture relevant, APIs not copyable into current/'s Effect 3.19), `pingdotgg/t3code`,
+— architecture relevant, APIs not copyable into apps/desktop/'s Effect 3.19), `pingdotgg/t3code`,
 `anomalyco/opencode@v2`.
 
 ## Findings per repo
@@ -59,7 +59,7 @@ Same shape: the default test application graph uses a real in-memory SQLite with
 - Adapter-level lock contention with temp file + separate native holder
   (`packages/effect-drizzle-sqlite/test/sqlite.test.ts:102-129`).
 
-## Recommendation for `current/`
+## Recommendation for `apps/desktop/`
 
 **Real SQLite behind the same Effect Context.Tag as production.** Replace `TestLaborerStore` with a
 drop-in `TestLaborerDatabase` layer that differs from production only in database path (and
@@ -76,7 +76,7 @@ Two variants:
 2. **Scoped temp file** — for two independent writers, stale CAS across connections, WAL/lock
    contention, reopen durability, migration idempotence across reopen, older-fixture upgrades.
    (`:memory:` is private to one connection and cannot test these.) Precedent:
-   `current/packages/task-db/test/task-database.test.ts:15-21, 56-74, 138-163`.
+   `packages/task-db/test/task-database.test.ts:15-21, 56-74, 138-163`.
 
 Isolation: fresh layer per test that expects an empty db; beware `@effect/vitest` `it.layer`
 memoization across a block — if shared, use unique IDs.

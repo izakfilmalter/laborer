@@ -59,12 +59,16 @@ describe('Sandcastle fast flow', () => {
       hostCheckoutProblem(
         'master',
         'feature/speed-up',
-        ' M next/tests/example.test.ts'
+        ' M apps/bot/tests/example.test.ts'
       ),
       'Sandcastle must start from a clean master checkout, but the host is on feature/speed-up. The checkout also has uncommitted changes. Restore a clean master checkout before restarting Sandcastle; after startup, the runner uses its detached base worktree.'
     )
     assert.strictEqual(
-      hostCheckoutProblem('master', 'master', ' M next/tests/example.test.ts'),
+      hostCheckoutProblem(
+        'master',
+        'master',
+        ' M apps/bot/tests/example.test.ts'
+      ),
       'Sandcastle must start from a clean master checkout. Commit or stash host changes before restarting Sandcastle.'
     )
   })

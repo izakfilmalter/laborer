@@ -147,6 +147,20 @@ const REQUIRED_ASAR_FILES = [
   'packages/server/dist/migrations/0006_app_settings_and_ledger.sql',
 ] as const
 
+const MCP_RESOURCE_DIRECTORY = 'laborer-mcp'
+const MCP_SCRIPT_NAME = 'laborer-mcp.mjs'
+const MCP_RUNTIME_NAME = 'task-mcp-runtime.mjs'
+const REQUIRED_MCP_MIGRATIONS = [
+  '0000_shared_task_db.sql',
+  '0001_execution_lifecycle_statuses.sql',
+  '0002_task_description_agent_source.sql',
+  '0003_worktree_task_source.sql',
+  '0004_task_worktree_pr_columns.sql',
+  '0005_projects.sql',
+  '0006_app_settings_and_ledger.sql',
+] as const
+const NODE_SHEBANG = '#!/usr/bin/env node\n'
+
 const REMOVED_PERSISTENCE_PAYLOAD_PATTERN =
   /(?:^|[/\\])(?:@livestore|sql\.js|wa-sqlite)(?:[/\\]|$)/i
 const PACKAGED_SMOKE_TIMEOUT_MS = 30_000
@@ -461,6 +475,20 @@ function createBuildConfig(): Record<string, unknown> {
       buildResources: 'apps/desktop/resources',
     },
     files: ['**/*'],
+    extraResources: [
+      {
+        from: 'packages/server/dist/task-mcp-main.mjs',
+        to: `${MCP_RESOURCE_DIRECTORY}/${MCP_SCRIPT_NAME}`,
+      },
+      {
+        from: `packages/server/dist/${MCP_RUNTIME_NAME}`,
+        to: `${MCP_RESOURCE_DIRECTORY}/${MCP_RUNTIME_NAME}`,
+      },
+      {
+        from: 'packages/server/dist/migrations',
+        to: `${MCP_RESOURCE_DIRECTORY}/migrations`,
+      },
+    ],
     mac: {
       target: ['dmg', 'zip'],
       icon: 'icon.icns',
@@ -474,6 +502,77 @@ function createBuildConfig(): Record<string, unknown> {
   }
 
   return config
+}
+
+function resolvePackagedResourcesDirectory(stageAppDir: string): string {
+  const appName = resolveDesktopAppName({
+    isDevelopment: false,
+    version: BUILD_VERSION,
+  })
+  return join(
+    stageAppDir,
+    'dist',
+    `mac-${ARCH}`,
+    `${appName}.app`,
+    'Contents',
+    'Resources'
+  )
+}
+
+function validatePackagedMcpResources(stageAppDir: string): void {
+  const resourcesDirectory = resolvePackagedResourcesDirectory(stageAppDir)
+  const mcpDirectory = join(resourcesDirectory, MCP_RESOURCE_DIRECTORY)
+  const scriptPath = join(mcpDirectory, MCP_SCRIPT_NAME)
+  const requiredFiles = [
+    scriptPath,
+    join(mcpDirectory, MCP_RUNTIME_NAME),
+    ...REQUIRED_MCP_MIGRATIONS.map((name) =>
+      join(mcpDirectory, 'migrations', name)
+    ),
+  ]
+  const missing = requiredFiles.filter((path) => !existsSync(path))
+  if (missing.length > 0) {
+    throw new Error(
+      `Packaged MCP resources are missing: ${missing.map((path) => relative(resourcesDirectory, path)).join(', ')}`
+    )
+  }
+
+  if (!readFileSync(scriptPath, 'utf8').startsWith(NODE_SHEBANG)) {
+    throw new Error(
+      `Packaged MCP script is missing its Node shebang: ${scriptPath}`
+    )
+  }
+  // biome-ignore lint/suspicious/noBitwiseOperators: POSIX executable bits are a bit mask.
+  if ((statSync(scriptPath).mode & 0o111) === 0) {
+    throw new Error(`Packaged MCP script is not executable: ${scriptPath}`)
+  }
+
+  log(
+    `Validated executable MCP resources in ${relative(stageAppDir, mcpDirectory)}`
+  )
+}
+
+function smokeTestPackagedMcp(stageAppDir: string): void {
+  const scriptPath = join(
+    resolvePackagedResourcesDirectory(stageAppDir),
+    MCP_RESOURCE_DIRECTORY,
+    MCP_SCRIPT_NAME
+  )
+  const smokeRoot = mkdtempSync(join(tmpdir(), 'laborer-mcp-package-smoke-'))
+  const env = {
+    ...process.env,
+    HOME: smokeRoot,
+    XDG_STATE_HOME: join(smokeRoot, 'state'),
+  }
+  const smokeClient = join(REPO_ROOT, 'scripts/smoke-test-packaged-mcp.mjs')
+
+  try {
+    run(process.execPath, [smokeClient, process.execPath, scriptPath], { env })
+    run(process.execPath, [smokeClient, scriptPath], { env })
+    log('Packaged MCP completed initialize + tool call via Node and shebang')
+  } finally {
+    rmSync(smokeRoot, { force: true, recursive: true })
+  }
 }
 
 function validatePackagedAsar(stageAppDir: string): void {
@@ -802,6 +901,8 @@ function stage(stageRoot: string): void {
   )
 
   validatePackagedAsar(stageAppDir)
+  validatePackagedMcpResources(stageAppDir)
+  smokeTestPackagedMcp(stageAppDir)
   smokeTestPackagedApp(stageAppDir)
 
   // Copy artifacts to output dir.

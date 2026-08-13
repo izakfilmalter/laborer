@@ -48,6 +48,7 @@ import {
   Effect,
   Fiber,
   Layer,
+  ManagedRuntime,
   pipe,
   Ref,
   Stream,
@@ -457,6 +458,14 @@ export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
 async function main(): Promise<void> {
   const { rpcPort, parentPort } = await waitForPort()
 
+  // Build the domain services exactly once. Every renderer connection must
+  // share this context; rebuilding InfrastructureLayer per MessagePort would
+  // duplicate background watchers and deferred initialization and could give
+  // each window a different in-memory view of the same database.
+  const managedRuntime = ManagedRuntime.make(InfrastructureLayer)
+  const infrastructureContext = await managedRuntime.context()
+  const sharedInfrastructureLayer = Layer.succeedContext(infrastructureContext)
+
   // Build the RPC layer with MessagePort transport.
   // MessagePort RPC needs no HTTP server or JSON serialization:
   // - RpcSerialization.layerJson (MessagePort uses structured clone)
@@ -512,7 +521,7 @@ async function main(): Promise<void> {
       const additionalProgram = RpcServer.layer(LaborerRpcs).pipe(
         Layer.provide(layerProtocolMessagePort(additionalRpcPort)),
         Layer.provide(LaborerRpcsLive),
-        Layer.provide(InfrastructureLayer),
+        Layer.provide(sharedInfrastructureLayer),
         Layer.launch,
         Effect.scoped
       )
@@ -521,7 +530,7 @@ async function main(): Promise<void> {
   })
 
   const program = RpcLive.pipe(
-    Layer.provide(InfrastructureLayer),
+    Layer.provide(sharedInfrastructureLayer),
     Layer.launch,
     Effect.scoped
   )
@@ -529,7 +538,11 @@ async function main(): Promise<void> {
   // Use Effect.runPromise instead of NodeRuntime.runMain to avoid
   // installing duplicate signal handlers in the utility process.
   // The parent process manages the lifecycle (kill/restart).
-  await Effect.runPromise(program)
+  try {
+    await Effect.runPromise(program)
+  } finally {
+    await managedRuntime.dispose()
+  }
 }
 
 if ((process as unknown as { parentPort?: unknown }).parentPort) {

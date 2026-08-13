@@ -1,12 +1,6 @@
 import { PositiveInt } from '@laborer/shared/rpc'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Effect, Layer, Schema } from 'effect'
 import { McpServer, Tool, Toolkit } from 'effect/unstable/ai'
-import {
-  Headers,
-  HttpMiddleware,
-  HttpServerRequest,
-  HttpServerResponse,
-} from 'effect/unstable/http'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
 
 const TaskStatus = Schema.Literals([
@@ -176,62 +170,7 @@ export const TaskMcpToolsLayer = McpServer.toolkit(TaskToolkit).pipe(
   Layer.provide(TaskToolkitHandlers)
 )
 
-export const TaskMcpProtocolLayer = McpServer.layerHttp({
-  name: 'laborer-current',
-  path: '/mcp',
-  version: '1.0.0',
-})
-
 export const TaskMcpStdioProtocolLayer = McpServer.layerStdio({
   name: 'laborer-current',
   version: '1.0.0',
 })
-
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', '::1', 'localhost'])
-
-export const isAllowedMcpOrigin = (origin: string): boolean => {
-  try {
-    const url = new URL(origin)
-    return (
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      LOOPBACK_HOSTS.has(url.hostname)
-    )
-  } catch {
-    return false
-  }
-}
-
-/**
- * Streamable HTTP requires Origin validation to keep an arbitrary web page
- * from using a visitor's browser to mutate this deliberately token-free local
- * endpoint. Native MCP clients normally omit Origin and remain unaffected.
- */
-export const mcpOriginGuard = HttpMiddleware.make((app) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest
-    const url = HttpServerRequest.toURL(request)
-    const origin = request.headers.origin
-    if (
-      Option.isNone(url) ||
-      url.value.pathname !== '/mcp' ||
-      origin === undefined
-    ) {
-      return yield* app
-    }
-    if (!isAllowedMcpOrigin(origin)) {
-      return HttpServerResponse.text('Forbidden MCP origin', {
-        status: 403,
-      })
-    }
-
-    // McpServer accepts requests without Origin. Validate Laborer's broader
-    // loopback-any-port policy above, then hide Origin from its exact matcher.
-    // Remove this shim when upstream allowedOrigins supports a predicate.
-    return yield* app.pipe(
-      Effect.provideService(
-        HttpServerRequest.HttpServerRequest,
-        request.modify({ headers: Headers.remove(request.headers, 'origin') })
-      )
-    )
-  })
-)

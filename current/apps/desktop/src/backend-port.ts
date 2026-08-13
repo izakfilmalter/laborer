@@ -1,6 +1,5 @@
 import { createServer } from 'node:net'
 
-export const DEFAULT_DESKTOP_BACKEND_PORT = 3773
 const MAX_TCP_PORT = 65_535
 
 export interface ResolveDesktopBackendPortOptions {
@@ -8,7 +7,7 @@ export interface ResolveDesktopBackendPortOptions {
   readonly host: string
   readonly maxPort?: number
   readonly requiredHosts?: readonly string[]
-  readonly startPort?: number
+  readonly startPort: number
 }
 
 const isValidPort = (port: number): boolean =>
@@ -59,7 +58,7 @@ export async function resolveDesktopBackendPort({
   host,
   maxPort = MAX_TCP_PORT,
   requiredHosts = [],
-  startPort = DEFAULT_DESKTOP_BACKEND_PORT,
+  startPort,
 }: ResolveDesktopBackendPortOptions): Promise<number> {
   if (!isValidPort(startPort)) {
     throw new Error(`Invalid desktop backend start port: ${String(startPort)}`)

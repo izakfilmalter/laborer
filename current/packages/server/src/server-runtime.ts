@@ -12,13 +12,6 @@ import {
 } from 'effect/unstable/http'
 import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 import { LaborerRpcsLive } from './rpc/handlers.js'
-import { AgentTaskService } from './services/agent-task-service.js'
-import { serverDiscoveryLayer } from './services/server-discovery.js'
-import {
-  mcpOriginGuard,
-  TaskMcpProtocolLayer,
-  TaskMcpToolsLayer,
-} from './services/task-mcp.js'
 import { InfrastructureLayer } from './utility-main.js'
 
 const PortSchema = Schema.Number.check(
@@ -36,11 +29,6 @@ export class ServerRuntimeConfig extends Context.Service<
   ServerRuntimeConfig,
   ServerRuntimeConfigShape
 >()('@laborer/server/ServerRuntimeConfig') {}
-
-class McpLoopbackRequiredError extends Schema.TaggedErrorClass<McpLoopbackRequiredError>()(
-  'McpLoopbackRequiredError',
-  { message: Schema.String }
-) {}
 
 const BootstrapEnvelope = Schema.Struct({
   authToken: Schema.optional(Schema.String),
@@ -136,15 +124,9 @@ const makeRoutesLayer = Layer.unwrap(
       )
     )
 
-    const mcpLayer = TaskMcpToolsLayer.pipe(
-      Layer.provide(TaskMcpProtocolLayer),
-      Layer.provide(AgentTaskService.layer())
-    )
-
     return Layer.mergeAll(
       HttpRouter.add('GET', '/', HttpServerResponse.empty({ status: 204 })),
-      authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp),
-      mcpLayer
+      authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp)
     )
   })
 )
@@ -152,11 +134,6 @@ const makeRoutesLayer = Layer.unwrap(
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
-    if (!['127.0.0.1', '::1', 'localhost'].includes(config.host)) {
-      return yield* new McpLoopbackRequiredError({
-        message: 'The token-free MCP endpoint requires a loopback server host',
-      })
-    }
     const listeningLogLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer
@@ -172,10 +149,9 @@ export const makeServerLayer = Layer.unwrap(
 
     return Layer.mergeAll(
       HttpRouter.serve(makeRoutesLayer, {
-        middleware: (app) => mcpOriginGuard(HttpMiddleware.cors()(app)),
+        middleware: HttpMiddleware.cors(),
       }),
-      listeningLogLayer,
-      serverDiscoveryLayer(config)
+      listeningLogLayer
     ).pipe(
       Layer.provide(InfrastructureLayer),
       Layer.provide(

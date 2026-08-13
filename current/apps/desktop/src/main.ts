@@ -15,10 +15,7 @@ import {
   triggerDownloadUpdate,
   triggerInstallUpdate,
 } from './auto-updater.js'
-import {
-  DEFAULT_DESKTOP_BACKEND_PORT,
-  resolveDesktopBackendPort,
-} from './backend-port.js'
+import { resolveDesktopBackendPort } from './backend-port.js'
 import { BackendProcessManager } from './backend-process-manager.js'
 import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
@@ -402,18 +399,16 @@ function reserveLoopbackPort(): Promise<number> {
 }
 
 async function startServerBackend(): Promise<void> {
-  const port = await resolveDesktopBackendPort({
-    host: DESKTOP_LOOPBACK_HOST,
-    requiredHosts: DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
-    startPort: Number(
-      process.env.LABORER_SERVER_PORT ??
-        process.env.LABORER_DESKTOP_BACKEND_PORT ??
-        DEFAULT_DESKTOP_BACKEND_PORT
-    ),
-    ...(process.env.LABORER_SERVER_PORT === undefined
-      ? {}
-      : { maxPort: Number(process.env.LABORER_SERVER_PORT) }),
-  })
+  const configuredPort = process.env.LABORER_DESKTOP_BACKEND_PORT
+  const port =
+    configuredPort === undefined
+      ? await reserveLoopbackPort()
+      : await resolveDesktopBackendPort({
+          host: DESKTOP_LOOPBACK_HOST,
+          maxPort: Number(configuredPort),
+          requiredHosts: DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
+          startPort: Number(configuredPort),
+        })
   const terminalPort = await reserveLoopbackPort()
   const fileWatcherPort = await reserveLoopbackPort()
 

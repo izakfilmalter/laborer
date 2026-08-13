@@ -46,6 +46,7 @@ import {
   getLeafIds,
 } from './panel-tree-utils'
 import { generateRandomTabName } from './random-name'
+import type { WorkspaceDropEdge } from './workspace-tile-utils'
 import { getWorkspaceTileLeaves } from './workspace-tile-utils'
 
 // ---------------------------------------------------------------------------
@@ -2148,6 +2149,8 @@ export {
   switchWindowTabByIndex,
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
+  computeWorkspaceDropEdge,
+  getWorkspaceDropEdge,
   isWorkspaceFrameData,
   WORKSPACE_FRAME_TYPE,
 }
@@ -2166,6 +2169,62 @@ function isWorkspaceFrameData(data: Record<string, unknown>): data is {
   index: number
 } {
   return data.type === WORKSPACE_FRAME_TYPE
+}
+
+/**
+ * Fraction of a workspace frame's width on each side that acts as a
+ * left/right drop zone (creating or targeting a column), capped at
+ * `WORKSPACE_DROP_SIDE_ZONE_MAX_PX`.
+ */
+const WORKSPACE_DROP_SIDE_ZONE_RATIO = 0.2
+
+/** Maximum pixel width of the left/right drop zones. */
+const WORKSPACE_DROP_SIDE_ZONE_MAX_PX = 120
+
+/**
+ * Compute which edge of a workspace frame the pointer is closest to
+ * during a drag. The outer side strips map to `left`/`right` (column
+ * placement); the remaining middle area maps to `top`/`bottom` (stacking
+ * within a column).
+ */
+function computeWorkspaceDropEdge(
+  input: { readonly clientX: number; readonly clientY: number },
+  rect: {
+    readonly left: number
+    readonly top: number
+    readonly width: number
+    readonly height: number
+  }
+): WorkspaceDropEdge {
+  const x = input.clientX - rect.left
+  const y = input.clientY - rect.top
+  const sideZone = Math.min(
+    rect.width * WORKSPACE_DROP_SIDE_ZONE_RATIO,
+    WORKSPACE_DROP_SIDE_ZONE_MAX_PX
+  )
+  if (x < sideZone) {
+    return 'left'
+  }
+  if (x > rect.width - sideZone) {
+    return 'right'
+  }
+  return y < rect.height / 2 ? 'top' : 'bottom'
+}
+
+/** Read the drop edge captured in a workspace frame drop target's data. */
+function getWorkspaceDropEdge(
+  data: Record<string, unknown>
+): WorkspaceDropEdge | undefined {
+  const edge = data.edge
+  if (
+    edge === 'top' ||
+    edge === 'bottom' ||
+    edge === 'left' ||
+    edge === 'right'
+  ) {
+    return edge
+  }
+  return undefined
 }
 
 export type {

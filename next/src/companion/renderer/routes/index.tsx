@@ -1,9 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { StatusPopover } from "../status-popover.tsx";
-import { useOperatorStatus } from "../status-store.ts";
+import { createFileRoute } from '@tanstack/react-router'
+import { StatusPopover } from '../status-popover.tsx'
+import { useOperatorStatus } from '../status-store.ts'
 
 const StatusRoute = () => {
-  const status = useOperatorStatus();
+  const status = useOperatorStatus()
   return (
     <StatusPopover
       quit={() => window.laborerCompanion.quit().catch(() => undefined)}
@@ -13,7 +13,7 @@ const StatusRoute = () => {
       reportContentHeight={window.laborerCompanion.setContentHeight}
       status={status}
     />
-  );
-};
+  )
+}
 
-export const Route = createFileRoute("/")({ component: StatusRoute });
+export const Route = createFileRoute('/')({ component: StatusRoute })

@@ -1,26 +1,26 @@
-import { Effect } from "effect";
+import { Effect } from 'effect'
 import type {
   AcpPermissionBroker,
   AcpPermissionInteraction,
   AcpPermissionPresentationRequest,
   AcpPermissionPresenter,
-} from "./acp-permission-broker.ts";
+} from './acp-permission-broker.ts'
 
 export interface ChatPermissionBoundary {
   readonly post: (
     request: AcpPermissionPresentationRequest
-  ) => Effect.Effect<{ readonly messageTs: string }, unknown>;
+  ) => Effect.Effect<{ readonly messageTs: string }, unknown>
   readonly settle: (request: {
-    readonly authorizedSlackUserId: string;
-    readonly capability: string;
-    readonly category: string;
-    readonly channelId: string;
-    readonly messageTs: string | null;
-    readonly presentationMarker: string;
-    readonly rootTs: string;
-    readonly state: "allowed" | "cancelled" | "expired" | "rejected";
-    readonly workspaceId: string;
-  }) => Effect.Effect<void, unknown>;
+    readonly authorizedSlackUserId: string
+    readonly capability: string
+    readonly category: string
+    readonly channelId: string
+    readonly messageTs: string | null
+    readonly presentationMarker: string
+    readonly rootTs: string
+    readonly state: 'allowed' | 'cancelled' | 'expired' | 'rejected'
+    readonly workspaceId: string
+  }) => Effect.Effect<void, unknown>
 }
 
 /**
@@ -34,20 +34,20 @@ export const makeChatAcpPermissionPresenter = (
   drain: Effect.void,
   post: chat.post,
   settle: (request) => chat.settle(request).pipe(Effect.ignore),
-});
+})
 
 export interface ChatPermissionActionDirectory {
   readonly brokerForWorkspace: (
     workspaceId: string
-  ) => Effect.Effect<AcpPermissionBroker>;
+  ) => Effect.Effect<AcpPermissionBroker>
 }
 
 export const handleChatPermissionAction = Effect.fn(
-  "AcpRuntime.handleChatPermissionAction"
+  'AcpRuntime.handleChatPermissionAction'
 )(function* (
   directory: ChatPermissionActionDirectory,
   interaction: AcpPermissionInteraction
 ) {
-  const broker = yield* directory.brokerForWorkspace(interaction.workspaceId);
-  return yield* broker.handleInteraction(interaction);
-});
+  const broker = yield* directory.brokerForWorkspace(interaction.workspaceId)
+  return yield* broker.handleInteraction(interaction)
+})

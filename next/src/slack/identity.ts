@@ -1,14 +1,14 @@
-import type { WebClient } from "@slack/web-api";
-import { Effect, Schema } from "effect";
-import { SlackRuntimeIdentity } from "./config.ts";
-import { SlackStartupError } from "./errors.ts";
+import type { WebClient } from '@slack/web-api'
+import { Effect, Schema } from 'effect'
+import { SlackRuntimeIdentity } from './config.ts'
+import { SlackStartupError } from './errors.ts'
 
 const AuthTestIdentity = Schema.Struct({
   bot_id: Schema.String,
   team: Schema.String,
   team_id: Schema.String,
   user_id: Schema.String,
-});
+})
 
 export const authenticateSlackBot = (
   client: WebClient
@@ -17,8 +17,8 @@ export const authenticateSlackBot = (
     try: () => client.auth.test(),
     catch: () =>
       SlackStartupError.make({
-        operation: "auth.test",
-        reason: "request-failed",
+        operation: 'auth.test',
+        reason: 'request-failed',
       }),
   }).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(AuthTestIdentity)),
@@ -26,8 +26,8 @@ export const authenticateSlackBot = (
       error instanceof SlackStartupError
         ? error
         : SlackStartupError.make({
-            operation: "auth.test",
-            reason: "required-bot-identity-missing",
+            operation: 'auth.test',
+            reason: 'required-bot-identity-missing',
           })
     ),
     Effect.map((identity) =>
@@ -38,4 +38,4 @@ export const authenticateSlackBot = (
         teamName: identity.team,
       })
     )
-  );
+  )

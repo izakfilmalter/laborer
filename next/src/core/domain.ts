@@ -1,17 +1,17 @@
-import { Effect, Schema } from "effect";
+import { Effect, Schema } from 'effect'
 
-export const MessageId = Schema.String.pipe(Schema.brand("MessageId"));
-export type MessageId = typeof MessageId.Type;
-export const ThreadId = Schema.String.pipe(Schema.brand("ThreadId"));
-export type ThreadId = typeof ThreadId.Type;
-export const TurnId = Schema.String.pipe(Schema.brand("TurnId"));
-export type TurnId = typeof TurnId.Type;
+export const MessageId = Schema.String.pipe(Schema.brand('MessageId'))
+export type MessageId = typeof MessageId.Type
+export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
+export type ThreadId = typeof ThreadId.Type
+export const TurnId = Schema.String.pipe(Schema.brand('TurnId'))
+export type TurnId = typeof TurnId.Type
 
-export const AuthorKind = Schema.Literals(["human", "externalBot", "laborer"]);
-export type AuthorKind = typeof AuthorKind.Type;
+export const AuthorKind = Schema.Literals(['human', 'externalBot', 'laborer'])
+export type AuthorKind = typeof AuthorKind.Type
 
 export class NormalizedImageInput extends Schema.Class<NormalizedImageInput>(
-  "NormalizedImageInput"
+  'NormalizedImageInput'
 )({
   byteLength: Schema.Int.check(Schema.isGreaterThan(0)),
   contentDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
@@ -20,16 +20,16 @@ export class NormalizedImageInput extends Schema.Class<NormalizedImageInput>(
   ),
   id: Schema.String.check(Schema.isPattern(/\S/)),
   mimeType: Schema.Literals([
-    "image/gif",
-    "image/jpeg",
-    "image/png",
-    "image/webp",
+    'image/gif',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
   ]),
   slackFileId: Schema.String.check(Schema.isPattern(/\S/)),
 }) {}
 
 export class UnavailableNormalizedImageInput extends Schema.Class<UnavailableNormalizedImageInput>(
-  "UnavailableNormalizedImageInput"
+  'UnavailableNormalizedImageInput'
 )({
   failureReason: Schema.String.check(Schema.isPattern(/\S/)),
   id: Schema.String.check(Schema.isPattern(/\S/)),
@@ -39,15 +39,15 @@ export class UnavailableNormalizedImageInput extends Schema.Class<UnavailableNor
 export const NormalizedImage = Schema.Union([
   NormalizedImageInput,
   UnavailableNormalizedImageInput,
-]);
-export type NormalizedImage = typeof NormalizedImage.Type;
+])
+export type NormalizedImage = typeof NormalizedImage.Type
 
 export class NormalizedMessage extends Schema.Class<NormalizedMessage>(
-  "NormalizedMessage"
+  'NormalizedMessage'
 )({
   authorKind: AuthorKind,
   authorSlackId: Schema.String,
-  classification: Schema.Literals(["context", "input"]),
+  classification: Schema.Literals(['context', 'input']),
   id: MessageId,
   isActivation: Schema.Boolean,
   images: Schema.optional(Schema.Array(NormalizedImage)).pipe(
@@ -66,7 +66,7 @@ export const canonicalThreadId = (
     workspaceId === undefined
       ? `${channelId}:${rootTs}`
       : `workspace:${workspaceId}:${channelId}:${rootTs}`
-  );
+  )
 
 export const stableMessageId = (
   channelId: string,
@@ -77,4 +77,4 @@ export const stableMessageId = (
     workspaceId === undefined
       ? `${channelId}:${messageTs}`
       : `workspace:${workspaceId}:${channelId}:${messageTs}`
-  );
+  )

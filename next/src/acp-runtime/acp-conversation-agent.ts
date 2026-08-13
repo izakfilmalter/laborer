@@ -1,9 +1,9 @@
 /** Opt-in ACP stable-v1 conversation-agent proof for issues #234 and #236. */
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
-import { basename, resolve, sep } from "node:path";
-import { Readable, Writable } from "node:stream";
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
+import { realpath, stat } from 'node:fs/promises'
+import { basename, resolve, sep } from 'node:path'
+import { Readable, Writable } from 'node:stream'
 import {
   type ActiveSessionMessage,
   type ContentBlock,
@@ -15,18 +15,18 @@ import {
   type PromptResponse,
   RequestError,
   type SessionUpdate,
-} from "@agentclientprotocol/sdk";
-import { Clock, Effect, Exit, Schema, Scope, Semaphore } from "effect";
+} from '@agentclientprotocol/sdk'
+import { Clock, Effect, Exit, Schema, Scope, Semaphore } from 'effect'
 import {
   type ProcessTerminationOutcome,
   processSupervisorProxyPath,
   terminateSupervisedProcess,
-} from "../adapters/process-supervisor.ts";
-import { HandlerFailure } from "../core/errors.ts";
+} from '../adapters/process-supervisor.ts'
+import { HandlerFailure } from '../core/errors.ts'
 import {
   assertNoSymlinkPathComponents,
   openRegularFileNoFollow,
-} from "../core/path-safety.ts";
+} from '../core/path-safety.ts'
 import type {
   ConversationAgentRequest,
   ConversationAgentSessionBinding,
@@ -34,26 +34,26 @@ import type {
   ConversationPromptAttemptOutcome,
   ConversationPromptAttemptStore,
   PublishConversationAgentMessage,
-} from "../reference-coding-application.ts";
-import type { AcpAuthorityRepository } from "./acp-authority.ts";
-import { inventoryAcpConfigSources } from "./acp-config-source-inventory.ts";
+} from '../reference-coding-application.ts'
+import type { AcpAuthorityRepository } from './acp-authority.ts'
+import { inventoryAcpConfigSources } from './acp-config-source-inventory.ts'
 import {
   extractAcpEffectiveMetadata,
   type SignedAcpEffectiveMetadata,
   signAcpEffectiveMetadata,
-} from "./acp-effective-metadata.ts";
-import type { AcpPermissionBroker } from "./acp-permission-broker.ts";
+} from './acp-effective-metadata.ts'
+import type { AcpPermissionBroker } from './acp-permission-broker.ts'
 import type {
   LaborerActionMcpBridge,
   PreparedActionMcpRegistration,
-} from "./action-mcp.ts";
+} from './action-mcp.ts'
 import {
   type AcpAgentContextSources,
   loadAcpAgentContextSnapshot,
   loadAcpSlackParticipantContexts,
   renderAcpPrompt,
   renderAcpPromptWithinByteLimit,
-} from "./agent-context.ts";
+} from './agent-context.ts'
 import {
   awaitLaborerMemoryMcpReadiness,
   clearLaborerMemoryPermissionRegistration,
@@ -67,66 +67,66 @@ import {
   recordLaborerMemoryDiagnostic,
   recordLaborerMemoryDiagnosticForSources,
   tryAuthorizeLaborerMemoryPermission,
-} from "./memory-mcp.ts";
-import type { SlackParticipantLookupShape } from "./slack-participant-lookup.ts";
+} from './memory-mcp.ts'
+import type { SlackParticipantLookupShape } from './slack-participant-lookup.ts'
 
-const MAX_PROMPT_BYTES = 256 * 1024;
-const MAX_PROMPT_IMAGES = 4;
+const MAX_PROMPT_BYTES = 256 * 1024
+const MAX_PROMPT_IMAGES = 4
 // Keep decoded bytes below 768 KiB so base64 remains within 1 MiB before JSON.
-const MAX_PROMPT_IMAGE_BYTES = 768 * 1024;
-const MAX_PUBLIC_OUTPUT_BYTES = 1024 * 1024;
-const MAX_PUBLIC_MESSAGES = 32;
-const CHILD_EXIT_GRACE_MILLIS = 2000;
-const MEMORY_MCP_ACTIVE_CALL_DRAIN_TIMEOUT_MILLIS = 5000;
-const MEMORY_MCP_BOOTSTRAP_SESSION_TIMEOUT_MILLIS = 5000;
-const MEMORY_MCP_ACTIVE_CALL_POLL_MILLIS = 10;
-const MAX_ACP_NDJSON_LINE_BYTES = 2 * 1024 * 1024;
-const MAX_ACP_INBOUND_PROCESS_BYTES = 256 * 1024 * 1024;
-const MAX_ACP_INBOUND_PROCESS_RECORDS = 250_000;
-const ACP_INITIALIZE_TIMEOUT_MILLIS = 10_000;
-const DEFAULT_PROMPT_DEADLINE_MILLIS = 15 * 60 * 1000;
-const MAX_PROMPT_DEADLINE_MILLIS = 60 * 60 * 1000;
-const PROMPT_CANCEL_SETTLEMENT_MILLIS = 2000;
-const MAX_ACTIVE_SESSIONS = 128;
-const MAX_SESSION_UPDATE_QUEUE_RECORDS = 1024;
-const MAX_SESSION_UPDATE_QUEUE_BYTES = 4 * 1024 * 1024;
-const JSON_RPC_INVALID_PARAMS = -32_602;
-const JSON_RPC_INTERNAL_ERROR = -32_603;
-const JSON_RPC_RESOURCE_NOT_FOUND = -32_002;
-const PROMPT_EPOCH_META_KEY = "laborer.dev/prompt-epoch";
-const PROMPT_EPOCH_CAPABILITY_KEY = "laborer.dev/prompt-epoch/v1";
-const OPEN_CODE_ORDER_BOUNDARY_META_KEY = "laborer.dev/opencode-order-boundary";
-const OPEN_CODE_MESSAGE_ID_PATTERN = /^msg_([\dA-Fa-f]{12})[\dA-Za-z]{14}$/;
-const OPEN_CODE_ORDER_MODULUS = 281_474_976_710_656n;
-const OPEN_CODE_SUPPORTED_VERSIONS = new Set(["0.0.0-next-17074"]);
-const OPEN_CODE_BOUNDARY_WAIT_MILLIS = 25;
-const OPEN_CODE_SESSION_LIST_MAX_PAGES = 100;
-const PROMPT_EPOCH_MARKER_TIMEOUT_MILLIS = 5000;
-const PROMPT_EPOCH_POST_RESPONSE_GRACE_MILLIS = 2000;
-const NEWLINE_BYTE = 0x0a;
-const MAX_PROCESS_SUPERVISOR_REPORT_BYTES = 1024;
-const SILENT_CONVERSATION_REPLY_TOKEN = "NO_REPLY";
-const textEncoder = new TextEncoder();
+const MAX_PROMPT_IMAGE_BYTES = 768 * 1024
+const MAX_PUBLIC_OUTPUT_BYTES = 1024 * 1024
+const MAX_PUBLIC_MESSAGES = 32
+const CHILD_EXIT_GRACE_MILLIS = 2000
+const MEMORY_MCP_ACTIVE_CALL_DRAIN_TIMEOUT_MILLIS = 5000
+const MEMORY_MCP_BOOTSTRAP_SESSION_TIMEOUT_MILLIS = 5000
+const MEMORY_MCP_ACTIVE_CALL_POLL_MILLIS = 10
+const MAX_ACP_NDJSON_LINE_BYTES = 2 * 1024 * 1024
+const MAX_ACP_INBOUND_PROCESS_BYTES = 256 * 1024 * 1024
+const MAX_ACP_INBOUND_PROCESS_RECORDS = 250_000
+const ACP_INITIALIZE_TIMEOUT_MILLIS = 10_000
+const DEFAULT_PROMPT_DEADLINE_MILLIS = 15 * 60 * 1000
+const MAX_PROMPT_DEADLINE_MILLIS = 60 * 60 * 1000
+const PROMPT_CANCEL_SETTLEMENT_MILLIS = 2000
+const MAX_ACTIVE_SESSIONS = 128
+const MAX_SESSION_UPDATE_QUEUE_RECORDS = 1024
+const MAX_SESSION_UPDATE_QUEUE_BYTES = 4 * 1024 * 1024
+const JSON_RPC_INVALID_PARAMS = -32_602
+const JSON_RPC_INTERNAL_ERROR = -32_603
+const JSON_RPC_RESOURCE_NOT_FOUND = -32_002
+const PROMPT_EPOCH_META_KEY = 'laborer.dev/prompt-epoch'
+const PROMPT_EPOCH_CAPABILITY_KEY = 'laborer.dev/prompt-epoch/v1'
+const OPEN_CODE_ORDER_BOUNDARY_META_KEY = 'laborer.dev/opencode-order-boundary'
+const OPEN_CODE_MESSAGE_ID_PATTERN = /^msg_([\dA-Fa-f]{12})[\dA-Za-z]{14}$/
+const OPEN_CODE_ORDER_MODULUS = 281_474_976_710_656n
+const OPEN_CODE_SUPPORTED_VERSIONS = new Set(['0.0.0-next-17074'])
+const OPEN_CODE_BOUNDARY_WAIT_MILLIS = 25
+const OPEN_CODE_SESSION_LIST_MAX_PAGES = 100
+const PROMPT_EPOCH_MARKER_TIMEOUT_MILLIS = 5000
+const PROMPT_EPOCH_POST_RESPONSE_GRACE_MILLIS = 2000
+const NEWLINE_BYTE = 0x0a
+const MAX_PROCESS_SUPERVISOR_REPORT_BYTES = 1024
+const SILENT_CONVERSATION_REPLY_TOKEN = 'NO_REPLY'
+const textEncoder = new TextEncoder()
 
 class AcpConversationFailure extends Schema.TaggedErrorClass<AcpConversationFailure>()(
-  "AcpConversationFailure",
+  'AcpConversationFailure',
   {
-    operation: Schema.Literals(["initialize", "prompt", "session", "spawn"]),
+    operation: Schema.Literals(['initialize', 'prompt', 'session', 'spawn']),
   }
 ) {}
 
 class AcpDurableSessionUnavailable extends Schema.TaggedErrorClass<AcpDurableSessionUnavailable>()(
-  "AcpDurableSessionUnavailable",
+  'AcpDurableSessionUnavailable',
   {}
 ) {}
 
 class AcpPromptProtocolRejected extends Schema.TaggedErrorClass<AcpPromptProtocolRejected>()(
-  "AcpPromptProtocolRejected",
+  'AcpPromptProtocolRejected',
   {}
 ) {}
 
 class AcpUnknownPromptStop extends Schema.TaggedErrorClass<AcpUnknownPromptStop>()(
-  "AcpUnknownPromptStop",
+  'AcpUnknownPromptStop',
   {}
 ) {}
 
@@ -140,221 +140,221 @@ const promptUpdateFailure = (
     cause instanceof AcpUnknownPromptStop ||
     cause instanceof AcpPromptProtocolRejected
   ) {
-    return cause;
+    return cause
   }
   return cause instanceof RequestError
     ? AcpPromptProtocolRejected.make()
-    : failure("prompt");
-};
+    : failure('prompt')
+}
 
 const promptCompletionFailure = (
   cause: unknown,
   runtimeIncompatibilityObserved: boolean
 ): unknown => {
   if (runtimeIncompatibilityObserved) {
-    return AcpPromptProtocolRejected.make();
+    return AcpPromptProtocolRejected.make()
   }
-  return cause instanceof RequestError ? AcpUnknownPromptStop.make() : cause;
-};
+  return cause instanceof RequestError ? AcpUnknownPromptStop.make() : cause
+}
 
 export interface AcpConversationAgentOptions {
-  readonly actionMcpBridge?: LaborerActionMcpBridge;
-  readonly agentContext?: AcpAgentContextSources;
-  readonly args?: readonly string[];
-  readonly authorityRepository?: AcpAuthorityRepository;
-  readonly childExitGraceMillis?: number;
-  readonly command: string;
-  readonly cwd: string;
+  readonly actionMcpBridge?: LaborerActionMcpBridge
+  readonly agentContext?: AcpAgentContextSources
+  readonly args?: readonly string[]
+  readonly authorityRepository?: AcpAuthorityRepository
+  readonly childExitGraceMillis?: number
+  readonly command: string
+  readonly cwd: string
   /** Skip #240's eager probe; durable new/resume requests verify memory directly. */
-  readonly durableSessionMode?: boolean;
-  readonly environment?: NodeJS.ProcessEnv;
-  readonly imageStorageRoot?: string;
+  readonly durableSessionMode?: boolean
+  readonly environment?: NodeJS.ProcessEnv
+  readonly imageStorageRoot?: string
   readonly inboundLimits?: {
-    readonly maxLineBytes?: number;
-    readonly maxProcessBytes?: number;
-    readonly maxProcessRecords?: number;
-  };
-  readonly initializeTimeoutMillis?: number;
-  readonly laborerSlackId?: string;
-  readonly memoryMcpActiveCallDrainTimeoutMillis?: number;
-  readonly memoryMcpBootstrapTimeoutMillis?: number;
-  readonly memoryMcpServer?: McpServerStdio;
-  readonly participantLookup?: SlackParticipantLookupShape;
-  readonly permissionBroker?: AcpPermissionBroker;
+    readonly maxLineBytes?: number
+    readonly maxProcessBytes?: number
+    readonly maxProcessRecords?: number
+  }
+  readonly initializeTimeoutMillis?: number
+  readonly laborerSlackId?: string
+  readonly memoryMcpActiveCallDrainTimeoutMillis?: number
+  readonly memoryMcpBootstrapTimeoutMillis?: number
+  readonly memoryMcpServer?: McpServerStdio
+  readonly participantLookup?: SlackParticipantLookupShape
+  readonly permissionBroker?: AcpPermissionBroker
   readonly processCleanupObserver?: (
-    outcome: ProcessTerminationOutcome | "failed"
-  ) => void;
+    outcome: ProcessTerminationOutcome | 'failed'
+  ) => void
   readonly processExitObserver?: (
     code: number | null,
     signal: NodeJS.Signals | null
-  ) => void;
+  ) => void
   readonly processFailureObserver?: (
-    classification: "deterministic" | "transient",
+    classification: 'deterministic' | 'transient',
     cause:
-      | "initialization_failed"
-      | "protocol_incompatible"
-      | "readiness_failed"
-      | "spawn_failed"
-      | "transport_lost"
-  ) => void;
-  readonly processGeneration?: number;
+      | 'initialization_failed'
+      | 'protocol_incompatible'
+      | 'readiness_failed'
+      | 'spawn_failed'
+      | 'transport_lost'
+  ) => void
+  readonly processGeneration?: number
   readonly processHealthObserver?: (
     health: AcpConversationProcessHealth
-  ) => void;
-  readonly promptDeadlineMillis?: number;
-  readonly requireDurableCapabilitiesAtStartup?: boolean;
+  ) => void
+  readonly promptDeadlineMillis?: number
+  readonly requireDurableCapabilitiesAtStartup?: boolean
   readonly testHooks?: {
-    readonly activeSessionLimit?: number;
-    readonly afterDurableBindingPersisted?: () => Promise<void>;
-    readonly afterProcessPoisoned?: () => Promise<void>;
-    readonly afterTerminalCommit?: () => Promise<void>;
-    readonly beforeDurableBindingPersist?: () => Promise<void>;
-    readonly beforePromptSubmission?: () => Promise<void>;
-    readonly beforeTerminalCommit?: () => Promise<void>;
-    readonly treatCommandAsOpenCode?: boolean;
-  };
+    readonly activeSessionLimit?: number
+    readonly afterDurableBindingPersisted?: () => Promise<void>
+    readonly afterProcessPoisoned?: () => Promise<void>
+    readonly afterTerminalCommit?: () => Promise<void>
+    readonly beforeDurableBindingPersist?: () => Promise<void>
+    readonly beforePromptSubmission?: () => Promise<void>
+    readonly beforeTerminalCommit?: () => Promise<void>
+    readonly treatCommandAsOpenCode?: boolean
+  }
 }
 
 export interface AcpConversationProcessHealth {
-  readonly generation: number;
-  readonly status: "closed" | "quarantined" | "ready" | "starting";
+  readonly generation: number
+  readonly status: 'closed' | 'quarantined' | 'ready' | 'starting'
 }
 
 const observeProcessHealth = (
   options: AcpConversationAgentOptions,
-  status: AcpConversationProcessHealth["status"]
+  status: AcpConversationProcessHealth['status']
 ): void => {
   try {
     options.processHealthObserver?.({
       generation: options.processGeneration ?? 1,
       status,
-    });
+    })
   } catch {
     // Health observation is diagnostic and cannot own the ACP lifecycle.
   }
-};
+}
 
 const observeProcessFailure = (
   options: AcpConversationAgentOptions,
-  classification: "deterministic" | "transient",
+  classification: 'deterministic' | 'transient',
   cause:
-    | "initialization_failed"
-    | "protocol_incompatible"
-    | "readiness_failed"
-    | "spawn_failed"
-    | "transport_lost"
+    | 'initialization_failed'
+    | 'protocol_incompatible'
+    | 'readiness_failed'
+    | 'spawn_failed'
+    | 'transport_lost'
 ): void => {
   try {
-    options.processFailureObserver?.(classification, cause);
+    options.processFailureObserver?.(classification, cause)
   } catch {
     // Failure classification is bounded supervisor metadata only.
   }
-};
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 interface ProcessSupervisorReport {
-  readonly code: number | null;
-  readonly signal: NodeJS.Signals | null;
+  readonly code: number | null
+  readonly signal: NodeJS.Signals | null
 }
 
 const parseProcessSupervisorReport = (
   source: string
 ): ProcessSupervisorReport | null => {
   try {
-    const value = JSON.parse(source) as unknown;
+    const value = JSON.parse(source) as unknown
     if (!isRecord(value)) {
-      return null;
+      return null
     }
-    const code = value.code;
-    const signal = value.signal;
+    const code = value.code
+    const signal = value.signal
     if (
       (code !== null &&
-        (typeof code !== "number" || !Number.isSafeInteger(code))) ||
+        (typeof code !== 'number' || !Number.isSafeInteger(code))) ||
       (signal !== null &&
-        (typeof signal !== "string" || !signal.startsWith("SIG")))
+        (typeof signal !== 'string' || !signal.startsWith('SIG')))
     ) {
-      return null;
+      return null
     }
     return {
       code,
       signal: signal as NodeJS.Signals | null,
-    };
+    }
   } catch {
-    return null;
+    return null
   }
-};
+}
 
 const awaitProcessSupervisorReport = (
   control: Readable
 ): Promise<ProcessSupervisorReport | null> =>
   new Promise((resolveReport) => {
-    let reportSource = "";
-    let settled = false;
+    let reportSource = ''
+    let settled = false
     const settle = (report: ProcessSupervisorReport | null): void => {
       if (settled) {
-        return;
+        return
       }
-      settled = true;
-      control.off("data", onData);
-      resolveReport(report);
-    };
+      settled = true
+      control.off('data', onData)
+      resolveReport(report)
+    }
     const onData = (chunk: Buffer | string): void => {
-      reportSource += chunk.toString();
+      reportSource += chunk.toString()
       if (
-        Buffer.byteLength(reportSource, "utf8") >
+        Buffer.byteLength(reportSource, 'utf8') >
         MAX_PROCESS_SUPERVISOR_REPORT_BYTES
       ) {
-        settle(null);
-        return;
+        settle(null)
+        return
       }
-      const lineEnd = reportSource.indexOf("\n");
+      const lineEnd = reportSource.indexOf('\n')
       if (lineEnd >= 0) {
-        settle(parseProcessSupervisorReport(reportSource.slice(0, lineEnd)));
+        settle(parseProcessSupervisorReport(reportSource.slice(0, lineEnd)))
       }
-    };
-    control.on("data", onData);
-    control.once("end", () =>
+    }
+    control.on('data', onData)
+    control.once('end', () =>
       settle(parseProcessSupervisorReport(reportSource.trim()))
-    );
-    control.once("error", () => settle(null));
-  });
+    )
+    control.once('error', () => settle(null))
+  })
 
 const openCodeMessageOrder = (update: SessionUpdate): bigint | null => {
   if (
-    update.sessionUpdate !== "agent_message_chunk" ||
-    typeof update.messageId !== "string"
+    update.sessionUpdate !== 'agent_message_chunk' ||
+    typeof update.messageId !== 'string'
   ) {
-    return null;
+    return null
   }
-  const encodedOrder = OPEN_CODE_MESSAGE_ID_PATTERN.exec(update.messageId)?.[1];
+  const encodedOrder = OPEN_CODE_MESSAGE_ID_PATTERN.exec(update.messageId)?.[1]
   if (encodedOrder === undefined) {
-    return null;
+    return null
   }
-  return BigInt(`0x${encodedOrder}`);
-};
+  return BigInt(`0x${encodedOrder}`)
+}
 
 const nextOpenCodeOrderBoundary = async (): Promise<bigint> => {
-  const startingMillis = Date.now();
-  const deadline = startingMillis + OPEN_CODE_BOUNDARY_WAIT_MILLIS;
+  const startingMillis = Date.now()
+  const deadline = startingMillis + OPEN_CODE_BOUNDARY_WAIT_MILLIS
   while (Date.now() <= startingMillis) {
     if (Date.now() >= deadline) {
-      throw new Error("OpenCode prompt boundary clock did not advance");
+      throw new Error('OpenCode prompt boundary clock did not advance')
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 1));
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1))
   }
-  return (BigInt(Date.now()) * 0x1000n - 1n) % OPEN_CODE_ORDER_MODULUS;
-};
+  return (BigInt(Date.now()) * 0x1000n - 1n) % OPEN_CODE_ORDER_MODULUS
+}
 
 const carriesPromptEpoch = (update: SessionUpdate, epoch: string): boolean =>
-  isRecord(update._meta) && update._meta[PROMPT_EPOCH_META_KEY] === epoch;
+  isRecord(update._meta) && update._meta[PROMPT_EPOCH_META_KEY] === epoch
 
 const isSettledTextlessOpenCodeResponse = (response: PromptResponse): boolean =>
-  response.stopReason === "end_turn" ||
-  response.stopReason === "max_tokens" ||
-  response.stopReason === "refusal" ||
-  response.stopReason === "cancelled";
+  response.stopReason === 'end_turn' ||
+  response.stopReason === 'max_tokens' ||
+  response.stopReason === 'refusal' ||
+  response.stopReason === 'cancelled'
 
 const isDurableSessionUnavailable = (
   cause: unknown,
@@ -362,246 +362,246 @@ const isDurableSessionUnavailable = (
   allowsPinnedOpenCodeExtension: boolean
 ): boolean => {
   if (!(cause instanceof RequestError)) {
-    return false;
+    return false
   }
   const isOpenCodeSessionNotFound =
     allowsPinnedOpenCodeExtension &&
     cause.code === JSON_RPC_INVALID_PARAMS &&
     cause.message === `Invalid params: session not found: ${sessionId}` &&
     isRecord(cause.data) &&
-    cause.data.sessionId === sessionId;
+    cause.data.sessionId === sessionId
   const resourceMessageIsCanonical =
-    cause.message === "Resource not found" ||
-    cause.message === `Resource not found: ${sessionId}`;
+    cause.message === 'Resource not found' ||
+    cause.message === `Resource not found: ${sessionId}`
   const resourceIdentityConflicts =
     isRecord(cause.data) &&
     cause.data.uri !== undefined &&
-    cause.data.uri !== sessionId;
+    cause.data.uri !== sessionId
   const isStableResourceNotFound =
     cause.code === JSON_RPC_RESOURCE_NOT_FOUND &&
     resourceMessageIsCanonical &&
-    !resourceIdentityConflicts;
-  return isOpenCodeSessionNotFound || isStableResourceNotFound;
-};
+    !resourceIdentityConflicts
+  return isOpenCodeSessionNotFound || isStableResourceNotFound
+}
 
 const isPinnedOpenCodeSessionServiceFailure = (cause: unknown): boolean =>
   cause instanceof RequestError &&
   cause.code === JSON_RPC_INTERNAL_ERROR &&
-  cause.message === "Internal error: OpenCode service failure" &&
+  cause.message === 'Internal error: OpenCode service failure' &&
   isRecord(cause.data) &&
-  cause.data.service === "session" &&
-  Object.keys(cause.data).length === 1;
+  cause.data.service === 'session' &&
+  Object.keys(cause.data).length === 1
 
 interface AcpInboundLimits {
-  readonly maxLineBytes: number;
-  readonly maxProcessBytes: number;
-  readonly maxProcessRecords: number;
+  readonly maxLineBytes: number
+  readonly maxProcessBytes: number
+  readonly maxProcessRecords: number
 }
 
 interface AcquiredChild {
-  readonly child: ChildProcessWithoutNullStreams;
-  readonly commandExit: Promise<void>;
+  readonly child: ChildProcessWithoutNullStreams
+  readonly commandExit: Promise<void>
   readonly exitListener: (
     code: number | null,
     signal: NodeJS.Signals | null
-  ) => void;
-  readonly ownsProcessGroup: boolean;
+  ) => void
+  readonly ownsProcessGroup: boolean
   readonly releaseState: {
-    completion?: Promise<void>;
-    requested: boolean;
-  };
-  readonly runtimeErrorListener: (cause: Error) => void;
+    completion?: Promise<void>
+    requested: boolean
+  }
+  readonly runtimeErrorListener: (cause: Error) => void
 }
 
 interface ActivePrompt {
-  readonly attemptId: string | null;
-  readonly attemptStore: ConversationPromptAttemptStore | undefined;
-  readonly cancellation: AbortController;
-  readonly closePermissions: Effect.Effect<void>;
+  readonly attemptId: string | null
+  readonly attemptStore: ConversationPromptAttemptStore | undefined
+  readonly cancellation: AbortController
+  readonly closePermissions: Effect.Effect<void>
   readonly completeTerminal: (
     outcome: ConversationPromptAttemptOutcome
-  ) => Effect.Effect<void, HandlerFailure>;
-  readonly completion: Promise<PromptResponse>;
+  ) => Effect.Effect<void, HandlerFailure>
+  readonly completion: Promise<PromptResponse>
   readonly localCancellationIntent: {
-    current: "deadline" | "local" | "shutdown" | null;
-  };
-  readonly notifyCancel: Effect.Effect<void>;
-  readonly recordUnknownStop: Effect.Effect<void, HandlerFailure>;
-  readonly terminal: { current: boolean };
+    current: 'deadline' | 'local' | 'shutdown' | null
+  }
+  readonly notifyCancel: Effect.Effect<void>
+  readonly recordUnknownStop: Effect.Effect<void, HandlerFailure>
+  readonly terminal: { current: boolean }
 }
 
 /** Supported low-level routing used because SDK 1.3 cannot attach an
  * ActiveSession to a successful stable-v1 session/resume response. */
 interface RoutedAcpSession {
-  dispose(): void;
-  readonly effectiveMetadata: SignedAcpEffectiveMetadata | null;
-  nextUpdate(): Promise<ActiveSessionMessage>;
+  dispose(): void
+  readonly effectiveMetadata: SignedAcpEffectiveMetadata | null
+  nextUpdate(): Promise<ActiveSessionMessage>
   prompt(
     input: readonly ContentBlock[],
     options: { readonly cancellationSignal: AbortSignal }
-  ): Promise<PromptResponse>;
-  readonly sessionId: string;
+  ): Promise<PromptResponse>
+  readonly sessionId: string
 }
 
 interface ManagedSession {
-  actionRegistration: PreparedActionMcpRegistration | null;
-  readonly durable: boolean;
-  readonly generation: number;
-  readonly introducedParticipantIds: Set<string>;
-  needsInitialContext: boolean;
-  readonly replacementParticipantIds: readonly string[];
-  readonly session: RoutedAcpSession;
+  actionRegistration: PreparedActionMcpRegistration | null
+  readonly durable: boolean
+  readonly generation: number
+  readonly introducedParticipantIds: Set<string>
+  needsInitialContext: boolean
+  readonly replacementParticipantIds: readonly string[]
+  readonly session: RoutedAcpSession
 }
 
 const bindingIsDefinitelyUnsubmitted = (
   binding: ConversationAgentSessionBinding | null
 ): boolean =>
   binding === null ||
-  (binding.initializationPhase === "pending" &&
-    binding.ambiguousPromptId === null);
+  (binding.initializationPhase === 'pending' &&
+    binding.ambiguousPromptId === null)
 
 interface SessionMessageQueue {
-  readonly clear: () => void;
-  readonly enqueue: (message: ActiveSessionMessage) => void;
-  readonly fail: (cause: unknown) => void;
-  readonly next: () => Promise<ActiveSessionMessage>;
+  readonly clear: () => void
+  readonly enqueue: (message: ActiveSessionMessage) => void
+  readonly fail: (cause: unknown) => void
+  readonly next: () => Promise<ActiveSessionMessage>
 }
 
 const makeSessionMessageQueue = (): SessionMessageQueue => {
   const messages: {
-    readonly bytes: number;
-    readonly message: ActiveSessionMessage;
-  }[] = [];
+    readonly bytes: number
+    readonly message: ActiveSessionMessage
+  }[] = []
   const waiters: {
-    readonly reject: (cause: unknown) => void;
-    readonly resolve: (message: ActiveSessionMessage) => void;
-  }[] = [];
-  let failureCause: unknown;
-  let queuedBytes = 0;
+    readonly reject: (cause: unknown) => void
+    readonly resolve: (message: ActiveSessionMessage) => void
+  }[] = []
+  let failureCause: unknown
+  let queuedBytes = 0
   return {
     clear: () => {
-      messages.length = 0;
-      queuedBytes = 0;
-      failureCause = undefined;
+      messages.length = 0
+      queuedBytes = 0
+      failureCause = undefined
     },
     enqueue: (message) => {
       if (failureCause !== undefined) {
-        return;
+        return
       }
-      const waiter = waiters.shift();
+      const waiter = waiters.shift()
       if (waiter !== undefined) {
-        waiter.resolve(message);
-        return;
+        waiter.resolve(message)
+        return
       }
-      const bytes = Buffer.byteLength(JSON.stringify(message), "utf8");
+      const bytes = Buffer.byteLength(JSON.stringify(message), 'utf8')
       if (
         messages.length >= MAX_SESSION_UPDATE_QUEUE_RECORDS ||
         queuedBytes + bytes > MAX_SESSION_UPDATE_QUEUE_BYTES
       ) {
-        const cause = new Error("ACP session update queue exceeded its limit");
-        failureCause = cause;
-        messages.length = 0;
-        queuedBytes = 0;
+        const cause = new Error('ACP session update queue exceeded its limit')
+        failureCause = cause
+        messages.length = 0
+        queuedBytes = 0
         for (const pending of waiters.splice(0)) {
-          pending.reject(cause);
+          pending.reject(cause)
         }
-        return;
+        return
       }
-      messages.push({ bytes, message });
-      queuedBytes += bytes;
+      messages.push({ bytes, message })
+      queuedBytes += bytes
     },
     fail: (cause) => {
-      failureCause = cause;
-      messages.length = 0;
-      queuedBytes = 0;
+      failureCause = cause
+      messages.length = 0
+      queuedBytes = 0
       for (const waiter of waiters.splice(0)) {
-        waiter.reject(cause);
+        waiter.reject(cause)
       }
     },
     next: () => {
-      const queued = messages.shift();
+      const queued = messages.shift()
       if (queued !== undefined) {
-        queuedBytes = Math.max(0, queuedBytes - queued.bytes);
-        return Promise.resolve(queued.message);
+        queuedBytes = Math.max(0, queuedBytes - queued.bytes)
+        return Promise.resolve(queued.message)
       }
       if (failureCause !== undefined) {
-        return Promise.reject(failureCause);
+        return Promise.reject(failureCause)
       }
       return new Promise((resolve, reject) => {
-        waiters.push({ reject, resolve });
-      });
+        waiters.push({ reject, resolve })
+      })
     },
-  };
-};
+  }
+}
 
 interface SessionUpdateRoute {
-  readonly enqueue: (message: ActiveSessionMessage) => void;
+  readonly enqueue: (message: ActiveSessionMessage) => void
 }
 
 interface PromptEpochVerification {
-  readonly hasObservedAgentMessage: () => boolean;
-  readonly isVerified: () => boolean;
-  readonly waitForVerification: () => Promise<boolean>;
+  readonly hasObservedAgentMessage: () => boolean
+  readonly isVerified: () => boolean
+  readonly waitForVerification: () => Promise<boolean>
 }
 
 interface PromptEpochGate {
   readonly begin: (
     marker: string,
     openCodeOrderBoundary: bigint | null
-  ) => PromptEpochVerification;
-  readonly end: () => void;
-  readonly permits: (update: SessionUpdate) => boolean;
+  ) => PromptEpochVerification
+  readonly end: () => void
+  readonly permits: (update: SessionUpdate) => boolean
 }
 
 const schedulePromptEpochMarkerTimeout = (options: {
-  readonly cancellation: AbortController;
-  readonly poison: () => void;
-  readonly usesOpenCodeMessageBoundary: boolean;
-  readonly verification: PromptEpochVerification;
+  readonly cancellation: AbortController
+  readonly poison: () => void
+  readonly usesOpenCodeMessageBoundary: boolean
+  readonly verification: PromptEpochVerification
 }): ReturnType<typeof setTimeout> | undefined => {
   if (options.usesOpenCodeMessageBoundary) {
-    return undefined;
+    return undefined
   }
   return setTimeout(() => {
     if (!options.verification.isVerified()) {
-      options.poison();
+      options.poison()
       options.cancellation.abort(
-        new Error("ACP agent did not establish a prompt epoch")
-      );
+        new Error('ACP agent did not establish a prompt epoch')
+      )
     }
-  }, PROMPT_EPOCH_MARKER_TIMEOUT_MILLIS);
-};
+  }, PROMPT_EPOCH_MARKER_TIMEOUT_MILLIS)
+}
 
 const makePromptEpochGate = (
   usesOpenCodeMessageBoundary: boolean
 ): PromptEpochGate => {
-  let latestOpenCodeMessageOrder = 0n;
+  let latestOpenCodeMessageOrder = 0n
   let epoch:
     | {
-        readonly historicalOpenCodeOrder: bigint;
-        readonly marker: string;
-        openCodeEpochOrder: bigint | null;
-        readonly openCodeOrderBoundary: bigint | null;
-        observedAgentMessage: boolean;
-        readonly resolveVerification: () => void;
-        readonly verification: Promise<void>;
-        verified: boolean;
+        readonly historicalOpenCodeOrder: bigint
+        readonly marker: string
+        openCodeEpochOrder: bigint | null
+        readonly openCodeOrderBoundary: bigint | null
+        observedAgentMessage: boolean
+        readonly resolveVerification: () => void
+        readonly verification: Promise<void>
+        verified: boolean
       }
-    | undefined;
+    | undefined
   const retainOrder = (order: bigint | null): void => {
     if (order !== null && order > latestOpenCodeMessageOrder) {
-      latestOpenCodeMessageOrder = order;
+      latestOpenCodeMessageOrder = order
     }
-  };
+  }
   const verifiesEpoch = (
     update: SessionUpdate,
     order: bigint | null
   ): boolean => {
     if (epoch === undefined) {
-      return false;
+      return false
     }
     if (carriesPromptEpoch(update, epoch.marker)) {
-      return true;
+      return true
     }
     return (
       usesOpenCodeMessageBoundary &&
@@ -609,14 +609,14 @@ const makePromptEpochGate = (
       epoch.openCodeOrderBoundary !== null &&
       order > epoch.openCodeOrderBoundary &&
       order > epoch.historicalOpenCodeOrder
-    );
-  };
+    )
+  }
   return {
     begin: (marker, openCodeOrderBoundary) => {
-      let resolveVerification: () => void = () => undefined;
+      let resolveVerification: () => void = () => undefined
       const verification = new Promise<void>((resolveVerified) => {
-        resolveVerification = resolveVerified;
-      });
+        resolveVerification = resolveVerified
+      })
       const started = {
         historicalOpenCodeOrder: latestOpenCodeMessageOrder,
         marker,
@@ -626,125 +626,125 @@ const makePromptEpochGate = (
         resolveVerification,
         verification,
         verified: false,
-      };
-      epoch = started;
+      }
+      epoch = started
       return {
         hasObservedAgentMessage: () => started.observedAgentMessage,
         isVerified: () => started.verified,
         waitForVerification: async () => {
           if (started.verified) {
-            return true;
+            return true
           }
-          let timeout: ReturnType<typeof setTimeout> | undefined;
+          let timeout: ReturnType<typeof setTimeout> | undefined
           const timedOut = new Promise<false>((resolveTimeout) => {
             timeout = setTimeout(
               () => resolveTimeout(false),
               PROMPT_EPOCH_POST_RESPONSE_GRACE_MILLIS
-            );
-          });
+            )
+          })
           const verified = await Promise.race([
             started.verification.then(() => true as const),
             timedOut,
-          ]);
+          ])
           if (timeout !== undefined) {
-            clearTimeout(timeout);
+            clearTimeout(timeout)
           }
-          return verified;
+          return verified
         },
-      };
+      }
     },
     end: () => {
-      epoch = undefined;
+      epoch = undefined
     },
     permits: (update) => {
-      const order = openCodeMessageOrder(update);
+      const order = openCodeMessageOrder(update)
       if (epoch === undefined) {
-        retainOrder(order);
-        return false;
+        retainOrder(order)
+        return false
       }
-      if (update.sessionUpdate === "agent_message_chunk") {
-        epoch.observedAgentMessage = true;
+      if (update.sessionUpdate === 'agent_message_chunk') {
+        epoch.observedAgentMessage = true
       }
       if (!(epoch.verified || verifiesEpoch(update, order))) {
-        retainOrder(order);
-        return false;
+        retainOrder(order)
+        return false
       }
       if (!epoch.verified) {
-        epoch.verified = true;
-        epoch.openCodeEpochOrder = order;
-        epoch.resolveVerification();
+        epoch.verified = true
+        epoch.openCodeEpochOrder = order
+        epoch.resolveVerification()
       } else if (
         usesOpenCodeMessageBoundary &&
-        update.sessionUpdate === "agent_message_chunk" &&
+        update.sessionUpdate === 'agent_message_chunk' &&
         (order === null ||
           epoch.openCodeEpochOrder === null ||
           order < epoch.openCodeEpochOrder)
       ) {
-        retainOrder(order);
-        return false;
+        retainOrder(order)
+        return false
       }
-      retainOrder(order);
-      return true;
+      retainOrder(order)
+      return true
     },
-  };
-};
+  }
+}
 
 const failure = (
-  operation: AcpConversationFailure["operation"]
-): AcpConversationFailure => AcpConversationFailure.make({ operation });
+  operation: AcpConversationFailure['operation']
+): AcpConversationFailure => AcpConversationFailure.make({ operation })
 
 const imageInputFailure = (safeDetail: string): HandlerFailure =>
-  HandlerFailure.make({ category: "protocol", safeDetail });
+  HandlerFailure.make({ category: 'protocol', safeDetail })
 
 const toHandlerFailure = (): HandlerFailure =>
   HandlerFailure.make({
-    category: "protocol",
-    noticeStyle: "generic",
-    safeDetail: "ACP Conversation agent failed",
-  });
+    category: 'protocol',
+    noticeStyle: 'generic',
+    safeDetail: 'ACP Conversation agent failed',
+  })
 
 const ambiguousPromptRecoveryFailure = (): HandlerFailure =>
   HandlerFailure.make({
-    category: "protocol",
-    noticeStyle: "generic",
-    safeDetail: "ACP prompt submission outcome is ambiguous",
-  });
+    category: 'protocol',
+    noticeStyle: 'generic',
+    safeDetail: 'ACP prompt submission outcome is ambiguous',
+  })
 
 type PromptSettlement =
-  | { readonly _tag: "Completed"; readonly response: PromptResponse }
-  | { readonly _tag: "Failed" }
-  | { readonly _tag: "TimedOut" };
+  | { readonly _tag: 'Completed'; readonly response: PromptResponse }
+  | { readonly _tag: 'Failed' }
+  | { readonly _tag: 'TimedOut' }
 
 const awaitPromptSettlement = (
-  completion: ActivePrompt["completion"],
+  completion: ActivePrompt['completion'],
   timeoutMillis: number
 ): Promise<PromptSettlement> =>
   new Promise((resolveSettlement) => {
     const timeout = setTimeout(() => {
-      resolveSettlement({ _tag: "TimedOut" });
-    }, timeoutMillis);
+      resolveSettlement({ _tag: 'TimedOut' })
+    }, timeoutMillis)
     completion.then(
       (response) => {
-        clearTimeout(timeout);
-        resolveSettlement({ _tag: "Completed", response });
+        clearTimeout(timeout)
+        resolveSettlement({ _tag: 'Completed', response })
       },
       () => {
-        clearTimeout(timeout);
-        resolveSettlement({ _tag: "Failed" });
+        clearTimeout(timeout)
+        resolveSettlement({ _tag: 'Failed' })
       }
-    );
-  });
+    )
+  })
 
 const configuredChildExitGraceMillis = (
   options: AcpConversationAgentOptions
 ): number => {
-  const configured = options.childExitGraceMillis;
+  const configured = options.childExitGraceMillis
   return configured !== undefined &&
     Number.isSafeInteger(configured) &&
     configured > 0
     ? configured
-    : CHILD_EXIT_GRACE_MILLIS;
-};
+    : CHILD_EXIT_GRACE_MILLIS
+}
 
 const positiveSafeIntegerOr = (
   candidate: number | undefined,
@@ -752,7 +752,7 @@ const positiveSafeIntegerOr = (
 ): number =>
   candidate !== undefined && Number.isSafeInteger(candidate) && candidate > 0
     ? candidate
-    : fallback;
+    : fallback
 
 const configuredInboundLimits = (
   options: AcpConversationAgentOptions
@@ -769,35 +769,35 @@ const configuredInboundLimits = (
     options.inboundLimits?.maxProcessRecords,
     MAX_ACP_INBOUND_PROCESS_RECORDS
   ),
-});
+})
 
 const configuredPromptDeadlineMillis = (
   options: AcpConversationAgentOptions
 ): number => {
-  const candidate = options.promptDeadlineMillis;
+  const candidate = options.promptDeadlineMillis
   if (
     candidate === undefined ||
     !Number.isSafeInteger(candidate) ||
     candidate <= 0
   ) {
-    return DEFAULT_PROMPT_DEADLINE_MILLIS;
+    return DEFAULT_PROMPT_DEADLINE_MILLIS
   }
-  return Math.min(candidate, MAX_PROMPT_DEADLINE_MILLIS);
-};
+  return Math.min(candidate, MAX_PROMPT_DEADLINE_MILLIS)
+}
 
 const durableStartupCapabilityFailure = (options: {
-  readonly required: boolean;
-  readonly supportsPromptEpoch: boolean;
-  readonly supportsResume: boolean;
-}): "prompt-epoch-capability-missing" | "resume-capability-missing" | null => {
+  readonly required: boolean
+  readonly supportsPromptEpoch: boolean
+  readonly supportsResume: boolean
+}): 'prompt-epoch-capability-missing' | 'resume-capability-missing' | null => {
   if (!options.required) {
-    return null;
+    return null
   }
   if (!options.supportsResume) {
-    return "resume-capability-missing";
+    return 'resume-capability-missing'
   }
-  return options.supportsPromptEpoch ? null : "prompt-epoch-capability-missing";
-};
+  return options.supportsPromptEpoch ? null : 'prompt-epoch-capability-missing'
+}
 
 const terminateChild = async (
   child: ChildProcessWithoutNullStreams,
@@ -806,58 +806,58 @@ const terminateChild = async (
   commandExit?: Promise<void>
 ): Promise<ProcessTerminationOutcome> => {
   if (!child.stdin.destroyed) {
-    child.stdin.end();
+    child.stdin.end()
   }
   if (commandExit !== undefined) {
     await new Promise<void>((resolveWait) => {
-      const timeout = setTimeout(resolveWait, graceMillis);
+      const timeout = setTimeout(resolveWait, graceMillis)
       commandExit.then(() => {
-        clearTimeout(timeout);
-        resolveWait();
-      });
-    });
+        clearTimeout(timeout)
+        resolveWait()
+      })
+    })
   }
-  return await terminateSupervisedProcess(child, graceMillis, ownsProcessGroup);
-};
+  return await terminateSupervisedProcess(child, graceMillis, ownsProcessGroup)
+}
 
 const releaseChild = (
   acquired: AcquiredChild,
   graceMillis: number,
-  observeCleanup?: AcpConversationAgentOptions["processCleanupObserver"]
+  observeCleanup?: AcpConversationAgentOptions['processCleanupObserver']
 ): Effect.Effect<void> =>
   Effect.promise(() => {
     if (acquired.releaseState.completion !== undefined) {
-      return acquired.releaseState.completion;
+      return acquired.releaseState.completion
     }
     const completion = (async () => {
-      acquired.releaseState.requested = true;
+      acquired.releaseState.requested = true
       try {
         const outcome = await terminateChild(
           acquired.child,
           graceMillis,
           acquired.ownsProcessGroup,
           acquired.commandExit
-        );
-        observeCleanup?.(outcome);
+        )
+        observeCleanup?.(outcome)
       } catch (cause) {
-        observeCleanup?.("failed");
-        throw cause;
+        observeCleanup?.('failed')
+        throw cause
       } finally {
-        acquired.child.off("exit", acquired.exitListener);
-        acquired.child.off("error", acquired.runtimeErrorListener);
+        acquired.child.off('exit', acquired.exitListener)
+        acquired.child.off('error', acquired.runtimeErrorListener)
       }
-    })();
-    acquired.releaseState.completion = completion;
-    return completion;
-  });
+    })()
+    acquired.releaseState.completion = completion
+    return completion
+  })
 
 const acquireChild = (
   options: AcpConversationAgentOptions
 ): Effect.Effect<AcquiredChild, AcpConversationFailure> =>
   Effect.callback<AcquiredChild, AcpConversationFailure>((resume) => {
-    let child: ChildProcessWithoutNullStreams;
-    const graceMillis = configuredChildExitGraceMillis(options);
-    const ownsProcessGroup = process.platform !== "win32";
+    let child: ChildProcessWithoutNullStreams
+    const graceMillis = configuredChildExitGraceMillis(options)
+    const ownsProcessGroup = process.platform !== 'win32'
     try {
       child = spawn(
         ownsProcessGroup ? process.execPath : options.command,
@@ -873,82 +873,82 @@ const acquireChild = (
           detached: ownsProcessGroup,
           env: options.environment ?? process.env,
           stdio: ownsProcessGroup
-            ? ["pipe", "pipe", "pipe", "pipe"]
-            : ["pipe", "pipe", "pipe"],
+            ? ['pipe', 'pipe', 'pipe', 'pipe']
+            : ['pipe', 'pipe', 'pipe'],
         }
-      ) as ChildProcessWithoutNullStreams;
+      ) as ChildProcessWithoutNullStreams
     } catch {
-      observeProcessFailure(options, "transient", "spawn_failed");
-      resume(failure("spawn"));
-      return;
+      observeProcessFailure(options, 'transient', 'spawn_failed')
+      resume(failure('spawn'))
+      return
     }
 
-    let acquired: AcquiredChild | undefined;
+    let acquired: AcquiredChild | undefined
     const onStartupError = (): void => {
-      observeProcessFailure(options, "transient", "spawn_failed");
-      child.off("spawn", onSpawn);
+      observeProcessFailure(options, 'transient', 'spawn_failed')
+      child.off('spawn', onSpawn)
       resume(
         Effect.promise(() =>
           terminateChild(child, graceMillis, ownsProcessGroup)
-        ).pipe(Effect.andThen(failure("spawn")))
-      );
-    };
+        ).pipe(Effect.andThen(failure('spawn')))
+      )
+    }
     const onSpawn = (): void => {
-      child.off("error", onStartupError);
-      const releaseState = { requested: false };
+      child.off('error', onStartupError)
+      const releaseState = { requested: false }
       const failTransport = (cause: Error): void => {
         if (releaseState.requested) {
-          return;
+          return
         }
-        child.stdout.destroy(cause);
-        child.stdin.destroy();
-      };
+        child.stdout.destroy(cause)
+        child.stdin.destroy()
+      }
       const runtimeErrorListener = (cause: Error): void => {
         failTransport(
-          new Error("ACP child process failed after startup", { cause })
-        );
-      };
+          new Error('ACP child process failed after startup', { cause })
+        )
+      }
       const exitListener = (
         code: number | null,
         signal: NodeJS.Signals | null
       ): void => {
         if (releaseState.requested) {
-          return;
+          return
         }
         try {
-          options.processExitObserver?.(code, signal);
+          options.processExitObserver?.(code, signal)
         } catch {
           // Exit observation cannot own process cleanup.
         }
-        observeProcessFailure(options, "transient", "transport_lost");
+        observeProcessFailure(options, 'transient', 'transport_lost')
         failTransport(
           new Error(
-            `ACP child exited unexpectedly (${signal ?? String(code ?? "unknown")})`
+            `ACP child exited unexpectedly (${signal ?? String(code ?? 'unknown')})`
           )
-        );
-      };
-      const supervisorControl = child.stdio[3];
+        )
+      }
+      const supervisorControl = child.stdio[3]
       const commandExit =
         supervisorControl instanceof Readable
           ? awaitProcessSupervisorReport(supervisorControl).then((report) => {
               if (report !== null) {
                 try {
-                  options.processExitObserver?.(report.code, report.signal);
+                  options.processExitObserver?.(report.code, report.signal)
                 } catch {
                   // Exit observation cannot own process cleanup.
                 }
               }
               if (!releaseState.requested) {
-                observeProcessFailure(options, "transient", "transport_lost");
-                observeProcessHealth(options, "closed");
+                observeProcessFailure(options, 'transient', 'transport_lost')
+                observeProcessHealth(options, 'closed')
                 failTransport(
-                  new Error("ACP child command exited unexpectedly")
-                );
+                  new Error('ACP child command exited unexpectedly')
+                )
               }
             })
           : new Promise<void>((resolveCommandExit) => {
-              child.once("exit", () => resolveCommandExit());
-            });
+              child.once('exit', () => resolveCommandExit())
+            })
       acquired = {
         child,
         commandExit,
@@ -956,78 +956,78 @@ const acquireChild = (
         ownsProcessGroup,
         releaseState,
         runtimeErrorListener,
-      };
-      child.on("error", runtimeErrorListener);
-      child.on("exit", exitListener);
+      }
+      child.on('error', runtimeErrorListener)
+      child.on('exit', exitListener)
       if (
         supervisorControl !== undefined &&
         supervisorControl !== null &&
-        "resume" in supervisorControl
+        'resume' in supervisorControl
       ) {
-        supervisorControl.resume();
+        supervisorControl.resume()
       }
-      child.stderr.resume();
-      resume(Effect.succeed(acquired));
-    };
-    child.once("error", onStartupError);
-    child.once("spawn", onSpawn);
+      child.stderr.resume()
+      resume(Effect.succeed(acquired))
+    }
+    child.once('error', onStartupError)
+    child.once('spawn', onSpawn)
     return Effect.promise(async () => {
       const cleanupErrorListener = (): void => {
         // Interruption owns cleanup; consume a concurrent spawn error while reaping.
-      };
-      child.off("spawn", onSpawn);
-      child.off("error", onStartupError);
-      child.on("error", cleanupErrorListener);
+      }
+      child.off('spawn', onSpawn)
+      child.off('error', onStartupError)
+      child.on('error', cleanupErrorListener)
       if (acquired !== undefined) {
-        acquired.releaseState.requested = true;
-        child.off("exit", acquired.exitListener);
-        child.off("error", acquired.runtimeErrorListener);
+        acquired.releaseState.requested = true
+        child.off('exit', acquired.exitListener)
+        child.off('error', acquired.runtimeErrorListener)
       }
       try {
-        await terminateChild(child, graceMillis, ownsProcessGroup);
+        await terminateChild(child, graceMillis, ownsProcessGroup)
       } finally {
-        child.off("error", cleanupErrorListener);
+        child.off('error', cleanupErrorListener)
       }
-    });
-  });
+    })
+  })
 
 const boundedNdJsonInput = (
   input: ReadableStream<Uint8Array>,
   limits: AcpInboundLimits
 ): ReadableStream<Uint8Array> => {
-  let lineBytes = 0;
-  let processBytes = 0;
-  let processRecords = 0;
+  let lineBytes = 0
+  let processBytes = 0
+  let processRecords = 0
   return input.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
-        processBytes += chunk.byteLength;
+        processBytes += chunk.byteLength
         if (processBytes > limits.maxProcessBytes) {
-          throw new Error("ACP input exceeded its process-lifetime byte limit");
+          throw new Error('ACP input exceeded its process-lifetime byte limit')
         }
         for (const byte of chunk) {
           if (byte === NEWLINE_BYTE) {
             if (lineBytes > 0) {
-              processRecords += 1;
+              processRecords += 1
               if (processRecords > limits.maxProcessRecords) {
                 throw new Error(
-                  "ACP input exceeded its process-lifetime record limit"
-                );
+                  'ACP input exceeded its process-lifetime record limit'
+                )
               }
             }
-            lineBytes = 0;
-            continue;
+            lineBytes = 0
+            continue
           }
-          lineBytes += 1;
+          lineBytes += 1
           if (lineBytes > limits.maxLineBytes) {
-            throw new Error("ACP NDJSON line exceeded its byte limit");
+            throw new Error('ACP NDJSON line exceeded its byte limit')
           }
         }
-        controller.enqueue(chunk);
+        controller.enqueue(chunk)
       },
     })
-  );
-};
+  )
+}
 
 const nextSessionUpdate = (
   session: RoutedAcpSession,
@@ -1035,197 +1035,197 @@ const nextSessionUpdate = (
 ): Promise<ActiveSessionMessage> =>
   new Promise((resolveUpdate, rejectUpdate) => {
     if (signal.aborted) {
-      rejectUpdate(signal.reason);
-      return;
+      rejectUpdate(signal.reason)
+      return
     }
     const onAbort = (): void => {
-      rejectUpdate(signal.reason);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
+      rejectUpdate(signal.reason)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
     session.nextUpdate().then(
       (update) => {
-        signal.removeEventListener("abort", onAbort);
-        resolveUpdate(update);
+        signal.removeEventListener('abort', onAbort)
+        resolveUpdate(update)
       },
       (cause: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        rejectUpdate(cause);
+        signal.removeEventListener('abort', onAbort)
+        rejectUpdate(cause)
       }
-    );
-  });
+    )
+  })
 
 const publicTextChunk = (
   update: SessionUpdate
 ): {
-  readonly messageId: string | null | undefined;
-  readonly text: string;
+  readonly messageId: string | null | undefined
+  readonly text: string
 } | null => {
   if (
-    update.sessionUpdate !== "agent_message_chunk" ||
-    update.content.type !== "text" ||
+    update.sessionUpdate !== 'agent_message_chunk' ||
+    update.content.type !== 'text' ||
     update.content.text.length === 0
   ) {
-    return null;
+    return null
   }
-  return { messageId: update.messageId, text: update.content.text };
-};
-
-type SilentConversationReplyPhase =
-  | "leading-whitespace"
-  | "token"
-  | "trailing-whitespace"
-  | "diverged";
-
-interface SilentConversationReplyState {
-  matchedTokenCodeUnits: number;
-  phase: SilentConversationReplyPhase;
+  return { messageId: update.messageId, text: update.content.text }
 }
 
-const ECMASCRIPT_WHITESPACE_CODE_UNIT = /^\s$/u;
+type SilentConversationReplyPhase =
+  | 'leading-whitespace'
+  | 'token'
+  | 'trailing-whitespace'
+  | 'diverged'
+
+interface SilentConversationReplyState {
+  matchedTokenCodeUnits: number
+  phase: SilentConversationReplyPhase
+}
+
+const ECMASCRIPT_WHITESPACE_CODE_UNIT = /^\s$/u
 
 const makeSilentConversationReplyState = (): SilentConversationReplyState => ({
   matchedTokenCodeUnits: 0,
-  phase: "leading-whitespace",
-});
+  phase: 'leading-whitespace',
+})
 
 const advanceSilentConversationReplyState = (
   state: SilentConversationReplyState,
   text: string
 ): boolean => {
-  if (state.phase === "diverged") {
-    return false;
+  if (state.phase === 'diverged') {
+    return false
   }
   for (let index = 0; index < text.length; index += 1) {
-    const codeUnit = text.charAt(index);
-    if (state.phase === "leading-whitespace") {
+    const codeUnit = text.charAt(index)
+    if (state.phase === 'leading-whitespace') {
       if (ECMASCRIPT_WHITESPACE_CODE_UNIT.test(codeUnit)) {
-        continue;
+        continue
       }
       if (codeUnit !== SILENT_CONVERSATION_REPLY_TOKEN.charAt(0)) {
-        state.phase = "diverged";
-        return false;
+        state.phase = 'diverged'
+        return false
       }
-      state.matchedTokenCodeUnits = 1;
-      state.phase = "token";
-      continue;
+      state.matchedTokenCodeUnits = 1
+      state.phase = 'token'
+      continue
     }
-    if (state.phase === "token") {
+    if (state.phase === 'token') {
       if (
         codeUnit !==
         SILENT_CONVERSATION_REPLY_TOKEN.charAt(state.matchedTokenCodeUnits)
       ) {
-        state.phase = "diverged";
-        return false;
+        state.phase = 'diverged'
+        return false
       }
-      state.matchedTokenCodeUnits += 1;
+      state.matchedTokenCodeUnits += 1
       if (
         state.matchedTokenCodeUnits === SILENT_CONVERSATION_REPLY_TOKEN.length
       ) {
-        state.phase = "trailing-whitespace";
+        state.phase = 'trailing-whitespace'
       }
-      continue;
+      continue
     }
     if (!ECMASCRIPT_WHITESPACE_CODE_UNIT.test(codeUnit)) {
-      state.phase = "diverged";
-      return false;
+      state.phase = 'diverged'
+      return false
     }
   }
-  return true;
-};
+  return true
+}
 
 const isSilentConversationReply = (
   state: SilentConversationReplyState
-): boolean => state.phase === "trailing-whitespace";
+): boolean => state.phase === 'trailing-whitespace'
 
 const newHumanParticipantIds = (
   request: ConversationAgentRequest,
   introducedParticipantIds: ReadonlySet<string>,
   laborerSlackId: string | undefined
 ): string[] => {
-  const pending = new Set<string>();
+  const pending = new Set<string>()
   for (const message of [...request.context, ...request.messages]) {
     if (
-      message.authorKind !== "human" ||
+      message.authorKind !== 'human' ||
       message.authorSlackId === laborerSlackId ||
       introducedParticipantIds.has(message.authorSlackId)
     ) {
-      continue;
+      continue
     }
-    pending.add(message.authorSlackId);
+    pending.add(message.authorSlackId)
   }
-  return [...pending];
-};
+  return [...pending]
+}
 
 const terminalOutcomeFor = (
-  stopReason: PromptResponse["stopReason"],
-  localCancellationIntent: ActivePrompt["localCancellationIntent"]["current"]
+  stopReason: PromptResponse['stopReason'],
+  localCancellationIntent: ActivePrompt['localCancellationIntent']['current']
 ): ConversationPromptAttemptOutcome => {
   switch (stopReason) {
-    case "end_turn":
-    case "max_tokens":
-    case "max_turn_requests":
-    case "refusal":
-      return stopReason;
-    case "cancelled":
+    case 'end_turn':
+    case 'max_tokens':
+    case 'max_turn_requests':
+    case 'refusal':
+      return stopReason
+    case 'cancelled':
       return localCancellationIntent === null
-        ? "cancelled_agent"
-        : "cancelled_local";
+        ? 'cancelled_agent'
+        : 'cancelled_local'
     default:
-      return "unknown_stop";
+      return 'unknown_stop'
   }
-};
+}
 
 const terminalStopFailure = (
   outcome: ConversationPromptAttemptOutcome
 ): HandlerFailure =>
   HandlerFailure.make({
-    category: outcome.startsWith("cancelled") ? "signal" : "protocol",
-    noticeStyle: "generic",
-    safeDetail: "ACP Conversation turn stopped without completion",
-  });
+    category: outcome.startsWith('cancelled') ? 'signal' : 'protocol',
+    noticeStyle: 'generic',
+    safeDetail: 'ACP Conversation turn stopped without completion',
+  })
 
-const settlePromptStop = Effect.fn("AcpConversationAgent.settlePromptStop")(
+const settlePromptStop = Effect.fn('AcpConversationAgent.settlePromptStop')(
   function* (
     prompt: ActivePrompt,
-    stopReason: PromptResponse["stopReason"],
+    stopReason: PromptResponse['stopReason'],
     publicOutputObserved: boolean,
     privateSilentCompletionObserved = false
   ) {
     yield* Effect.tryPromise({
       try: () => prompt.completion,
-      catch: () => failure("prompt"),
-    });
-    yield* prompt.closePermissions;
+      catch: () => failure('prompt'),
+    })
+    yield* prompt.closePermissions
     const outcome = terminalOutcomeFor(
       stopReason,
       prompt.localCancellationIntent.current
-    );
-    if (outcome === "unknown_stop") {
-      yield* prompt.recordUnknownStop;
-      return yield* ambiguousPromptRecoveryFailure();
+    )
+    if (outcome === 'unknown_stop') {
+      yield* prompt.recordUnknownStop
+      return yield* ambiguousPromptRecoveryFailure()
     }
-    yield* prompt.completeTerminal(outcome);
-    prompt.terminal.current = true;
+    yield* prompt.completeTerminal(outcome)
+    prompt.terminal.current = true
     const boundedCompletion =
       (publicOutputObserved || privateSilentCompletionObserved) &&
-      (outcome === "max_tokens" || outcome === "max_turn_requests");
-    if (outcome !== "end_turn" && !boundedCompletion) {
-      return yield* terminalStopFailure(outcome);
+      (outcome === 'max_tokens' || outcome === 'max_turn_requests')
+    if (outcome !== 'end_turn' && !boundedCompletion) {
+      return yield* terminalStopFailure(outcome)
     }
-    return [] as const;
+    return [] as const
   }
-);
+)
 
 const settlePromptProtocolFailure = Effect.fn(
-  "AcpConversationAgent.settlePromptProtocolFailure"
+  'AcpConversationAgent.settlePromptProtocolFailure'
 )(function* (prompt: ActivePrompt) {
-  yield* prompt.closePermissions;
-  yield* prompt.completeTerminal("protocol_failed");
-  return yield* terminalStopFailure("protocol_failed");
-});
+  yield* prompt.closePermissions
+  yield* prompt.completeTerminal('protocol_failed')
+  return yield* terminalStopFailure('protocol_failed')
+})
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: prompt admission, bounded context rendering, durable image validation, streaming, and terminal settlement share one ACP ownership boundary
-const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
+const runPrompt = Effect.fn('AcpConversationAgent.runPrompt')(function* (
   session: RoutedAcpSession,
   request: ConversationAgentRequest,
   requiredInput: string,
@@ -1244,56 +1244,56 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
   imagePromptCapable: boolean
 ) {
   if (textEncoder.encode(requiredInput).byteLength > MAX_PROMPT_BYTES) {
-    return yield* failure("prompt");
+    return yield* failure('prompt')
   }
-  let input = requiredInput;
-  let submittedParticipantIds = participantIds;
+  let input = requiredInput
+  let submittedParticipantIds = participantIds
   if (
     agentContext !== undefined &&
     (needsInitialContext || participantIds.length > 0)
   ) {
     const initialSnapshot = needsInitialContext
       ? yield* loadAcpAgentContextSnapshot(agentContext)
-      : { participants: [], soul: null, workspaceMemory: null };
+      : { participants: [], soul: null, workspaceMemory: null }
     const participants = yield* loadAcpSlackParticipantContexts(
       agentContext,
       participantLookup,
       participantIds
-    );
+    )
     const rendered = yield* renderAcpPromptWithinByteLimit(
       request,
       { ...initialSnapshot, participants },
       MAX_PROMPT_BYTES
-    );
+    )
     if (rendered === null) {
-      return yield* failure("prompt");
+      return yield* failure('prompt')
     }
-    input = rendered.prompt;
-    submittedParticipantIds = rendered.introducedParticipantIds;
+    input = rendered.prompt
+    submittedParticipantIds = rendered.introducedParticipantIds
   }
   const images = [
     ...(request.adoptionImages ?? []),
     ...[...request.context, ...request.messages].flatMap(
       (message) => message.images ?? []
     ),
-  ];
-  if (images.some((image) => "failureReason" in image)) {
+  ]
+  if (images.some((image) => 'failureReason' in image)) {
     return yield* imageInputFailure(
-      "required image input is unavailable; re-upload a supported image and try again"
-    );
+      'required image input is unavailable; re-upload a supported image and try again'
+    )
   }
   const aggregateImageBytes = images.reduce(
     (total, image) =>
-      "failureReason" in image ? total : total + image.byteLength,
+      'failureReason' in image ? total : total + image.byteLength,
     0
-  );
+  )
   if (
     images.length > MAX_PROMPT_IMAGES ||
     aggregateImageBytes > MAX_PROMPT_IMAGE_BYTES
   ) {
     return yield* imageInputFailure(
-      "image input exceeds the supported count or aggregate byte limit"
-    );
+      'image input exceeds the supported count or aggregate byte limit'
+    )
   }
   if (
     images.length > 0 &&
@@ -1301,116 +1301,113 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
   ) {
     return yield* imageInputFailure(
       imageStorageRoot === undefined
-        ? "image storage is unavailable"
-        : "the selected Conversation agent does not support image input"
-    );
+        ? 'image storage is unavailable'
+        : 'the selected Conversation agent does not support image input'
+    )
   }
   const root =
-    imageStorageRoot === undefined ? undefined : resolve(imageStorageRoot);
-  const promptBlocks: ContentBlock[] = [];
-  let remainingText = input;
+    imageStorageRoot === undefined ? undefined : resolve(imageStorageRoot)
+  const promptBlocks: ContentBlock[] = []
+  let remainingText = input
   for (const image of images) {
-    if ("failureReason" in image) {
-      return yield* imageInputFailure("required image input is unavailable");
+    if ('failureReason' in image) {
+      return yield* imageInputFailure('required image input is unavailable')
     }
     if (root === undefined) {
-      return yield* imageInputFailure("image storage is unavailable");
+      return yield* imageInputFailure('image storage is unavailable')
     }
-    const path = resolve(root, image.contentPath);
+    const path = resolve(root, image.contentPath)
     if (path !== root && !path.startsWith(`${root}${sep}`)) {
-      return yield* imageInputFailure("accepted image storage is invalid");
+      return yield* imageInputFailure('accepted image storage is invalid')
     }
     const bytes = yield* Effect.tryPromise({
       try: async () => {
-        await assertNoSymlinkPathComponents(path, "read-inbound-image");
-        const handle = await openRegularFileNoFollow(
-          path,
-          "read-inbound-image"
-        );
+        await assertNoSymlinkPathComponents(path, 'read-inbound-image')
+        const handle = await openRegularFileNoFollow(path, 'read-inbound-image')
         try {
-          const metadata = await handle.stat();
+          const metadata = await handle.stat()
           if (
             metadata.size !== image.byteLength ||
             // biome-ignore lint/suspicious/noBitwiseOperators: POSIX mode masks are bit fields.
             (metadata.mode & 0o077) !== 0 ||
-            (typeof process.getuid === "function" &&
+            (typeof process.getuid === 'function' &&
               metadata.uid !== process.getuid())
           ) {
-            throw new Error("image-content-invalid");
+            throw new Error('image-content-invalid')
           }
-          const content = new Uint8Array(image.byteLength + 1);
-          let offset = 0;
+          const content = new Uint8Array(image.byteLength + 1)
+          let offset = 0
           while (offset < content.byteLength) {
             const read = await handle.read(
               content,
               offset,
               content.byteLength - offset,
               offset
-            );
+            )
             if (read.bytesRead === 0) {
-              break;
+              break
             }
-            offset += read.bytesRead;
+            offset += read.bytesRead
           }
           if (
             offset !== image.byteLength ||
-            createHash("sha256")
+            createHash('sha256')
               .update(content.subarray(0, offset))
-              .digest("hex") !== image.contentDigest
+              .digest('hex') !== image.contentDigest
           ) {
-            throw new Error("image-digest-mismatch");
+            throw new Error('image-digest-mismatch')
           }
-          return content.subarray(0, offset);
+          return content.subarray(0, offset)
         } finally {
-          await handle.close();
+          await handle.close()
         }
       },
       catch: () =>
         imageInputFailure(
-          "accepted image content is unavailable; re-upload the image and try again"
+          'accepted image content is unavailable; re-upload the image and try again'
         ),
-    });
-    const markerStart = remainingText.indexOf("<slack-image ");
+    })
+    const markerStart = remainingText.indexOf('<slack-image ')
     const markerEnd =
-      markerStart < 0 ? -1 : remainingText.indexOf("/>", markerStart);
+      markerStart < 0 ? -1 : remainingText.indexOf('/>', markerStart)
     if (markerEnd >= 0) {
       promptBlocks.push({
         text: remainingText.slice(0, markerEnd + 2),
-        type: "text",
-      });
-      remainingText = remainingText.slice(markerEnd + 2);
+        type: 'text',
+      })
+      remainingText = remainingText.slice(markerEnd + 2)
     } else if (promptBlocks.length === 0) {
-      promptBlocks.push({ text: remainingText, type: "text" });
-      remainingText = "";
+      promptBlocks.push({ text: remainingText, type: 'text' })
+      remainingText = ''
     }
     promptBlocks.push({
-      data: Buffer.from(bytes).toString("base64"),
+      data: Buffer.from(bytes).toString('base64'),
       mimeType: image.mimeType,
-      type: "image",
+      type: 'image',
       uri: null,
-    });
+    })
   }
   if (remainingText.length > 0 || promptBlocks.length === 0) {
-    promptBlocks.push({ text: remainingText, type: "text" });
+    promptBlocks.push({ text: remainingText, type: 'text' })
   }
   return yield* Effect.acquireUseRelease(
     startPrompt(promptBlocks, submittedParticipantIds),
     (prompt) =>
       Effect.gen(function* () {
         const consumeUpdates = Effect.gen(function* () {
-          let outputBytes = 0;
-          let publicOutputObserved = false;
-          const silentReplyState = makeSilentConversationReplyState();
-          let terminalUpdateObserved = false;
-          const messageIds = new Set<string>();
-          const fallbackMessageId = `${request.promptId}:message`;
+          let outputBytes = 0
+          let publicOutputObserved = false
+          const silentReplyState = makeSilentConversationReplyState()
+          let terminalUpdateObserved = false
+          const messageIds = new Set<string>()
+          const fallbackMessageId = `${request.promptId}:message`
           const heldChunks: {
-            readonly messageId: string;
-            readonly text: string;
-          }[] = [];
+            readonly messageId: string
+            readonly text: string
+          }[] = []
           const publishChunk = Effect.fnUntraced(function* (chunk: {
-            readonly messageId: string;
-            readonly text: string;
+            readonly messageId: string
+            readonly text: string
           }) {
             if (
               prompt.attemptId !== null &&
@@ -1418,64 +1415,64 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
             ) {
               yield* prompt.attemptStore.markPublicOutputObserved(
                 prompt.attemptId
-              );
+              )
             }
-            publicOutputObserved = true;
-            yield* publishMessage(chunk);
-          });
+            publicOutputObserved = true
+            yield* publishMessage(chunk)
+          })
           const flushHeldChunks = Effect.fnUntraced(function* () {
-            const chunks = heldChunks.splice(0);
-            yield* Effect.forEach(chunks, publishChunk, { discard: true });
-          });
+            const chunks = heldChunks.splice(0)
+            yield* Effect.forEach(chunks, publishChunk, { discard: true })
+          })
           // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Protocol routing, silent-token buffering, output bounds, and terminal ordering form one auditable prompt state machine.
           const consumeMessages = Effect.gen(function* () {
             while (true) {
               const message = yield* Effect.tryPromise({
                 try: (signal) => nextSessionUpdate(session, signal),
                 catch: promptUpdateFailure,
-              });
-              if (message.kind === "stop") {
-                terminalUpdateObserved = true;
+              })
+              if (message.kind === 'stop') {
+                terminalUpdateObserved = true
                 const privateSilentCompletionObserved =
-                  isSilentConversationReply(silentReplyState);
+                  isSilentConversationReply(silentReplyState)
                 if (!privateSilentCompletionObserved) {
-                  yield* flushHeldChunks();
+                  yield* flushHeldChunks()
                 }
                 return yield* settlePromptStop(
                   prompt,
                   message.stopReason,
                   publicOutputObserved,
                   privateSilentCompletionObserved
-                );
+                )
               }
-              const chunk = publicTextChunk(message.update);
+              const chunk = publicTextChunk(message.update)
               if (chunk === null) {
-                continue;
+                continue
               }
-              const messageId = chunk.messageId ?? fallbackMessageId;
-              messageIds.add(messageId);
-              outputBytes += textEncoder.encode(chunk.text).byteLength;
+              const messageId = chunk.messageId ?? fallbackMessageId
+              messageIds.add(messageId)
+              outputBytes += textEncoder.encode(chunk.text).byteLength
               if (
                 messageIds.size > MAX_PUBLIC_MESSAGES ||
                 outputBytes > MAX_PUBLIC_OUTPUT_BYTES
               ) {
-                return yield* failure("prompt");
+                return yield* failure('prompt')
               }
-              const publicChunk = { messageId, text: chunk.text };
-              if (silentReplyState.phase !== "diverged") {
-                heldChunks.push(publicChunk);
+              const publicChunk = { messageId, text: chunk.text }
+              if (silentReplyState.phase !== 'diverged') {
+                heldChunks.push(publicChunk)
                 if (
                   advanceSilentConversationReplyState(
                     silentReplyState,
                     chunk.text
                   )
                 ) {
-                  continue;
+                  continue
                 }
-                yield* flushHeldChunks();
-                continue;
+                yield* flushHeldChunks()
+                continue
               }
-              yield* publishChunk(publicChunk);
+              yield* publishChunk(publicChunk)
             }
           }).pipe(
             Effect.onExit(() =>
@@ -1484,78 +1481,78 @@ const runPrompt = Effect.fn("AcpConversationAgent.runPrompt")(function* (
                 ? Effect.void
                 : flushHeldChunks()
             )
-          );
-          return yield* consumeMessages;
+          )
+          return yield* consumeMessages
         }).pipe(
           Effect.catchTags({
             AcpPromptProtocolRejected: () =>
               settlePromptProtocolFailure(prompt),
             AcpUnknownPromptStop: () =>
               Effect.gen(function* () {
-                yield* prompt.closePermissions;
-                yield* prompt.recordUnknownStop;
-                return yield* ambiguousPromptRecoveryFailure();
+                yield* prompt.closePermissions
+                yield* prompt.recordUnknownStop
+                return yield* ambiguousPromptRecoveryFailure()
               }),
           })
-        );
+        )
         const raced = yield* Effect.raceFirst(
           consumeUpdates.pipe(
-            Effect.map((value) => ({ _tag: "Completed" as const, value }))
+            Effect.map((value) => ({ _tag: 'Completed' as const, value }))
           ),
           Effect.sleep(`${promptDeadlineMillis} millis`).pipe(
-            Effect.as({ _tag: "Deadline" as const })
+            Effect.as({ _tag: 'Deadline' as const })
           )
-        );
-        if (raced._tag === "Completed") {
-          return raced.value;
+        )
+        if (raced._tag === 'Completed') {
+          return raced.value
         }
-        prompt.localCancellationIntent.current = "deadline";
+        prompt.localCancellationIntent.current = 'deadline'
         if (prompt.attemptId !== null && prompt.attemptStore !== undefined) {
           yield* prompt.attemptStore.markCancellationIntent(
             prompt.attemptId,
-            "deadline"
-          );
+            'deadline'
+          )
         }
-        yield* prompt.closePermissions;
-        yield* prompt.notifyCancel;
+        yield* prompt.closePermissions
+        yield* prompt.notifyCancel
         const cancellation = yield* Effect.result(
           Effect.tryPromise({
             try: () => prompt.completion,
-            catch: () => failure("prompt"),
+            catch: () => failure('prompt'),
           }).pipe(Effect.timeout(`${PROMPT_CANCEL_SETTLEMENT_MILLIS} millis`))
-        );
+        )
         if (
-          cancellation._tag === "Success" &&
-          cancellation.success.stopReason === "cancelled"
+          cancellation._tag === 'Success' &&
+          cancellation.success.stopReason === 'cancelled'
         ) {
-          return yield* settlePromptStop(prompt, "cancelled", false);
+          return yield* settlePromptStop(prompt, 'cancelled', false)
         }
         if (prompt.attemptId !== null && prompt.attemptStore !== undefined) {
-          const timestamp = yield* Clock.currentTimeMillis;
+          const timestamp = yield* Clock.currentTimeMillis
           yield* prompt.attemptStore.markInterrupted(
             prompt.attemptId,
-            "unresolved",
+            'unresolved',
             timestamp
-          );
+          )
         }
-        return yield* ambiguousPromptRecoveryFailure();
+        return yield* ambiguousPromptRecoveryFailure()
       }),
     (prompt, exit) => (Exit.isSuccess(exit) ? Effect.void : invalidate(prompt))
-  );
-});
+  )
+})
 
-export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
+export const makeAcpConversationAgent = Effect.fn('makeAcpConversationAgent')(
   function* (
     options: AcpConversationAgentOptions
   ): Effect.fn.Return<ConversationAgentShape, HandlerFailure, Scope.Scope> {
-    observeProcessHealth(options, "starting");
-    const constructionScope = yield* Scope.make();
+    observeProcessHealth(options, 'starting')
+    const constructionScope = yield* Scope.make()
     const setup = Effect.gen(function* () {
-      const exitGraceMillis = configuredChildExitGraceMillis(options);
+      const exitGraceMillis = configuredChildExitGraceMillis(options)
       const activeSessionLimit = positiveSafeIntegerOr(
         options.testHooks?.activeSessionLimit,
         MAX_ACTIVE_SESSIONS
-      );
+      )
       const acquiredChild = yield* Effect.acquireRelease(
         acquireChild(options),
         (acquired) =>
@@ -1564,115 +1561,115 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             exitGraceMillis,
             options.processCleanupObserver
           )
-      ).pipe(Effect.mapError(toHandlerFailure));
-      const { child } = acquiredChild;
-      const output = Writable.toWeb(child.stdin);
+      ).pipe(Effect.mapError(toHandlerFailure))
+      const { child } = acquiredChild
+      const output = Writable.toWeb(child.stdin)
       const childOutput = Readable.toWeb(
         child.stdout
-      ) as ReadableStream<Uint8Array>;
+      ) as ReadableStream<Uint8Array>
       const input = boundedNdJsonInput(
         childOutput,
         configuredInboundLimits(options)
-      );
-      const memoryMcpServer = options.memoryMcpServer;
-      const actionMcpBridge = options.actionMcpBridge;
+      )
+      const memoryMcpServer = options.memoryMcpServer
+      const actionMcpBridge = options.actionMcpBridge
       const memoryMcpBootstrapTimeoutMillis = positiveSafeIntegerOr(
         options.memoryMcpBootstrapTimeoutMillis,
         MEMORY_MCP_BOOTSTRAP_SESSION_TIMEOUT_MILLIS
-      );
+      )
       const memoryMcpActiveCallDrainTimeoutMillis = positiveSafeIntegerOr(
         options.memoryMcpActiveCallDrainTimeoutMillis,
         MEMORY_MCP_ACTIVE_CALL_DRAIN_TIMEOUT_MILLIS
-      );
+      )
       const sessionWorkingDirectory =
         options.agentContext?.root ??
         (yield* Effect.tryPromise({
           try: () => realpath(options.cwd),
           catch: toHandlerFailure,
-        }));
-      const memoryTrustedRoot = sessionWorkingDirectory;
+        }))
+      const memoryTrustedRoot = sessionWorkingDirectory
       const sessionWorkingDirectoryIdentity = yield* Effect.tryPromise({
         try: async () => {
           const metadata = await stat(sessionWorkingDirectory, {
             bigint: true,
-          });
+          })
           if (!metadata.isDirectory()) {
-            throw new Error("ACP session root is not a directory");
+            throw new Error('ACP session root is not a directory')
           }
-          return `${metadata.dev}:${metadata.ino}`;
+          return `${metadata.dev}:${metadata.ino}`
         },
         catch: toHandlerFailure,
-      });
+      })
       const verifySessionWorkingDirectory = Effect.fn(
-        "AcpConversationAgent.verifySessionWorkingDirectory"
+        'AcpConversationAgent.verifySessionWorkingDirectory'
       )(function* () {
         const current = yield* Effect.tryPromise({
           try: async () => {
             const [canonical, metadata] = await Promise.all([
               realpath(sessionWorkingDirectory),
               stat(sessionWorkingDirectory, { bigint: true }),
-            ]);
+            ])
             return {
               canonical,
               identity: `${metadata.dev}:${metadata.ino}`,
               isDirectory: metadata.isDirectory(),
-            };
+            }
           },
           catch: toHandlerFailure,
-        });
+        })
         if (
           !current.isDirectory ||
           current.canonical !== sessionWorkingDirectory ||
           current.identity !== sessionWorkingDirectoryIdentity
         ) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
-      });
-      const privateContext = yield* Effect.context<never>();
-      const runPrivateEffect = Effect.runForkWith(privateContext);
-      const runPrivatePromise = Effect.runPromiseWith(privateContext);
+      })
+      const privateContext = yield* Effect.context<never>()
+      const runPrivateEffect = Effect.runForkWith(privateContext)
+      const runPrivatePromise = Effect.runPromiseWith(privateContext)
       const memoryPermissionGate: LaborerMemoryPermissionGate = {
         acceptingCalls: true,
         activeToolCallIds: new Set<string>(),
         onSafetyDenial: () => {
           runPrivateEffect(
             Effect.logWarning(
-              "Memory permission denied for registration safety"
+              'Memory permission denied for registration safety'
             )
-          );
+          )
         },
         safetyDenialObserved: false,
-      };
+      }
       const memoryAuthorizedSessionPermissions = new Map<
         string,
         LaborerMemoryPermissionRegistration
-      >();
+      >()
       const memoryObservedSessionLifecycles = new Map<
         string,
         LaborerMemoryPermissionRegistration
-      >();
-      const sessionUpdateRoutes = new Map<string, SessionUpdateRoute>();
+      >()
+      const sessionUpdateRoutes = new Map<string, SessionUpdateRoute>()
       const connection = client({
-        name: "laborer-acp-conversation-proof",
+        name: 'laborer-acp-conversation-proof',
       })
         .onNotification(methods.client.session.update, ({ params }) => {
           sessionUpdateRoutes.get(params.sessionId)?.enqueue({
-            kind: "session_update",
+            kind: 'session_update',
             notification: params,
             update: params.update,
-          });
-          observeLaborerMemoryToolCall(params, memoryObservedSessionLifecycles);
-          options.actionMcpBridge?.observeToolCall(params);
-          const update = params.update;
+          })
+          observeLaborerMemoryToolCall(params, memoryObservedSessionLifecycles)
+          options.actionMcpBridge?.observeToolCall(params)
+          const update = params.update
           if (
-            update.sessionUpdate === "tool_call_update" &&
-            (update.status === "completed" || update.status === "failed") &&
+            update.sessionUpdate === 'tool_call_update' &&
+            (update.status === 'completed' || update.status === 'failed') &&
             ![...memoryPermissionGate.activeToolCallIds].some((callId) =>
               callId.startsWith(`${params.sessionId}\0`)
             ) &&
             !memoryAuthorizedSessionPermissions.has(params.sessionId)
           ) {
-            memoryObservedSessionLifecycles.delete(params.sessionId);
+            memoryObservedSessionLifecycles.delete(params.sessionId)
           }
         })
         .onRequest(
@@ -1683,30 +1680,30 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 ? null
                 : await runPrivatePromise(
                     options.actionMcpBridge.tryAuthorizePermission(params)
-                  );
+                  )
             if (actionDecision !== null) {
-              return actionDecision;
+              return actionDecision
             }
             const memoryDecision = tryAuthorizeLaborerMemoryPermission(
               params,
               memoryAuthorizedSessionPermissions
-            );
+            )
             if (memoryDecision !== null) {
-              return memoryDecision;
+              return memoryDecision
             }
             return options.permissionBroker === undefined
-              ? { outcome: { outcome: "cancelled" as const } }
+              ? { outcome: { outcome: 'cancelled' as const } }
               : await runPrivatePromise(
                   options.permissionBroker.request(params)
-                );
+                )
           }
         )
-        .connect(ndJsonStream(output, input));
+        .connect(ndJsonStream(output, input))
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          connection.close();
+          connection.close()
         })
-      );
+      )
       const initialized = yield* Effect.tryPromise({
         try: () =>
           connection.agent.request(methods.agent.initialize, {
@@ -1715,7 +1712,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
               _meta: { [PROMPT_EPOCH_CAPABILITY_KEY]: true },
             },
           }),
-        catch: () => failure("initialize"),
+        catch: () => failure('initialize'),
       }).pipe(
         Effect.timeout(
           `${positiveSafeIntegerOr(
@@ -1724,69 +1721,61 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           )} millis`
         ),
         Effect.mapError(toHandlerFailure)
-      );
+      )
       if (
         PROTOCOL_VERSION !== 1 ||
         initialized.protocolVersion !== PROTOCOL_VERSION
       ) {
-        observeProcessFailure(
-          options,
-          "deterministic",
-          "protocol_incompatible"
-        );
-        return yield* toHandlerFailure();
+        observeProcessFailure(options, 'deterministic', 'protocol_incompatible')
+        return yield* toHandlerFailure()
       }
 
       const commandIsOpenCode =
-        basename(options.command) === "opencode" ||
-        basename(options.command) === "opencode.exe" ||
-        basename(options.command) === "opencode2" ||
-        basename(options.command) === "opencode2.exe" ||
-        options.testHooks?.treatCommandAsOpenCode === true;
+        basename(options.command) === 'opencode' ||
+        basename(options.command) === 'opencode.exe' ||
+        basename(options.command) === 'opencode2' ||
+        basename(options.command) === 'opencode2.exe' ||
+        options.testHooks?.treatCommandAsOpenCode === true
       const commandRequiresOpenCodeContract =
         commandIsOpenCode ||
         options.args?.some(
-          (argument) => basename(argument) === "opencode-v2-acp-adapter.ts"
-        ) === true;
+          (argument) => basename(argument) === 'opencode-v2-acp-adapter.ts'
+        ) === true
       const reportsSupportedOpenCode =
-        initialized.agentInfo?.name === "OpenCode" &&
-        OPEN_CODE_SUPPORTED_VERSIONS.has(initialized.agentInfo.version);
+        initialized.agentInfo?.name === 'OpenCode' &&
+        OPEN_CODE_SUPPORTED_VERSIONS.has(initialized.agentInfo.version)
       if (commandRequiresOpenCodeContract && !reportsSupportedOpenCode) {
-        observeProcessFailure(
-          options,
-          "deterministic",
-          "protocol_incompatible"
-        );
-        yield* Effect.logWarning("OpenCode ACP contract is incompatible", {
-          code: "opencode-version-unsupported",
-        });
-        return yield* toHandlerFailure();
+        observeProcessFailure(options, 'deterministic', 'protocol_incompatible')
+        yield* Effect.logWarning('OpenCode ACP contract is incompatible', {
+          code: 'opencode-version-unsupported',
+        })
+        return yield* toHandlerFailure()
       }
-      const usesOpenCodeMessageBoundary = commandIsOpenCode;
+      const usesOpenCodeMessageBoundary = commandIsOpenCode
       const supportsPromptEpochExtension =
         isRecord(initialized.agentCapabilities?._meta) &&
         initialized.agentCapabilities._meta[PROMPT_EPOCH_CAPABILITY_KEY] ===
-          true;
-      let poisonIncompatibleProcess = (): void => undefined;
-      let reapFailedProcess = (): void => undefined;
+          true
+      let poisonIncompatibleProcess = (): void => undefined
+      let reapFailedProcess = (): void => undefined
       const effectiveMetadataFor = Effect.fn(
-        "AcpConversationAgent.effectiveMetadataFor"
+        'AcpConversationAgent.effectiveMetadataFor'
       )(function* (
         response:
-          | import("@agentclientprotocol/sdk").NewSessionResponse
-          | import("@agentclientprotocol/sdk").ResumeSessionResponse,
+          | import('@agentclientprotocol/sdk').NewSessionResponse
+          | import('@agentclientprotocol/sdk').ResumeSessionResponse,
         cwd: string,
         registration: PreparedLaborerMemoryMcpRegistration | null,
         actionRegistration: PreparedActionMcpRegistration | null
       ): Effect.fn.Return<SignedAcpEffectiveMetadata | null, HandlerFailure> {
         if (options.authorityRepository === undefined) {
-          return null;
+          return null
         }
         const configSourceInventory = yield* inventoryAcpConfigSources({
           environment: options.environment ?? process.env,
           projectRoot: sessionWorkingDirectory,
           repository: options.authorityRepository,
-        });
+        })
         return signAcpEffectiveMetadata(
           options.authorityRepository,
           extractAcpEffectiveMetadata({
@@ -1804,78 +1793,78 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             repository: options.authorityRepository,
             response,
           })
-        );
-      });
+        )
+      })
       const attachRoutedSession = (
         sessionId: string,
         effectiveMetadata: SignedAcpEffectiveMetadata | null
       ): RoutedAcpSession => {
-        const queue = makeSessionMessageQueue();
+        const queue = makeSessionMessageQueue()
         if (sessionUpdateRoutes.has(sessionId)) {
-          throw new Error("ACP session is already attached");
+          throw new Error('ACP session is already attached')
         }
-        let disposed = false;
-        let promptActive = false;
-        const promptEpoch = makePromptEpochGate(usesOpenCodeMessageBoundary);
+        let disposed = false
+        let promptActive = false
+        const promptEpoch = makePromptEpochGate(usesOpenCodeMessageBoundary)
         sessionUpdateRoutes.set(sessionId, {
           enqueue: (message) => {
             if (
-              message.kind === "session_update" &&
+              message.kind === 'session_update' &&
               promptEpoch.permits(message.update)
             ) {
-              queue.enqueue(message);
+              queue.enqueue(message)
             }
           },
-        });
+        })
         return {
           dispose: () => {
             if (disposed) {
-              return;
+              return
             }
-            disposed = true;
-            promptEpoch.end();
-            sessionUpdateRoutes.delete(sessionId);
-            queue.fail(new Error("ACP session routing disposed"));
+            disposed = true
+            promptEpoch.end()
+            sessionUpdateRoutes.delete(sessionId)
+            queue.fail(new Error('ACP session routing disposed'))
           },
           effectiveMetadata,
           nextUpdate: async () => {
-            const message = await queue.next();
-            if (message.kind === "stop") {
-              promptActive = false;
-              promptEpoch.end();
-              queue.clear();
+            const message = await queue.next()
+            if (message.kind === 'stop') {
+              promptActive = false
+              promptEpoch.end()
+              queue.clear()
             }
-            return message;
+            return message
           },
           prompt: async (input, promptOptions) => {
             if (disposed || promptActive) {
-              throw new Error("ACP session routing disposed");
+              throw new Error('ACP session routing disposed')
             }
-            queue.clear();
-            promptActive = true;
-            let openCodeOrderBoundary: bigint | null;
+            queue.clear()
+            promptActive = true
+            let openCodeOrderBoundary: bigint | null
             try {
               openCodeOrderBoundary = usesOpenCodeMessageBoundary
                 ? await nextOpenCodeOrderBoundary()
-                : null;
-              promptOptions.cancellationSignal.throwIfAborted();
+                : null
+              promptOptions.cancellationSignal.throwIfAborted()
             } catch (cause) {
-              promptActive = false;
-              promptEpoch.end();
-              throw cause;
+              promptActive = false
+              promptEpoch.end()
+              throw cause
             }
-            const marker = randomUUID();
+            const marker = randomUUID()
             const verification = promptEpoch.begin(
               marker,
               openCodeOrderBoundary
-            );
-            const markerCancellation = new AbortController();
+            )
+            const markerCancellation = new AbortController()
             const markerTimeout = schedulePromptEpochMarkerTimeout({
               cancellation: markerCancellation,
               poison: poisonIncompatibleProcess,
               usesOpenCodeMessageBoundary,
               verification,
-            });
+            })
             const requestCompletion = connection.agent.request(
               methods.agent.session.prompt,
               {
@@ -1897,101 +1886,97 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                   markerCancellation.signal,
                 ]),
               }
-            );
+            )
             const completion = requestCompletion
               .then(async (response) => {
                 const acceptsTextlessResponse =
                   usesOpenCodeMessageBoundary &&
                   !verification.hasObservedAgentMessage() &&
-                  isSettledTextlessOpenCodeResponse(response);
+                  isSettledTextlessOpenCodeResponse(response)
                 if (
                   !(
                     acceptsTextlessResponse ||
                     (await verification.waitForVerification())
                   )
                 ) {
-                  poisonIncompatibleProcess();
-                  throw new Error("ACP agent did not establish a prompt epoch");
+                  poisonIncompatibleProcess()
+                  throw new Error('ACP agent did not establish a prompt epoch')
                 }
-                return response;
+                return response
               })
               .finally(() => {
                 if (markerTimeout !== undefined) {
-                  clearTimeout(markerTimeout);
+                  clearTimeout(markerTimeout)
                 }
-              });
+              })
             completion.then(
               (response) => {
                 queue.enqueue({
-                  kind: "stop",
+                  kind: 'stop',
                   response,
                   stopReason: response.stopReason,
-                });
+                })
               },
               (cause: unknown) => {
-                promptActive = false;
-                promptEpoch.end();
+                promptActive = false
+                promptEpoch.end()
                 const completionFailure = promptCompletionFailure(
                   cause,
                   runtimeIncompatibilityObserved
-                );
-                queue.fail(completionFailure);
+                )
+                queue.fail(completionFailure)
                 if (completionFailure instanceof AcpPromptProtocolRejected) {
-                  reapFailedProcess();
+                  reapFailedProcess()
                 }
               }
-            );
-            return completion;
+            )
+            return completion
           },
           sessionId,
-        };
-      };
+        }
+      }
 
-      const sessions = new Map<string, ManagedSession>();
+      const sessions = new Map<string, ManagedSession>()
       let promotedActionRegistration: PreparedActionMcpRegistration | null =
-        null;
-      const claimedSessionClosures = new WeakSet<RoutedAcpSession>();
-      let memoryBootstrapSession: RoutedAcpSession | undefined;
-      let nextSessionGeneration = 0;
+        null
+      const claimedSessionClosures = new WeakSet<RoutedAcpSession>()
+      let memoryBootstrapSession: RoutedAcpSession | undefined
+      let nextSessionGeneration = 0
       const allocateSessionGeneration = (): number => {
-        nextSessionGeneration += 1;
-        return nextSessionGeneration;
-      };
-      let processPoisoned = false;
-      let pollutedProcessCleanup: Promise<void> | undefined;
-      let shutdownRequested = false;
-      const quarantinedConversations = new Set<string>();
-      const memoryRegistrationGate = yield* Semaphore.make(1);
-      const workspacePromptGate = yield* Semaphore.make(1);
+        nextSessionGeneration += 1
+        return nextSessionGeneration
+      }
+      let processPoisoned = false
+      let pollutedProcessCleanup: Promise<void> | undefined
+      let shutdownRequested = false
+      const quarantinedConversations = new Set<string>()
+      const memoryRegistrationGate = yield* Semaphore.make(1)
+      const workspacePromptGate = yield* Semaphore.make(1)
       const supportsSessionClose =
         initialized.agentCapabilities?.sessionCapabilities?.close !==
           undefined &&
-        initialized.agentCapabilities.sessionCapabilities.close !== null;
+        initialized.agentCapabilities.sessionCapabilities.close !== null
       const supportsSessionResume =
         initialized.agentCapabilities?.sessionCapabilities?.resume !==
           undefined &&
-        initialized.agentCapabilities.sessionCapabilities.resume !== null;
+        initialized.agentCapabilities.sessionCapabilities.resume !== null
       const supportsSessionList =
         initialized.agentCapabilities?.sessionCapabilities?.list !==
           undefined &&
-        initialized.agentCapabilities.sessionCapabilities.list !== null;
+        initialized.agentCapabilities.sessionCapabilities.list !== null
       const startupCapabilityFailure = durableStartupCapabilityFailure({
         required: options.requireDurableCapabilitiesAtStartup === true,
         supportsPromptEpoch:
           usesOpenCodeMessageBoundary || supportsPromptEpochExtension,
         supportsResume: supportsSessionResume,
-      });
+      })
       if (startupCapabilityFailure !== null) {
-        observeProcessFailure(
-          options,
-          "deterministic",
-          "protocol_incompatible"
-        );
-        observeProcessHealth(options, "quarantined");
-        yield* Effect.logWarning("ACP workspace contract is incompatible", {
+        observeProcessFailure(options, 'deterministic', 'protocol_incompatible')
+        observeProcessHealth(options, 'quarantined')
+        yield* Effect.logWarning('ACP workspace contract is incompatible', {
           code: startupCapabilityFailure,
-        });
-        return yield* toHandlerFailure();
+        })
+        return yield* toHandlerFailure()
       }
 
       const claimActiveSessionForClose = (
@@ -1999,32 +1984,32 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
         preserveActiveToolCalls = true
       ): boolean => {
         if (claimedSessionClosures.has(session)) {
-          return false;
+          return false
         }
-        claimedSessionClosures.add(session);
-        session.dispose();
+        claimedSessionClosures.add(session)
+        session.dispose()
         const permissionRegistration = memoryObservedSessionLifecycles.get(
           session.sessionId
-        );
+        )
         if (permissionRegistration !== undefined) {
           clearLaborerMemoryPermissionRegistration(
             session.sessionId,
             permissionRegistration,
             { preserveActiveToolCalls }
-          );
+          )
         }
-        memoryAuthorizedSessionPermissions.delete(session.sessionId);
+        memoryAuthorizedSessionPermissions.delete(session.sessionId)
         const retainsActiveToolCalls = [
           ...memoryPermissionGate.activeToolCallIds,
-        ].some((callId) => callId.startsWith(`${session.sessionId}\0`));
+        ].some((callId) => callId.startsWith(`${session.sessionId}\0`))
         if (!(preserveActiveToolCalls && retainsActiveToolCalls)) {
-          memoryObservedSessionLifecycles.delete(session.sessionId);
+          memoryObservedSessionLifecycles.delete(session.sessionId)
         }
-        return true;
-      };
+        return true
+      }
 
       const closeClaimedSession = Effect.fn(
-        "AcpConversationAgent.closeClaimedSession"
+        'AcpConversationAgent.closeClaimedSession'
       )(function* (session: RoutedAcpSession) {
         if (supportsSessionClose) {
           yield* Effect.tryPromise({
@@ -2037,78 +2022,78 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 { cancellationSignal: signal }
               ),
             catch: () => undefined,
-          }).pipe(Effect.timeout(`${exitGraceMillis} millis`), Effect.ignore);
+          }).pipe(Effect.timeout(`${exitGraceMillis} millis`), Effect.ignore)
         }
-      });
+      })
 
       const releaseMemoryBootstrapSession = Effect.fn(
-        "AcpConversationAgent.releaseMemoryBootstrapSession"
+        'AcpConversationAgent.releaseMemoryBootstrapSession'
       )(function* () {
         const session = yield* Effect.sync(() => {
-          const retained = memoryBootstrapSession;
-          memoryBootstrapSession = undefined;
+          const retained = memoryBootstrapSession
+          memoryBootstrapSession = undefined
           return retained !== undefined && claimActiveSessionForClose(retained)
             ? retained
-            : undefined;
-        });
+            : undefined
+        })
         if (session === undefined) {
-          return;
+          return
         }
-        yield* closeClaimedSession(session);
-      });
+        yield* closeClaimedSession(session)
+      })
 
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
-          yield* Effect.sync(() => observeProcessHealth(options, "closed"));
+          yield* Effect.sync(() => observeProcessHealth(options, 'closed'))
           yield* Effect.sync(() => {
-            shutdownRequested = true;
-          });
+            shutdownRequested = true
+          })
           if (options.permissionBroker !== undefined) {
-            yield* options.permissionBroker.cancelAll;
+            yield* options.permissionBroker.cancelAll
           }
           const claimedManagedSessions = yield* Effect.sync(() => {
-            const claimed: RoutedAcpSession[] = [];
+            const claimed: RoutedAcpSession[] = []
             for (const [conversationId, managed] of sessions) {
-              sessions.delete(conversationId);
+              sessions.delete(conversationId)
               if (
                 claimActiveSessionForClose(managed.session, false) &&
                 !managed.durable
               ) {
-                claimed.push(managed.session);
+                claimed.push(managed.session)
               }
             }
-            return claimed;
-          });
+            return claimed
+          })
           yield* Effect.forEach(claimedManagedSessions, closeClaimedSession, {
-            concurrency: "unbounded",
+            concurrency: 'unbounded',
             discard: true,
-          });
-          yield* releaseMemoryBootstrapSession();
+          })
+          yield* releaseMemoryBootstrapSession()
           for (const [
             sessionId,
             registration,
           ] of memoryObservedSessionLifecycles) {
-            clearLaborerMemoryPermissionRegistration(sessionId, registration);
+            clearLaborerMemoryPermissionRegistration(sessionId, registration)
           }
-          memoryAuthorizedSessionPermissions.clear();
-          memoryObservedSessionLifecycles.clear();
-          memoryPermissionGate.activeToolCallIds.clear();
-          quarantinedConversations.clear();
-          sessionUpdateRoutes.clear();
-          const cleanup = pollutedProcessCleanup;
+          memoryAuthorizedSessionPermissions.clear()
+          memoryObservedSessionLifecycles.clear()
+          memoryPermissionGate.activeToolCallIds.clear()
+          quarantinedConversations.clear()
+          sessionUpdateRoutes.clear()
+          const cleanup = pollutedProcessCleanup
           if (cleanup !== undefined) {
-            yield* Effect.promise(() => cleanup);
+            yield* Effect.promise(() => cleanup)
           }
         })
-      );
+      )
 
       const recordMemoryRegistrationDiagnostic = Effect.fn(
-        "AcpConversationAgent.recordMemoryRegistrationDiagnostic"
+        'AcpConversationAgent.recordMemoryRegistrationDiagnostic'
       )(function* (
         code: LaborerMemoryDiagnosticCode,
         authority: { readonly root: string; readonly workspaceId: string }
       ) {
-        yield* Effect.logWarning("Memory MCP registration failed", { code });
+        yield* Effect.logWarning('Memory MCP registration failed', { code })
         if (
           options.agentContext !== undefined &&
           options.agentContext.root === authority.root &&
@@ -2117,115 +2102,115 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           yield* recordLaborerMemoryDiagnosticForSources({
             code,
             sources: options.agentContext,
-          });
-          return;
+          })
+          return
         }
-        yield* recordLaborerMemoryDiagnostic({ code, ...authority });
-      });
+        yield* recordLaborerMemoryDiagnostic({ code, ...authority })
+      })
 
       const clearMemoryPermissionState = (): void => {
         for (const [
           sessionId,
           registration,
         ] of memoryObservedSessionLifecycles) {
-          clearLaborerMemoryPermissionRegistration(sessionId, registration);
+          clearLaborerMemoryPermissionRegistration(sessionId, registration)
         }
-        memoryAuthorizedSessionPermissions.clear();
-        memoryObservedSessionLifecycles.clear();
-        memoryPermissionGate.activeToolCallIds.clear();
-        memoryPermissionGate.safetyDenialObserved = false;
-      };
+        memoryAuthorizedSessionPermissions.clear()
+        memoryObservedSessionLifecycles.clear()
+        memoryPermissionGate.activeToolCallIds.clear()
+        memoryPermissionGate.safetyDenialObserved = false
+      }
 
       const claimPollutedProcessState = (): RoutedAcpSession[] | undefined => {
         if (processPoisoned) {
-          return undefined;
+          return undefined
         }
-        const claimed: RoutedAcpSession[] = [];
-        processPoisoned = true;
-        observeProcessHealth(options, "quarantined");
-        memoryPermissionGate.acceptingCalls = false;
+        const claimed: RoutedAcpSession[] = []
+        processPoisoned = true
+        observeProcessHealth(options, 'quarantined')
+        memoryPermissionGate.acceptingCalls = false
         for (const [conversationId, managed] of sessions) {
-          sessions.delete(conversationId);
+          sessions.delete(conversationId)
           if (
             claimActiveSessionForClose(managed.session, false) &&
             !managed.durable
           ) {
-            claimed.push(managed.session);
+            claimed.push(managed.session)
           }
         }
-        const bootstrapSession = memoryBootstrapSession;
-        memoryBootstrapSession = undefined;
+        const bootstrapSession = memoryBootstrapSession
+        memoryBootstrapSession = undefined
         if (
           bootstrapSession !== undefined &&
           claimActiveSessionForClose(bootstrapSession, false)
         ) {
-          claimed.push(bootstrapSession);
+          claimed.push(bootstrapSession)
         }
-        clearMemoryPermissionState();
+        clearMemoryPermissionState()
         if (options.permissionBroker !== undefined) {
-          runPrivateEffect(options.permissionBroker.cancelAll);
+          runPrivateEffect(options.permissionBroker.cancelAll)
         }
-        return claimed;
-      };
+        return claimed
+      }
 
       const requireHealthyProcess = Effect.suspend(() =>
         processPoisoned ? toHandlerFailure() : Effect.void
-      );
+      )
 
       const startPollutedProcessCleanup = (): Promise<void> => {
         if (pollutedProcessCleanup !== undefined) {
-          return pollutedProcessCleanup;
+          return pollutedProcessCleanup
         }
-        const claimedSessions = claimPollutedProcessState();
+        const claimedSessions = claimPollutedProcessState()
         if (claimedSessions === undefined) {
-          return Promise.resolve();
+          return Promise.resolve()
         }
-        let resolveCleanup: () => void = () => undefined;
+        let resolveCleanup: () => void = () => undefined
         const completion = new Promise<void>((resolveCompletion) => {
-          resolveCleanup = resolveCompletion;
-        });
-        pollutedProcessCleanup = completion;
+          resolveCleanup = resolveCompletion
+        })
+        pollutedProcessCleanup = completion
         runPrivateEffect(
           Effect.gen(function* () {
             if (options.testHooks?.afterProcessPoisoned !== undefined) {
               yield* Effect.promise(
                 options.testHooks.afterProcessPoisoned
-              ).pipe(Effect.ignore);
+              ).pipe(Effect.ignore)
             }
             yield* Effect.forEach(claimedSessions, closeClaimedSession, {
-              concurrency: "unbounded",
+              concurrency: 'unbounded',
               discard: true,
-            });
-            connection.close();
+            })
+            connection.close()
             yield* releaseChild(
               acquiredChild,
               exitGraceMillis,
               options.processCleanupObserver
-            );
+            )
           }).pipe(Effect.ensuring(Effect.sync(resolveCleanup)))
-        );
-        return completion;
-      };
+        )
+        return completion
+      }
 
       const reapPollutedProcess = Effect.fn(
-        "AcpConversationAgent.reapPollutedProcess"
+        'AcpConversationAgent.reapPollutedProcess'
       )(function* () {
-        yield* Effect.promise(startPollutedProcessCleanup);
-      });
-      let runtimeIncompatibilityObserved = false;
+        yield* Effect.promise(startPollutedProcessCleanup)
+      })
+      let runtimeIncompatibilityObserved = false
       poisonIncompatibleProcess = () => {
         if (!runtimeIncompatibilityObserved) {
-          runtimeIncompatibilityObserved = true;
+          runtimeIncompatibilityObserved = true
           observeProcessFailure(
             options,
-            "deterministic",
-            "protocol_incompatible"
-          );
+            'deterministic',
+            'protocol_incompatible'
+          )
         }
-      };
+      }
       reapFailedProcess = () => {
-        startPollutedProcessCleanup().catch(() => undefined);
-      };
+        startPollutedProcessCleanup().catch(() => undefined)
+      }
 
       runPrivateEffect(
         Effect.promise(() => connection.closed).pipe(
@@ -2236,138 +2221,138 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           ),
           Effect.ignore
         )
-      );
+      )
 
       const prepareMemoryRegistration = Effect.fn(
-        "AcpConversationAgent.prepareMemoryRegistration"
+        'AcpConversationAgent.prepareMemoryRegistration'
       )(function* () {
         if (memoryMcpServer === undefined) {
-          return null;
+          return null
         }
         const prepared = yield* Effect.result(
           prepareLaborerMemoryMcpRegistration(
             memoryMcpServer,
             memoryTrustedRoot
           )
-        );
-        if (prepared._tag === "Success") {
-          return prepared.success;
+        )
+        if (prepared._tag === 'Success') {
+          return prepared.success
         }
-        const authority = laborerMemoryMcpAuthority(memoryMcpServer);
+        const authority = laborerMemoryMcpAuthority(memoryMcpServer)
         if (authority !== null) {
           yield* recordMemoryRegistrationDiagnostic(
-            "registration-invalid",
+            'registration-invalid',
             authority
-          );
+          )
         } else {
-          yield* Effect.logWarning("Memory MCP registration failed", {
-            code: "registration-invalid",
-          });
+          yield* Effect.logWarning('Memory MCP registration failed', {
+            code: 'registration-invalid',
+          })
         }
-        return yield* toHandlerFailure();
-      });
+        return yield* toHandlerFailure()
+      })
 
       const prepareActionRegistration = Effect.fn(
-        "AcpConversationAgent.prepareActionRegistration"
+        'AcpConversationAgent.prepareActionRegistration'
       )(function* () {
         return actionMcpBridge === undefined
           ? null
-          : yield* actionMcpBridge.prepareRegistration;
-      });
+          : yield* actionMcpBridge.prepareRegistration
+      })
 
       const promoteActionRegistration = Effect.fn(
-        "AcpConversationAgent.promoteActionRegistration"
+        'AcpConversationAgent.promoteActionRegistration'
       )(function* (registration: PreparedActionMcpRegistration | null) {
         if (registration === null || actionMcpBridge === undefined) {
-          return;
+          return
         }
-        yield* actionMcpBridge.awaitCallsDrained;
-        yield* actionMcpBridge.awaitReadiness(registration);
+        yield* actionMcpBridge.awaitCallsDrained
+        yield* actionMcpBridge.awaitReadiness(registration)
         yield* Effect.sync(() => {
-          promotedActionRegistration = registration;
+          promotedActionRegistration = registration
           for (const managed of sessions.values()) {
-            managed.actionRegistration = registration;
+            managed.actionRegistration = registration
           }
-        });
-      });
+        })
+      })
 
       const openVerifiedActionSession = Effect.fn(
-        "AcpConversationAgent.openVerifiedActionSession"
+        'AcpConversationAgent.openVerifiedActionSession'
       )(function* <E>(
         registration: PreparedActionMcpRegistration | null,
         openSession: Effect.Effect<RoutedAcpSession, E>
       ) {
-        let retainedSession: RoutedAcpSession | undefined;
+        let retainedSession: RoutedAcpSession | undefined
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const session = yield* restore(openSession);
-            retainedSession = session;
-            yield* restore(promoteActionRegistration(registration));
-            retainedSession = undefined;
-            return session;
+            const session = yield* restore(openSession)
+            retainedSession = session
+            yield* restore(promoteActionRegistration(registration))
+            retainedSession = undefined
+            return session
           }).pipe(
             Effect.onExit((exit) => {
               if (Exit.isSuccess(exit) || retainedSession === undefined) {
-                return Effect.void;
+                return Effect.void
               }
-              const session = retainedSession;
-              retainedSession = undefined;
+              const session = retainedSession
+              retainedSession = undefined
               return claimActiveSessionForClose(session)
                 ? closeClaimedSession(session)
-                : Effect.void;
+                : Effect.void
             })
           )
-        );
-      });
+        )
+      })
 
       const awaitActiveMemoryCallsDrained = Effect.fn(
-        "AcpConversationAgent.awaitActiveMemoryCallsDrained"
+        'AcpConversationAgent.awaitActiveMemoryCallsDrained'
       )(function* (authority: {
-        readonly root: string;
-        readonly workspaceId: string;
+        readonly root: string
+        readonly workspaceId: string
       }) {
         const drained = Effect.gen(function* () {
           while (memoryPermissionGate.activeToolCallIds.size > 0) {
-            yield* Effect.sleep(`${MEMORY_MCP_ACTIVE_CALL_POLL_MILLIS} millis`);
+            yield* Effect.sleep(`${MEMORY_MCP_ACTIVE_CALL_POLL_MILLIS} millis`)
           }
-        });
+        })
         const result = yield* Effect.result(
           drained.pipe(
             Effect.timeout(`${memoryMcpActiveCallDrainTimeoutMillis} millis`)
           )
-        );
-        if (result._tag === "Failure") {
+        )
+        if (result._tag === 'Failure') {
           yield* recordMemoryRegistrationDiagnostic(
-            "registration-active-call-timeout",
+            'registration-active-call-timeout',
             authority
-          );
-          return yield* toHandlerFailure();
+          )
+          return yield* toHandlerFailure()
         }
-      });
+      })
 
       const verifyMemoryRegistrationReadiness = Effect.fn(
-        "AcpConversationAgent.verifyMemoryRegistrationReadiness"
+        'AcpConversationAgent.verifyMemoryRegistrationReadiness'
       )(function* (registration: PreparedLaborerMemoryMcpRegistration) {
         const readiness = yield* Effect.result(
           awaitLaborerMemoryMcpReadiness(registration)
-        );
-        if (readiness._tag === "Failure") {
+        )
+        if (readiness._tag === 'Failure') {
           yield* recordMemoryRegistrationDiagnostic(
-            readiness.failure.reason === "collision"
-              ? "registration-collision"
-              : "registration-missing",
+            readiness.failure.reason === 'collision'
+              ? 'registration-collision'
+              : 'registration-missing',
             registration.authority
-          );
-          return yield* toHandlerFailure();
+          )
+          return yield* toHandlerFailure()
         }
-      });
+      })
 
-      const startSession = Effect.fn("AcpConversationAgent.startSession")(
+      const startSession = Effect.fn('AcpConversationAgent.startSession')(
         function* (
           registration: PreparedLaborerMemoryMcpRegistration | null,
           actionRegistration: PreparedActionMcpRegistration | null = null
         ) {
-          yield* verifySessionWorkingDirectory();
+          yield* verifySessionWorkingDirectory()
           const response = yield* Effect.tryPromise({
             try: (signal) =>
               connection.agent.request(
@@ -2383,21 +2368,21 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 },
                 { cancellationSignal: signal }
               ),
-            catch: () => failure("session"),
-          });
+            catch: () => failure('session'),
+          })
           const effectiveMetadata = yield* effectiveMetadataFor(
             response,
             sessionWorkingDirectory,
             registration,
             actionRegistration
-          );
+          )
           return yield* Effect.try({
             try: () =>
               attachRoutedSession(response.sessionId, effectiveMetadata),
-            catch: () => failure("session"),
-          });
+            catch: () => failure('session'),
+          })
         }
-      );
+      )
 
       const requireCurrentBindingRoot = (
         binding: ConversationAgentSessionBinding
@@ -2407,16 +2392,16 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             binding.cwd === sessionWorkingDirectory &&
               binding.cwdIdentity === sessionWorkingDirectoryIdentity
               ? Effect.void
-              : failure("session")
+              : failure('session')
           )
-        );
+        )
 
       const pinnedOpenCodeSessionExists = Effect.fn(
-        "AcpConversationAgent.pinnedOpenCodeSessionExists"
+        'AcpConversationAgent.pinnedOpenCodeSessionExists'
       )(function* (binding: ConversationAgentSessionBinding) {
-        yield* requireCurrentBindingRoot(binding);
-        let cursor: string | undefined;
-        const observedCursors = new Set<string>();
+        yield* requireCurrentBindingRoot(binding)
+        let cursor: string | undefined
+        const observedCursors = new Set<string>()
         for (let page = 0; page < OPEN_CODE_SESSION_LIST_MAX_PAGES; page += 1) {
           const response = yield* Effect.tryPromise({
             try: (signal) =>
@@ -2428,37 +2413,37 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 },
                 { cancellationSignal: signal }
               ),
-            catch: () => failure("session"),
-          });
+            catch: () => failure('session'),
+          })
           if (
             response.sessions.some(
               (session) => session.sessionId === binding.sessionId
             )
           ) {
-            return true;
+            return true
           }
           if (
             response.nextCursor === undefined ||
             response.nextCursor === null
           ) {
-            return false;
+            return false
           }
           if (observedCursors.has(response.nextCursor)) {
-            return yield* failure("session");
+            return yield* failure('session')
           }
-          observedCursors.add(response.nextCursor);
-          cursor = response.nextCursor;
+          observedCursors.add(response.nextCursor)
+          cursor = response.nextCursor
         }
-        return yield* failure("session");
-      });
+        return yield* failure('session')
+      })
 
-      const resumeSession = Effect.fn("AcpConversationAgent.resumeSession")(
+      const resumeSession = Effect.fn('AcpConversationAgent.resumeSession')(
         function* (
           binding: ConversationAgentSessionBinding,
           registration: PreparedLaborerMemoryMcpRegistration | null,
           actionRegistration: PreparedActionMcpRegistration | null = null
         ) {
-          yield* requireCurrentBindingRoot(binding);
+          yield* requireCurrentBindingRoot(binding)
           const resumed = yield* Effect.result(
             Effect.tryPromise({
               try: (signal) =>
@@ -2478,8 +2463,8 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 ),
               catch: (cause) => ({ cause }),
             })
-          );
-          if (resumed._tag === "Failure") {
+          )
+          if (resumed._tag === 'Failure') {
             if (
               isDurableSessionUnavailable(
                 resumed.failure.cause,
@@ -2487,38 +2472,38 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 usesOpenCodeMessageBoundary
               )
             ) {
-              return yield* AcpDurableSessionUnavailable.make();
+              return yield* AcpDurableSessionUnavailable.make()
             }
             const canCorroboratePinnedMissingSession =
               usesOpenCodeMessageBoundary &&
               supportsSessionList &&
-              isPinnedOpenCodeSessionServiceFailure(resumed.failure.cause);
+              isPinnedOpenCodeSessionServiceFailure(resumed.failure.cause)
             if (canCorroboratePinnedMissingSession) {
               const exists = yield* Effect.result(
                 pinnedOpenCodeSessionExists(binding)
-              );
-              if (exists._tag === "Success" && !exists.success) {
-                return yield* AcpDurableSessionUnavailable.make();
+              )
+              if (exists._tag === 'Success' && !exists.success) {
+                return yield* AcpDurableSessionUnavailable.make()
               }
             }
-            return yield* failure("session");
+            return yield* failure('session')
           }
           const effectiveMetadata = yield* effectiveMetadataFor(
             resumed.success,
             sessionWorkingDirectory,
             registration,
             actionRegistration
-          );
+          )
           return yield* Effect.try({
             try: () =>
               attachRoutedSession(binding.sessionId, effectiveMetadata),
-            catch: () => failure("session"),
-          });
+            catch: () => failure('session'),
+          })
         }
-      );
+      )
 
       const startVerifiedMemorySession = Effect.fn(
-        "AcpConversationAgent.startVerifiedMemorySession"
+        'AcpConversationAgent.startVerifiedMemorySession'
       )(function* <A>(
         registration: PreparedLaborerMemoryMcpRegistration,
         actionRegistration: PreparedActionMcpRegistration | null,
@@ -2528,7 +2513,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
         >,
         acceptSession: (session: RoutedAcpSession) => A
       ) {
-        let retainedSession: RoutedAcpSession | undefined;
+        let retainedSession: RoutedAcpSession | undefined
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const session = yield* restore(
@@ -2536,85 +2521,85 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 Effect.timeout(`${memoryMcpBootstrapTimeoutMillis} millis`),
                 Effect.tapError(() =>
                   recordMemoryRegistrationDiagnostic(
-                    "registration-missing",
+                    'registration-missing',
                     registration.authority
                   )
                 ),
                 Effect.mapError(toHandlerFailure)
               )
-            );
-            retainedSession = session;
-            yield* restore(verifyMemoryRegistrationReadiness(registration));
+            )
+            retainedSession = session
+            yield* restore(verifyMemoryRegistrationReadiness(registration))
             if (actionRegistration !== null && actionMcpBridge !== undefined) {
-              yield* restore(promoteActionRegistration(actionRegistration));
+              yield* restore(promoteActionRegistration(actionRegistration))
             }
-            const accepted = acceptSession(session);
-            retainedSession = undefined;
-            return accepted;
+            const accepted = acceptSession(session)
+            retainedSession = undefined
+            return accepted
           }).pipe(
             Effect.onExit((exit) => {
               if (Exit.isSuccess(exit) || retainedSession === undefined) {
-                return Effect.void;
+                return Effect.void
               }
-              const session = retainedSession;
-              retainedSession = undefined;
+              const session = retainedSession
+              retainedSession = undefined
               return claimActiveSessionForClose(session)
                 ? closeClaimedSession(session)
-                : Effect.void;
+                : Effect.void
             })
           )
-        );
-      });
+        )
+      })
 
       const resumeVerifiedMemorySession = Effect.fn(
-        "AcpConversationAgent.resumeVerifiedMemorySession"
+        'AcpConversationAgent.resumeVerifiedMemorySession'
       )(function* (
         binding: ConversationAgentSessionBinding,
         registration: PreparedLaborerMemoryMcpRegistration,
         actionRegistration: PreparedActionMcpRegistration | null
       ) {
-        let retainedSession: RoutedAcpSession | undefined;
+        let retainedSession: RoutedAcpSession | undefined
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const session = yield* restore(
               resumeSession(binding, registration, actionRegistration).pipe(
                 Effect.timeout(`${memoryMcpBootstrapTimeoutMillis} millis`)
               )
-            );
-            retainedSession = session;
-            yield* restore(verifyMemoryRegistrationReadiness(registration));
+            )
+            retainedSession = session
+            yield* restore(verifyMemoryRegistrationReadiness(registration))
             if (actionRegistration !== null && actionMcpBridge !== undefined) {
-              yield* restore(promoteActionRegistration(actionRegistration));
+              yield* restore(promoteActionRegistration(actionRegistration))
             }
-            retainedSession = undefined;
-            return session;
+            retainedSession = undefined
+            return session
           }).pipe(
             Effect.onExit((exit) => {
               if (Exit.isSuccess(exit) || retainedSession === undefined) {
-                return Effect.void;
+                return Effect.void
               }
-              const session = retainedSession;
-              retainedSession = undefined;
+              const session = retainedSession
+              retainedSession = undefined
               return claimActiveSessionForClose(session)
                 ? closeClaimedSession(session)
-                : Effect.void;
+                : Effect.void
             })
           )
-        );
-      });
+        )
+      })
 
       const beginMemoryRegistration = Effect.fn(
-        "AcpConversationAgent.beginMemoryRegistration"
+        'AcpConversationAgent.beginMemoryRegistration'
       )(function* (registration: PreparedLaborerMemoryMcpRegistration) {
         yield* Effect.sync(() => {
-          memoryPermissionGate.acceptingCalls = false;
-          memoryPermissionGate.safetyDenialObserved = false;
-        });
-        yield* awaitActiveMemoryCallsDrained(registration.authority);
+          memoryPermissionGate.acceptingCalls = false
+          memoryPermissionGate.safetyDenialObserved = false
+        })
+        yield* awaitActiveMemoryCallsDrained(registration.authority)
         if (actionMcpBridge !== undefined) {
-          yield* actionMcpBridge.awaitCallsDrained;
+          yield* actionMcpBridge.awaitCallsDrained
         }
-      });
+      })
 
       const activateMemoryPermission = (
         session: RoutedAcpSession,
@@ -2629,36 +2614,36 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           permission: registration.permission,
           pinnedOpenCodeVersion:
             commandIsOpenCode && reportsSupportedOpenCode
-              ? (initialized.agentInfo?.version as "0.0.0-next-17074")
+              ? (initialized.agentInfo?.version as '0.0.0-next-17074')
               : null,
           rejectedToolCallIds: new Set<string>(),
           rejectUncorrelatedPermissions: false,
-        };
+        }
         memoryAuthorizedSessionPermissions.set(
           session.sessionId,
           permissionRegistration
-        );
+        )
         memoryObservedSessionLifecycles.set(
           session.sessionId,
           permissionRegistration
-        );
-        memoryPermissionGate.acceptingCalls = true;
-        memoryPermissionGate.safetyDenialObserved = false;
-      };
+        )
+        memoryPermissionGate.acceptingCalls = true
+        memoryPermissionGate.safetyDenialObserved = false
+      }
 
       const createManagedSession = Effect.fn(
-        "AcpConversationAgent.createManagedSession"
+        'AcpConversationAgent.createManagedSession'
       )(function* (conversationId: string, memoryEnabled: boolean) {
-        yield* requireHealthyProcess;
+        yield* requireHealthyProcess
         if (sessions.size >= activeSessionLimit) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
-        const actionRegistration = yield* prepareActionRegistration();
+        const actionRegistration = yield* prepareActionRegistration()
         if (!memoryEnabled) {
           const session = yield* openVerifiedActionSession(
             actionRegistration,
             startSession(null, actionRegistration)
-          );
+          )
           const created: ManagedSession = {
             actionRegistration,
             durable: false,
@@ -2667,18 +2652,18 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             needsInitialContext: options.agentContext !== undefined,
             replacementParticipantIds: [],
             session,
-          };
-          sessions.set(conversationId, created);
-          return created;
+          }
+          sessions.set(conversationId, created)
+          return created
         }
         return yield* memoryRegistrationGate.withPermit(
           Effect.gen(function* () {
-            yield* requireHealthyProcess;
-            const registration = yield* prepareMemoryRegistration();
+            yield* requireHealthyProcess
+            const registration = yield* prepareMemoryRegistration()
             if (registration === null) {
-              return yield* toHandlerFailure();
+              return yield* toHandlerFailure()
             }
-            yield* beginMemoryRegistration(registration);
+            yield* beginMemoryRegistration(registration)
             return yield* startVerifiedMemorySession(
               registration,
               actionRegistration,
@@ -2692,40 +2677,40 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                   needsInitialContext: options.agentContext !== undefined,
                   replacementParticipantIds: [],
                   session,
-                };
-                activateMemoryPermission(session, registration);
-                sessions.set(conversationId, created);
-                return created;
+                }
+                activateMemoryPermission(session, registration)
+                sessions.set(conversationId, created)
+                return created
               }
-            );
+            )
           }).pipe(
             Effect.onExit((exit) =>
               Exit.isFailure(exit) ? reapPollutedProcess() : Effect.void
             )
           )
-        );
-      });
+        )
+      })
 
       const bootstrapMemoryRegistration = Effect.fn(
-        "AcpConversationAgent.bootstrapMemoryRegistration"
+        'AcpConversationAgent.bootstrapMemoryRegistration'
       )(function* () {
-        const registration = yield* prepareMemoryRegistration();
+        const registration = yield* prepareMemoryRegistration()
         if (registration === null) {
-          return false;
+          return false
         }
-        yield* beginMemoryRegistration(registration);
+        yield* beginMemoryRegistration(registration)
         return yield* startVerifiedMemorySession(
           registration,
           null,
           startSession(registration),
           (session) => {
-            memoryBootstrapSession = session;
-            memoryPermissionGate.acceptingCalls = true;
-            memoryPermissionGate.safetyDenialObserved = false;
-            return true;
+            memoryBootstrapSession = session
+            memoryPermissionGate.acceptingCalls = true
+            memoryPermissionGate.safetyDenialObserved = false
+            return true
           }
-        );
-      });
+        )
+      })
 
       const memoryEnabled =
         options.durableSessionMode === true
@@ -2738,20 +2723,20 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                     : Effect.void
                 )
               )
-            );
+            )
 
       const persistDurableSession = Effect.fn(
-        "AcpConversationAgent.persistDurableSession"
+        'AcpConversationAgent.persistDurableSession'
       )(function* (
         request: ConversationAgentRequest,
         previous: ConversationAgentSessionBinding | null,
         session: RoutedAcpSession
       ) {
-        const store = request.sessionBindingStore;
+        const store = request.sessionBindingStore
         if (store === undefined) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
-        yield* verifySessionWorkingDirectory();
+        yield* verifySessionWorkingDirectory()
         return yield* store.replace(previous?.generation ?? null, {
           ambiguousPromptId:
             request.recovery === undefined
@@ -2767,7 +2752,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             session.effectiveMetadata?.fingerprint ??
             previous?.effectiveMetadataFingerprint ??
             null,
-          initializationPhase: "pending",
+          initializationPhase: 'pending',
           introducedParticipantIds: [],
           lastAttachedProcessGeneration: options.processGeneration ?? 1,
           pendingParticipantIds:
@@ -2781,18 +2766,18 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 ],
           requiresReplacement: false,
           sessionId: session.sessionId,
-        });
-      });
+        })
+      })
 
       const retainDurableManagedSession = (options: {
-        readonly actionRegistration: PreparedActionMcpRegistration | null;
-        readonly binding: ConversationAgentSessionBinding;
-        readonly conversationId: string;
-        readonly registration: PreparedLaborerMemoryMcpRegistration | null;
-        readonly session: RoutedAcpSession;
+        readonly actionRegistration: PreparedActionMcpRegistration | null
+        readonly binding: ConversationAgentSessionBinding
+        readonly conversationId: string
+        readonly registration: PreparedLaborerMemoryMcpRegistration | null
+        readonly session: RoutedAcpSession
       }): ManagedSession => {
         const initializationIsPending =
-          options.binding.initializationPhase === "pending";
+          options.binding.initializationPhase === 'pending'
         const introducedParticipantIds = initializationIsPending
           ? options.binding.introducedParticipantIds
           : [
@@ -2800,7 +2785,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 ...options.binding.introducedParticipantIds,
                 ...options.binding.pendingParticipantIds,
               ]),
-            ];
+            ]
         const managed: ManagedSession = {
           actionRegistration: options.actionRegistration,
           durable: true,
@@ -2811,16 +2796,16 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             ? options.binding.pendingParticipantIds
             : [],
           session: options.session,
-        };
-        if (options.registration !== null) {
-          activateMemoryPermission(options.session, options.registration);
         }
-        sessions.set(options.conversationId, managed);
-        return managed;
-      };
+        if (options.registration !== null) {
+          activateMemoryPermission(options.session, options.registration)
+        }
+        sessions.set(options.conversationId, managed)
+        return managed
+      }
 
       const openDurableReplacement = Effect.fn(
-        "AcpConversationAgent.openDurableReplacement"
+        'AcpConversationAgent.openDurableReplacement'
       )(function* (
         request: ConversationAgentRequest,
         previous: ConversationAgentSessionBinding | null,
@@ -2831,29 +2816,29 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
         registration: PreparedLaborerMemoryMcpRegistration | null,
         actionRegistration: PreparedActionMcpRegistration | null
       ) {
-        let retainedSession: RoutedAcpSession | undefined;
+        let retainedSession: RoutedAcpSession | undefined
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const session = yield* restore(openNew);
-            retainedSession = session;
+            const session = yield* restore(openNew)
+            retainedSession = session
             if (options.testHooks?.beforeDurableBindingPersist !== undefined) {
               yield* restore(
                 Effect.tryPromise({
                   try: options.testHooks.beforeDurableBindingPersist,
                   catch: toHandlerFailure,
                 })
-              );
+              )
             }
             const binding = yield* restore(
               persistDurableSession(request, previous, session)
-            );
+            )
             if (options.testHooks?.afterDurableBindingPersisted !== undefined) {
               yield* restore(
                 Effect.tryPromise({
                   try: options.testHooks.afterDurableBindingPersisted,
                   catch: toHandlerFailure,
                 })
-              );
+              )
             }
             const managed = retainDurableManagedSession({
               actionRegistration,
@@ -2861,57 +2846,57 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
               conversationId: request.conversationId,
               registration,
               session,
-            });
-            retainedSession = undefined;
-            return managed;
+            })
+            retainedSession = undefined
+            return managed
           }).pipe(
             Effect.onExit((exit) => {
               if (Exit.isSuccess(exit) || retainedSession === undefined) {
-                return Effect.void;
+                return Effect.void
               }
-              const session = retainedSession;
-              retainedSession = undefined;
+              const session = retainedSession
+              retainedSession = undefined
               return claimActiveSessionForClose(session)
                 ? closeClaimedSession(session)
-                : Effect.void;
+                : Effect.void
             })
           )
-        );
-      });
+        )
+      })
 
       const refreshEffectiveMetadata = Effect.fn(
-        "AcpConversationAgent.refreshEffectiveMetadata"
+        'AcpConversationAgent.refreshEffectiveMetadata'
       )(function* (
         request: ConversationAgentRequest,
         persisted: ConversationAgentSessionBinding,
         resumedSession: RoutedAcpSession
       ) {
-        const effectiveMetadata = resumedSession.effectiveMetadata;
+        const effectiveMetadata = resumedSession.effectiveMetadata
         if (effectiveMetadata === null) {
-          return persisted;
+          return persisted
         }
         if (
           persisted.effectiveMetadataFingerprint != null &&
           persisted.effectiveMetadataFingerprint !==
             effectiveMetadata.fingerprint
         ) {
-          yield* Effect.logWarning("ACP effective configuration drifted", {
-            code: "effective-configuration-drift",
-          });
+          yield* Effect.logWarning('ACP effective configuration drifted', {
+            code: 'effective-configuration-drift',
+          })
         }
-        const store = request.sessionBindingStore;
+        const store = request.sessionBindingStore
         if (store === undefined) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
         return yield* store.recordEffectiveMetadata(
           persisted.generation,
           effectiveMetadata.metadata,
           effectiveMetadata.fingerprint
-        );
-      });
+        )
+      })
 
       const resumeOrReplaceDurableSession = Effect.fn(
-        "AcpConversationAgent.resumeOrReplaceDurableSession"
+        'AcpConversationAgent.resumeOrReplaceDurableSession'
       )(function* (
         request: ConversationAgentRequest,
         persisted: ConversationAgentSessionBinding,
@@ -2932,35 +2917,35 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 persisted,
                 registration,
                 actionRegistration
-              );
-        const resumed = yield* Effect.result(resumeEffect);
-        if (resumed._tag === "Success") {
+              )
+        const resumed = yield* Effect.result(resumeEffect)
+        if (resumed._tag === 'Success') {
           const metadataBinding = yield* refreshEffectiveMetadata(
             request,
             persisted,
             resumed.success
-          );
+          )
           const binding =
             request.sessionBindingStore === undefined
               ? metadataBinding
               : yield* request.sessionBindingStore.recordProcessAttachment(
                   metadataBinding.generation,
                   options.processGeneration ?? 1
-                );
+                )
           return retainDurableManagedSession({
             actionRegistration,
             binding,
             conversationId: request.conversationId,
             registration,
             session: resumed.success,
-          });
+          })
         }
-        if (resumed.failure._tag === "AcpDurableSessionUnavailable") {
+        if (resumed.failure._tag === 'AcpDurableSessionUnavailable') {
           if (
             request.adoptionHistory !== undefined &&
             request.recovery === undefined
           ) {
-            return yield* toHandlerFailure();
+            return yield* toHandlerFailure()
           }
           return yield* openDurableReplacement(
             request,
@@ -2968,30 +2953,30 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             openNew,
             registration,
             actionRegistration
-          );
+          )
         }
-        quarantinedConversations.add(request.conversationId);
-        yield* Effect.logWarning("ACP durable session quarantined", {
-          code: "resume-failed",
-        });
-        yield* reapPollutedProcess();
-        return yield* toHandlerFailure();
-      });
+        quarantinedConversations.add(request.conversationId)
+        yield* Effect.logWarning('ACP durable session quarantined', {
+          code: 'resume-failed',
+        })
+        yield* reapPollutedProcess()
+        return yield* toHandlerFailure()
+      })
 
       const prepareDurableSessionOpen = Effect.fn(
-        "AcpConversationAgent.prepareDurableSessionOpen"
+        'AcpConversationAgent.prepareDurableSessionOpen'
       )(function* () {
         const registration = memoryEnabled
           ? yield* prepareMemoryRegistration()
-          : null;
-        const actionRegistration = yield* prepareActionRegistration();
+          : null
+        const actionRegistration = yield* prepareActionRegistration()
         if (memoryEnabled && registration === null) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
         if (registration !== null) {
-          yield* beginMemoryRegistration(registration);
+          yield* beginMemoryRegistration(registration)
         } else if (actionMcpBridge !== undefined) {
-          yield* actionMcpBridge.awaitCallsDrained;
+          yield* actionMcpBridge.awaitCallsDrained
         }
         const openNew =
           registration === null
@@ -3004,24 +2989,24 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 actionRegistration,
                 startSession(registration, actionRegistration),
                 (session) => session
-              );
-        return { actionRegistration, openNew, registration };
-      });
+              )
+        return { actionRegistration, openNew, registration }
+      })
 
       const openDurableSession = Effect.fn(
-        "AcpConversationAgent.openDurableSession"
+        'AcpConversationAgent.openDurableSession'
         // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Durable session replacement keeps adoption, recovery, root authority, and resume ordering in one state-machine boundary.
       )(function* (
         request: ConversationAgentRequest,
         persisted: ConversationAgentSessionBinding | null
       ) {
-        yield* requireHealthyProcess;
-        yield* verifySessionWorkingDirectory();
+        yield* requireHealthyProcess
+        yield* verifySessionWorkingDirectory()
         const { actionRegistration, openNew, registration } =
-          yield* prepareDurableSessionOpen();
+          yield* prepareDurableSessionOpen()
         if (persisted === null) {
           if (request.sessionBindingStore?.beginSessionCreation !== undefined) {
-            yield* request.sessionBindingStore.beginSessionCreation();
+            yield* request.sessionBindingStore.beginSessionCreation()
           }
           return yield* openDurableReplacement(
             request,
@@ -3029,54 +3014,53 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             openNew,
             registration,
             actionRegistration
-          );
+          )
         }
         const replacementRequested =
           persisted.requiresReplacement === true ||
           (request.recovery !== undefined &&
-            persisted.generation ===
-              request.recovery.previousBindingGeneration);
+            persisted.generation === request.recovery.previousBindingGeneration)
         const bindingRootChanged =
           persisted.cwd !== sessionWorkingDirectory ||
-          persisted.cwdIdentity !== sessionWorkingDirectoryIdentity;
+          persisted.cwdIdentity !== sessionWorkingDirectoryIdentity
         const adoptionBlocksAutomaticReplacement =
           request.adoptionHistory !== undefined &&
-          request.recovery === undefined;
+          request.recovery === undefined
         if (
           adoptionBlocksAutomaticReplacement &&
           (replacementRequested || bindingRootChanged)
         ) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
         if (replacementRequested) {
-          yield* options.permissionBroker?.cancelAll ?? Effect.void;
+          yield* options.permissionBroker?.cancelAll ?? Effect.void
           yield* Effect.tryPromise({
             try: () =>
               connection.agent.notify(methods.agent.session.close, {
                 sessionId: persisted.sessionId,
               }),
             catch: () => undefined,
-          }).pipe(Effect.ignore);
+          }).pipe(Effect.ignore)
           return yield* openDurableReplacement(
             request,
             persisted,
             openNew,
             registration,
             actionRegistration
-          );
+          )
         }
         if (bindingRootChanged) {
           yield* Effect.logWarning(
-            "ACP durable session root authority changed",
-            { code: "session-root-changed" }
-          );
+            'ACP durable session root authority changed',
+            { code: 'session-root-changed' }
+          )
           return yield* openDurableReplacement(
             request,
             persisted,
             openNew,
             registration,
             actionRegistration
-          );
+          )
         }
         return yield* resumeOrReplaceDurableSession(
           request,
@@ -3084,37 +3068,37 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
           openNew,
           registration,
           actionRegistration
-        );
-      });
+        )
+      })
 
       const createDurableManagedSession = Effect.fn(
-        "AcpConversationAgent.createDurableManagedSession"
+        'AcpConversationAgent.createDurableManagedSession'
       )(function* (request: ConversationAgentRequest) {
-        const store = request.sessionBindingStore;
+        const store = request.sessionBindingStore
         if (store === undefined) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
         if (quarantinedConversations.has(request.conversationId)) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
         if (sessions.size >= activeSessionLimit) {
-          return yield* toHandlerFailure();
+          return yield* toHandlerFailure()
         }
         if (!(usesOpenCodeMessageBoundary || supportsPromptEpochExtension)) {
-          quarantinedConversations.add(request.conversationId);
-          yield* Effect.logWarning("ACP durable session quarantined", {
-            code: "prompt-epoch-capability-missing",
-          });
-          return yield* toHandlerFailure();
+          quarantinedConversations.add(request.conversationId)
+          yield* Effect.logWarning('ACP durable session quarantined', {
+            code: 'prompt-epoch-capability-missing',
+          })
+          return yield* toHandlerFailure()
         }
         if (!supportsSessionResume) {
-          quarantinedConversations.add(request.conversationId);
-          yield* Effect.logWarning("ACP durable session quarantined", {
-            code: "resume-capability-missing",
-          });
-          return yield* toHandlerFailure();
+          quarantinedConversations.add(request.conversationId)
+          yield* Effect.logWarning('ACP durable session quarantined', {
+            code: 'resume-capability-missing',
+          })
+          return yield* toHandlerFailure()
         }
-        const persisted = yield* store.load;
+        const persisted = yield* store.load
 
         return yield* memoryRegistrationGate.withPermit(
           openDurableSession(request, persisted).pipe(
@@ -3122,8 +3106,8 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
               Exit.isFailure(exit) ? reapPollutedProcess() : Effect.void
             )
           )
-        );
-      });
+        )
+      })
 
       const mustReplaceExistingSession = Effect.fnUntraced(function* (
         request: ConversationAgentRequest,
@@ -3132,37 +3116,37 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
         const persisted =
           request.sessionBindingStore === undefined
             ? null
-            : yield* request.sessionBindingStore.load;
+            : yield* request.sessionBindingStore.load
         return (
           persisted?.requiresReplacement === true ||
           (request.recovery !== undefined &&
             existing.generation === request.recovery.previousBindingGeneration)
-        );
-      });
+        )
+      })
 
-      const sessionFor = Effect.fn("AcpConversationAgent.sessionFor")(
+      const sessionFor = Effect.fn('AcpConversationAgent.sessionFor')(
         function* (request: ConversationAgentRequest) {
-          yield* requireHealthyProcess;
-          const existing = sessions.get(request.conversationId);
+          yield* requireHealthyProcess
+          const existing = sessions.get(request.conversationId)
           if (existing !== undefined) {
             if (yield* mustReplaceExistingSession(request, existing)) {
-              sessions.delete(request.conversationId);
+              sessions.delete(request.conversationId)
               if (claimActiveSessionForClose(existing.session)) {
-                yield* options.permissionBroker?.cancelAll ?? Effect.void;
-                yield* closeClaimedSession(existing.session);
+                yield* options.permissionBroker?.cancelAll ?? Effect.void
+                yield* closeClaimedSession(existing.session)
               }
             } else {
-              return existing;
+              return existing
             }
           }
           const usesDurableBinding =
             options.durableSessionMode === true &&
-            request.sessionBindingStore !== undefined;
+            request.sessionBindingStore !== undefined
           return yield* usesDurableBinding
             ? createDurableManagedSession(request)
-            : createManagedSession(request.conversationId, memoryEnabled);
+            : createManagedSession(request.conversationId, memoryEnabled)
         }
-      );
+      )
 
       const invalidateSession = (
         conversationId: string,
@@ -3170,29 +3154,29 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       ) =>
         // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Cancellation, authority revocation, routing disposal, and process poisoning must retain this cleanup order.
         Effect.fnUntraced(function* (prompt: ActivePrompt) {
-          const { session } = managed;
+          const { session } = managed
           if (prompt.terminal.current) {
-            return;
+            return
           }
           if (prompt.localCancellationIntent.current === null) {
-            prompt.localCancellationIntent.current = "local";
+            prompt.localCancellationIntent.current = 'local'
             if (
               prompt.attemptId !== null &&
               prompt.attemptStore !== undefined
             ) {
               yield* prompt.attemptStore
-                .markCancellationIntent(prompt.attemptId, "local")
-                .pipe(Effect.ignore);
+                .markCancellationIntent(prompt.attemptId, 'local')
+                .pipe(Effect.ignore)
             }
           }
-          yield* prompt.closePermissions;
+          yield* prompt.closePermissions
           const claimed = yield* Effect.sync(() => {
-            prompt.cancellation.abort();
+            prompt.cancellation.abort()
             if (sessions.get(conversationId)?.session === session) {
-              sessions.delete(conversationId);
+              sessions.delete(conversationId)
             }
-            return claimActiveSessionForClose(session);
-          });
+            return claimActiveSessionForClose(session)
+          })
           if (claimed) {
             yield* Effect.tryPromise({
               try: () =>
@@ -3200,56 +3184,56 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                   sessionId: session.sessionId,
                 }),
               catch: () => undefined,
-            }).pipe(Effect.ignore);
+            }).pipe(Effect.ignore)
             if (!managed.durable) {
-              yield* closeClaimedSession(session);
+              yield* closeClaimedSession(session)
             }
           }
           const settlement = yield* Effect.promise(() =>
             awaitPromptSettlement(prompt.completion, CHILD_EXIT_GRACE_MILLIS)
-          );
+          )
           if (
-            settlement._tag === "Completed" &&
-            settlement.response.stopReason === "cancelled"
+            settlement._tag === 'Completed' &&
+            settlement.response.stopReason === 'cancelled'
           ) {
             yield* prompt
-              .completeTerminal("cancelled_local")
-              .pipe(Effect.ignore);
-            prompt.terminal.current = true;
-            return;
+              .completeTerminal('cancelled_local')
+              .pipe(Effect.ignore)
+            prompt.terminal.current = true
+            return
           }
-          if (settlement._tag === "TimedOut") {
-            yield* reapPollutedProcess();
+          if (settlement._tag === 'TimedOut') {
+            yield* reapPollutedProcess()
           }
           if (prompt.attemptId !== null && prompt.attemptStore !== undefined) {
-            const timestamp = yield* Clock.currentTimeMillis;
+            const timestamp = yield* Clock.currentTimeMillis
             yield* prompt.attemptStore
-              .markInterrupted(prompt.attemptId, "unresolved", timestamp)
-              .pipe(Effect.ignore);
+              .markInterrupted(prompt.attemptId, 'unresolved', timestamp)
+              .pipe(Effect.ignore)
           }
-        });
+        })
 
       const preparePromptBinding = Effect.fnUntraced(function* (
         request: ConversationAgentRequest,
         managed: ManagedSession,
         introducedParticipantIds: readonly string[]
       ) {
-        const initializesSession = managed.needsInitialContext;
+        const initializesSession = managed.needsInitialContext
         if (!managed.durable || request.sessionBindingStore === undefined) {
-          return { completeBinding: Effect.void };
+          return { completeBinding: Effect.void }
         }
         yield* request.sessionBindingStore.beginPrompt(
           managed.generation,
           introducedParticipantIds,
           initializesSession,
           request.promptId
-        );
+        )
         return {
           completeBinding: request.sessionBindingStore
             .completePrompt(managed.generation)
             .pipe(Effect.asVoid),
-        };
-      });
+        }
+      })
 
       const activatePromptPermissions = Effect.fnUntraced(function* (
         request: ConversationAgentRequest,
@@ -3267,8 +3251,8 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 rootTs: request.turnAuthority.rootTs,
                 sessionId: managed.session.sessionId,
                 turnId: request.turnId,
-                workspaceId: options.agentContext?.workspaceId ?? "local",
-              };
+                workspaceId: options.agentContext?.workspaceId ?? 'local',
+              }
         const closeHumanPermissions =
           options.permissionBroker === undefined || turnScope === null
             ? Effect.void
@@ -3276,68 +3260,68 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 ...turnScope,
                 authorizedSlackUserId:
                   request.turnAuthority?.authorizedSlackUserId ?? null,
-              });
+              })
         const closeActionCapabilities =
           actionMcpBridge === undefined || turnScope === null
             ? Effect.void
             : yield* Effect.gen(function* () {
-                const actionRegistration = promotedActionRegistration;
+                const actionRegistration = promotedActionRegistration
                 if (actionRegistration === null) {
-                  return yield* toHandlerFailure();
+                  return yield* toHandlerFailure()
                 }
                 yield* Effect.sync(() => {
-                  managed.actionRegistration = actionRegistration;
-                });
+                  managed.actionRegistration = actionRegistration
+                })
                 return yield* actionMcpBridge.activateTurn({
                   actionServerGeneration:
                     actionRegistration.actionServerGeneration,
                   actions: request.actions,
                   controls: request.executionControls,
                   scope: turnScope,
-                });
-              });
+                })
+              })
         return {
           closePermissions: Effect.all(
             [closeActionCapabilities, closeHumanPermissions],
             { discard: true }
           ),
-        };
-      });
+        }
+      })
 
       const completePromptTerminal = Effect.fnUntraced(function* (options_: {
-        readonly attemptId: string | null;
-        readonly attemptStore: ConversationPromptAttemptStore | undefined;
-        readonly bindingGeneration: number | null;
-        readonly completeBinding: Effect.Effect<void, HandlerFailure>;
-        readonly outcome: ConversationPromptAttemptOutcome;
+        readonly attemptId: string | null
+        readonly attemptStore: ConversationPromptAttemptStore | undefined
+        readonly bindingGeneration: number | null
+        readonly completeBinding: Effect.Effect<void, HandlerFailure>
+        readonly outcome: ConversationPromptAttemptOutcome
       }) {
         if (
           options_.attemptId === null ||
           options_.attemptStore === undefined
         ) {
-          yield* options_.completeBinding;
-          return;
+          yield* options_.completeBinding
+          return
         }
         if (options.testHooks?.beforeTerminalCommit !== undefined) {
           yield* Effect.tryPromise({
             try: options.testHooks.beforeTerminalCommit,
             catch: toHandlerFailure,
-          });
+          })
         }
-        const timestamp = yield* Clock.currentTimeMillis;
+        const timestamp = yield* Clock.currentTimeMillis
         yield* options_.attemptStore.markTerminalAndCompleteBinding(
           options_.attemptId,
           options_.outcome,
           timestamp,
           options_.bindingGeneration
-        );
+        )
         if (options.testHooks?.afterTerminalCommit !== undefined) {
           yield* Effect.tryPromise({
             try: options.testHooks.afterTerminalCommit,
             catch: toHandlerFailure,
-          });
+          })
         }
-      });
+      })
 
       const submitOwnedPrompt = (
         request: ConversationAgentRequest,
@@ -3351,28 +3335,28 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       ): Effect.Effect<ActivePrompt, AcpConversationFailure> =>
         Effect.try({
           try: () => {
-            const registered = sessions.get(request.conversationId);
+            const registered = sessions.get(request.conversationId)
             const sessionIsOwned =
               !processPoisoned &&
               registered === managed &&
               registered.session === managed.session &&
               registered.generation === managed.generation &&
-              !claimedSessionClosures.has(managed.session);
+              !claimedSessionClosures.has(managed.session)
             if (!sessionIsOwned) {
-              throw new Error("ACP session ownership changed before prompt");
+              throw new Error('ACP session ownership changed before prompt')
             }
-            const cancellation = new AbortController();
+            const cancellation = new AbortController()
             const localCancellationIntent = { current: null } satisfies {
-              current: "deadline" | "local" | "shutdown" | null;
-            };
+              current: 'deadline' | 'local' | 'shutdown' | null
+            }
             const completion = managed.session.prompt(input, {
               cancellationSignal: cancellation.signal,
-            });
-            managed.needsInitialContext = false;
+            })
+            managed.needsInitialContext = false
             for (const participantId of introducedParticipantIds) {
-              managed.introducedParticipantIds.add(participantId);
+              managed.introducedParticipantIds.add(participantId)
             }
-            completion.catch(() => undefined);
+            completion.catch(() => undefined)
             return {
               attemptId,
               attemptStore,
@@ -3400,15 +3384,15 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
               recordUnknownStop:
                 attemptId !== null && attemptStore !== undefined
                   ? Effect.gen(function* () {
-                      const timestamp = yield* Clock.currentTimeMillis;
-                      yield* attemptStore.markUnknownStop(attemptId, timestamp);
+                      const timestamp = yield* Clock.currentTimeMillis
+                      yield* attemptStore.markUnknownStop(attemptId, timestamp)
                     })
                   : Effect.void,
               terminal: { current: false },
-            };
+            }
           },
-          catch: () => failure("prompt"),
-        });
+          catch: () => failure('prompt'),
+        })
 
       const startOwnedPrompt = (
         request: ConversationAgentRequest,
@@ -3419,7 +3403,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
         ActivePrompt,
         AcpConversationFailure | HandlerFailure
       > => {
-        const attemptStore = request.promptAttemptStore;
+        const attemptStore = request.promptAttemptStore
         // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Prepared/submitting publication and capability activation are one crash-boundary state machine.
         return Effect.gen(function* () {
           const attemptId =
@@ -3427,9 +3411,9 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
               ? null
               : (request.recovery?.replacementAttemptId ??
                 request.promptAttemptId ??
-                randomUUID());
+                randomUUID())
           if (attemptStore !== undefined && attemptId !== null) {
-            const preparedAt = yield* Clock.currentTimeMillis;
+            const preparedAt = yield* Clock.currentTimeMillis
             yield* attemptStore.prepare({
               attemptId,
               bindingGeneration: managed.durable ? managed.generation : null,
@@ -3438,30 +3422,30 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
               ...(request.recovery === undefined
                 ? {}
                 : { recoveryDecisionId: request.recovery.decisionId }),
-              sessionDigest: createHash("sha256")
-                .update("acp-session\0", "utf8")
-                .update(managed.session.sessionId, "utf8")
-                .digest("base64url"),
-            });
+              sessionDigest: createHash('sha256')
+                .update('acp-session\0', 'utf8')
+                .update(managed.session.sessionId, 'utf8')
+                .digest('base64url'),
+            })
           }
           const { completeBinding } = yield* preparePromptBinding(
             request,
             managed,
             introducedParticipantIds
-          );
+          )
           if (options.testHooks?.beforePromptSubmission !== undefined) {
             yield* Effect.tryPromise({
               try: options.testHooks.beforePromptSubmission,
               catch: toHandlerFailure,
-            });
+            })
           }
           const { closePermissions } = yield* activatePromptPermissions(
             request,
             managed
-          );
+          )
           if (attemptStore !== undefined && attemptId !== null) {
-            const submittedAt = yield* Clock.currentTimeMillis;
-            yield* attemptStore.markSubmitting(attemptId, submittedAt);
+            const submittedAt = yield* Clock.currentTimeMillis
+            yield* attemptStore.markSubmitting(attemptId, submittedAt)
           }
           return yield* submitOwnedPrompt(
             request,
@@ -3472,54 +3456,54 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
             attemptStore,
             completeBinding,
             closePermissions
-          ).pipe(Effect.tapError(() => closePermissions));
+          ).pipe(Effect.tapError(() => closePermissions))
         }).pipe(
           Effect.onExit((exit) => {
             if (Exit.isSuccess(exit) || attemptStore === undefined) {
-              return Effect.void;
+              return Effect.void
             }
             return Effect.gen(function* () {
-              const attempt = yield* attemptStore.latest;
-              if (attempt === null || attempt.phase === "terminal") {
-                return;
+              const attempt = yield* attemptStore.latest
+              if (attempt === null || attempt.phase === 'terminal') {
+                return
               }
-              const timestamp = yield* Clock.currentTimeMillis;
+              const timestamp = yield* Clock.currentTimeMillis
               yield* attemptStore
                 .markInterrupted(
                   attempt.attemptId,
-                  attempt.phase === "submitting" ? "unresolved" : "retryable",
+                  attempt.phase === 'submitting' ? 'unresolved' : 'retryable',
                   timestamp
                 )
-                .pipe(Effect.asVoid);
-            }).pipe(Effect.ignore);
+                .pipe(Effect.asVoid)
+            }).pipe(Effect.ignore)
           })
-        );
-      };
+        )
+      }
 
-      const handle: ConversationAgentShape["handle"] = (
+      const handle: ConversationAgentShape['handle'] = (
         request,
         publishMessage
       ) => {
         if (publishMessage === undefined) {
-          return toHandlerFailure();
+          return toHandlerFailure()
         }
         return Effect.gen(function* () {
-          yield* requireHealthyProcess;
+          yield* requireHealthyProcess
           return yield* workspacePromptGate.withPermit(
             Effect.gen(function* () {
-              yield* requireHealthyProcess;
+              yield* requireHealthyProcess
               const requiredInput =
                 options.agentContext === undefined
                   ? request.input
-                  : renderAcpPrompt(request);
+                  : renderAcpPrompt(request)
               if (
                 textEncoder.encode(requiredInput).byteLength > MAX_PROMPT_BYTES
               ) {
-                return yield* failure("prompt");
+                return yield* failure('prompt')
               }
-              const managed = yield* sessionFor(request);
+              const managed = yield* sessionFor(request)
               if (managed === null) {
-                return [];
+                return []
               }
               const participantIds =
                 options.agentContext === undefined
@@ -3536,7 +3520,7 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                           options.laborerSlackId
                         ),
                       ]),
-                    ];
+                    ]
               return yield* runPrompt(
                 managed.session,
                 request,
@@ -3558,112 +3542,112 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
                 options.imageStorageRoot,
                 initialized.agentCapabilities?.promptCapabilities?.image ===
                   true
-              );
+              )
             })
-          );
+          )
         }).pipe(
-          Effect.catchTag("AcpConversationFailure", () => toHandlerFailure())
-        );
-      };
+          Effect.catchTag('AcpConversationFailure', () => toHandlerFailure())
+        )
+      }
 
-      const recover: NonNullable<ConversationAgentShape["recover"]> = (
+      const recover: NonNullable<ConversationAgentShape['recover']> = (
         request,
         publishMessage
       ) => {
         if (publishMessage === undefined) {
-          return toHandlerFailure();
+          return toHandlerFailure()
         }
         // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Recovery deliberately makes every terminal, retryable, unresolved, and legacy binding branch explicit.
         return Effect.gen(function* () {
-          yield* requireHealthyProcess;
+          yield* requireHealthyProcess
           const latestAttempt =
             request.promptAttemptStore === undefined
               ? null
-              : yield* request.promptAttemptStore.latest;
+              : yield* request.promptAttemptStore.latest
           if (request.recovery !== undefined) {
             if (
               latestAttempt?.attemptId ===
                 request.recovery.replacementAttemptId &&
-              latestAttempt.recoveryClass === "unresolved"
+              latestAttempt.recoveryClass === 'unresolved'
             ) {
-              return yield* ambiguousPromptRecoveryFailure();
+              return yield* ambiguousPromptRecoveryFailure()
             }
-            return yield* handle(request, publishMessage);
+            return yield* handle(request, publishMessage)
           }
-          if (latestAttempt?.recoveryClass === "unresolved") {
-            return yield* ambiguousPromptRecoveryFailure();
+          if (latestAttempt?.recoveryClass === 'unresolved') {
+            return yield* ambiguousPromptRecoveryFailure()
           }
           if (
-            latestAttempt?.phase === "terminal" &&
+            latestAttempt?.phase === 'terminal' &&
             latestAttempt.outcome !== null
           ) {
             if (request.promptAttemptStore !== undefined) {
               const timestamp =
-                latestAttempt.terminalAt ?? (yield* Clock.currentTimeMillis);
+                latestAttempt.terminalAt ?? (yield* Clock.currentTimeMillis)
               yield* request.promptAttemptStore.markTerminalAndCompleteBinding(
                 latestAttempt.attemptId,
                 latestAttempt.outcome,
                 timestamp,
                 latestAttempt.bindingGeneration
-              );
+              )
             }
-            return latestAttempt.outcome === "end_turn"
+            return latestAttempt.outcome === 'end_turn'
               ? ([] as const)
-              : yield* terminalStopFailure(latestAttempt.outcome);
+              : yield* terminalStopFailure(latestAttempt.outcome)
           }
-          if (latestAttempt?.recoveryClass === "retryable") {
-            return yield* handle(request, publishMessage);
+          if (latestAttempt?.recoveryClass === 'retryable') {
+            return yield* handle(request, publishMessage)
           }
-          const store = request.sessionBindingStore;
+          const store = request.sessionBindingStore
           if (options.durableSessionMode !== true || store === undefined) {
-            return yield* ambiguousPromptRecoveryFailure();
+            return yield* ambiguousPromptRecoveryFailure()
           }
-          const persisted = yield* store.load;
+          const persisted = yield* store.load
           if (bindingIsDefinitelyUnsubmitted(persisted)) {
-            return yield* handle(request, publishMessage);
+            return yield* handle(request, publishMessage)
           }
           const definitelyUnsubmitted = yield* workspacePromptGate.withPermit(
             Effect.gen(function* () {
-              yield* requireHealthyProcess;
-              const latest = yield* store.load;
+              yield* requireHealthyProcess
+              const latest = yield* store.load
               if (bindingIsDefinitelyUnsubmitted(latest)) {
-                return true;
+                return true
               }
-              const managed = yield* sessionFor(request);
+              const managed = yield* sessionFor(request)
               if (managed === null) {
-                return yield* toHandlerFailure();
+                return yield* toHandlerFailure()
               }
-              return false;
+              return false
             })
-          );
+          )
           if (definitelyUnsubmitted) {
-            return yield* handle(request, publishMessage);
+            return yield* handle(request, publishMessage)
           }
-          yield* Effect.logWarning("ACP prompt recovery requires resolution", {
-            code: "prompt-submission-ambiguous",
-          });
-          return yield* ambiguousPromptRecoveryFailure();
+          yield* Effect.logWarning('ACP prompt recovery requires resolution', {
+            code: 'prompt-submission-ambiguous',
+          })
+          return yield* ambiguousPromptRecoveryFailure()
         }).pipe(
-          Effect.catchTag("AcpConversationFailure", () => toHandlerFailure())
-        );
-      };
+          Effect.catchTag('AcpConversationFailure', () => toHandlerFailure())
+        )
+      }
 
       const replaceAmbiguousSession: NonNullable<
-        ConversationAgentShape["replaceAmbiguousSession"]
+        ConversationAgentShape['replaceAmbiguousSession']
       > = (request) =>
         workspacePromptGate
           .withPermit(sessionFor(request).pipe(Effect.asVoid))
           .pipe(
-            Effect.catchTag("AcpConversationFailure", () => toHandlerFailure())
-          );
+            Effect.catchTag('AcpConversationFailure', () => toHandlerFailure())
+          )
 
-      observeProcessHealth(options, "ready");
+      observeProcessHealth(options, 'ready')
       return {
         handle,
         recover,
         replaceAmbiguousSession,
-      };
-    }).pipe(Effect.provideService(Scope.Scope, constructionScope));
+      }
+    }).pipe(Effect.provideService(Scope.Scope, constructionScope))
     return yield* setup.pipe(
       Effect.tap(() =>
         Effect.addFinalizer((exit) => Scope.close(constructionScope, exit))
@@ -3671,10 +3655,10 @@ export const makeAcpConversationAgent = Effect.fn("makeAcpConversationAgent")(
       Effect.onExit((exit) =>
         Exit.isFailure(exit)
           ? Effect.sync(() =>
-              observeProcessHealth(options, "quarantined")
+              observeProcessHealth(options, 'quarantined')
             ).pipe(Effect.andThen(Scope.close(constructionScope, exit)))
           : Effect.void
       )
-    );
+    )
   }
-);
+)

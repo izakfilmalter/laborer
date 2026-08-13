@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, renameSync, rmSync, symlinkSync } from 'node:fs'
+import { lstatSync, mkdirSync, renameSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -36,6 +36,11 @@ export const installLaborerMcpSymlink = (
     'laborer-mcp'
   )
   mkdirSync(dirname(commandPath), { recursive: true })
+
+  const existingCommand = lstatSync(commandPath, { throwIfNoEntry: false })
+  if (existingCommand !== undefined && !existingCommand.isSymbolicLink()) {
+    throw new Error(`Refusing to replace non-symlink at ${commandPath}`)
+  }
 
   const temporaryPath = `${commandPath}.${String(process.pid)}.${randomUUID()}.tmp`
   try {

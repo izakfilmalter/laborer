@@ -1,4 +1,11 @@
-import { mkdtempSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -47,6 +54,24 @@ describe('Laborer MCP symlink installer', () => {
     })
 
     expect(readlinkSync(installedPath)).toBe(secondScript)
+  })
+
+  it('does not overwrite a user-owned command at the stable path', () => {
+    const homeDirectory = makeTemporaryDirectory()
+    const commandPath = join(homeDirectory, '.local', 'bin', 'laborer-mcp')
+    const warn = vi.fn()
+    mkdirSync(join(homeDirectory, '.local', 'bin'), { recursive: true })
+    writeFileSync(commandPath, 'user command')
+
+    refreshLaborerMcpSymlink({
+      homeDirectory,
+      scriptPath: '/Applications/Laborer.app/laborer-mcp.mjs',
+      warn,
+    })
+
+    expect(readFileSync(commandPath, 'utf8')).toBe('user command')
+    expect(warn).toHaveBeenCalledOnce()
+    expect(warn.mock.calls[0]?.[0]).toContain('Refusing to replace non-symlink')
   })
 
   it('logs a warning and returns without throwing when installation fails', () => {

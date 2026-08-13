@@ -29,7 +29,8 @@
     "@opentelemetry/semantic-conventions": "^1.33.0",
     "diff": "7.0.0",
     "effect": "catalog:",
-    "ignore": "7.0.5"
+    "ignore": "7.0.5",
+    "ioredis": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

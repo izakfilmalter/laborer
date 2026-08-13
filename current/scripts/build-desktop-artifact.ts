@@ -123,6 +123,11 @@ const REQUIRED_ASAR_FILES = [
   'node_modules/@effect/platform-node/package.json',
   'node_modules/@effect/platform-node-shared/package.json',
   'node_modules/effect/package.json',
+  // The @effect/platform-node barrel eagerly loads NodeRedis, which imports
+  // its required `ioredis` peer dependency at module load. If ioredis is
+  // missing from the asar, every sidecar crash-loops at import time and the
+  // renderer gets ERR_CONNECTION_REFUSED on the backend port.
+  'node_modules/ioredis/package.json',
   'packages/server/dist/main.mjs',
   // The bundled server resolves task-db SQL migrations relative to the
   // bundle (`new URL('./migrations/*.sql', import.meta.url)`). If these are

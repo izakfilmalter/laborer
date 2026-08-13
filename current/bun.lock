@@ -142,6 +142,7 @@
         "@laborer/shared": "workspace:*",
         "@parcel/watcher": "^2.5.6",
         "effect": "catalog:",
+        "ioredis": "catalog:",
       },
       "devDependencies": {
         "@effect/vitest": "catalog:",
@@ -172,6 +173,7 @@
         "diff": "7.0.0",
         "effect": "catalog:",
         "ignore": "7.0.5",
+        "ioredis": "catalog:",
       },
       "devDependencies": {
         "@effect/vitest": "catalog:",
@@ -224,6 +226,7 @@
         "@xterm/addon-serialize": "^0.14.0",
         "@xterm/headless": "^6.0.0",
         "effect": "catalog:",
+        "ioredis": "catalog:",
         "node-pty": "1.1.0",
       },
       "devDependencies": {
@@ -246,6 +249,7 @@
     "@effect/vitest": "4.0.0-beta.99",
     "dotenv": "^17.2.2",
     "effect": "4.0.0-beta.99",
+    "ioredis": "^5.7.0",
     "typescript": "^5",
     "zod": "^4.1.13",
   },

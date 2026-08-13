@@ -25,5 +25,6 @@ OpenCode-managed references are readable under `~/.local/share/opencode/repos/`:
 - `@agent-client-protocol` — `github.com/agentclientprotocol/agent-client-protocol`
 - `@chat` — `github.com/vercel/chat`
 - `@t3code` — `github.com/pingdotgg/t3code`
+- `@vscode` — `github.com/microsoft/vscode`
 
 Use them for specifications, implementation patterns, tests, and examples. Prefer the target implementation's installed dependency versions when APIs differ.

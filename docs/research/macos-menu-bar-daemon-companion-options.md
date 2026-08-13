@@ -4,7 +4,7 @@
 
 ## Question
 
-Can the primary `next/` Laborer daemon have a good React, React Native, or
+Can the primary `apps/bot/` Laborer daemon have a good React, React Native, or
 TypeScript macOS menu-bar companion, or does the companion need to be a native
 app?
 
@@ -50,17 +50,17 @@ the companion as a second implementation of the Runner:
   without merging their state. The Runner owns ingestion, durable ordering,
   process supervision, and delivery; Slack details remain in adapters. See
   [`CONTEXT.md`](../../CONTEXT.md) and
-  [`next/AGENTS.md`](../../next/AGENTS.md).
+  [`apps/bot/AGENTS.md`](../../apps/bot/AGENTS.md).
 - The current live entrypoint is a long-running Node/Effect process. It starts
   one app-wide Socket Mode receiver, waits for `SIGINT` or `SIGTERM`, and then
   closes its Effect scope. It currently exposes no operator health/control API.
   See
-  [`next/src/slack/live.ts`](../../next/src/slack/live.ts).
+  [`apps/bot/src/slack/live.ts`](../../apps/bot/src/slack/live.ts).
 - Runtime state and a per-root ownership lock live under
   `.laborer-runtime/`. The lock's loopback TCP server proves exclusive
   ownership; it is not an authenticated control protocol. See
-  [`next/src/slack/runtime-paths.ts`](../../next/src/slack/runtime-paths.ts) and
-  [`next/src/slack/runner-lock.ts`](../../next/src/slack/runner-lock.ts).
+  [`apps/bot/src/slack/runtime-paths.ts`](../../apps/bot/src/slack/runtime-paths.ts) and
+  [`apps/bot/src/slack/runner-lock.ts`](../../apps/bot/src/slack/runner-lock.ts).
 - Slack credentials are resolved from macOS Keychain into the daemon's
   environment at launch, and are kept out of tracked `.env` files and handler
   environments. The menu app should not broaden that secret boundary. See
@@ -102,7 +102,7 @@ switcher presence appropriate for a menu-bar utility.
 The existing daemon can remain independently installed. If a future product
 bundles it, Tauri's sidecar mechanism accepts any executable, supports
 architecture-qualified binaries, and can expose stdout/stdin to Rust or
-JavaScript. Because `next/` currently executes TypeScript on Node, such a bundle
+JavaScript. Because `apps/bot/` currently executes TypeScript on Node, such a bundle
 must include a supported Node runtime or first compile the daemon into an
 independent executable; the Rust shell does not itself run the daemon's
 TypeScript.

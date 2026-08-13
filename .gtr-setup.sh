@@ -23,7 +23,7 @@ fi
 cat > "$WORKTREES_DIR/biome.json" << EOF
 {
   "\$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
-  "extends": ["../${REPO_NAME}/current/biome.json"]
+  "extends": ["../${REPO_NAME}/biome.json"]
 }
 EOF
 echo "  Updated biome.json in worktrees directory"
@@ -36,11 +36,11 @@ git gtr config set gtr.ai.default claude
 
 # Copy the current app environment to worktrees (gtr handles copying, script
 # handles overrides).
-git gtr config add gtr.copy.include "current/.env.local"
+git gtr config add gtr.copy.include ".env.local"
 
 # Post-create hook for worktree setup and bun install
 # Use absolute path since hook runs from within the new worktree
-git gtr config add gtr.hook.postCreate "$REPO_ROOT/current/scripts/worktree-setup.sh"
+git gtr config add gtr.hook.postCreate "$REPO_ROOT/scripts/worktree-setup.sh"
 
 echo ""
 echo "gtr configured successfully!"

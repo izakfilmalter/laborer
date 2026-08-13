@@ -1,6 +1,6 @@
 # Next: Primary Slack-Native Laborer
 
-`next/` is the primary Laborer implementation. It is an issue-driven Slack-native TypeScript application built from tracer bullets and canaries. `README.md` records what each prototype proves and its remaining scope; do not infer production guarantees beyond that evidence.
+`apps/bot/` is the primary Laborer implementation. It is an issue-driven Slack-native TypeScript application built from tracer bullets and canaries. `README.md` records what each prototype proves and its remaining scope; do not infer production guarantees beyond that evidence.
 
 ## Architectural Boundary
 
@@ -17,11 +17,11 @@ Keep throwaway work inside its named prototype unless the issue explicitly promo
 
 Run commands from the repository root:
 
-- Fix formatting: `bun run --cwd next format:fix`
-- Typecheck: `bun run --cwd next typecheck`
-- Test: `bun run --cwd next test`
-- Scan tracked files for Slack secrets: `bun run --cwd next check:secrets`
-- Run the full check: `bun run --cwd next check`
+- Fix formatting: `bun run --cwd apps/bot format:fix`
+- Typecheck: `bun run --cwd apps/bot typecheck`
+- Test: `bun run --cwd apps/bot test`
+- Scan tracked files for Slack secrets: `bun run --cwd apps/bot check:secrets`
+- Run the full check: `bun run --cwd apps/bot check`
 
 `check` verifies formatting but does not fix it. Run `format:fix` before the full check.
 
@@ -29,9 +29,9 @@ The live Slack entry point runs on Node because the Chat Slack adapter depends o
 
 ## Daemon Lifecycle
 
-- Start the live daemon from the repository root with `bun run --cwd next start:slack`.
+- Start the live daemon from the repository root with `bun run --cwd apps/bot start:slack`.
 - Stop it with Ctrl-C and wait for `Slack Laborer stopped cleanly.` before starting another instance.
-- During daemon development, use `bun run --cwd next dev:slack`. Node watch mode restarts the one Chat/ACP composition; in-flight conversational work is intentionally not drained or replayed.
+- During daemon development, use `bun run --cwd apps/bot dev:slack`. Node watch mode restarts the one Chat/ACP composition; in-flight conversational work is intentionally not drained or replayed.
 - Node watch mode follows imported source files. Changes to dependencies, environment, package metadata, or Node require restarting `dev:slack`.
 
 ## Effect 4
@@ -39,7 +39,7 @@ The live Slack entry point runs on Node because the Chat Slack adapter depends o
 This implementation pins Effect 4 beta packages. Before writing Effect code:
 
 1. Run `effect-solutions list` and read relevant guides.
-2. Check the installed package version and existing `next/` usage.
+2. Check the installed package version and existing `apps/bot/` usage.
 3. Search `@effect` for current implementations.
 
 Use `Schema` at untrusted and persisted boundaries, schema-tagged errors for expected failures, narrow `Context.Service` contracts, `Layer` composition, and scoped resource lifecycles.

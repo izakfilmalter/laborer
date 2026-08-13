@@ -3,4 +3,4 @@ version = 1
 name = "laborer"
 
 [setup]
-script = "sh ./current/scripts/worktree-setup.sh --no-ports"
+script = "sh ./scripts/worktree-setup.sh --no-ports"

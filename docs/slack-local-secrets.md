@@ -1,7 +1,7 @@
 # Local Slack secret storage
 
 Laborer's local multi-workspace daemon keeps Slack credentials in macOS
-Keychain rather than `next/.env.local`. The tracked worktree initializer copies
+Keychain rather than `.env.local`. The tracked worktree initializer copies
 that environment file into agent worktrees, so Slack credentials must never be
 stored there.
 

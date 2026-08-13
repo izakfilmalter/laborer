@@ -55,7 +55,7 @@ Developers are spending $200+/month on AI coding agents (Claude Code, OpenCode, 
 
 ## Getting Started
 
-Run these commands from the `current/` directory.
+Run these commands from the repository root.
 
 Install dependencies:
 
@@ -104,7 +104,7 @@ In development, Turborepo runs all services as separate processes. In production
 ## Project Structure
 
 ```
-current/
+.
 ├── apps/
 │   ├── web/              # React frontend (Vite + TanStack Router)
 │   └── desktop/          # Electron main process
@@ -115,7 +115,7 @@ current/
 │   ├── shared/           # Shared types, schema, RPC contracts
 │   ├── env/              # Environment variable validation
 │   └── config/           # Shared TypeScript config
-├── docs/                 # Historical PRDs and progress notes
+├── docs/archive/         # Historical PRDs and progress notes
 └── scripts/              # Build and setup scripts
 ```
 
@@ -205,7 +205,7 @@ git gtr ai izak/feature-name
 
 This automatically:
 - Creates a new worktree with your branch
-- Copies `current/.env.local` (via gtr config)
+- Copies `.env.local` (via gtr config)
 - Copies AI tool config directories (`.opencode/`, `.cursor/`, `.claude/`)
 - Runs `bun install` for the current app
 

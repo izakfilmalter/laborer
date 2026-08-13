@@ -42,10 +42,10 @@ const makeRepository = async (): Promise<{
   )
   sandboxes.add(sandbox)
   const repository = join(sandbox, 'laborer')
-  const sourceDirectory = join(repository, 'next')
+  const sourceDirectory = join(repository, 'app')
   await mkdir(sourceDirectory, { recursive: true })
   await Promise.all([
-    writeFile(join(repository, '.gitignore'), 'next/.env.local\n'),
+    writeFile(join(repository, '.gitignore'), '.env.local\n'),
     writeFile(join(repository, 'README.md'), 'fixture\n'),
     writeFile(join(sourceDirectory, 'package.json'), '{}\n'),
     writeFile(join(sourceDirectory, '.env.local'), 'SECRET=required\n', {
@@ -115,7 +115,7 @@ describe('eighth adapter review regressions', () => {
     const { workingDirectory } = await Effect.runPromise(
       manager.create(request)
     )
-    expect(workingDirectory).toBe(join(worktreePath, 'next'))
+    expect(workingDirectory).toBe(join(worktreePath, 'app'))
     await unlink(join(workingDirectory, '.env.local'))
 
     expect(manager.validate).toBeDefined()

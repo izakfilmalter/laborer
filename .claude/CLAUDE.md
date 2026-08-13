@@ -144,7 +144,7 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 
 Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
 
-The guides and project reference can lag or lead the installed Effect 4 beta APIs. Never guess or copy an example blindly: the target implementation's manifest, installed types, and repository usage are authoritative. `current/` and `next/` pin shared Effect packages in lockstep; do not introduce Effect 3 patterns or independently change shared versions in `current/`.
+The guides and project reference can lag or lead the installed Effect 4 beta APIs. Never guess or copy an example blindly: the target implementation's manifest, installed types, and repository usage are authoritative. `apps/desktop/` and `apps/bot/` pin shared Effect packages in lockstep; do not introduce Effect 3 patterns or independently change shared versions in `apps/desktop/`.
 <!-- effect-solutions:end -->
 
 ## LiveStore

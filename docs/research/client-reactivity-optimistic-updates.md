@@ -1,8 +1,8 @@
 # Client reactivity and optimistic updates in OpenCode and T3 Code
 
-Research supporting the LiveStore-removal effort in `current/`: how the two reference apps
+Research supporting the LiveStore-removal effort in `apps/desktop/`: how the two reference apps
 handle (a) UI reactivity over their sqlite/server state and (b) optimistic updates, and
-what `current/` should copy. Companion to `opencode-sqlite-sync.md` and
+what `apps/desktop/` should copy. Companion to `opencode-sqlite-sync.md` and
 `t3code-sqlite-sync.md`, which cover the storage/sync layers; this covers the client layer.
 
 ## Executive comparison
@@ -138,7 +138,7 @@ race handling; Stream → Effect Atom → React bridge; derived indexes over per
 stores; token/version guards; keyed mutation scheduling. Note: T3 does not provide optimistic
 server-entity CRUD generically — it waits for the authoritative stream.
 
-## What `current/` should copy
+## What `apps/desktop/` should copy
 
 ### Minimal state model
 

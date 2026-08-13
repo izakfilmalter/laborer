@@ -224,7 +224,7 @@ Herdr has no separate unread counter. `seen == false` is the unread/attention ma
 
 ## 5. Configuration and documentation
 
-The generated current config reference is `docs/next/website/src/data/config-reference.json`:
+The generated current config reference is `docs/apps/bot/website/src/data/config-reference.json`:
 
 - `ui.toast.delivery`: `off|herdr|terminal|system`, default `off` (`:754-768`),
 - `ui.toast.delay_seconds`: 0–3600, default 1; delivery only if state still matches (`:769-774`),
@@ -239,7 +239,7 @@ The backing types/defaults are `ToastConfig`, `ToastDelivery`, `StatusIndicatorS
 
 There are no per-project notification settings in the inspected config model. Popup policy is global; sound can be overridden per **agent kind**, not per project/pane/session. Presentation metadata can customize labels/tokens, but it does not establish project-specific notification policy.
 
-Detection manifests support bundled, remotely updated, and local override sources (`ManifestSource`, `src/detect/manifest.rs:49-72`; load precedence at `src/detect/manifest.rs:554-663`). `herdr agent explain` exposes matched rule/evidence and fallback reasons; `website/agent-guide.md:82` recommends it for wrong states. Integration install/status is available separately and reports current/outdated/not-installed state (`src/integration/types.rs:120-159`).
+Detection manifests support bundled, remotely updated, and local override sources (`ManifestSource`, `src/detect/manifest.rs:49-72`; load precedence at `src/detect/manifest.rs:554-663`). `herdr agent explain` exposes matched rule/evidence and fallback reasons; `website/agent-guide.md:82` recommends it for wrong states. Integration install/status is available separately and reports apps/desktop/outdated/not-installed state (`src/integration/types.rs:120-159`).
 
 ## Notable design takeaways
 

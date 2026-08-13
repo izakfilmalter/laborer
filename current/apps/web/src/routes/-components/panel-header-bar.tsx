@@ -1,5 +1,10 @@
 import type { WindowLayout } from '@laborer/shared/types'
-import { PanelLeftClose, PanelLeftOpen, SquareKanban } from 'lucide-react'
+import {
+  Columns3,
+  PanelLeftClose,
+  PanelLeftOpen,
+  SquareKanban,
+} from 'lucide-react'
 import { useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
@@ -135,6 +140,7 @@ function WindowTabBar({
  */
 export function PanelHeaderBar({
   boardOpen,
+  onCleanUpLayout,
   onToggleBoard,
   onToggleSidebar,
   sidebarCollapsed,
@@ -146,6 +152,7 @@ export function PanelHeaderBar({
   onReorderWindowTabs,
 }: {
   readonly boardOpen: boolean
+  readonly onCleanUpLayout?: (() => void) | undefined
   readonly onToggleBoard: () => void
   readonly onToggleSidebar?: (() => void) | undefined
   readonly sidebarCollapsed?: boolean
@@ -209,6 +216,25 @@ export function PanelHeaderBar({
             <Kbd>K</Kbd>
           </TooltipContent>
         </Tooltip>
+        {onCleanUpLayout && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Clean up layout"
+                  onClick={onCleanUpLayout}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <Columns3 className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>
+              Clean up layout — give every workspace room
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Window tab bar (auto-hides with 1 tab) */}

@@ -30,6 +30,14 @@ import { cleanupRepo } from './workspace-helper.js'
 
 export const expect = playwrightExpect
 
+/**
+ * Electron has no true headless mode, so by default the app runs with
+ * hidden windows (LABORER_HIDE_WINDOWS=1) and no dock icon. Playwright
+ * drives the page over CDP, which works without a visible window.
+ * Set E2E_HEADED=1 to show the real window while debugging tests.
+ */
+const runHeaded = process.env.E2E_HEADED === '1'
+
 /** Resolve the Electron binary path. */
 function resolveElectronPath(): string {
   const desktopDir = resolve(import.meta.dirname, '../../../../apps/desktop')
@@ -71,6 +79,19 @@ export const test = base.extend<E2EFixtures>({
     // Resolve the data dir — use a temp dir for test isolation
     const dataDirBase = join(tmpdir(), `laborer-e2e-data-${Date.now()}`)
 
+    // Strip host-process markers from the inherited environment. They leak
+    // in when tests are launched from an Electron-hosted terminal (editors,
+    // agents, Laborer itself):
+    // - ELECTRON_RUN_AS_NODE makes the Electron binary boot as plain Node,
+    //   which rejects Chromium flags with "bad option" and kills the launch.
+    // - LABORER_BACKEND_CHILD trips main.ts's guard against launching the
+    //   desktop app from a backend child process environment.
+    const {
+      ELECTRON_RUN_AS_NODE: _electronRunAsNode,
+      LABORER_BACKEND_CHILD: _laborerBackendChild,
+      ...inheritedEnv
+    } = process.env
+
     const electronApp = await _electron.launch({
       executablePath: resolveElectronPath(),
       args: [
@@ -78,11 +99,17 @@ export const test = base.extend<E2EFixtures>({
         join(desktopDir, 'dist-electron', 'main.cjs'),
       ],
       env: {
-        ...process.env,
+        ...inheritedEnv,
         VITE_DEV_SERVER_URL: devServerUrl,
         DATA_DIR: dataDirBase,
+        // Isolate the Electron user data profile (localStorage, window
+        // state, caches) so tests never read or pollute the developer's
+        // real profile, and each test starts with a clean layout.
+        LABORER_USER_DATA_DIR: join(dataDirBase, 'user-data'),
         // Disable GPU acceleration for consistent test rendering
         ELECTRON_DISABLE_GPU: '1',
+        // Keep windows hidden unless explicitly running headed
+        ...(runHeaded ? {} : { LABORER_HIDE_WINDOWS: '1' }),
       },
       timeout: 30_000,
     })
@@ -142,6 +169,17 @@ export const test = base.extend<E2EFixtures>({
 
     // Wait for the page to be fully loaded
     await page.waitForLoadState('domcontentloaded')
+
+    // When the window is hidden, Chromium reports document.hasFocus() as
+    // false, which breaks focus-dependent code (xterm.js keyboard capture).
+    // Enable CDP focus emulation so the page behaves as if focused — the
+    // same mechanism headless Chromium uses.
+    if (!runHeaded) {
+      const session = await page.context().newCDPSession(page)
+      await session.send('Emulation.setFocusEmulationEnabled', {
+        enabled: true,
+      })
+    }
 
     // Auto-dismiss any unexpected JavaScript dialogs (alert/confirm/prompt).
     // The Electron app doesn't use native browser dialogs, but rare race

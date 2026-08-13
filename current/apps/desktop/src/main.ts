@@ -176,6 +176,15 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const isDev = Boolean(VITE_DEV_SERVER_URL)
 const desktopSmokeTestFile = process.env.LABORER_DESKTOP_SMOKE_TEST_FILE
 
+/**
+ * Headless-style mode for E2E tests: keep windows hidden so Playwright can
+ * drive the app via CDP without a visible window stealing focus. Electron
+ * has no true headless mode, so "hidden window + no dock icon" is the
+ * closest equivalent (same pattern the smoke test uses).
+ */
+const hideWindowsForTests =
+  Boolean(desktopSmokeTestFile) || process.env.LABORER_HIDE_WINDOWS === '1'
+
 const desktopAppName = resolveDesktopAppName({
   isDevelopment: isDev,
   version: app.getVersion(),
@@ -183,6 +192,16 @@ const desktopAppName = resolveDesktopAppName({
 
 app.setName(desktopAppName)
 process.title = desktopAppName
+
+// Isolate the Electron user data profile when requested (E2E tests).
+// Without this, test runs share localStorage, window state, and caches
+// with the developer's real profile — persisted panel layouts accumulate
+// across runs and tests corrupt the developer's actual workspace layout.
+// MUST happen before app.whenReady() so all storage uses the override.
+const userDataDirOverride = process.env.LABORER_USER_DATA_DIR
+if (userDataDirOverride) {
+  app.setPath('userData', userDataDirOverride)
+}
 
 /** Traffic light button inset for the hidden title bar. */
 const TRAFFIC_LIGHT_POSITION = { x: 12, y: 10 } as const
@@ -293,6 +312,9 @@ function createWindow(record?: WindowRecord): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       additionalArguments: buildWindowBootstrapArgs({ windowId }),
+      // Hidden windows throttle timers and requestAnimationFrame by
+      // default, which stalls xterm.js rendering during hidden E2E runs.
+      ...(hideWindowsForTests ? { backgroundThrottling: false } : {}),
     },
   })
 
@@ -320,7 +342,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   })
 
   window.once('ready-to-show', () => {
-    if (!desktopSmokeTestFile) {
+    if (!hideWindowsForTests) {
       window.show()
     }
   })
@@ -429,6 +451,11 @@ async function startServerBackend(): Promise<void> {
 app
   .whenReady()
   .then(async () => {
+    // In hidden test mode, drop the dock icon so launching the app does
+    // not steal focus or bounce the dock on macOS.
+    if (hideWindowsForTests) {
+      app.dock?.hide()
+    }
     // In production, register the custom laborer:// protocol handler
     // that serves the built frontend from disk.
     if (!isDev) {

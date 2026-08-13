@@ -2362,11 +2362,14 @@ class TerminalManager extends Context.Service<
         Effect.catchDefect(() => Effect.void)
       )
 
-      // Launch the detection fiber as a daemon so it runs for the
-      // lifetime of the scoped layer and is interrupted on shutdown.
+      // Launch the detection fiber in the layer scope so it is interrupted on
+      // shutdown instead of leaking into Effect's global scope.
       yield* detectionTick.pipe(
         Effect.repeat(Schedule.spaced(`${DETECTION_INTERVAL_MS} millis`)),
-        Effect.forkDetach({ startImmediately: true })
+        // The process detector must register before layer acquisition returns;
+        // terminal-manager's OSC 133/background-process regression proves the
+        // deferred v4 default can otherwise publish a false idle transition.
+        Effect.forkScoped({ startImmediately: true })
       )
 
       yield* Effect.log(

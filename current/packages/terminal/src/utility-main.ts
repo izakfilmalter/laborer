@@ -194,7 +194,7 @@ function setupSessionPersistence(
   const program = Effect.gen(function* () {
     const tm = yield* TerminalManager
 
-    // Capture the runtime for synchronous access in the SIGTERM handler
+    // Capture the services for synchronous access in the SIGTERM handler
     const context = yield* Effect.context<TerminalManager>()
     const runSync = Effect.runSyncWith(context)
 

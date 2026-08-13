@@ -1,7 +1,7 @@
-import type { LaborerCompanionBridge } from "../shared.ts";
+import type { LaborerCompanionBridge } from '../shared.ts'
 
 declare global {
   interface Window {
-    readonly laborerCompanion: LaborerCompanionBridge;
+    readonly laborerCompanion: LaborerCompanionBridge
   }
 }

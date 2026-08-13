@@ -1,5 +1,5 @@
-import { Effect, Schema } from "effect";
-import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { Effect, Schema } from 'effect'
+import { Rpc, RpcGroup } from 'effect/unstable/rpc'
 import {
   CancelExecutionRequest,
   ConversationClientCompatibility,
@@ -18,14 +18,14 @@ import {
   RuntimeExecutionId,
   RuntimeWorkspaceId,
   StartExecutionRequest,
-} from "./root-runtime.ts";
+} from './root-runtime.ts'
 
-export const ROOT_RUNTIME_PROTOCOL_VERSION = 4;
+export const ROOT_RUNTIME_PROTOCOL_VERSION = 4
 
-const ProtocolVersion = Schema.Literal(ROOT_RUNTIME_PROTOCOL_VERSION);
+const ProtocolVersion = Schema.Literal(ROOT_RUNTIME_PROTOCOL_VERSION)
 const NegotiatedProtocolVersion = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(1)
-);
+)
 
 export const AttachConversationClientRpcRequest = Schema.Struct({
   compatibility: ConversationClientCompatibility,
@@ -34,16 +34,16 @@ export const AttachConversationClientRpcRequest = Schema.Struct({
   // schema failure before the RPC handler runs.
   protocolVersion: NegotiatedProtocolVersion,
   workspaceId: RuntimeWorkspaceId,
-});
+})
 
 export const NegotiateConversationClientRpc = Rpc.make(
-  "RootRuntime.NegotiateConversationClient",
+  'RootRuntime.NegotiateConversationClient',
   {
     error: DurableRuntimeError,
     payload: AttachConversationClientRpcRequest,
     success: Schema.Void,
   }
-);
+)
 
 /**
  * Establishes the scoped, process-local delivery half of the versioned RPC
@@ -51,76 +51,76 @@ export const NegotiateConversationClientRpc = Rpc.make(
  * negotiate this request first and then bind their connection-owned handler.
  */
 export const attachConversationClientLocally = Effect.fn(
-  "attachConversationClientLocally"
+  'attachConversationClientLocally'
 )(function* (
   runtime: RootDurableRuntimeShape,
   untrustedRequest: unknown,
-  handler: Parameters<RootDurableRuntimeShape["attachConversationClient"]>[2]
+  handler: Parameters<RootDurableRuntimeShape['attachConversationClient']>[2]
 ) {
   const request = yield* Schema.decodeUnknownEffect(
     AttachConversationClientRpcRequest,
-    { onExcessProperty: "error" }
+    { onExcessProperty: 'error' }
   )(untrustedRequest).pipe(
     Effect.mapError(() =>
-      DurableRuntimeError.make({ reason: "incompatible-client" })
+      DurableRuntimeError.make({ reason: 'incompatible-client' })
     )
-  );
+  )
   if (request.protocolVersion !== ROOT_RUNTIME_PROTOCOL_VERSION) {
-    return yield* DurableRuntimeError.make({ reason: "incompatible-client" });
+    return yield* DurableRuntimeError.make({ reason: 'incompatible-client' })
   }
   yield* runtime.attachConversationClient(
     request.compatibility,
     request.workspaceId,
     handler
-  );
-});
+  )
+})
 
-export const StartExecutionRpc = Rpc.make("RootRuntime.StartExecution", {
+export const StartExecutionRpc = Rpc.make('RootRuntime.StartExecution', {
   error: DurableRuntimeError,
   payload: Schema.Struct({
     ...StartExecutionRequest.fields,
     protocolVersion: ProtocolVersion,
   }),
   success: ExecutionSnapshot,
-});
+})
 
 export const RunConversationRpcRequest = Schema.Struct({
   ...RunConversationRequest.fields,
   protocolVersion: ProtocolVersion,
-});
+})
 
-export const RunConversationRpc = Rpc.make("RootRuntime.RunConversation", {
+export const RunConversationRpc = Rpc.make('RootRuntime.RunConversation', {
   error: DurableRuntimeError,
   payload: RunConversationRpcRequest,
   success: ConversationReceipt,
-});
+})
 
-export const runConversationRpcLocally = Effect.fn("runConversationRpcLocally")(
+export const runConversationRpcLocally = Effect.fn('runConversationRpcLocally')(
   function* (runtime: RootDurableRuntimeShape, untrustedRequest: unknown) {
     const request = yield* Schema.decodeUnknownEffect(
       RunConversationRpcRequest,
-      { onExcessProperty: "error" }
+      { onExcessProperty: 'error' }
     )(untrustedRequest).pipe(
       Effect.mapError(() =>
-        DurableRuntimeError.make({ reason: "invalid-payload" })
+        DurableRuntimeError.make({ reason: 'invalid-payload' })
       )
-    );
+    )
     const receipt = yield* runtime.runConversation({
       event: request.event,
       rootIdentity: request.rootIdentity,
       workspaceId: request.workspaceId,
-    });
+    })
     return yield* Schema.decodeUnknownEffect(ConversationReceipt, {
-      onExcessProperty: "error",
+      onExcessProperty: 'error',
     })(receipt).pipe(
       Effect.mapError(() =>
-        DurableRuntimeError.make({ reason: "storage-failure" })
+        DurableRuntimeError.make({ reason: 'storage-failure' })
       )
-    );
+    )
   }
-);
+)
 
-export const GetExecutionRpc = Rpc.make("RootRuntime.GetExecution", {
+export const GetExecutionRpc = Rpc.make('RootRuntime.GetExecution', {
   error: DurableRuntimeError,
   payload: {
     executionId: RuntimeExecutionId,
@@ -129,37 +129,37 @@ export const GetExecutionRpc = Rpc.make("RootRuntime.GetExecution", {
     workspaceId: RuntimeWorkspaceId,
   },
   success: ExecutionSnapshot,
-});
+})
 
-export const InspectExecutionRpc = Rpc.make("RootRuntime.InspectExecution", {
+export const InspectExecutionRpc = Rpc.make('RootRuntime.InspectExecution', {
   error: DurableRuntimeError,
   payload: Schema.Struct({
     ...InspectExecutionRequest.fields,
     protocolVersion: ProtocolVersion,
   }),
   success: ExecutionControlReceipt,
-});
+})
 
-export const FollowUpExecutionRpc = Rpc.make("RootRuntime.FollowUpExecution", {
+export const FollowUpExecutionRpc = Rpc.make('RootRuntime.FollowUpExecution', {
   error: DurableRuntimeError,
   payload: Schema.Struct({
     ...FollowUpExecutionRequest.fields,
     protocolVersion: ProtocolVersion,
   }),
   success: ExecutionControlReceipt,
-});
+})
 
-export const CancelExecutionRpc = Rpc.make("RootRuntime.CancelExecution", {
+export const CancelExecutionRpc = Rpc.make('RootRuntime.CancelExecution', {
   error: DurableRuntimeError,
   payload: Schema.Struct({
     ...CancelExecutionRequest.fields,
     protocolVersion: ProtocolVersion,
   }),
   success: ExecutionControlReceipt,
-});
+})
 
 export const PendingExecutionEventsRpc = Rpc.make(
-  "RootRuntime.PendingExecutionEvents",
+  'RootRuntime.PendingExecutionEvents',
   {
     error: DurableRuntimeError,
     payload: {
@@ -173,10 +173,10 @@ export const PendingExecutionEventsRpc = Rpc.make(
     },
     success: Schema.Array(ExecutionEvent),
   }
-);
+)
 
 export const AcknowledgeExecutionEventRpc = Rpc.make(
-  "RootRuntime.AcknowledgeExecutionEvent",
+  'RootRuntime.AcknowledgeExecutionEvent',
   {
     error: DurableRuntimeError,
     payload: {
@@ -187,7 +187,7 @@ export const AcknowledgeExecutionEventRpc = Rpc.make(
     },
     success: Schema.Void,
   }
-);
+)
 
 export const RootRuntimeRpcs = RpcGroup.make(
   NegotiateConversationClientRpc,
@@ -199,23 +199,23 @@ export const RootRuntimeRpcs = RpcGroup.make(
   CancelExecutionRpc,
   PendingExecutionEventsRpc,
   AcknowledgeExecutionEventRpc
-);
+)
 
 export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
   Effect.gen(function* () {
-    const runtime = yield* RootDurableRuntime;
+    const runtime = yield* RootDurableRuntime
     return {
-      "RootRuntime.AcknowledgeExecutionEvent": ({
+      'RootRuntime.AcknowledgeExecutionEvent': ({
         conversationId,
         eventId,
         workspaceId,
       }) => runtime.acknowledgeEvent(eventId, conversationId, workspaceId),
-      "RootRuntime.GetExecution": ({
+      'RootRuntime.GetExecution': ({
         conversationId,
         executionId,
         workspaceId,
       }) => runtime.getExecution(executionId, conversationId, workspaceId),
-      "RootRuntime.InspectExecution": ({
+      'RootRuntime.InspectExecution': ({
         controlId,
         conversationId,
         executionId,
@@ -227,16 +227,16 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
           executionId,
           workspaceId,
         }),
-      "RootRuntime.NegotiateConversationClient": ({
+      'RootRuntime.NegotiateConversationClient': ({
         compatibility,
         protocolVersion,
       }) =>
         protocolVersion === ROOT_RUNTIME_PROTOCOL_VERSION
           ? runtime.checkConversationClientCompatibility(compatibility)
           : Effect.fail(
-              DurableRuntimeError.make({ reason: "incompatible-client" })
+              DurableRuntimeError.make({ reason: 'incompatible-client' })
             ),
-      "RootRuntime.FollowUpExecution": ({
+      'RootRuntime.FollowUpExecution': ({
         content,
         controlId,
         conversationId,
@@ -250,7 +250,7 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
           executionId,
           workspaceId,
         }),
-      "RootRuntime.CancelExecution": ({
+      'RootRuntime.CancelExecution': ({
         controlId,
         conversationId,
         executionId,
@@ -262,18 +262,18 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
           executionId,
           workspaceId,
         }),
-      "RootRuntime.PendingExecutionEvents": ({
+      'RootRuntime.PendingExecutionEvents': ({
         conversationId,
         limit,
         workspaceId,
       }) => runtime.pendingEvents(conversationId, workspaceId, limit),
-      "RootRuntime.RunConversation": (request) =>
+      'RootRuntime.RunConversation': (request) =>
         runtime.runConversation({
           event: request.event,
           rootIdentity: request.rootIdentity,
           workspaceId: request.workspaceId,
         }),
-      "RootRuntime.StartExecution": (request) =>
+      'RootRuntime.StartExecution': (request) =>
         runtime.startExecution({
           actionName: request.actionName,
           conversationId: request.conversationId,
@@ -282,6 +282,6 @@ export const rootRuntimeRpcHandlers = RootRuntimeRpcs.toLayer(
           rootIdentity: request.rootIdentity,
           workspaceId: request.workspaceId,
         }),
-    };
+    }
   })
-);
+)

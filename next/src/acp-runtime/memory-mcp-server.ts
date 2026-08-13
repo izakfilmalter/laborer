@@ -1,19 +1,19 @@
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { Effect } from "effect";
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { Effect } from 'effect'
 import {
   makeLaborerMemoryMcpServer,
   publishLaborerMemoryMcpReadiness,
   recordLaborerMemoryDiagnostic,
-} from "./memory-mcp.ts";
+} from './memory-mcp.ts'
 
-const root = process.env.LABORER_MEMORY_ROOT;
-const configRoot = process.env.LABORER_MEMORY_CONFIG_ROOT;
-const stateRoot = process.env.LABORER_MEMORY_STATE_ROOT;
-const workspaceId = process.env.LABORER_MEMORY_WORKSPACE_ID;
-const serverName = process.env.LABORER_MEMORY_SERVER_NAME;
-const authorityGuard = process.env.LABORER_MEMORY_AUTHORITY_GUARD;
-const readinessNonce = process.env.LABORER_MEMORY_REGISTRATION_NONCE;
-const readinessPath = process.env.LABORER_MEMORY_READY_PATH;
+const root = process.env.LABORER_MEMORY_ROOT
+const configRoot = process.env.LABORER_MEMORY_CONFIG_ROOT
+const stateRoot = process.env.LABORER_MEMORY_STATE_ROOT
+const workspaceId = process.env.LABORER_MEMORY_WORKSPACE_ID
+const serverName = process.env.LABORER_MEMORY_SERVER_NAME
+const authorityGuard = process.env.LABORER_MEMORY_AUTHORITY_GUARD
+const readinessNonce = process.env.LABORER_MEMORY_REGISTRATION_NONCE
+const readinessPath = process.env.LABORER_MEMORY_READY_PATH
 
 if (
   root === undefined ||
@@ -22,16 +22,14 @@ if (
   workspaceId === undefined
 ) {
   process.stderr.write(
-    "[laborer-memory] fixed workspace configuration missing\n"
-  );
-  process.exitCode = 1;
+    '[laborer-memory] fixed workspace configuration missing\n'
+  )
+  process.exitCode = 1
 } else {
   const program = Effect.gen(function* () {
-    const runReadiness = Effect.runPromiseWith(yield* Effect.context<never>());
-    if (process.env.LABORER_MEMORY_TEST_FAIL_STARTUP === "1") {
-      return yield* Effect.die(
-        new Error("Injected memory MCP startup failure")
-      );
+    const runReadiness = Effect.runPromiseWith(yield* Effect.context<never>())
+    if (process.env.LABORER_MEMORY_TEST_FAIL_STARTUP === '1') {
+      return yield* Effect.die(new Error('Injected memory MCP startup failure'))
     }
     const server = yield* makeLaborerMemoryMcpServer({
       ...(authorityGuard === undefined ? {} : { authorityGuard }),
@@ -40,7 +38,7 @@ if (
       ...(serverName === undefined ? {} : { serverName }),
       workspaceId,
       stateRoot,
-    });
+    })
     if (
       serverName !== undefined &&
       authorityGuard !== undefined &&
@@ -62,26 +60,26 @@ if (
           })
         ).catch(() => {
           process.stderr.write(
-            "[laborer-memory] registration readiness failed\n"
-          );
-          process.exitCode = 1;
-        });
-      };
+            '[laborer-memory] registration readiness failed\n'
+          )
+          process.exitCode = 1
+        })
+      }
     }
-    yield* Effect.promise(() => server.connect(new StdioServerTransport()));
-  });
+    yield* Effect.promise(() => server.connect(new StdioServerTransport()))
+  })
   Effect.runPromise(program).catch(async () => {
     await Effect.runPromise(
       recordLaborerMemoryDiagnostic({
         ...(authorityGuard === undefined ? {} : { authorityGuard }),
-        code: "startup-failed",
+        code: 'startup-failed',
         configRoot,
         root,
         stateRoot,
         workspaceId,
       })
-    );
-    process.stderr.write("[laborer-memory] server startup failed\n");
-    process.exitCode = 1;
-  });
+    )
+    process.stderr.write('[laborer-memory] server startup failed\n')
+    process.exitCode = 1
+  })
 }

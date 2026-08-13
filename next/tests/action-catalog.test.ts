@@ -1,5 +1,5 @@
-import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { assert, describe, it } from '@effect/vitest'
+import { Effect } from 'effect'
 import {
   ACTION_PROMPT_MAX_LENGTH,
   actionInputHash,
@@ -8,12 +8,12 @@ import {
   dealWithBugAction,
   makeProductionActionCatalog,
   productionActionCatalog,
-} from "../src/action-catalog.ts";
+} from '../src/action-catalog.ts'
 
-const CATALOG_FINGERPRINT_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const CATALOG_FINGERPRINT_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
-describe("production Action catalog", () => {
-  it.effect("generates strict MCP documentation and runtime codecs once", () =>
+describe('production Action catalog', () => {
+  it.effect('generates strict MCP documentation and runtime codecs once', () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(
         productionActionCatalog.actions.map(({ handlerKey, name }) => ({
@@ -21,155 +21,152 @@ describe("production Action catalog", () => {
           name,
         })),
         [
-          { handlerKey: "create-feature", name: "create-feature" },
-          { handlerKey: "deal-with-bug", name: "deal-with-bug" },
+          { handlerKey: 'create-feature', name: 'create-feature' },
+          { handlerKey: 'deal-with-bug', name: 'deal-with-bug' },
         ]
-      );
+      )
       assert.deepStrictEqual(
         productionActionCatalog.tools.map(({ name }) => name),
-        ["create-feature", "deal-with-bug"]
-      );
+        ['create-feature', 'deal-with-bug']
+      )
       for (const tool of productionActionCatalog.tools) {
-        assert.strictEqual(tool.inputSchema.additionalProperties, false);
+        assert.strictEqual(tool.inputSchema.additionalProperties, false)
         assert.deepStrictEqual(tool.inputSchema.required, [
-          "prompt",
-          "title",
-          "worktreeName",
-        ]);
-        assert.strictEqual(tool.outputSchema.additionalProperties, false);
+          'prompt',
+          'title',
+          'worktreeName',
+        ])
+        assert.strictEqual(tool.outputSchema.additionalProperties, false)
         assert.deepStrictEqual(tool.outputSchema.required, [
-          "actionName",
-          "deduplicated",
-          "executionId",
-          "status",
-        ]);
+          'actionName',
+          'deduplicated',
+          'executionId',
+          'status',
+        ])
         assert.deepStrictEqual(tool.annotations, {
           destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false,
           readOnlyHint: false,
-        });
+        })
       }
       assert.match(
         productionActionCatalog.fingerprint,
         CATALOG_FINGERPRINT_PATTERN
-      );
+      )
 
       const valid = {
-        prompt: "  Build a feature.  ",
-        title: "Build a feature",
-        worktreeName: "feature-246",
-      };
+        prompt: '  Build a feature.  ',
+        title: 'Build a feature',
+        worktreeName: 'feature-246',
+      }
       assert.deepStrictEqual(
         yield* createFeatureAction.decodeInput(valid),
         valid
-      );
+      )
       for (const invalid of [
         { ...valid, extra: true },
-        { ...valid, prompt: " \n\t " },
-        { ...valid, prompt: "x".repeat(ACTION_PROMPT_MAX_LENGTH + 1) },
-        { ...valid, title: " \n\t " },
-        { ...valid, title: "x".repeat(101) },
+        { ...valid, prompt: ' \n\t ' },
+        { ...valid, prompt: 'x'.repeat(ACTION_PROMPT_MAX_LENGTH + 1) },
+        { ...valid, title: ' \n\t ' },
+        { ...valid, title: 'x'.repeat(101) },
         { prompt: valid.prompt, worktreeName: valid.worktreeName },
-        { ...valid, worktreeName: "../escape" },
-        { ...valid, worktreeName: "branch.lock" },
+        { ...valid, worktreeName: '../escape' },
+        { ...valid, worktreeName: 'branch.lock' },
       ]) {
         assert.strictEqual(
           (yield* Effect.result(createFeatureAction.decodeInput(invalid)))._tag,
-          "Failure"
-        );
+          'Failure'
+        )
       }
 
       const encoded = yield* createFeatureAction.encodeResult({
-        actionName: "create-feature",
+        actionName: 'create-feature',
         deduplicated: false,
-        executionId: "execution:opaque",
-        status: "running",
-      });
+        executionId: 'execution:opaque',
+        status: 'running',
+      })
       assert.deepStrictEqual(encoded, {
-        actionName: "create-feature",
+        actionName: 'create-feature',
         deduplicated: false,
-        executionId: "execution:opaque",
-        status: "running",
-      });
+        executionId: 'execution:opaque',
+        status: 'running',
+      })
       assert.strictEqual(
         (yield* Effect.result(
           createFeatureAction.encodeResult({
-            actionName: "create-feature",
+            actionName: 'create-feature',
             deduplicated: false,
-            executionId: "execution:opaque",
-            leakedPath: "/private/repository",
-            status: "running",
+            executionId: 'execution:opaque',
+            leakedPath: '/private/repository',
+            status: 'running',
           })
         ))._tag,
-        "Failure"
-      );
+        'Failure'
+      )
 
-      assert.deepStrictEqual(
-        yield* dealWithBugAction.decodeInput(valid),
-        valid
-      );
+      assert.deepStrictEqual(yield* dealWithBugAction.decodeInput(valid), valid)
       assert.deepStrictEqual(
         yield* dealWithBugAction.encodeResult({
-          actionName: "deal-with-bug",
+          actionName: 'deal-with-bug',
           deduplicated: true,
-          executionId: "execution:bug:opaque",
-          status: "completed",
+          executionId: 'execution:bug:opaque',
+          status: 'completed',
         }),
         {
-          actionName: "deal-with-bug",
+          actionName: 'deal-with-bug',
           deduplicated: true,
-          executionId: "execution:bug:opaque",
-          status: "completed",
+          executionId: 'execution:bug:opaque',
+          status: 'completed',
         }
-      );
+      )
       assert.strictEqual(
         (yield* Effect.result(
           dealWithBugAction.encodeResult({
-            actionName: "create-feature",
+            actionName: 'create-feature',
             deduplicated: false,
-            executionId: "execution:mismatched-tag",
-            status: "running",
+            executionId: 'execution:mismatched-tag',
+            status: 'running',
           })
         ))._tag,
-        "Failure"
-      );
+        'Failure'
+      )
     })
-  );
+  )
 
-  it.effect("canonicalizes input without changing prompt whitespace", () =>
+  it.effect('canonicalizes input without changing prompt whitespace', () =>
     Effect.gen(function* () {
       const first = yield* actionInputHash(
-        "create-feature",
+        'create-feature',
         productionActionCatalog.fingerprint,
-        { prompt: "  e\u0301  ", title: "Execution task", worktreeName: "nfc" }
-      );
+        { prompt: '  e\u0301  ', title: 'Execution task', worktreeName: 'nfc' }
+      )
       const normalized = yield* actionInputHash(
-        "create-feature",
+        'create-feature',
         productionActionCatalog.fingerprint,
-        { worktreeName: "nfc", title: "Execution task", prompt: "  é  " }
-      );
+        { worktreeName: 'nfc', title: 'Execution task', prompt: '  é  ' }
+      )
       const trimmed = yield* actionInputHash(
-        "create-feature",
+        'create-feature',
         productionActionCatalog.fingerprint,
-        { prompt: "é", title: "Execution task", worktreeName: "nfc" }
-      );
-      assert.strictEqual(first, normalized);
-      assert.notStrictEqual(first, trimmed);
+        { prompt: 'é', title: 'Execution task', worktreeName: 'nfc' }
+      )
+      assert.strictEqual(first, normalized)
+      assert.notStrictEqual(first, trimmed)
     })
-  );
+  )
 
-  it.effect("rejects ambiguous or collectively oversized canonical input", () =>
+  it.effect('rejects ambiguous or collectively oversized canonical input', () =>
     Effect.gen(function* () {
       const normalizedKeyCollision = {
-        "e\u0301": 1,
+        'e\u0301': 1,
         é: 2,
-      };
+      }
       assert.strictEqual(
         (yield* Effect.result(canonicalActionInput(normalizedKeyCollision)))
           ._tag,
-        "Failure"
-      );
+        'Failure'
+      )
       assert.strictEqual(
         (yield* Effect.result(
           canonicalActionInput({
@@ -177,67 +174,67 @@ describe("production Action catalog", () => {
             right: Array.from({ length: 128 }, (_, index) => index),
           })
         ))._tag,
-        "Failure"
-      );
+        'Failure'
+      )
     })
-  );
+  )
 
-  it("fingerprints deterministic routing and contract identity without changing tools", () => {
+  it('fingerprints deterministic routing and contract identity without changing tools', () => {
     const reversed = makeProductionActionCatalog([
       dealWithBugAction,
       createFeatureAction,
-    ]);
+    ])
     assert.strictEqual(
       reversed.fingerprint,
       productionActionCatalog.fingerprint
-    );
-    assert.deepStrictEqual(reversed.tools, productionActionCatalog.tools);
+    )
+    assert.deepStrictEqual(reversed.tools, productionActionCatalog.tools)
 
     const remapped = makeProductionActionCatalog([
-      { ...createFeatureAction, handlerKey: "deal-with-bug" },
-      { ...dealWithBugAction, handlerKey: "create-feature" },
-    ]);
-    assert.deepStrictEqual(remapped.tools, productionActionCatalog.tools);
+      { ...createFeatureAction, handlerKey: 'deal-with-bug' },
+      { ...dealWithBugAction, handlerKey: 'create-feature' },
+    ])
+    assert.deepStrictEqual(remapped.tools, productionActionCatalog.tools)
     assert.notStrictEqual(
       remapped.fingerprint,
       productionActionCatalog.fingerprint
-    );
+    )
 
     const nextContract = makeProductionActionCatalog(
       [createFeatureAction, dealWithBugAction],
       productionActionCatalog.contractVersion + 1
-    );
-    assert.deepStrictEqual(nextContract.tools, productionActionCatalog.tools);
+    )
+    assert.deepStrictEqual(nextContract.tools, productionActionCatalog.tools)
     assert.notStrictEqual(
       nextContract.fingerprint,
       productionActionCatalog.fingerprint
-    );
-  });
+    )
+  })
 
-  it("fails catalog name and handler collisions", () => {
+  it('fails catalog name and handler collisions', () => {
     assert.throws(() =>
       makeProductionActionCatalog([
         createFeatureAction,
         { ...createFeatureAction },
       ])
-    );
+    )
     assert.throws(() =>
       makeProductionActionCatalog([
         createFeatureAction,
-        { ...createFeatureAction, name: "other-action" },
+        { ...createFeatureAction, name: 'other-action' },
       ])
-    );
+    )
     assert.throws(() =>
       makeProductionActionCatalog([
         createFeatureAction,
-        { ...dealWithBugAction, name: "create-feature" },
+        { ...dealWithBugAction, name: 'create-feature' },
       ])
-    );
+    )
     assert.throws(() =>
       makeProductionActionCatalog([
         createFeatureAction,
-        { ...dealWithBugAction, handlerKey: "create-feature" },
+        { ...dealWithBugAction, handlerKey: 'create-feature' },
       ])
-    );
-  });
-});
+    )
+  })
+})

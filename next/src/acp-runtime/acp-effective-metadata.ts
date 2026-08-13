@@ -3,44 +3,44 @@ import type {
   NewSessionResponse,
   ResumeSessionResponse,
   SessionConfigOption,
-} from "@agentclientprotocol/sdk";
-import { Array as EffectArray } from "effect";
-import type { AcpAuthorityRepository } from "./acp-authority.ts";
-import type { AcpConfigSourceInventory } from "./acp-config-source-inventory.ts";
+} from '@agentclientprotocol/sdk'
+import { Array as EffectArray } from 'effect'
+import type { AcpAuthorityRepository } from './acp-authority.ts'
+import type { AcpConfigSourceInventory } from './acp-config-source-inventory.ts'
 
-const MAX_METADATA_VALUE_LENGTH = 256;
-const MAX_ENVIRONMENT_NAMES = 64;
-const MAX_MCP_SERVER_NAMES = 16;
-export const ACP_INTEGRATION_CONTRACT_VERSION = 2;
+const MAX_METADATA_VALUE_LENGTH = 256
+const MAX_ENVIRONMENT_NAMES = 64
+const MAX_MCP_SERVER_NAMES = 16
+export const ACP_INTEGRATION_CONTRACT_VERSION = 2
 
 export interface AcpEffectiveMetadata {
-  readonly clientMcpServerNames: readonly string[];
-  readonly configSourceInventory: AcpConfigSourceInventory;
-  readonly cwd: string;
-  readonly effort: string | null;
-  readonly environmentAggregate: string;
-  readonly environmentNameCount: number;
-  readonly environmentNames: readonly string[];
-  readonly environmentNamesIncomplete: boolean;
+  readonly clientMcpServerNames: readonly string[]
+  readonly configSourceInventory: AcpConfigSourceInventory
+  readonly cwd: string
+  readonly effort: string | null
+  readonly environmentAggregate: string
+  readonly environmentNameCount: number
+  readonly environmentNames: readonly string[]
+  readonly environmentNamesIncomplete: boolean
   readonly implementation: {
-    readonly name: string;
-    readonly version: string;
-  };
-  readonly integrationContractVersion: number;
-  readonly mode: string | null;
-  readonly model: string | null;
-  readonly protocolVersion: number;
-  readonly rootAuthority: "bound-project-root";
-  readonly selectedAgent: string | null;
+    readonly name: string
+    readonly version: string
+  }
+  readonly integrationContractVersion: number
+  readonly mode: string | null
+  readonly model: string | null
+  readonly protocolVersion: number
+  readonly rootAuthority: 'bound-project-root'
+  readonly selectedAgent: string | null
 }
 
 export interface SignedAcpEffectiveMetadata {
-  readonly fingerprint: string;
-  readonly metadata: AcpEffectiveMetadata;
+  readonly fingerprint: string
+  readonly metadata: AcpEffectiveMetadata
 }
 
 const bounded = (value: string): string =>
-  value.slice(0, MAX_METADATA_VALUE_LENGTH);
+  value.slice(0, MAX_METADATA_VALUE_LENGTH)
 
 const boundedNames = (
   values: readonly string[],
@@ -48,48 +48,48 @@ const boundedNames = (
 ): readonly string[] =>
   [...new Set(values.filter((value) => value.length > 0).map(bounded))]
     .sort()
-    .slice(0, maximum);
+    .slice(0, maximum)
 
 const currentStringValue = (
   options: readonly SessionConfigOption[] | null | undefined,
   predicate: (option: SessionConfigOption) => boolean
 ): string | null => {
-  const option = options?.find(predicate);
-  if (option === undefined || !("currentValue" in option)) {
-    return null;
+  const option = options?.find(predicate)
+  if (option === undefined || !('currentValue' in option)) {
+    return null
   }
-  return typeof option.currentValue === "string"
+  return typeof option.currentValue === 'string'
     ? bounded(option.currentValue)
-    : null;
-};
+    : null
+}
 
 export const extractAcpEffectiveMetadata = (options: {
-  readonly agentInfo: Implementation | null | undefined;
-  readonly configSourceInventory: AcpConfigSourceInventory;
-  readonly cwd: string;
-  readonly environment: NodeJS.ProcessEnv;
-  readonly mcpServerNames: readonly string[];
-  readonly protocolVersion: number;
-  readonly repository: AcpAuthorityRepository;
-  readonly response: NewSessionResponse | ResumeSessionResponse;
+  readonly agentInfo: Implementation | null | undefined
+  readonly configSourceInventory: AcpConfigSourceInventory
+  readonly cwd: string
+  readonly environment: NodeJS.ProcessEnv
+  readonly mcpServerNames: readonly string[]
+  readonly protocolVersion: number
+  readonly repository: AcpAuthorityRepository
+  readonly response: NewSessionResponse | ResumeSessionResponse
 }): AcpEffectiveMetadata => {
-  const configOptions = options.response.configOptions;
-  const responseMode = options.response.modes?.currentModeId;
+  const configOptions = options.response.configOptions
+  const responseMode = options.response.modes?.currentModeId
   const environmentEntries = Object.entries(options.environment)
-    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-    .sort(([left], [right]) => left.localeCompare(right));
-  const environmentNames = environmentEntries.map(([name]) => name);
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    .sort(([left], [right]) => left.localeCompare(right))
+  const environmentNames = environmentEntries.map(([name]) => name)
   const selectedAgent =
-    typeof responseMode === "string"
+    typeof responseMode === 'string'
       ? bounded(responseMode)
       : currentStringValue(
           configOptions,
-          (option) => option.category === "mode"
-        );
+          (option) => option.category === 'mode'
+        )
   return {
     implementation: {
-      name: bounded(options.agentInfo?.name ?? "unknown"),
-      version: bounded(options.agentInfo?.version ?? "unknown"),
+      name: bounded(options.agentInfo?.name ?? 'unknown'),
+      version: bounded(options.agentInfo?.version ?? 'unknown'),
     },
     clientMcpServerNames: boundedNames(
       options.mcpServerNames,
@@ -98,7 +98,7 @@ export const extractAcpEffectiveMetadata = (options: {
     configSourceInventory: options.configSourceInventory,
     cwd: bounded(options.cwd),
     environmentAggregate: options.repository.digest(
-      "effective-acp-environment",
+      'effective-acp-environment',
       JSON.stringify(environmentEntries)
     ),
     environmentNameCount: environmentNames.length,
@@ -106,20 +106,20 @@ export const extractAcpEffectiveMetadata = (options: {
     environmentNamesIncomplete: environmentNames.length > MAX_ENVIRONMENT_NAMES,
     effort: currentStringValue(
       configOptions,
-      (option) => option.category === "thought_level"
+      (option) => option.category === 'thought_level'
     ),
     integrationContractVersion: ACP_INTEGRATION_CONTRACT_VERSION,
     mode:
-      typeof responseMode === "string" ? bounded(responseMode) : selectedAgent,
+      typeof responseMode === 'string' ? bounded(responseMode) : selectedAgent,
     model: currentStringValue(
       configOptions,
-      (option) => option.category === "model"
+      (option) => option.category === 'model'
     ),
     protocolVersion: options.protocolVersion,
-    rootAuthority: "bound-project-root",
+    rootAuthority: 'bound-project-root',
     selectedAgent,
-  };
-};
+  }
+}
 
 const canonicalMetadata = (metadata: AcpEffectiveMetadata): string =>
   JSON.stringify({
@@ -140,15 +140,15 @@ const canonicalMetadata = (metadata: AcpEffectiveMetadata): string =>
     protocolVersion: metadata.protocolVersion,
     rootAuthority: metadata.rootAuthority,
     selectedAgent: metadata.selectedAgent,
-  });
+  })
 
 export const signAcpEffectiveMetadata = (
   repository: AcpAuthorityRepository,
   metadata: AcpEffectiveMetadata
 ): SignedAcpEffectiveMetadata => ({
   fingerprint: repository.digest(
-    "effective-acp-metadata",
+    'effective-acp-metadata',
     canonicalMetadata(metadata)
   ),
   metadata,
-});
+})

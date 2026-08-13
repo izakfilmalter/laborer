@@ -1,12 +1,12 @@
-export const LABORER_LAUNCH_AGENT_LABEL = "com.laborer.daemon";
-export const LABORER_LAUNCH_AGENT_PLIST = `${LABORER_LAUNCH_AGENT_LABEL}.plist`;
+export const LABORER_LAUNCH_AGENT_LABEL = 'com.laborer.daemon'
+export const LABORER_LAUNCH_AGENT_PLIST = `${LABORER_LAUNCH_AGENT_LABEL}.plist`
 
 export const macosPackageLayout = {
-  daemonBundleProgram: "Contents/MacOS/laborer-daemon",
+  daemonBundleProgram: 'Contents/MacOS/laborer-daemon',
   launchAgentPlist: `Contents/Library/LaunchAgents/${LABORER_LAUNCH_AGENT_PLIST}`,
-  nodeRuntime: "Contents/Resources/daemon/bin/node",
-  serviceManager: "Contents/Resources/service-management",
-} as const;
+  nodeRuntime: 'Contents/Resources/daemon/bin/node',
+  serviceManager: 'Contents/Resources/service-management',
+} as const
 
 export const laborerLaunchAgentPlist =
   (): string => `<?xml version="1.0" encoding="UTF-8"?>
@@ -27,4 +27,4 @@ export const laborerLaunchAgentPlist =
   <integer>10</integer>
 </dict>
 </plist>
-`;
+`

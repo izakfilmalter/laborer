@@ -5,6 +5,9 @@
  * The heading shows the project name, a chevron toggle, and project
  * settings/delete actions.
  *
+ * The heading is also the grab area that reorders the project — the stored
+ * order is shared with the kanban swim lanes.
+ *
  * @see Issue #168: ProjectGroup collapsible headings with nested workspaces
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
  * @see Issue #173: Polish and verification
@@ -24,6 +27,11 @@ import {
 } from '@/components/create-workspace-composer'
 import type { ComposerCloseReason } from '@/components/inline-composer'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import {
+  ProjectDragHandle,
+  ProjectDropIndicator,
+  useProjectDragItem,
+} from '@/components/project-reorder'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
 import {
   AlertDialog,
@@ -60,16 +68,39 @@ const removeProjectMutation = LaborerClient.mutation('project.remove')
 
 interface ProjectGroupProps {
   readonly expanded: boolean
+  /** Position in the rendered tree, which orients the drop indicator. */
+  readonly index: number
   readonly onToggle: () => void
   readonly project: {
     readonly id: string
     readonly name: string
     readonly repoPath: string
   }
+  /** False while a search filters the tree, where a drop slot is ambiguous. */
+  readonly reorderEnabled: boolean
 }
 
-function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
+function ProjectGroup({
+  project,
+  expanded,
+  index,
+  onToggle,
+  reorderEnabled,
+}: ProjectGroupProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+  const groupRef = useRef<HTMLDivElement | null>(null)
+  const headingRef = useRef<HTMLDivElement | null>(null)
+  // An order written before the server is up cannot be stored, so the group
+  // only becomes draggable alongside its other write actions.
+  const canReorder = reorderEnabled && isServerReady
+  const { closestEdge, isDragging } = useProjectDragItem({
+    dragHandleRef: headingRef,
+    elementRef: groupRef,
+    enabled: canReorder,
+    index,
+    projectId: project.id,
+    surface: 'sidebar',
+  })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
   const [pendingWorkspaceCreations, setPendingWorkspaceCreations] = useState<
@@ -150,102 +181,116 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
   }
 
   return (
-    <Collapsible defaultOpen={expanded} open={expanded}>
-      <div className="flex items-center gap-1">
-        <CollapsibleTrigger
-          className="flex flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left font-medium text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-          onClick={onToggle}
-        >
-          <ChevronRight
-            className={cn(
-              'size-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-              expanded && 'rotate-90'
-            )}
-          />
-          <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate">{project.name}</span>
-        </CollapsibleTrigger>
-        <div className="flex shrink-0 items-center gap-0.5">
-          <CreateWorkspaceButton
-            composerId={composerId}
-            disabled={!isServerReady}
-            id={addButtonId}
-            onToggle={toggleComposer}
-            open={composerOpen}
-            projectName={project.name}
-          />
-          <ProjectSettingsModal
-            projectId={project.id}
-            projectName={project.name}
-          />
-          <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <AlertDialogTrigger
-                    render={
-                      <Button
-                        aria-label={`Remove project ${project.name}`}
-                        className="h-7 w-7"
-                        disabled={!isServerReady}
-                        size="icon-sm"
-                        title={
-                          isServerReady ? undefined : 'Connecting to server...'
-                        }
-                        variant="ghost"
-                      />
-                    }
-                  />
-                }
-              >
-                <Trash2 className="size-3.5 text-muted-foreground" />
-              </TooltipTrigger>
-              <TooltipContent>Remove project</TooltipContent>
-            </Tooltip>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Remove project?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will unregister{' '}
-                  <strong className="text-foreground">{project.name}</strong>{' '}
-                  from Laborer. Existing workspaces and worktrees will not be
-                  deleted from disk.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleRemove} variant="destructive">
-                  Remove
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </div>
-      {composerOpen && (
-        // Outside the collapsible so the composer survives a collapse mid-typing.
-        <div className="ml-2 border-l pt-1 pl-2">
-          <CreateWorkspaceComposer
-            composerId={composerId}
-            onClose={closeComposer}
-            onPendingCreationChange={handlePendingCreationChange}
-            projectId={project.id}
-            projectName={project.name}
-          />
-        </div>
+    <div
+      className={cn(
+        'group/project relative transition-opacity',
+        isDragging && 'opacity-40'
       )}
-      <CollapsibleContent>
-        <div className="mt-1 ml-2 border-l pl-2">
-          <WorkspaceList
-            onPendingCreationChange={handlePendingCreationChange}
-            pendingCreations={pendingWorkspaceCreations}
+      ref={groupRef}
+    >
+      <ProjectDropIndicator edge={closestEdge} />
+      <Collapsible defaultOpen={expanded} open={expanded}>
+        <div className="flex items-center gap-1" ref={headingRef}>
+          <ProjectDragHandle
+            disabled={!canReorder}
             projectId={project.id}
             projectName={project.name}
-            repoPath={project.repoPath}
           />
+          <CollapsibleTrigger
+            className="flex flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left font-medium text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+            onClick={onToggle}
+          >
+            <ChevronRight
+              className={cn(
+                'size-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+                expanded && 'rotate-90'
+              )}
+            />
+            <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate">{project.name}</span>
+          </CollapsibleTrigger>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <CreateWorkspaceButton
+              composerId={composerId}
+              disabled={!isServerReady}
+              id={addButtonId}
+              onToggle={toggleComposer}
+              open={composerOpen}
+              projectName={project.name}
+            />
+            <ProjectSettingsModal
+              projectId={project.id}
+              projectName={project.name}
+            />
+            <AlertDialog onOpenChange={setDialogOpen} open={dialogOpen}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <AlertDialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Remove project ${project.name}`}
+                          className="h-7 w-7"
+                          disabled={!isServerReady}
+                          size="icon-sm"
+                          title={
+                            isServerReady ? undefined : 'Connecting to server...'
+                          }
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <Trash2 className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>Remove project</TooltipContent>
+              </Tooltip>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Remove project?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will unregister{' '}
+                    <strong className="text-foreground">{project.name}</strong>{' '}
+                    from Laborer. Existing workspaces and worktrees will not be
+                    deleted from disk.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleRemove} variant="destructive">
+                    Remove
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </div>
-      </CollapsibleContent>
-    </Collapsible>
+        {composerOpen && (
+          // Outside the collapsible so the composer survives a collapse mid-typing.
+          <div className="ml-2 border-l pt-1 pl-2">
+            <CreateWorkspaceComposer
+              composerId={composerId}
+              onClose={closeComposer}
+              onPendingCreationChange={handlePendingCreationChange}
+              projectId={project.id}
+              projectName={project.name}
+            />
+          </div>
+        )}
+        <CollapsibleContent>
+          <div className="mt-1 ml-2 border-l pl-2">
+            <WorkspaceList
+              onPendingCreationChange={handlePendingCreationChange}
+              pendingCreations={pendingWorkspaceCreations}
+              projectId={project.id}
+              projectName={project.name}
+              repoPath={project.repoPath}
+            />
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
   )
 }
 

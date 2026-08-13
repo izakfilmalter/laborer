@@ -699,6 +699,40 @@ export const handleTaskMove = (payload: {
   readonly taskId: string
 }) => handleTaskMoveAtPath(payload)
 
+export const handleProjectMove = (payload: {
+  readonly expectedRevision: number
+  readonly mutationId: string
+  readonly projectId: string
+  readonly sortOrder: number | null
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('move project', (native) =>
+        native.moveProject(
+          payload.projectId,
+          payload.expectedRevision,
+          payload.sortOrder,
+          payload.mutationId
+        )
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new RpcError({
+              code:
+                cause instanceof LaborerDatabaseStaleRevisionError
+                  ? 'CAS_CONFLICT'
+                  : 'PROJECT_MOVE_FAILED',
+              message:
+                cause instanceof LaborerDatabaseStaleRevisionError
+                  ? `Project changed while reordering: ${payload.projectId}`
+                  : `Unable to reorder project: ${payload.projectId}`,
+            })
+        )
+      )
+  })
+
 export const handleAppSettingSet = (payload: {
   readonly expectedRevision: number
   readonly key: string
@@ -897,6 +931,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         yield* registry.removeProject(projectId)
       }),
     'project.list': handleProjectList,
+    'project.move': handleProjectMove,
 
     'task.board.subscribe': () =>
       subscribeToTaskBoard().pipe(

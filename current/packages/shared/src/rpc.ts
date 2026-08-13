@@ -227,6 +227,8 @@ export const SharedProjectRow = Schema.Struct({
   repoId: Schema.String,
   revision: Schema.Int,
   rootPath: Schema.String,
+  /** Manual rank. Null means unranked; ordering then falls back to createdAt. */
+  sortOrder: Schema.NullOr(Schema.Finite),
   updatedAt: Schema.Int,
 })
 export type SharedProjectRow = typeof SharedProjectRow.Type
@@ -601,6 +603,24 @@ export class LaborerRpcs extends RpcGroup.make(
   Rpc.make('project.list', {
     success: Schema.Array(ProjectResponse),
     error: RpcError,
+  }),
+
+  /** Revision-CAS manual-order write used by project drags. Rank is the only field it writes. */
+  Rpc.make('project.move', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      row: SharedProjectRow,
+    }),
+    error: RpcError,
+    payload: {
+      expectedRevision: PositiveInt,
+      mutationId: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
+      ),
+      projectId: Schema.String,
+      sortOrder: Schema.NullOr(Schema.Finite),
+    },
   }),
 
   /**

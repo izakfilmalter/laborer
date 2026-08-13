@@ -65,4 +65,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       "utf8"
     ),
   },
+  {
+    name: "0007_projects_sort_order",
+    sql: readFileSync(
+      new URL("./migrations/0007_projects_sort_order.sql", import.meta.url),
+      "utf8"
+    ),
+  },
 ];

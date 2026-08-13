@@ -122,6 +122,8 @@ export interface Project {
   readonly repoId: string
   readonly revision: number
   readonly rootPath: string
+  /** Manual rank. Null means unranked; ordering then falls back to createdAt. */
+  readonly sortOrder: number | null
   readonly updatedAt: number
 }
 
@@ -135,7 +137,10 @@ export interface NewProject {
 }
 
 export type ProjectPatch = Partial<
-  Pick<Project, 'canonicalGitCommonDir' | 'name' | 'repoId' | 'rootPath'>
+  Pick<
+    Project,
+    'canonicalGitCommonDir' | 'name' | 'repoId' | 'rootPath' | 'sortOrder'
+  >
 >
 
 export interface AppSetting {
@@ -253,7 +258,7 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
   pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
-  created_at, updated_at, revision`
+  created_at, updated_at, revision, sort_order`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
 const MAX_LEDGER_READ = 1000
 const MAX_TABLE_ROWS = 10_000
@@ -291,6 +296,7 @@ const PROJECT_PATCH_FIELDS = [
   'name',
   'repoId',
   'rootPath',
+  'sortOrder',
 ] as const satisfies readonly (keyof ProjectPatch)[]
 
 const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
@@ -322,6 +328,7 @@ const PROJECT_PATCH_COLUMNS: Record<keyof ProjectPatch, string> = {
   name: 'name',
   repoId: 'repo_id',
   rootPath: 'root_path',
+  sortOrder: 'sort_order',
 }
 
 const invalidColumn = (column: string): never => {
@@ -487,6 +494,7 @@ const rowToProject = (value: unknown): Project => {
     repoId: string(row.repo_id, 'projects.repo_id'),
     revision: revision(row.revision, 'projects.revision'),
     rootPath: string(row.root_path, 'projects.root_path'),
+    sortOrder: nullableNumber(row.sort_order, 'projects.sort_order'),
     updatedAt: integer(row.updated_at, 'projects.updated_at'),
   }
 }
@@ -867,7 +875,7 @@ export class NativeLaborerDatabase {
     const rows = this.#database
       .prepare(
         `SELECT ${PROJECT_COLUMNS} FROM projects
-          ORDER BY created_at, id LIMIT ?`
+          ORDER BY COALESCE(sort_order, created_at), id LIMIT ?`
       )
       .all(MAX_TABLE_ROWS + 1)
     return boundedRows(rows, 'projects').map(rowToProject)
@@ -945,6 +953,27 @@ export class NativeLaborerDatabase {
       )
       return { row: this.#requireProject(id), cursor }
     })
+  }
+
+  /**
+   * Narrow manual-order write for project drags. Rank is the only field the
+   * UI writes, so this delegates to the CAS update rather than widening the
+   * surface a reorder can touch.
+   */
+  moveProject(
+    id: string,
+    expectedRevision: number,
+    sortOrder: number | null,
+    mutationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<Project> {
+    return this.updateProject(
+      id,
+      expectedRevision,
+      { sortOrder },
+      mutationId,
+      changedAt
+    )
   }
 
   deleteProject(

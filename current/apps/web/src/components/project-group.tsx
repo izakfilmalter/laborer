@@ -15,6 +15,7 @@
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
 import { ChevronRight, FolderGit2, Trash2 } from 'lucide-react'
+import type { KeyboardEvent } from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
@@ -50,6 +51,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { Kbd } from '@/components/ui/kbd'
 import {
   Tooltip,
   TooltipContent,
@@ -61,6 +63,7 @@ import type {
   PendingWorkspaceCreationChangeHandler,
 } from '@/hooks/use-create-workspace'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
@@ -234,7 +237,9 @@ function ProjectGroup({
                           disabled={!isServerReady}
                           size="icon-sm"
                           title={
-                            isServerReady ? undefined : 'Connecting to server...'
+                            isServerReady
+                              ? undefined
+                              : 'Connecting to server...'
                           }
                           variant="ghost"
                         />
@@ -246,7 +251,19 @@ function ProjectGroup({
                 </TooltipTrigger>
                 <TooltipContent>Remove project</TooltipContent>
               </Tooltip>
-              <AlertDialogContent>
+              <AlertDialogContent
+                onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                  if (isExactEnter(event.nativeEvent)) {
+                    event.preventDefault()
+                    return
+                  }
+
+                  if (isMetaEnter(event.nativeEvent)) {
+                    event.preventDefault()
+                    handleRemove()
+                  }
+                }}
+              >
                 <AlertDialogHeader>
                   <AlertDialogTitle>Remove project?</AlertDialogTitle>
                   <AlertDialogDescription>
@@ -257,9 +274,16 @@ function ProjectGroup({
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleRemove} variant="destructive">
+                  <AlertDialogCancel>
+                    Cancel <Kbd>Esc</Kbd>
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleRemove}
+                    variant="destructive"
+                  >
                     Remove
+                    <Kbd>⌘</Kbd>
+                    <Kbd>↵</Kbd>
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

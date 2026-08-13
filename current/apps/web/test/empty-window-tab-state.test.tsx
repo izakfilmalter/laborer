@@ -344,6 +344,33 @@ describe('EmptyWindowTabState', () => {
     expect(addWorkspaceToCurrentTabMock).toHaveBeenCalledWith('ws-1')
   })
 
+  it('scrolls the whole state in a ScrollArea and biases content to the top', () => {
+    setupQueryResults(
+      [
+        {
+          id: 'ws-1',
+          projectId: 'proj-1',
+          branchName: 'feature/login',
+          status: 'running',
+        },
+      ],
+      [{ id: 'proj-1', name: 'MyProject' }]
+    )
+    render(<EmptyWindowTabState />)
+    const container = screen.getByTestId('empty-window-tab-state')
+    expect(container.dataset.slot).toBe('scroll-area')
+    expect(
+      container.querySelector('[data-slot="scroll-area-viewport"]')
+    ).not.toBeNull()
+    const empty = container.querySelector('[data-slot="empty"]')
+    expect(empty?.className).toContain('justify-start')
+    // The workspace list is not separately clipped — the state itself scrolls.
+    const nestedScrollAreas = container.querySelectorAll(
+      '[data-slot="scroll-area"]'
+    )
+    expect(nestedScrollAreas).toHaveLength(0)
+  })
+
   it('uses the Empty component library', () => {
     setupQueryResults([], [])
     render(<EmptyWindowTabState />)

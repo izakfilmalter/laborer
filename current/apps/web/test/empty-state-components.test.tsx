@@ -329,4 +329,26 @@ describe('Visual consistency', () => {
       container.querySelector('[data-slot="empty-description"]')
     ).toBeDefined()
   })
+
+  it('EmptyWorkspaceState scrolls in a ScrollArea and biases content to the top', () => {
+    render(<EmptyWorkspaceState workspaceId="ws-1" />)
+    const container = screen.getByTestId('empty-workspace-state')
+    expect(container.dataset.slot).toBe('scroll-area')
+    expect(
+      container.querySelector('[data-slot="scroll-area-viewport"]')
+    ).not.toBeNull()
+    const empty = container.querySelector('[data-slot="empty"]')
+    expect(empty?.className).toContain('justify-start')
+  })
+
+  it('EmptyPanelTabState scrolls in a ScrollArea and biases content to the top', () => {
+    render(<EmptyPanelTabState workspaceId="ws-1" />)
+    const container = screen.getByTestId('empty-panel-tab-state')
+    expect(container.dataset.slot).toBe('scroll-area')
+    expect(
+      container.querySelector('[data-slot="scroll-area-viewport"]')
+    ).not.toBeNull()
+    const empty = container.querySelector('[data-slot="empty"]')
+    expect(empty?.className).toContain('justify-start')
+  })
 })

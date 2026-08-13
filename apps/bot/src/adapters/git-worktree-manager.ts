@@ -19,6 +19,11 @@ import {
   resolve,
   sep,
 } from 'node:path'
+import {
+  readWorktreeOwnerMarker,
+  type WorktreeOwnerMarker,
+  writeWorktreeOwnerMarker,
+} from '@laborer/worktree-owner'
 import { Effect, Array as EffectArray } from 'effect'
 import { SAFE_WORKTREE_NAME_PATTERN } from '../action-catalog.ts'
 import { HandlerFailure } from '../core/errors.ts'
@@ -34,8 +39,6 @@ import {
 const GIT_MAX_BUFFER_BYTES = 256 * 1024
 const GIT_TIMEOUT_MILLIS = 30_000
 const ENVIRONMENT_MAX_BYTES = 1024 * 1024
-const WORKTREE_OWNER_MARKER = '.laborer-worktree-owner.json'
-const WORKTREE_OWNER_MARKER_MAX_BYTES = 4096
 
 interface RegisteredWorktree {
   readonly branch: string | null
@@ -319,15 +322,6 @@ const readRegisteredWorktrees = async (
     await runGit(repository, ['worktree', 'list', '--porcelain', '-z'], signal)
   )
 
-interface WorktreeOwnerMarker {
-  readonly conversationId: string
-  readonly executionId: string
-  readonly operationId: string
-  readonly rootAuthorityDigest: string
-  readonly schemaVersion: 1
-  readonly worktreeName: string
-}
-
 const rootAuthorityDigest = (repository: string): string =>
   createHash('sha256')
     .update('laborer-worktree-root-authority-v1\0', 'utf8')
@@ -346,36 +340,12 @@ const ownerMarkerFor = (
   worktreeName: request.worktreeName,
 })
 
-const ownerMarkerPath = (worktreePath: string): string =>
-  join(worktreePath, WORKTREE_OWNER_MARKER)
-
 const writeOwnerMarker = async (
   context: RepositoryContext,
   worktreePath: string,
   request: WorktreeRequest
 ): Promise<void> => {
-  const path = ownerMarkerPath(worktreePath)
-  const file = await open(
-    path,
-    constants.O_WRONLY +
-      constants.O_CREAT +
-      constants.O_EXCL +
-      constants.O_NOFOLLOW,
-    0o600
-  )
-  try {
-    await file.writeFile(JSON.stringify(ownerMarkerFor(context, request)))
-    await file.chmod(0o600)
-    await file.sync()
-  } finally {
-    await file.close()
-  }
-  const directory = await open(worktreePath, constants.O_RDONLY)
-  try {
-    await directory.sync()
-  } finally {
-    await directory.close()
-  }
+  await writeWorktreeOwnerMarker(worktreePath, ownerMarkerFor(context, request))
 }
 
 const assertOwnerMarker = async (
@@ -383,40 +353,9 @@ const assertOwnerMarker = async (
   worktreePath: string,
   request: WorktreeRequest
 ): Promise<void> => {
-  const path = ownerMarkerPath(worktreePath)
-  const metadata = await lstat(path).catch((error: unknown) => {
-    if (isMissing(error)) {
-      throw worktreeFailure('worktree ownership marker conflicts')
-    }
-    throw error
-  })
-  if (
-    metadata.isSymbolicLink() ||
-    !metadata.isFile() ||
-    metadata.size > WORKTREE_OWNER_MARKER_MAX_BYTES ||
-    metadata.mode % 0o1000 !== 0o600
-  ) {
-    throw worktreeFailure('worktree ownership marker conflicts')
-  }
-  const file = await open(path, constants.O_RDONLY + constants.O_NOFOLLOW)
-  let source: string
+  let marker: WorktreeOwnerMarker
   try {
-    const openedMetadata = await file.stat()
-    if (
-      !openedMetadata.isFile() ||
-      openedMetadata.dev !== metadata.dev ||
-      openedMetadata.ino !== metadata.ino ||
-      openedMetadata.size > WORKTREE_OWNER_MARKER_MAX_BYTES
-    ) {
-      throw worktreeFailure('worktree ownership marker conflicts')
-    }
-    source = await file.readFile('utf8')
-  } finally {
-    await file.close()
-  }
-  let marker: unknown
-  try {
-    marker = JSON.parse(source) as unknown
+    marker = await readWorktreeOwnerMarker(worktreePath)
   } catch {
     throw worktreeFailure('worktree ownership marker conflicts')
   }

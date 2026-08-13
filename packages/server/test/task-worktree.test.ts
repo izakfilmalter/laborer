@@ -7,6 +7,11 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  WORKTREE_OWNER_MARKER_MAX_BYTES,
+  type WorktreeOwnerMarker,
+  writeWorktreeOwnerMarker,
+} from '@laborer/worktree-owner'
 import { afterEach, describe, expect, it } from 'vitest'
 import { inspectTaskWorktree } from '../src/services/task-worktree.js'
 
@@ -26,12 +31,21 @@ const worktree = (): string => {
   return path
 }
 
+const marker = (executionId: string): WorktreeOwnerMarker => ({
+  conversationId: 'conversation-1',
+  executionId,
+  operationId: 'operation-1',
+  rootAuthorityDigest: 'root-digest',
+  schemaVersion: 1,
+  worktreeName: 'tree',
+})
+
 describe('inspectTaskWorktree', () => {
   it('reports passive existence and matching owner evidence', () => {
     const path = worktree()
     writeFileSync(
       join(path, '.laborer-worktree-owner.json'),
-      JSON.stringify({ executionId: 'execution-1' })
+      JSON.stringify(marker('execution-1'))
     )
 
     expect(inspectTaskWorktree(path, 'execution-1')).toEqual({
@@ -47,7 +61,7 @@ describe('inspectTaskWorktree', () => {
   it('never treats missing or symlinked owner markers as ownership', () => {
     const path = worktree()
     const markerTarget = join(path, 'marker-target.json')
-    writeFileSync(markerTarget, JSON.stringify({ executionId: 'execution-1' }))
+    writeFileSync(markerTarget, JSON.stringify(marker('execution-1')))
     symlinkSync(markerTarget, join(path, '.laborer-worktree-owner.json'))
 
     expect(inspectTaskWorktree(path, 'execution-1')).toEqual({
@@ -58,6 +72,27 @@ describe('inspectTaskWorktree', () => {
     expect(inspectTaskWorktree(path, 'execution-1')).toEqual({
       botOwned: false,
       exists: false,
+    })
+  })
+
+  it('reads a shared writer marker at the 16 KiB boundary', async () => {
+    const path = worktree()
+    const baseMarker = marker('execution-boundary')
+    const emptyConversationMarker = { ...baseMarker, conversationId: '' }
+    const baseBytes = Buffer.byteLength(JSON.stringify(emptyConversationMarker))
+    const boundaryMarker = {
+      ...emptyConversationMarker,
+      conversationId: 'x'.repeat(WORKTREE_OWNER_MARKER_MAX_BYTES - baseBytes),
+    }
+
+    await writeWorktreeOwnerMarker(path, boundaryMarker)
+
+    expect(Buffer.byteLength(JSON.stringify(boundaryMarker))).toBe(
+      WORKTREE_OWNER_MARKER_MAX_BYTES
+    )
+    expect(inspectTaskWorktree(path, 'execution-boundary')).toEqual({
+      botOwned: true,
+      exists: true,
     })
   })
 })

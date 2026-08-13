@@ -1281,19 +1281,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * for drop-in replacement at the call site.
  */
 function decodeWindowLayout(input: unknown): RepairWindowLayoutResult {
-  // Step 1: Try strict Schema decode first (fast path for valid data)
-  const decodeResult = Schema.decodeUnknownResult(WindowLayoutSchema)(input)
+  try {
+    // Step 1: Try strict Schema decode first (fast path for valid data)
+    const decodeResult = Schema.decodeUnknownResult(
+      Schema.toType(WindowLayoutSchema)
+    )(input)
 
-  if (Result.isSuccess(decodeResult)) {
-    // Valid layout — apply repair transforms (collapse splits, fix sizes, etc.)
-    const decoded = decodeResult.success
-    const repaired = repairTransforms(decoded)
-    const wasRepaired = !deepEqual(decoded, repaired)
-    return { windowLayout: repaired, wasRepaired }
+    if (Result.isSuccess(decodeResult)) {
+      // Valid layout — apply repair transforms (collapse splits, fix sizes, etc.)
+      const decoded = decodeResult.success
+      const repaired = repairTransforms(decoded)
+      const wasRepaired = !deepEqual(decoded, repaired)
+      return { windowLayout: repaired, wasRepaired }
+    }
+
+    // Step 2: Schema decode failed — attempt lenient field-by-field recovery
+    return lenientDecodeWindowLayout(input)
+  } catch {
+    // Persisted state must never prevent the renderer from starting, including
+    // if a decoder or repair transform itself unexpectedly defects.
+    return { windowLayout: undefined, wasRepaired: true }
   }
-
-  // Step 2: Schema decode failed — attempt lenient field-by-field recovery
-  return lenientDecodeWindowLayout(input)
 }
 
 /**
@@ -1421,10 +1429,16 @@ function deepEqual(a: WindowLayout, b: WindowLayout): boolean {
 }
 
 // Schema decoders (cached at module level for performance)
-const decodeWindowTab = Schema.decodeUnknownResult(WindowTabSchema)
-const decodePanelNode = Schema.decodeUnknownResult(PanelNodeSchema)
-const decodePanelTab = Schema.decodeUnknownResult(PanelTabSchema)
-const decodeTileNode = Schema.decodeUnknownResult(WorkspaceTileNodeSchema)
+const decodeWindowTab = Schema.decodeUnknownResult(
+  Schema.toType(WindowTabSchema)
+)
+const decodePanelNode = Schema.decodeUnknownResult(
+  Schema.toType(PanelNodeSchema)
+)
+const decodePanelTab = Schema.decodeUnknownResult(Schema.toType(PanelTabSchema))
+const decodeTileNode = Schema.decodeUnknownResult(
+  Schema.toType(WorkspaceTileNodeSchema)
+)
 
 /**
  * Lenient decode of a WindowLayout from `unknown` input.

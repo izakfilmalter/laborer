@@ -389,6 +389,26 @@ interface StoredPanelLayout {
   readonly windowLayout: unknown | null
 }
 
+/** Decode the untrusted localStorage envelope without letting it block startup. */
+export const decodeStoredPanelLayout = (
+  raw: string | null
+): StoredPanelLayout => {
+  if (!raw) {
+    return { windowLayout: null }
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && 'windowLayout' in parsed) {
+      return { windowLayout: Reflect.get(parsed, 'windowLayout') ?? null }
+    }
+  } catch {
+    // A malformed persisted value is equivalent to no saved layout.
+  }
+
+  return { windowLayout: null }
+}
+
 const createPanelLayoutStorageKey = (windowId: string) =>
   `${PANEL_LAYOUT_STORAGE_KEY_PREFIX}${windowId}`
 
@@ -397,23 +417,9 @@ const readStoredPanelLayout = (windowId: string): StoredPanelLayout => {
     return { windowLayout: null }
   }
 
-  try {
-    const raw = window.localStorage.getItem(
-      createPanelLayoutStorageKey(windowId)
-    )
-    if (!raw) {
-      return { windowLayout: null }
-    }
-
-    const parsed = JSON.parse(raw) as unknown
-    if (parsed && typeof parsed === 'object' && 'windowLayout' in parsed) {
-      return { windowLayout: Reflect.get(parsed, 'windowLayout') ?? null }
-    }
-  } catch {
-    return { windowLayout: null }
-  }
-
-  return { windowLayout: null }
+  return decodeStoredPanelLayout(
+    window.localStorage.getItem(createPanelLayoutStorageKey(windowId))
+  )
 }
 
 const writeStoredPanelLayout = (

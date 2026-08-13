@@ -1,7 +1,7 @@
 /**
  * AtomRegistryProvider — Wraps the React tree with the effect-atom Registry.
  *
- * The RegistryProvider from @effect-atom/atom-react creates a Registry
+ * The RegistryProvider from @effect/atom-react creates an AtomRegistry
  * instance that manages atom subscriptions, lifecycle, and the Effect
  * runtime for AtomRpc clients.
  *

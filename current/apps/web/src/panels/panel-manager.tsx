@@ -673,7 +673,12 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const pendingClose = usePendingClosePane()
   const pendingPicker = usePendingPicker()
   const [isDragOver, setIsDragOver] = useState(false)
-  const paneContainerRef = useRef<HTMLDivElement | null>(null)
+  // Held as state (not a ref) so focus restoration re-runs whenever the pane's
+  // DOM node is replaced — which is exactly what fullscreen toggling does when
+  // the pane moves between the normal tree and the fullscreen portal.
+  const [paneContainer, setPaneContainer] = useState<HTMLDivElement | null>(
+    null
+  )
 
   const isFullscreen = fullscreenPaneId === node.id
   const isActive = activePaneId === node.id
@@ -684,6 +689,13 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   // When this pane becomes active (via keyboard navigation, tab switch, or
   // split), transfer DOM focus to it. This ensures terminal panes receive
   // keyboard input immediately without requiring a click.
+  //
+  // It also re-runs whenever the pane's container element is replaced, which
+  // happens on every fullscreen transition: React remounts the pane subtree
+  // when it moves between the normal tree and the fullscreen portal, and the
+  // browser drops focus to `document.body` as soon as the focused node leaves
+  // the document. Without this, Cmd+Shift+Enter would silently unfocus the
+  // terminal and force the user to click back in before typing.
   useEffect(() => {
     if (!isActive) {
       return
@@ -692,7 +704,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       return
     }
 
-    const container = paneContainerRef.current
+    const container = paneContainer
     if (!container) {
       return
     }
@@ -722,7 +734,13 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
     }
 
     container.focus()
-  }, [isActive, isLiveTerminalPane, node.id, pendingPicker.paneId])
+  }, [
+    isActive,
+    isLiveTerminalPane,
+    node.id,
+    paneContainer,
+    pendingPicker.paneId,
+  ])
 
   /**
    * Auto-close the pane when the terminal process exits.
@@ -801,12 +819,10 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       }
       actions?.setActivePaneId(node.id)
       if (pendingPicker.paneId === node.id) {
-        paneContainerRef.current
-          ?.querySelector<HTMLElement>('[role="listbox"]')
-          ?.focus()
+        paneContainer?.querySelector<HTMLElement>('[role="listbox"]')?.focus()
       }
     },
-    [actions, node.id, pendingPicker.paneId]
+    [actions, node.id, paneContainer, pendingPicker.paneId]
   )
 
   const handleClickCapture = useCallback(
@@ -832,7 +848,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       onDrop={handleDrop}
       onFocusCapture={() => actions?.setActivePaneId(node.id)}
       onMouseDownCapture={handleMouseDownCapture}
-      ref={paneContainerRef}
+      ref={setPaneContainer}
       role="region"
       tabIndex={-1}
     >

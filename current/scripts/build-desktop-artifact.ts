@@ -34,6 +34,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -712,7 +713,11 @@ function smokeTestPackagedApp(stageAppDir: string): void {
         existsSync(mcpCommandPath)
       ) {
         const linkedScriptPath = readlinkSync(mcpCommandPath)
-        if (linkedScriptPath !== expectedMcpScriptPath) {
+        // macOS exposes the same temporary directory through both `/var` and
+        // `/private/var`; compare canonical paths rather than path aliases.
+        if (
+          realpathSync(linkedScriptPath) !== realpathSync(expectedMcpScriptPath)
+        ) {
           throw new Error(
             `Packaged app installed MCP command for ${linkedScriptPath}, expected ${expectedMcpScriptPath}`
           )

@@ -76,13 +76,16 @@ test.describe('workspace lifecycle', () => {
     ).toBeVisible({ timeout: 15_000 })
   })
 
-  test('converts forward slashes to hyphens in branch name on create and shows correctly in sidebar', async ({
+  /**
+   * Namespaced branches are the house style — an auto-generated name is
+   * `laborer/<uuid>` — so a typed slash survives into the branch. Only the
+   * worktree directory is slugified, which the sidebar never shows.
+   */
+  test('keeps forward slashes in the branch name and shows it in the sidebar', async ({
     electronApp,
     page,
   }) => {
-    const timestamp = Date.now()
-    const inputBranchName = `e2e-slash/branch-${timestamp}`
-    const expectedBranchName = `e2e-slash-branch-${timestamp}`
+    const branchName = `e2e-slash/branch-${Date.now()}`
 
     await resetAndWaitForApp(page)
 
@@ -99,29 +102,25 @@ test.describe('workspace lifecycle', () => {
       name: `Branch name or Slack URL for ${projectName}`,
     })
     await expect(composerInput).toBeVisible({ timeout: 10_000 })
-    await composerInput.fill(inputBranchName)
+    await composerInput.fill(branchName)
 
-    // Verify the input displays the slash as typed
-    await expect(composerInput).toHaveValue(inputBranchName)
+    // The branch mask keeps the slash rather than stripping it
+    await expect(composerInput).toHaveValue(branchName)
 
-    // Commit — the server transforms / to -
     await composerInput.press('Enter')
 
     // The composer clears itself and stays open for the next workspace
     await expect(composerInput).toHaveValue('', { timeout: 30_000 })
 
-    // The workspace should appear in the sidebar with the transformed branch name.
+    // The workspace appears in the sidebar under the branch name as typed.
     // Use .first() — the branch name also appears in the panel header bar.
     await expect(
-      page.getByText(expectedBranchName, { exact: true }).first()
-    ).toBeVisible({
-      timeout: 15_000,
-    })
+      page.getByText(branchName, { exact: true }).first()
+    ).toBeVisible({ timeout: 15_000 })
 
-    // The destroy button should reference the transformed branch name
     await expect(
       page.getByRole('button', {
-        name: `Destroy workspace ${expectedBranchName}`,
+        name: `Destroy workspace ${branchName}`,
       })
     ).toBeVisible({ timeout: 15_000 })
   })

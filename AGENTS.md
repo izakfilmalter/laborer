@@ -11,6 +11,8 @@ Laborer is a Bun and Turborepo monorepo whose Slack, desktop, and web surfaces a
 
 Use the nearest `AGENTS.md`. App guidance adds local constraints to this file; shared rules have one canonical home here. Keep changes within the issue's app or package boundary unless the behavior itself crosses that boundary. Preserve explicit RPC and adapter boundaries rather than importing another app's internals.
 
+Default product work to `apps/bot/`. Change mission control (`apps/desktop/`, `apps/web/`, and its supporting packages) only when the issue explicitly concerns it; the merged repository does not erase those ownership boundaries.
+
 ## Commands
 
 Run workspace-wide commands from the repository root:

@@ -14,7 +14,7 @@ The bot and mission-control apps retain distinct runtime responsibilities while 
 ## Requirements
 
 - Bun 1.3.5
-- Node 24.11.1 for the bot runtime and task MCP
+- Node 24.11.1 for the bot runtime; Node 24 or newer for the task MCP
 - macOS for Electron packaging and launchd integration
 
 ## Development
@@ -23,17 +23,18 @@ Run commands from the repository root:
 
 ```sh
 bun install
+cp .env.example .env.local
 bun run dev
 ```
 
-`dev` starts the web app, backend services, and Electron shell. To run an individual surface:
+`dev` starts the web app, mission-control services, and Electron shell. To run the Vite interface by itself or the bot daemon in watch mode:
 
 ```sh
 bun run --cwd apps/web dev
 bun run dev:bot
 ```
 
-The repository uses one ignored root `.env.local`. Copy [`.env.example`](./.env.example) and fill only the credentials needed by the runtime you are starting.
+The repository uses one ignored root `.env.local`. Fill only the credentials needed by the runtime you are starting; the mission-control defaults in the example are not secrets.
 
 ## Common commands
 

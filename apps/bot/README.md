@@ -1,7 +1,7 @@
 # Laborer bot
 
-`apps/bot/` is Laborer's Slack bridge and local runtime, published in the
-monorepo as `@laborer/bot`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
+`apps/bot/` is Laborer's Slack bridge and local runtime, named `@laborer/bot` in
+the monorepo. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
 entire Slack plane: Socket Mode ingestion, normalization, routing, activation,
 subscription, delivery, streaming, and Block Kit permission UI. One Slack
 adapter serves every configured workspace through an `installationProvider`
@@ -64,6 +64,16 @@ All daemon runtime state has one root. Workspace state is isolated under
 Action/Execution runtime uses its partition's `runtime.sqlite`. Pre-Chat runtime
 state is deleted at cutover, not imported or archived; affected Slack threads
 activate again by mention.
+
+Durable Soul, Workspace-memory, and User-profile Markdown lives separately
+under `$XDG_CONFIG_HOME/laborer` (defaulting to `~/.config/laborer`). Laborer
+partitions Soul context by canonical Laborer-root identity and partitions
+Workspace memory and User profiles by authenticated Slack workspace.
+
+Implementation Actions inherit the user's OpenCode permission policy. Laborer
+does not add wildcard allows when creating implementation sessions; when it
+resumes a historical session, it removes only exact wildcard-allow entries
+installed by the retired adapter and preserves every other ordered rule.
 
 ## Stable installed identities
 

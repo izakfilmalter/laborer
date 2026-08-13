@@ -396,3 +396,9 @@ Playwright tests run against the full stack (server + web app). They spin up the
 4. **Effect all the way down.** The server is Effect TS v3. Services are Effect services with tag-based DI. RPC is `@effect/rpc` with `effect-atom`'s `AtomRpc` on the client for typed mutations. Testing uses @effect/vitest. The shared schema uses Effect Schema (via LiveStore). This provides type safety, composability, and testability throughout.
 
 5. **Progressive complexity.** A developer can start with one project, workspace, and terminal, then add splits, supplementary terminals, and dev servers as needed.
+
+### Issue Tracking
+
+Implementation issues derived from this PRD are tracked in:
+
+- **[issues.md](./issues.md)** — Remaining issues (Ready / Blocked)

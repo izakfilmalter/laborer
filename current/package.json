@@ -23,7 +23,6 @@
     "dev": "turbo dev dev:electron",
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
-    "dev:native": "turbo -F native dev",
     "build:app": "tsx scripts/build-desktop-artifact.ts",
     "cleanup:livestore": "tsx scripts/cleanup-livestore-files.ts",
     "test": "turbo test --ui=stream --concurrency=3",

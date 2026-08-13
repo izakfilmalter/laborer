@@ -101,11 +101,11 @@ export function EmptyWorkspaceState({
   )
 
   return (
-    <div
-      className="flex h-full w-full items-center justify-center bg-background"
+    <ScrollArea
+      className="h-full w-full bg-background"
       data-testid="empty-workspace-state"
     >
-      <Empty>
+      <Empty className="justify-start pt-12">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <Layers />
@@ -120,7 +120,7 @@ export function EmptyWorkspaceState({
           <PanelTypePicker onCancel={noop} onSelect={handleSelect} />
         </EmptyContent>
       </Empty>
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -151,11 +151,11 @@ export function EmptyPanelTabState({
   )
 
   return (
-    <div
-      className="flex h-full w-full items-center justify-center bg-background"
+    <ScrollArea
+      className="h-full w-full bg-background"
       data-testid="empty-panel-tab-state"
     >
-      <Empty>
+      <Empty className="justify-start pt-12">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <PanelTop />
@@ -170,7 +170,7 @@ export function EmptyPanelTabState({
           <PanelTypePicker onCancel={noop} onSelect={handleSelect} />
         </EmptyContent>
       </Empty>
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -267,11 +267,11 @@ export function EmptyWindowTabState() {
   const hasAvailableWorkspaces = groups.some((g) => g.workspaces.length > 0)
 
   return (
-    <div
-      className="flex h-full w-full items-center justify-center bg-background"
+    <ScrollArea
+      className="h-full w-full bg-background"
       data-testid="empty-window-tab-state"
     >
-      <Empty>
+      <Empty className="justify-start pt-12">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <LayoutGrid />
@@ -284,17 +284,15 @@ export function EmptyWindowTabState() {
         </EmptyHeader>
         <EmptyContent className="items-stretch">
           {hasAvailableWorkspaces ? (
-            <ScrollArea className="max-h-48 w-full">
-              <div className="grid gap-3">
-                {groups.map((group) => (
-                  <WorkspacePickerGroup
-                    group={group}
-                    key={group.projectId}
-                    onSelect={handleSelectWorkspace}
-                  />
-                ))}
-              </div>
-            </ScrollArea>
+            <div className="grid w-full gap-3">
+              {groups.map((group) => (
+                <WorkspacePickerGroup
+                  group={group}
+                  key={group.projectId}
+                  onSelect={handleSelectWorkspace}
+                />
+              ))}
+            </div>
           ) : (
             <p className="text-muted-foreground text-xs">
               All workspaces are already open. Create a new one from the
@@ -303,7 +301,7 @@ export function EmptyWindowTabState() {
           )}
         </EmptyContent>
       </Empty>
-    </div>
+    </ScrollArea>
   )
 }
 

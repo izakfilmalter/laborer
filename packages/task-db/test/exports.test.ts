@@ -48,25 +48,26 @@ describe('@laborer/task-db exports', () => {
     ).toEqual(migrationLedger)
   })
 
-  it('resolves every public subpath under Bun and Node', async () => {
+  it('resolves every public subpath under Bun and Node', () => {
     const imports = [
       '@laborer/task-db',
       '@laborer/task-db/path',
       '@laborer/task-db/migrations',
       '@laborer/task-db/schema',
     ]
-    await Promise.all(imports.map((specifier) => import(specifier)))
+    const script = `await Promise.all(${JSON.stringify(imports)}.map((specifier) => import(specifier)))`
 
-    const node = spawnSync(
-      'node',
-      [
-        '--input-type=module',
-        '--eval',
-        `await Promise.all(${JSON.stringify(imports)}.map((specifier) => import(specifier)))`,
-      ],
-      { cwd: new URL('..', import.meta.url), encoding: 'utf8' }
-    )
-    expect(node.stderr).toBe('')
-    expect(node.status).toBe(0)
+    for (const [runtime, arguments_] of [
+      ['node', ['--input-type=module', '--eval', script]],
+      ['bun', ['--eval', script]],
+    ] as const) {
+      const result = spawnSync(runtime, arguments_, {
+        cwd: new URL('..', import.meta.url),
+        encoding: 'utf8',
+      })
+      expect(result.error, `${runtime} failed to start`).toBeUndefined()
+      expect(result.stderr, `${runtime} wrote to stderr`).toBe('')
+      expect(result.status, `${runtime} exited unsuccessfully`).toBe(0)
+    }
   })
 })

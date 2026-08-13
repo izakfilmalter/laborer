@@ -2,7 +2,7 @@
  * Hook that returns a reactive map of per-service health states.
  *
  * Aggregates data from sidecar status events (Electron IPC or dev polling)
- * and includes a `sync` entry for renderer-to-server RPC connection health.
+ * and includes a `sync` alias for renderer-to-server RPC health.
  *
  * ```tsx
  * const statuses = useServiceStatus()
@@ -15,7 +15,6 @@
  */
 
 import { useMemo } from 'react'
-import { useServerConnectionState } from '@/hooks/use-server-connection-state'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
 import type { ServiceState } from '@/lib/sidecar-statuses'
 
@@ -29,18 +28,17 @@ type ServiceStatuses = Record<ServiceName, ServiceState>
  * Returns a reactive map of per-service health states.
  *
  * Includes all sidecar services plus a `sync` entry for the server RPC
- * connection. Updates reactively when process health or transport state changes.
+ * connection. MessagePort RPC shares the server utility process lifecycle.
  */
 function useServiceStatus(): ServiceStatuses {
   const sidecarStatuses = useSidecarStatuses()
-  const syncState = useServerConnectionState(sidecarStatuses.server)
 
   return useMemo(
     (): ServiceStatuses => ({
       ...sidecarStatuses,
-      sync: syncState,
+      sync: sidecarStatuses.server,
     }),
-    [sidecarStatuses, syncState]
+    [sidecarStatuses]
   )
 }
 

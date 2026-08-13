@@ -134,7 +134,6 @@ const OPTIONAL_EFFECT_RUNTIME_PACKAGES = [
 ] as const
 
 const REQUIRED_ASAR_FILES = [
-  'packages/server/dist/main.mjs',
   // The bundled server resolves task-db SQL migrations relative to the
   // bundle (`new URL('./migrations/*.sql', import.meta.url)`). If these are
   // missing from the asar, the server sidecar crash-loops at import time and

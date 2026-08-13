@@ -26,7 +26,7 @@ export default defineConfig([
   {
     ...shared,
     clean: true,
-    entry: ['src/utility-main.ts', 'src/main.ts'],
+    entry: ['src/utility-main.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
   },
   {

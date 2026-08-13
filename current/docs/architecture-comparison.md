@@ -274,7 +274,7 @@ startServerBackend():
 #### Server Backend Initialization (deferred pattern)
 
 ```
-packages/server/src/main.ts
+packages/server/src/utility-main.ts
   |
   |-- Immediate layer (fast startup):
   |     LaborerStoreLive (SQLite), ConfigService, RepositoryIdentity

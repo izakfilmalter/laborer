@@ -9,7 +9,6 @@ import type {
 import {
   BrowserWindow,
   dialog,
-  type IpcMainEvent,
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
@@ -43,7 +42,6 @@ export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 export const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 export const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 export const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
-export const GET_BACKEND_WS_URL_CHANNEL = 'desktop:get-backend-ws-url'
 export const GET_SIDECAR_STATUSES_CHANNEL = 'desktop:get-sidecar-statuses'
 export const BEFORE_QUIT_CHANNEL = 'desktop:before-quit'
 export const QUIT_REPLY_CHANNEL = 'desktop:quit-reply'
@@ -223,7 +221,6 @@ type GetSidecarStatusesCallback = () => SidecarStatusEvent[]
 type GetUpdateStateCallback = () => DesktopUpdateState
 type DownloadUpdateCallback = () => Promise<DesktopUpdateActionResult>
 type InstallUpdateCallback = () => Promise<DesktopUpdateActionResult>
-type GetBackendWsUrlCallback = () => string | null
 type WorkspacePresenceCallback = (workspaceIds: readonly string[]) => void
 
 let trayCountCallback: TrayCountCallback | null = null
@@ -232,7 +229,6 @@ let getSidecarStatusesCallback: GetSidecarStatusesCallback | null = null
 let getUpdateStateCallback: GetUpdateStateCallback | null = null
 let downloadUpdateCallback: DownloadUpdateCallback | null = null
 let installUpdateCallback: InstallUpdateCallback | null = null
-let getBackendWsUrlCallback: GetBackendWsUrlCallback | null = null
 let utilityProcessManagerRef: UtilityProcessManager | null = null
 let workspacePresenceCallback: WorkspacePresenceCallback | null = null
 
@@ -282,11 +278,6 @@ export function setDownloadUpdateHandler(cb: DownloadUpdateCallback): void {
 /** Set the callback for installing a downloaded update. */
 export function setInstallUpdateHandler(cb: InstallUpdateCallback): void {
   installUpdateCallback = cb
-}
-
-/** Set the callback for getting the server backend WebSocket URL. */
-export function setGetBackendWsUrlHandler(cb: GetBackendWsUrlCallback): void {
-  getBackendWsUrlCallback = cb
 }
 
 /** Set the utility process manager for MessagePort acquisition. */
@@ -554,15 +545,6 @@ export function registerIpcHandlers(
   })
 
   // -- Get backend WebSocket URL ---------------------------------------------
-  ipcMain.removeAllListeners(GET_BACKEND_WS_URL_CHANNEL)
-  ipcMain.on(GET_BACKEND_WS_URL_CHANNEL, (event: IpcMainEvent) => {
-    event.returnValue = getBackendWsUrlCallback?.() ?? null
-  })
-  ipcMain.removeHandler(GET_BACKEND_WS_URL_CHANNEL)
-  ipcMain.handle(GET_BACKEND_WS_URL_CHANNEL, () => {
-    return getBackendWsUrlCallback?.() ?? null
-  })
-
   // -- Auto-update: get state -----------------------------------------------
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL)
   ipcMain.handle(UPDATE_GET_STATE_CHANNEL, () => {

@@ -1,5 +1,4 @@
 import { watch, writeFileSync } from 'node:fs'
-import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
 import {
@@ -15,8 +14,6 @@ import {
   triggerDownloadUpdate,
   triggerInstallUpdate,
 } from './auto-updater.js'
-import { resolveDesktopBackendPort } from './backend-port.js'
-import { BackendProcessManager } from './backend-process-manager.js'
 import { DevWatcher } from './dev-watcher.js'
 import { fixPath } from './fix-path.js'
 import {
@@ -29,7 +26,6 @@ import {
   registerIpcHandlers,
   removeWindowPresence,
   setDownloadUpdateHandler,
-  setGetBackendWsUrlHandler,
   setGetSidecarStatusesHandler,
   setGetUpdateStateHandler,
   setInstallUpdateHandler,
@@ -54,13 +50,6 @@ import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { UtilityProcessManager } from './utility-process-manager.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
 import { type WindowRecord, WindowStateManager } from './window-state.js'
-
-if (process.env.LABORER_BACKEND_CHILD === '1') {
-  console.error(
-    '[main] Refusing to launch desktop app from backend child process environment'
-  )
-  process.exit(1)
-}
 
 // Fix PATH before anything else — must happen synchronously before
 // any child processes are spawned. On macOS, apps launched from
@@ -131,8 +120,6 @@ process.on('SIGPIPE', () => {
 // back to this app after the user authorizes in the browser.
 
 const GITHUB_OAUTH_PROTOCOL = 'x-github-desktop-dev-auth'
-const DESKTOP_LOOPBACK_HOST = '127.0.0.1'
-const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ['0.0.0.0', '::'] as const
 
 /** Pending OAuth URL received before a window was ready. */
 let pendingOAuthUrl: string | null = null
@@ -209,12 +196,6 @@ let lifecycleMonitor: LifecycleMonitor | null = null
  * Only created in dev mode, unless `LABORER_SKIP_WATCH=1` is set.
  */
 let devWatcher: DevWatcher | null = null
-
-/** Server backend child process manager. */
-let backendProcessManager: BackendProcessManager | null = null
-
-/** Current server backend WebSocket URL exposed to renderer clients. */
-let backendWsUrl: string | null = null
 
 /** Sole app-wide owner of native agent-attention notification policy. */
 let agentNotificationCoordinator: AgentNotificationCoordinator<
@@ -382,52 +363,36 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   return window
 }
 
-function reserveLoopbackPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (typeof address === 'object' && address !== null) {
-        const { port } = address
-        server.close(() => resolve(port))
-        return
-      }
-      server.close(() => reject(new Error('Failed to reserve backend port')))
-    })
-  })
-}
+/** Reconnect server dependencies whenever either utility process restarts. */
+function brokerServerServicePorts(): void {
+  if (
+    lifecycleMonitor?.isHealthy('server') &&
+    lifecycleMonitor.isHealthy('terminal')
+  ) {
+    utilityProcessManager?.brokerInterProcessPort(
+      'server',
+      { type: 'terminal-rpc-port' },
+      'terminal',
+      { type: 'port' }
+    )
+  }
 
-async function startServerBackend(): Promise<void> {
-  const configuredPort = process.env.LABORER_DESKTOP_BACKEND_PORT
-  const port =
-    configuredPort === undefined
-      ? await reserveLoopbackPort()
-      : await resolveDesktopBackendPort({
-          host: DESKTOP_LOOPBACK_HOST,
-          maxPort: Number(configuredPort),
-          requiredHosts: DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
-          startPort: Number(configuredPort),
-        })
-  const terminalPort = await reserveLoopbackPort()
-  const fileWatcherPort = await reserveLoopbackPort()
-
-  process.env.LABORER_TERMINAL_HTTP_PORT = String(terminalPort)
-  process.env.LABORER_TERMINAL_RPC_URL = `ws://127.0.0.1:${String(terminalPort)}/rpc`
-  process.env.LABORER_FILE_WATCHER_HTTP_PORT = String(fileWatcherPort)
-  process.env.LABORER_FILE_WATCHER_RPC_URL = `ws://127.0.0.1:${String(fileWatcherPort)}/rpc`
-  process.env.PORT = String(port)
-
-  backendProcessManager = new BackendProcessManager({
-    authToken: crypto.randomUUID(),
-    port,
-  })
-  backendWsUrl = backendProcessManager.start().wsUrl
+  if (
+    lifecycleMonitor?.isHealthy('server') &&
+    lifecycleMonitor.isHealthy('file-watcher')
+  ) {
+    utilityProcessManager?.brokerInterProcessPort(
+      'server',
+      { type: 'file-watcher-rpc-port' },
+      'file-watcher',
+      { type: 'port' }
+    )
+  }
 }
 
 app
   .whenReady()
-  .then(async () => {
+  .then(() => {
     if (app.isPackaged) {
       refreshLaborerMcpSymlink({
         scriptPath: laborerMcpBundleScriptPath(process.resourcesPath),
@@ -499,6 +464,7 @@ app
     utilityProcessManager.setMessageHandler((name, message) => {
       if (message.type === 'ready') {
         lifecycleMonitor?.handleReady(name)
+        brokerServerServicePorts()
         if (name === 'terminal') {
           publishWorkspacePresence()
         }
@@ -521,11 +487,9 @@ app
         ?.postMessage({ type: 'workspace-presence', workspaceIds })
     })
 
-    await startServerBackend()
-
     // Fork utility processes via the lifecycle monitor, which handles
     // startup detection, crash recovery, and status events.
-    lifecycleMonitor.forkAllAndMonitor(['terminal', 'file-watcher'])
+    lifecycleMonitor.forkAllAndMonitor(['server', 'terminal', 'file-watcher'])
 
     // No powerMonitor suspend/resume wiring is needed for heartbeats:
     // the lifecycle monitor counts awake time (process-time countdowns),
@@ -569,7 +533,7 @@ app
     // Wire sidecar restart requests from the renderer to the lifecycle
     // monitor or utility process manager.
     setRestartSidecarHandler(async (name) => {
-      const validNames = ['terminal', 'file-watcher'] as const
+      const validNames = ['server', 'terminal', 'file-watcher'] as const
       type ValidName = (typeof validNames)[number]
       if (!validNames.includes(name as ValidName)) {
         return
@@ -591,8 +555,6 @@ app
     setGetSidecarStatusesHandler(() => {
       return lifecycleMonitor?.getCurrentStatuses() ?? []
     })
-
-    setGetBackendWsUrlHandler(() => backendWsUrl)
 
     // Wire auto-update IPC handlers.
     setGetUpdateStateHandler(() => getUpdateState())
@@ -744,10 +706,6 @@ async function shutdownUtilityProcesses(): Promise<void> {
   if (utilityProcessManager) {
     await utilityProcessManager.killAllAndWait(UTILITY_QUIT_TIMEOUT_MS)
   }
-
-  backendProcessManager?.stop()
-  backendProcessManager = null
-  backendWsUrl = null
 }
 
 // Phase 1: `before-quit` — ask renderers for permission, with veto support.

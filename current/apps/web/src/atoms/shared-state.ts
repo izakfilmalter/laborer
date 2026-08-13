@@ -649,12 +649,12 @@ export const SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS = 60_000
 
 /**
  * The app owns ONE shared-state subscription for its whole lifetime. When the
- * loopback socket drops — OS sleep/wake is enough — the in-flight
+ * MessagePort closes — for example, when the utility process restarts — the in-flight
  * `state.subscribe` stream fails, and without a retry the renderer would keep
  * presenting its last projection forever while mutations kept landing in the
  * shared database (the "created tasks never appear on the board" failure).
  *
- * Like {@link wsReconnectRetrySchedule} one layer down, this schedule must
+ * This schedule must
  * never terminate. Each retry opens a fresh subscription whose snapshot is
  * authoritative, so no delta lost during the outage is ever needed. The
  * custom Effect 4 schedule caps its exponential delay and periodically

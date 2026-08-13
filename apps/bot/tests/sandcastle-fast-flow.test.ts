@@ -12,7 +12,7 @@ import {
   shellQuote,
   shouldFastForwardPreservedWorktree,
   shouldRefreshUnstartedBranch,
-} from '../../.sandcastle/fast-flow/index.ts'
+} from '../../../.sandcastle/fast-flow/index.ts'
 
 describe('Sandcastle fast flow', () => {
   it('merges without asking gh to delete a checked-out worktree branch', () => {

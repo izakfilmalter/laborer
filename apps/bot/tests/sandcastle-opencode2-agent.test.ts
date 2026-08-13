@@ -9,7 +9,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { opencode2Agent } from '../../.sandcastle/opencode2-agent/index.ts'
+import { opencode2Agent } from '../../../.sandcastle/opencode2-agent/index.ts'
 
 const sandcastleMain = readFileSync('../.sandcastle/main.ts', 'utf8')
 

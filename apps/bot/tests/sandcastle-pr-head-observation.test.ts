@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest'
 import {
   PrHeadObservationError,
   waitForExpectedPrHead,
-} from '../../.sandcastle/pr-head-observation/index.ts'
+} from '../../../.sandcastle/pr-head-observation/index.ts'
 
 describe('Sandcastle PR head observation', () => {
   it("allows GitHub's PR head view to converge after a push", async () => {

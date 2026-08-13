@@ -8,7 +8,7 @@ import {
   reviewedHeadFromBody,
   reviewedHeadMarker,
   specClosureOrder,
-} from '../../.sandcastle/spec-pr-progress/index.ts'
+} from '../../../.sandcastle/spec-pr-progress/index.ts'
 
 const acceptedHead = 'a'.repeat(40)
 const reviewedHead = 'b'.repeat(40)

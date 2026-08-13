@@ -54,7 +54,7 @@ describe("primary runtime identity audit", () => {
       "utf8"
     );
 
-    expect(packageJson.name).toBe("@laborer/slack-runtime");
+    expect(packageJson.name).toBe("@laborer/bot");
     expect(
       Object.keys(packageJson.scripts ?? {}).filter(
         (name) => name.includes("oauth") || name.includes("funnel")

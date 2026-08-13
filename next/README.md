@@ -1,7 +1,7 @@
 # Slack-native Laborer
 
 `next/` is Laborer's primary Slack-native implementation, package
-`@laborer/slack-runtime`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
+`@laborer/bot`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
 entire Slack plane: Socket Mode ingestion, normalization, routing, activation,
 subscription, delivery, streaming, and Block Kit permission UI. One Slack
 adapter serves every configured workspace through an `installationProvider`
@@ -63,7 +63,7 @@ activate again by mention.
 
 ## Stable installed identities
 
-The source package is `@laborer/slack-runtime`, but already installed external
+The source package is `@laborer/bot`, but already installed external
 identities do not follow package naming. The launchd service label remains
 `com.laborer.daemon` and the companion bundle identifier remains
 `com.laborer.companion`. The daemon/companion operator protocol is an explicit

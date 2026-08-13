@@ -139,11 +139,12 @@ The `.reference/` directory contains shallow clones of key dependency repositori
 
 1. Run `effect-solutions list` to see available guides
 2. Run `effect-solutions show <topic>...` for relevant patterns (supports multiple topics)
-3. Search `.reference/effect/` for real implementations (run `effect-solutions setup` first)
+3. Check the target implementation's package manifest, installed types, and existing usage
+4. Search the `@effect` project reference for implementations and tests, then reconcile them with the installed version
 
 Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
 
-Never guess at Effect patterns - check the guide first.
+The guides and project reference can lag or lead the installed Effect 4 beta APIs. Never guess or copy an example blindly: the target implementation's manifest, installed types, and repository usage are authoritative. `current/` and `next/` pin shared Effect packages in lockstep; do not introduce Effect 3 patterns or independently change shared versions in `current/`.
 <!-- effect-solutions:end -->
 
 ## LiveStore

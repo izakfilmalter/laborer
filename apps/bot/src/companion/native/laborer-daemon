@@ -5,4 +5,5 @@ CONTENTS="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
 DAEMON="$CONTENTS/Resources/daemon"
 
 export NODE_ENV=production
+cd "$DAEMON/app"
 exec "$DAEMON/bin/node" "$DAEMON/app/src/acp-runtime/production-live.ts"

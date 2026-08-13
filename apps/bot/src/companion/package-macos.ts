@@ -19,6 +19,7 @@ import { laborerLaunchAgentPlist, macosPackageLayout } from './macos-package.ts'
 
 const execFileAsync = promisify(execFile)
 const packageRoot = resolve(import.meta.dirname, '../..')
+const repositoryRoot = resolve(packageRoot, '../..')
 const outputRoot = resolve(packageRoot, 'release', `macos-${arch()}`)
 const application = resolve(outputRoot, 'Laborer.app')
 const contents = resolve(application, 'Contents')
@@ -128,11 +129,16 @@ const packageMacosApplication = async (): Promise<void> => {
     resolve(packagedApplication, 'node_modules'),
     'dir'
   )
-  await Promise.all(
-    ['laborer.json', 'package.json'].map((name) =>
-      copyFile(resolve(packageRoot, name), resolve(packagedDaemon, 'app', name))
-    )
-  )
+  await Promise.all([
+    copyFile(
+      resolve(repositoryRoot, 'laborer.json'),
+      resolve(packagedDaemon, 'app', 'laborer.json')
+    ),
+    copyFile(
+      resolve(packageRoot, 'package.json'),
+      resolve(packagedDaemon, 'app', 'package.json')
+    ),
+  ])
   await copyFile(
     node,
     resolve(contents, macosPackageLayout.nodeRuntime.replace('Contents/', ''))

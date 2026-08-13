@@ -34,8 +34,8 @@ git gtr config set gtr.editor.default cursor
 # Default AI tool
 git gtr config set gtr.ai.default claude
 
-# Copy the current app environment to worktrees (gtr handles copying, script
-# handles overrides).
+# Copy the root environment contract to worktrees (gtr handles copying, the
+# post-create script handles worktree-specific overrides).
 git gtr config add gtr.copy.include ".env.local"
 
 # Post-create hook for worktree setup and bun install

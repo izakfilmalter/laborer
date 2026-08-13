@@ -155,26 +155,42 @@ describe('addWorkspaceToTab', () => {
     }
   })
 
-  it('wraps a horizontal root split in a new vertical split', () => {
+  it('adds into the smallest column of a horizontal root split', () => {
+    // Horizontal root = multi-column layout. The new workspace joins the
+    // column with the fewest workspaces instead of wrapping the whole
+    // layout in a vertical split (which would destroy the columns).
     const split = makeTileSplit(
       'split-1',
       'horizontal',
-      [makeTile('tile-1', 'ws-1'), makeTile('tile-2', 'ws-2')],
-      [50, 50]
+      [
+        makeTileSplit(
+          'col-1',
+          'vertical',
+          [makeTile('tile-1', 'ws-1'), makeTile('tile-2', 'ws-2')],
+          [50, 50]
+        ),
+        makeTile('tile-3', 'ws-3'),
+      ],
+      [60, 40]
     )
     const tab = makeTab('tab-1', split)
-    const result = addWorkspaceToTab(tab, 'ws-3')
+    const result = addWorkspaceToTab(tab, 'ws-4')
 
     expect(result.workspaceLayout?._tag).toBe('WorkspaceTileSplit')
     const newSplit = result.workspaceLayout as WorkspaceTileSplit
-    expect(newSplit.direction).toBe('vertical')
+    // Root stays horizontal with its column widths untouched
+    expect(newSplit.direction).toBe('horizontal')
     expect(newSplit.children.length).toBe(2)
-    expect(newSplit.sizes).toEqual([50, 50])
+    expect(newSplit.sizes).toEqual([60, 40])
 
-    // First child is the original horizontal split
-    expect(newSplit.children[0]).toBe(split)
-    // Second child is the new workspace
-    expect((newSplit.children[1] as WorkspaceTileLeaf).workspaceId).toBe('ws-3')
+    // First column is untouched
+    expect(newSplit.children[0]).toBe(split.children[0])
+    // Second (smaller) column now stacks ws-3 above the new workspace
+    const secondColumn = newSplit.children[1] as WorkspaceTileSplit
+    expect(secondColumn._tag).toBe('WorkspaceTileSplit')
+    expect(secondColumn.direction).toBe('vertical')
+    expect(getWorkspaceIds(secondColumn)).toEqual(['ws-3', 'ws-4'])
+    expect(secondColumn.sizes).toEqual([50, 50])
   })
 
   it('does not mutate the original tab', () => {

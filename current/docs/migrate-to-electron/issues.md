@@ -102,7 +102,7 @@ Remove the `ensureBunSpawnForNodeTests()` polyfills from `docker-detection.e2e.t
 
 Swap the server package from Bun runtime to Node.js. This is the final step of the server Bun migration — after spawn sites are already converted (Issues 2, 3), this handles the remaining Bun-specific APIs:
 
-1. Replace `@effect/platform-bun` with `@effect/platform-node` in `packages/server/src/main.ts` (`BunHttpServer` -> `NodeHttpServer` with `http.createServer()`, `BunRuntime` -> `NodeRuntime`)
+1. Replace the server package's `@effect/platform-bun` runtime with `@effect/platform-node`.
 2. Replace `import { Database } from 'bun:sqlite'` with `better-sqlite3` in `packages/server/src/services/sync-backend.ts` — the LiveStore sync backend
 3. Update `packages/server/tsconfig.json` to remove `"bun"` from types array
 4. Update `packages/server/package.json`: swap `@effect/platform-bun` -> `@effect/platform-node`, add `better-sqlite3` + `@types/better-sqlite3`, remove `@types/bun`, update scripts from `bun run` to `tsx`
@@ -264,7 +264,7 @@ Reserve two ephemeral ports (for server and terminal) at startup using Node.js `
 
 
 - Spawn via `child_process.spawn(process.execPath, [entryPath], { env: { ELECTRON_RUN_AS_NODE: '1', ...serviceEnv } })`
-- Entry paths: resolve to the bundled service entry points (in dev: `../../packages/server/src/main.ts` run via tsx; in prod: bundled `dist/` files)
+- Entry paths: resolve to each service package's bundled utility-process entry point.
 - Pass environment: ports (from Issue 7), auth token, DATA_DIR, TERMINAL_PORT, etc.
 - Capture stderr in a ring buffer (last 50 lines) for crash diagnostics
 - Graceful shutdown on app quit: SIGTERM first, SIGKILL after 2-second timeout

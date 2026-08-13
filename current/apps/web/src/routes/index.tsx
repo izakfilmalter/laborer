@@ -16,6 +16,7 @@ import {
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
+import { useProjectReorderMonitor } from '@/components/project-reorder'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -915,6 +916,9 @@ function HomeComponent() {
   // Project collapse state — persisted to localStorage
   const collapseState = useProjectCollapseState()
 
+  // Commits sidebar project drags; the board owns its own monitor.
+  useProjectReorderMonitor('sidebar')
+
   // Sidebar search — filters the project tree in real-time
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -1172,16 +1176,18 @@ function HomeComponent() {
               <ScrollArea className="min-h-0 flex-1">
                 <div className="grid gap-4 p-3">
                   {/* Project-grouped tree — each project is a collapsible heading */}
-                  {filteredProjects.map((project) => (
+                  {filteredProjects.map((project, projectIndex) => (
                     <ProjectGroup
                       expanded={
                         isSearchActive && matchingProjectIds.has(project.id)
                           ? true
                           : collapseState.isExpanded(project.id)
                       }
+                      index={projectIndex}
                       key={project.id}
                       onToggle={() => collapseState.toggle(project.id)}
                       project={project}
+                      reorderEnabled={!isSearchActive}
                     />
                   ))}
                   {projectList.length === 0 && (
@@ -1224,6 +1230,7 @@ function HomeComponent() {
               <div className="flex h-full flex-col">
                 <PanelHeaderBar
                   boardOpen={boardOverlayOpen}
+                  onCleanUpLayout={panelActions.cleanUpWorkspaceLayout}
                   onCloseWindowTab={gatedPanelActions.closeWindowTab}
                   onNewWindowTab={panelActions.addWindowTab}
                   onRenameWindowTab={panelActions.renameWindowTab}

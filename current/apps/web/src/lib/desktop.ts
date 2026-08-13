@@ -65,22 +65,6 @@ export async function openExternalUrl(url: string): Promise<boolean> {
   return openedWindow !== null
 }
 
-/** Return the desktop-managed backend WebSocket URL, when running in Electron. */
-export function getBackendWsUrl(): string | null {
-  return getDesktopBridge()?.getBackendWsUrl() ?? null
-}
-
-export function getBackendRpcWsUrl(): string | null {
-  const backendUrl = getBackendWsUrl()
-  if (!backendUrl) {
-    return null
-  }
-
-  const url = new URL(backendUrl)
-  url.pathname = '/rpc'
-  return url.toString()
-}
-
 /**
  * Attempt to focus an existing window that has the given workspace open.
  * Returns true if another window was focused (the caller should abort its

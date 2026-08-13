@@ -75,9 +75,12 @@ import {
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
 } from '@/panels/window-layout-utils'
+import type { WorkspaceDropEdge } from '@/panels/workspace-tile-utils'
 import {
   addWorkspaceToTab,
+  cleanUpWorkspaceTiles,
   getWorkspaceTileLeaves,
+  moveWorkspaceTileToEdge,
   removeWorkspaceFromTab,
   reorderWorkspaceTiles,
 } from '@/panels/workspace-tile-utils'
@@ -85,6 +88,35 @@ import { useInitialLayout } from './use-initial-layout'
 
 /** Browser fallback until every renderer boot path has a native window ID. */
 const DEFAULT_PANEL_WINDOW_ID = 'default'
+
+/**
+ * Fallback content height (px) used by layout clean-up when the tab's
+ * container cannot be measured (e.g. in tests).
+ */
+const FALLBACK_TAB_CONTENT_HEIGHT_PX = 800
+
+/**
+ * Measure the rendered height of a window tab's content area.
+ *
+ * The active tab's container carries a `data-window-tab-id` attribute
+ * (see WindowTabContent) and fills the panel area, so its client height
+ * is the space available to distribute among workspace frames. Falls
+ * back to the viewport height, then a constant, when unavailable.
+ */
+function measureTabContentHeight(tabId: string): number {
+  if (typeof document !== 'undefined') {
+    const container = document.querySelector(
+      `[data-window-tab-id="${CSS.escape(tabId)}"]`
+    )
+    if (container instanceof HTMLElement && container.clientHeight > 0) {
+      return container.clientHeight
+    }
+  }
+  if (typeof window !== 'undefined' && window.innerHeight > 0) {
+    return window.innerHeight
+  }
+  return FALLBACK_TAB_CONTENT_HEIGHT_PX
+}
 
 interface PendingAgentSpawn {
   readonly initialPrompt?: string | undefined
@@ -1538,6 +1570,71 @@ export function usePanelLayout() {
     [persistedWindowLayout, commitWindowLayout]
   )
 
+  /**
+   * Move a workspace frame relative to another frame's edge within the
+   * active window tab. Left/right edges create a new column beside the
+   * target's column; top/bottom edges stack within the target's column.
+   */
+  const handleMoveWorkspaceInTab = useCallback(
+    (
+      sourceWorkspaceId: string,
+      targetWorkspaceId: string,
+      edge: WorkspaceDropEdge
+    ) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const activeTab = getActiveWindowTab(persistedWindowLayout)
+      if (!activeTab?.workspaceLayout) {
+        return
+      }
+      const updatedTab = moveWorkspaceTileToEdge(
+        activeTab,
+        sourceWorkspaceId,
+        targetWorkspaceId,
+        edge
+      )
+      if (updatedTab === activeTab) {
+        return
+      }
+      commitWindowLayout('workspace-moved', {
+        ...persistedWindowLayout,
+        tabs: persistedWindowLayout.tabs.map((tab) =>
+          tab.id === activeTab.id ? updatedTab : tab
+        ),
+      })
+    },
+    [persistedWindowLayout, commitWindowLayout]
+  )
+
+  /**
+   * Clean up the active tab's workspace layout: repack workspaces into
+   * balanced columns so every frame gets at least the minimum vertical
+   * space, based on the measured height of the tab's content area.
+   */
+  const handleCleanUpWorkspaceLayout = useCallback(() => {
+    if (!persistedWindowLayout) {
+      return
+    }
+    const activeTab = getActiveWindowTab(persistedWindowLayout)
+    if (!activeTab?.workspaceLayout) {
+      return
+    }
+    const updatedTab = cleanUpWorkspaceTiles(
+      activeTab,
+      measureTabContentHeight(activeTab.id)
+    )
+    if (updatedTab === activeTab) {
+      return
+    }
+    commitWindowLayout('workspace-layout-cleaned', {
+      ...persistedWindowLayout,
+      tabs: persistedWindowLayout.tabs.map((tab) =>
+        tab.id === activeTab.id ? updatedTab : tab
+      ),
+    })
+  }, [persistedWindowLayout, commitWindowLayout])
+
   const handleAddWindowTab = useCallback(() => {
     const base = persistedWindowLayout ?? { tabs: [], activeTabId: undefined }
     const newLayout = addWindowTab(base)
@@ -2243,6 +2340,8 @@ export function usePanelLayout() {
       removePanelTab: handleRemovePanelTab,
       reorderPanelTabsDnd: handleReorderPanelTabs,
       reorderWorkspaces: handleReorderWorkspaces,
+      moveWorkspaceInTab: handleMoveWorkspaceInTab,
+      cleanUpWorkspaceLayout: handleCleanUpWorkspaceLayout,
       addWorkspaceToCurrentTab: handleAddWorkspaceToCurrentTab,
       addWindowTab: handleAddWindowTab,
       closeWindowTab: handleCloseWindowTab,
@@ -2275,6 +2374,8 @@ export function usePanelLayout() {
       handleRemovePanelTab,
       handleReorderPanelTabs,
       handleReorderWorkspaces,
+      handleMoveWorkspaceInTab,
+      handleCleanUpWorkspaceLayout,
       handleAddWorkspaceToCurrentTab,
       handleAddWindowTab,
       handleCloseWindowTab,

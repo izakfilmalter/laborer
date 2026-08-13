@@ -2,7 +2,7 @@
  * E2E Tests — Workspace Lifecycle
  *
  * Tests workspace lifecycle flows: create and destroy workspaces via the
- * per-project "+" button dialog, verify the workspace cards appear in the
+ * per-project "+" button composer, verify the workspace cards appear in the
  * sidebar with their branch names and status badges, and confirm removal.
  *
  * All tests exercise the full stack: Electron UI -> RPC mutation -> backend
@@ -23,9 +23,8 @@ import {
 /**
  * Regex patterns for button names that include keyboard shortcut indicators
  * (e.g. `<Kbd>↵</Kbd>`). Using regex avoids `exact: true` mismatches when
- * the accessible name includes shortcut text like "Create Workspace ↵".
+ * the accessible name includes shortcut text.
  */
-const CREATE_WORKSPACE_RE = /Create Workspace/
 const DESTROY_RE = /^Destroy/
 
 test.describe('workspace lifecycle', () => {
@@ -37,30 +36,23 @@ test.describe('workspace lifecycle', () => {
 
     const projectName = await addProject(electronApp, page)
 
-    // --- Step 2: Click the per-project "+" button to open the Create Workspace dialog ---
+    // --- Step 2: Click the per-project "+" button to open the inline composer ---
     const createWorkspaceButton = page.getByRole('button', {
       name: `Create workspace in ${projectName}`,
     })
     await createWorkspaceButton.click()
 
-    // Wait for the Create Workspace dialog to appear
-    const dialogTitle = page.getByRole('heading', {
-      name: 'Create Workspace',
+    const composerInput = page.getByRole('textbox', {
+      name: `Branch name or Slack URL for ${projectName}`,
     })
-    await expect(dialogTitle).toBeVisible({ timeout: 10_000 })
+    await expect(composerInput).toBeVisible({ timeout: 10_000 })
 
-    // --- Step 3: Submit the form (leave branch name empty to auto-generate) ---
-    const submitButton = page.getByRole('button', {
-      name: CREATE_WORKSPACE_RE,
-    })
-    await submitButton.click()
-
-    // Wait for the dialog to close (workspace creation started)
-    await expect(dialogTitle).not.toBeVisible({ timeout: 30_000 })
+    // --- Step 3: Commit an empty composer so the branch name is auto-generated ---
+    await composerInput.press('Enter')
 
     // The "No workspaces" empty state should no longer be visible
     const noWorkspacesText = page.getByText('No workspaces')
-    await expect(noWorkspacesText).not.toBeVisible()
+    await expect(noWorkspacesText).not.toBeVisible({ timeout: 30_000 })
   })
 
   test('shows the created workspace branch name and running status in the sidebar', async ({
@@ -84,66 +76,51 @@ test.describe('workspace lifecycle', () => {
     ).toBeVisible({ timeout: 15_000 })
   })
 
-  test('converts forward slashes to hyphens in branch name on create and shows correctly in sidebar', async ({
+  /**
+   * Namespaced branches are the house style — an auto-generated name is
+   * `laborer/<uuid>` — so a typed slash survives into the branch. Only the
+   * worktree directory is slugified, which the sidebar never shows.
+   */
+  test('keeps forward slashes in the branch name and shows it in the sidebar', async ({
     electronApp,
     page,
   }) => {
-    const timestamp = Date.now()
-    const inputBranchName = `e2e-slash/branch-${timestamp}`
-    const expectedBranchName = `e2e-slash-branch-${timestamp}`
+    const branchName = `e2e-slash/branch-${Date.now()}`
 
     await resetAndWaitForApp(page)
 
     const projectName = await addProject(electronApp, page)
 
-    // Open the Create Workspace dialog
+    // Open the inline composer
     const createWorkspaceButton = page.getByRole('button', {
       name: `Create workspace in ${projectName}`,
     })
     await createWorkspaceButton.click()
 
-    const dialogTitle = page.getByRole('heading', {
-      name: 'Create Workspace',
-    })
-    await expect(dialogTitle).toBeVisible({ timeout: 10_000 })
-
     // Type a branch name with a forward slash
-    const branchNameInput = page.getByRole('textbox', {
-      name: 'Branch Name or Slack URL (optional)',
+    const composerInput = page.getByRole('textbox', {
+      name: `Branch name or Slack URL for ${projectName}`,
     })
-    await branchNameInput.fill(inputBranchName)
+    await expect(composerInput).toBeVisible({ timeout: 10_000 })
+    await composerInput.fill(branchName)
 
-    // Verify the input displays the slash as typed
-    await expect(branchNameInput).toHaveValue(inputBranchName)
+    // The branch mask keeps the slash rather than stripping it
+    await expect(composerInput).toHaveValue(branchName)
 
-    // Submit — the form should transform / to -
-    const submitButton = page.getByRole('button', {
-      name: CREATE_WORKSPACE_RE,
-    })
-    await submitButton.click()
+    await composerInput.press('Enter')
 
-    // Wait for the success toast — it should contain the transformed branch name
-    const successToast = page.getByText('is being set up', {
-      exact: false,
-    })
-    await expect(successToast).toBeVisible({ timeout: 30_000 })
-    await expect(successToast).toContainText(expectedBranchName)
+    // The composer clears itself and stays open for the next workspace
+    await expect(composerInput).toHaveValue('', { timeout: 30_000 })
 
-    // Dialog should close on success
-    await expect(dialogTitle).not.toBeVisible()
-
-    // The workspace should appear in the sidebar with the transformed branch name.
+    // The workspace appears in the sidebar under the branch name as typed.
     // Use .first() — the branch name also appears in the panel header bar.
     await expect(
-      page.getByText(expectedBranchName, { exact: true }).first()
-    ).toBeVisible({
-      timeout: 15_000,
-    })
+      page.getByText(branchName, { exact: true }).first()
+    ).toBeVisible({ timeout: 15_000 })
 
-    // The destroy button should reference the transformed branch name
     await expect(
       page.getByRole('button', {
-        name: `Destroy workspace ${expectedBranchName}`,
+        name: `Destroy workspace ${branchName}`,
       })
     ).toBeVisible({ timeout: 15_000 })
   })

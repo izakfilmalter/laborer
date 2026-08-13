@@ -1,5 +1,5 @@
 /**
- * Tests for the TerminalList spawn button behavior.
+ * Tests for the TerminalSpawnControls spawn button behavior.
  *
  * Verifies that the "Agent" and "New" (terminal) buttons in the sidebar
  * workspace card split the active pane instead of creating new tabs:
@@ -158,7 +158,7 @@ vi.mock('@/lib/workspace-agent-status', () => ({
 // Import component under test AFTER mocks
 // ---------------------------------------------------------------------------
 
-import { TerminalList } from '../src/components/terminal-list'
+import { TerminalSpawnControls } from '../src/components/terminal-list'
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -174,7 +174,7 @@ beforeEach(() => {
   activeWorkspaceIdRef.current = null
 })
 
-describe('TerminalList spawn buttons', () => {
+describe('TerminalSpawnControls', () => {
   describe('with an active pane in the SAME workspace', () => {
     beforeEach(() => {
       activePaneIdRef.current = 'pane-1'
@@ -182,7 +182,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('clicking Agent button splits right from the active pane', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
         name: 'Start opencode2 agent',
@@ -201,7 +201,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('Cmd+clicking Agent button splits down from the active pane', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
         name: 'Start opencode2 agent',
@@ -220,7 +220,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('clicking New terminal button splits right from the active pane', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
         name: 'New terminal',
@@ -239,7 +239,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('Cmd+clicking New terminal button splits down from the active pane', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
         name: 'New terminal',
@@ -260,14 +260,14 @@ describe('TerminalList spawn buttons', () => {
 
   describe('with an active pane in a DIFFERENT workspace', () => {
     beforeEach(() => {
-      // The active pane belongs to ws-other, but we'll render TerminalList
+      // The active pane belongs to ws-other, but we'll render the controls
       // for ws-1. The spawn should NOT split the other workspace's pane.
       activePaneIdRef.current = 'pane-other'
       activeWorkspaceIdRef.current = 'ws-other'
     })
 
     it('clicking New terminal button calls addPanelTab for the target workspace', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
         name: 'New terminal',
@@ -281,7 +281,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('clicking Agent button calls addPanelTab for the target workspace', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
         name: 'Start opencode2 agent',
@@ -295,7 +295,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('Cmd+clicking New terminal button calls addPanelTab (not split) for different workspace', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
         name: 'New terminal',
@@ -314,7 +314,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('clicking Agent button falls back to addPanelTab', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
         name: 'Start opencode2 agent',
@@ -326,7 +326,7 @@ describe('TerminalList spawn buttons', () => {
     })
 
     it('clicking New terminal button falls back to addPanelTab', () => {
-      render(<TerminalList projectId="proj-1" workspaceId="ws-1" />)
+      render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
         name: 'New terminal',

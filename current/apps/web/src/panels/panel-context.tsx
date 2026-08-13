@@ -18,6 +18,7 @@ import type {
   WindowLayout,
 } from '@laborer/shared/types'
 import { createContext, useContext } from 'react'
+import type { WorkspaceDropEdge } from './workspace-tile-utils'
 
 /** Direction for pane resize operations. */
 type ResizeDirection = 'left' | 'right' | 'up' | 'down'
@@ -106,6 +107,15 @@ interface PanelActions {
     options?: AutoOpenAgentOptions
   ) => void
   /**
+   * Clean up the active window tab's workspace layout.
+   *
+   * Repacks the tab's workspaces into balanced columns so every workspace
+   * frame receives at least the minimum vertical space (352px), adding
+   * columns as needed. Triggered by the header bar's clean-up button.
+   */
+  readonly cleanUpWorkspaceLayout?: (() => void) | undefined
+
+  /**
    * Close a pane and remove it from the layout.
    * If it's the last pane, the layout becomes empty.
    *
@@ -161,6 +171,24 @@ interface PanelActions {
    * @param workspaceId - The workspace whose panes should be closed
    */
   readonly forceCloseWorkspace: (workspaceId: string) => void
+
+  /**
+   * Move a workspace frame relative to another frame's edge within the
+   * active window tab. Dropping on the `top`/`bottom` edge stacks the
+   * source above/below the target in the target's column; `left`/`right`
+   * places it in a new column beside the target's column.
+   *
+   * @param sourceWorkspaceId - The workspace being dragged
+   * @param targetWorkspaceId - The workspace whose frame received the drop
+   * @param edge - Which edge of the target frame received the drop
+   */
+  readonly moveWorkspaceInTab?:
+    | ((
+        sourceWorkspaceId: string,
+        targetWorkspaceId: string,
+        edge: WorkspaceDropEdge
+      ) => void)
+    | undefined
 
   /**
    * Remove a panel tab by ID from a workspace.

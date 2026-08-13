@@ -6,9 +6,10 @@
   "scripts": {
     "with-env": "dotenv -e ../../.env.local --",
     "dev": "tsdown --watch",
+    "mcp:dev": "tsx src/task-mcp-main.ts",
     "build": "tsdown && tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "tsdown && vitest run",
     "test:watch": "vitest"
   },
   "exports": {

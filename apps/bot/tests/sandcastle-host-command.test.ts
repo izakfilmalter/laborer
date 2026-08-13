@@ -159,7 +159,9 @@ describe('Sandcastle host process supervision', () => {
     const directory = mkdtempSync(join(tmpdir(), 'laborer-host-signal-'))
     const childPidPath = join(directory, 'child-pid')
     const scriptPath = join(directory, 'runner.ts')
-    const providerPath = resolve('../.sandcastle/host-native-provider/index.ts')
+    const providerPath = resolve(
+      '../../.sandcastle/host-native-provider/index.ts'
+    )
     writeFileSync(
       scriptPath,
       [

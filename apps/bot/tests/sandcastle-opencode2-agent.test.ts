@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { opencode2Agent } from '../../../.sandcastle/opencode2-agent/index.ts'
 
-const sandcastleMain = readFileSync('../.sandcastle/main.ts', 'utf8')
+const sandcastleMain = readFileSync('../../.sandcastle/main.ts', 'utf8')
 
 const runCommand = async (
   command: string,
@@ -67,7 +67,7 @@ describe('Sandcastle opencode2 agent', () => {
 
   it('uses the machine-installed CLI and its existing state', () => {
     const packageJson = JSON.parse(
-      readFileSync('../.sandcastle/package.json', 'utf8')
+      readFileSync('../../.sandcastle/package.json', 'utf8')
     ) as {
       readonly devDependencies?: Readonly<Record<string, string>>
     }
@@ -75,7 +75,9 @@ describe('Sandcastle opencode2 agent', () => {
     assert.notProperty(packageJson.devDependencies ?? {}, '@opencode-ai/cli')
     assert.include(sandcastleMain, 'runFile("opencode2", ["--version"])')
     assert.include(sandcastleMain, 'runFile("opencode2", ["run", "--help"])')
-    const rootPackage = JSON.parse(readFileSync('../package.json', 'utf8')) as {
+    const rootPackage = JSON.parse(
+      readFileSync('../../package.json', 'utf8')
+    ) as {
       readonly scripts?: Readonly<Record<string, string>>
     }
     assert.strictEqual(

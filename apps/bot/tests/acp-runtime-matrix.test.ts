@@ -40,14 +40,17 @@ const captureFailure = (operation: () => void): Error => {
 
 describe('issue #243 ACP runtime matrix', () => {
   it('keeps package pins synchronized with the supported matrix', async () => {
-    const [packageSource, nodeVersion] = await Promise.all([
+    const [packageSource, rootPackageSource, nodeVersion] = await Promise.all([
       readFile(new URL('../package.json', import.meta.url), 'utf8'),
-      readFile(new URL('../.node-version', import.meta.url), 'utf8'),
+      readFile(new URL('../../../package.json', import.meta.url), 'utf8'),
+      readFile(new URL('../../../.node-version', import.meta.url), 'utf8'),
     ])
     const packageJson = JSON.parse(packageSource) as {
       dependencies: Record<string, string>
       devDependencies: Record<string, string>
       engines: { node: string }
+    }
+    const rootPackageJson = JSON.parse(rootPackageSource) as {
       packageManager: string
     }
     assert.strictEqual(
@@ -79,7 +82,7 @@ describe('issue #243 ACP runtime matrix', () => {
       SUPPORTED_ACP_RUNTIME_MATRIX.node
     )
     assert.strictEqual(
-      packageJson.packageManager,
+      rootPackageJson.packageManager,
       `bun@${SUPPORTED_ACP_RUNTIME_MATRIX.bun}`
     )
     assert.strictEqual(nodeVersion.trim(), SUPPORTED_ACP_RUNTIME_MATRIX.node)

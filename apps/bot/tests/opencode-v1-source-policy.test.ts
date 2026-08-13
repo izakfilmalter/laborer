@@ -122,12 +122,12 @@ describe('OpenCode V1 operational source policy', () => {
 
   it('leaves the Sandcastle opencode2 version and configuration machine-managed', () => {
     const sandcastlePackage = JSON.parse(
-      readFileSync('../.sandcastle/package.json', 'utf8')
+      readFileSync('../../.sandcastle/package.json', 'utf8')
     ) as {
       readonly devDependencies?: Readonly<Record<string, string>>
     }
     const agent = readFileSync(
-      '../.sandcastle/opencode2-agent/index.ts',
+      '../../.sandcastle/opencode2-agent/index.ts',
       'utf8'
     )
     assert.notProperty(

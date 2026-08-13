@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 
 const packageSource = await readFile(
-  new URL('../../package.json', import.meta.url),
+  new URL('../../../../package.json', import.meta.url),
   'utf8'
 )
 const packageJson = JSON.parse(packageSource) as {
@@ -21,7 +21,10 @@ if (actualBun !== undefined) {
   }
 } else {
   const expectedNode = (
-    await readFile(new URL('../../.node-version', import.meta.url), 'utf8')
+    await readFile(
+      new URL('../../../../.node-version', import.meta.url),
+      'utf8'
+    )
   ).trim()
   if (process.versions.node !== expectedNode) {
     throw new Error(

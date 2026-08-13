@@ -149,8 +149,11 @@ describe('Sandcastle fast flow', () => {
   })
 
   it('delegates verification to the final code-review agent', () => {
-    const main = readFileSync('../.sandcastle/main.ts', 'utf8')
-    const reviewPrompt = readFileSync('../.sandcastle/review-prompt.md', 'utf8')
+    const main = readFileSync('../../.sandcastle/main.ts', 'utf8')
+    const reviewPrompt = readFileSync(
+      '../../.sandcastle/review-prompt.md',
+      'utf8'
+    )
 
     assert.notInclude(main, 'enforceLocalGate')
     assert.notInclude(main, 'FULL_GATE')
@@ -164,7 +167,7 @@ describe('Sandcastle fast flow', () => {
   })
 
   it('isolates base refreshes and prompts from the shared checkout', () => {
-    const main = readFileSync('../.sandcastle/main.ts', 'utf8')
+    const main = readFileSync('../../.sandcastle/main.ts', 'utf8')
 
     assert.include(main, 'const RUNNER_BASE_WORKTREE')
     assert.include(main, '["-C", RUNNER_BASE_WORKTREE, ...args]')
@@ -190,7 +193,7 @@ describe('Sandcastle fast flow', () => {
   })
 
   it('persists and repeats outer runner failures', () => {
-    const main = readFileSync('../.sandcastle/main.ts', 'utf8')
+    const main = readFileSync('../../.sandcastle/main.ts', 'utf8')
 
     assert.include(main, '"logs", "failures.ndjson"')
     assert.include(main, 'appendFileSync(')
@@ -208,7 +211,7 @@ describe('Sandcastle fast flow', () => {
       'ui-prompt.md',
       'ui-review-prompt.md',
     ]) {
-      const content = readFileSync(`../.sandcastle/${prompt}`, 'utf8')
+      const content = readFileSync(`../../.sandcastle/${prompt}`, 'utf8')
       assert.notInclude(content, 'runner executes that comprehensive gate')
     }
   })

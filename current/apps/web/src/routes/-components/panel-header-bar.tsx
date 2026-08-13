@@ -216,7 +216,21 @@ export function PanelHeaderBar({
             <Kbd>K</Kbd>
           </TooltipContent>
         </Tooltip>
-        {onCleanUpLayout && (
+      </div>
+
+      {/* Window tab bar (auto-hides with 1 tab) */}
+      <WindowTabBar
+        onCloseTab={onCloseWindowTab}
+        onNewTab={onNewWindowTab}
+        onRenameTab={onRenameWindowTab}
+        onReorderTabs={onReorderWindowTabs}
+        onSelectTab={onSelectWindowTab}
+        windowLayout={windowLayout}
+      />
+
+      {/* Right: layout actions */}
+      {onCleanUpLayout && (
+        <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -234,18 +248,8 @@ export function PanelHeaderBar({
               Clean up layout — give every workspace room
             </TooltipContent>
           </Tooltip>
-        )}
-      </div>
-
-      {/* Window tab bar (auto-hides with 1 tab) */}
-      <WindowTabBar
-        onCloseTab={onCloseWindowTab}
-        onNewTab={onNewWindowTab}
-        onRenameTab={onRenameWindowTab}
-        onReorderTabs={onReorderWindowTabs}
-        onSelectTab={onSelectWindowTab}
-        windowLayout={windowLayout}
-      />
+        </div>
+      )}
     </div>
   )
 }

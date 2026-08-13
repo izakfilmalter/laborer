@@ -2,8 +2,9 @@ import {
   closeSync,
   constants,
   fstatSync,
+  lstatSync,
   openSync,
-  readFileSync,
+  readSync,
   type Stats,
 } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
@@ -38,22 +39,34 @@ export const parseWorktreeOwnerMarker = (
     typeof value !== 'object' ||
     value === null ||
     Object.keys(value).length !== markerKeys.length ||
-    !markerKeys.every((key) => key in value)
+    !markerKeys.every((key) => Object.hasOwn(value, key))
   ) {
     throw new Error('Invalid worktree owner marker')
   }
-  const marker = value as Record<(typeof markerKeys)[number], unknown>
+  const conversationId = Reflect.get(value, 'conversationId')
+  const executionId = Reflect.get(value, 'executionId')
+  const operationId = Reflect.get(value, 'operationId')
+  const rootAuthorityDigest = Reflect.get(value, 'rootAuthorityDigest')
+  const schemaVersion = Reflect.get(value, 'schemaVersion')
+  const worktreeName = Reflect.get(value, 'worktreeName')
   if (
-    typeof marker.conversationId !== 'string' ||
-    typeof marker.executionId !== 'string' ||
-    typeof marker.operationId !== 'string' ||
-    typeof marker.rootAuthorityDigest !== 'string' ||
-    marker.schemaVersion !== 1 ||
-    typeof marker.worktreeName !== 'string'
+    typeof conversationId !== 'string' ||
+    typeof executionId !== 'string' ||
+    typeof operationId !== 'string' ||
+    typeof rootAuthorityDigest !== 'string' ||
+    schemaVersion !== 1 ||
+    typeof worktreeName !== 'string'
   ) {
     throw new Error('Invalid worktree owner marker')
   }
-  return marker as unknown as WorktreeOwnerMarker
+  return {
+    conversationId,
+    executionId,
+    operationId,
+    rootAuthorityDigest,
+    schemaVersion,
+    worktreeName,
+  }
 }
 
 const serializeMarker = (marker: WorktreeOwnerMarker): string => {
@@ -71,7 +84,8 @@ const assertReadableMetadata = (metadata: Stats): void => {
   if (
     !metadata.isFile() ||
     metadata.isSymbolicLink() ||
-    metadata.size > WORKTREE_OWNER_MARKER_MAX_BYTES
+    metadata.size > WORKTREE_OWNER_MARKER_MAX_BYTES ||
+    metadata.mode % 0o1000 !== 0o600
   ) {
     throw new Error('Invalid worktree owner marker')
   }
@@ -79,6 +93,51 @@ const assertReadableMetadata = (metadata: Stats): void => {
 
 const decodeSource = (source: string): WorktreeOwnerMarker =>
   parseWorktreeOwnerMarker(JSON.parse(source) as unknown)
+
+const readBounded = async (
+  file: Awaited<ReturnType<typeof open>>
+): Promise<string> => {
+  const bytes = Buffer.alloc(WORKTREE_OWNER_MARKER_MAX_BYTES + 1)
+  let totalBytesRead = 0
+  while (totalBytesRead < bytes.byteLength) {
+    const { bytesRead } = await file.read(
+      bytes,
+      totalBytesRead,
+      bytes.byteLength - totalBytesRead,
+      totalBytesRead
+    )
+    if (bytesRead === 0) {
+      break
+    }
+    totalBytesRead += bytesRead
+  }
+  if (totalBytesRead > WORKTREE_OWNER_MARKER_MAX_BYTES) {
+    throw new Error('Invalid worktree owner marker')
+  }
+  return bytes.toString('utf8', 0, totalBytesRead)
+}
+
+const readBoundedSync = (descriptor: number): string => {
+  const bytes = Buffer.alloc(WORKTREE_OWNER_MARKER_MAX_BYTES + 1)
+  let totalBytesRead = 0
+  while (totalBytesRead < bytes.byteLength) {
+    const bytesRead = readSync(
+      descriptor,
+      bytes,
+      totalBytesRead,
+      bytes.byteLength - totalBytesRead,
+      totalBytesRead
+    )
+    if (bytesRead === 0) {
+      break
+    }
+    totalBytesRead += bytesRead
+  }
+  if (totalBytesRead > WORKTREE_OWNER_MARKER_MAX_BYTES) {
+    throw new Error('Invalid worktree owner marker')
+  }
+  return bytes.toString('utf8', 0, totalBytesRead)
+}
 
 /** Create and durably flush a private owner marker without following links. */
 export const writeWorktreeOwnerMarker = async (
@@ -116,9 +175,6 @@ export const readWorktreeOwnerMarker = async (
   const path = markerPath(worktreePath)
   const pathMetadata = await lstat(path)
   assertReadableMetadata(pathMetadata)
-  if (pathMetadata.mode % 0o1000 !== 0o600) {
-    throw new Error('Invalid worktree owner marker')
-  }
   const file = await open(path, constants.O_RDONLY + constants.O_NOFOLLOW)
   try {
     const openedMetadata = await file.stat()
@@ -129,7 +185,7 @@ export const readWorktreeOwnerMarker = async (
     ) {
       throw new Error('Invalid worktree owner marker')
     }
-    return decodeSource(await file.readFile('utf8'))
+    return decodeSource(await readBounded(file))
   } finally {
     await file.close()
   }
@@ -141,13 +197,19 @@ export const readWorktreeOwnerMarkerSync = (
 ): WorktreeOwnerMarker => {
   let descriptor: number | undefined
   try {
-    descriptor = openSync(
-      markerPath(worktreePath),
-      constants.O_RDONLY + constants.O_NOFOLLOW
-    )
+    const path = markerPath(worktreePath)
+    const pathMetadata = lstatSync(path)
+    assertReadableMetadata(pathMetadata)
+    descriptor = openSync(path, constants.O_RDONLY + constants.O_NOFOLLOW)
     const metadata = fstatSync(descriptor)
     assertReadableMetadata(metadata)
-    return decodeSource(readFileSync(descriptor, 'utf8'))
+    if (
+      metadata.dev !== pathMetadata.dev ||
+      metadata.ino !== pathMetadata.ino
+    ) {
+      throw new Error('Invalid worktree owner marker')
+    }
+    return decodeSource(readBoundedSync(descriptor))
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor)

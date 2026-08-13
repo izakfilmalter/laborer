@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   readWorktreeOwnerMarker,
+  readWorktreeOwnerMarkerSync,
   WORKTREE_OWNER_MARKER_MAX_BYTES,
   WORKTREE_OWNER_MARKER_NAME,
   type WorktreeOwnerMarker,
@@ -47,6 +48,23 @@ describe('worktree owner marker', () => {
     )
 
     await expect(readWorktreeOwnerMarker(root)).rejects.toThrow(
+      'Invalid worktree owner marker'
+    )
+  })
+
+  it('rejects markers that are not private in both readers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'laborer-owner-marker-'))
+    roots.push(root)
+    await writeFile(
+      join(root, WORKTREE_OWNER_MARKER_NAME),
+      JSON.stringify(marker()),
+      { mode: 0o644 }
+    )
+
+    await expect(readWorktreeOwnerMarker(root)).rejects.toThrow(
+      'Invalid worktree owner marker'
+    )
+    expect(() => readWorktreeOwnerMarkerSync(root)).toThrow(
       'Invalid worktree owner marker'
     )
   })

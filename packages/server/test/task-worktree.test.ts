@@ -45,7 +45,8 @@ describe('inspectTaskWorktree', () => {
     const path = worktree()
     writeFileSync(
       join(path, '.laborer-worktree-owner.json'),
-      JSON.stringify(marker('execution-1'))
+      JSON.stringify(marker('execution-1')),
+      { mode: 0o600 }
     )
 
     expect(inspectTaskWorktree(path, 'execution-1')).toEqual({
@@ -61,7 +62,9 @@ describe('inspectTaskWorktree', () => {
   it('never treats missing or symlinked owner markers as ownership', () => {
     const path = worktree()
     const markerTarget = join(path, 'marker-target.json')
-    writeFileSync(markerTarget, JSON.stringify(marker('execution-1')))
+    writeFileSync(markerTarget, JSON.stringify(marker('execution-1')), {
+      mode: 0o600,
+    })
     symlinkSync(markerTarget, join(path, '.laborer-worktree-owner.json'))
 
     expect(inspectTaskWorktree(path, 'execution-1')).toEqual({

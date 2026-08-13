@@ -1,4 +1,8 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import {
+  type ChildProcessWithoutNullStreams,
+  spawn,
+  spawnSync,
+} from 'node:child_process'
 import { once } from 'node:events'
 import {
   mkdirSync,
@@ -108,6 +112,27 @@ const callTool = async (
 }
 
 describe('task MCP stdio entry point', () => {
+  it('fails before loading the runtime on unsupported Node versions', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        "Object.defineProperty(process, 'version', { value: 'v23.9.0' }); await import('./dist/task-mcp-main.mjs')",
+      ],
+      {
+        cwd: join(import.meta.dirname, '..'),
+        encoding: 'utf8',
+      }
+    )
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe(
+      'Laborer MCP requires Node.js 24 or newer (running v23.9.0).\n'
+    )
+  })
+
   it('lists all tools and completes task CRUD with protocol-only stdout', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-mcp-stdio-')))
     roots.push(root)

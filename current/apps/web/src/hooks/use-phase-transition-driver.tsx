@@ -20,8 +20,8 @@
  * @see apps/web/src/hooks/use-sidecar-statuses.ts — sidecar status source
  */
 
-import { Result } from '@effect-atom/atom'
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { useEffect, useMemo, useRef } from 'react'
 
 import { LaborerClient } from '@/atoms/laborer-client'

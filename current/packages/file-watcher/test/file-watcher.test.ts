@@ -78,7 +78,7 @@ describe('FileWatcher', () => {
           Effect.sync(() => {
             calls.native += 1
           }).pipe(
-            Effect.zipRight(
+            Effect.andThen(
               Effect.fail(
                 new FileWatcherError({
                   message: 'native backend unavailable',

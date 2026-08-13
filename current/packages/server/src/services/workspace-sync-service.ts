@@ -77,7 +77,7 @@ const spawnGit = async (
   return { exitCode, stdout, stderr }
 }
 
-class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
+class WorkspaceSyncService extends Context.Service<
   WorkspaceSyncService,
   {
     readonly checkStatus: (
@@ -96,8 +96,8 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
     readonly stopPolling: (workspaceId: string) => Effect.Effect<void>
     readonly stopAllPolling: () => Effect.Effect<void>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/WorkspaceSyncService') {
+  static readonly layer = Layer.effect(
     WorkspaceSyncService,
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
@@ -105,7 +105,7 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
       const backgroundFetch = yield* BackgroundFetchService
 
       const pollingFibers = yield* Ref.make<
-        Map<string, Fiber.RuntimeFiber<void, never>>
+        Map<string, Fiber.Fiber<void, never>>
       >(new Map())
       const previousStatuses = yield* Ref.make<Map<string, string>>(new Map())
 
@@ -238,10 +238,10 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
 
           const interval = intervalMs ?? SYNC_STATUS_POLL_INTERVAL_MS
           const fiber = yield* checkStatus(workspaceId).pipe(
-            Effect.catchAll(() => Effect.void),
+            Effect.catch(() => Effect.void),
             Effect.repeat(Schedule.spaced(Duration.millis(interval))),
             Effect.asVoid,
-            Effect.forkDaemon
+            Effect.forkDetach
           )
 
           yield* Ref.update(pollingFibers, (fibers) => {
@@ -305,9 +305,9 @@ class WorkspaceSyncService extends Context.Tag('@laborer/WorkspaceSyncService')<
         )
       })
 
-      yield* Effect.forkDaemon(
+      yield* Effect.forkDetach(
         bootstrapPolling().pipe(
-          Effect.catchAllCause((cause) =>
+          Effect.catchCause((cause) =>
             Effect.logWarning('Workspace sync bootstrap failed', { cause })
           )
         )

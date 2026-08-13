@@ -34,13 +34,13 @@
  */
 
 import { createServer } from 'node:http'
-import { HttpMiddleware, HttpRouter } from '@effect/platform'
 import { NodeHttpServer } from '@effect/platform-node'
-import { RpcSerialization, RpcServer } from '@effect/rpc'
 import { FileWatcherRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { Context, Effect, Layer, ManagedRuntime } from 'effect'
+import { HttpMiddleware, HttpRouter } from 'effect/unstable/http'
+import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 
 import { FileWatcherRpcsLive } from './rpc/handlers.js'
 import { FileWatcher } from './services/file-watcher.js'
@@ -159,7 +159,7 @@ function serveRpcOnPort(
     return yield* Layer.launch(RpcLive)
   }).pipe(
     Effect.scoped,
-    Effect.tapErrorCause((cause) =>
+    Effect.tapCause((cause) =>
       Effect.sync(() => {
         console.error(
           '[file-watcher-utility] serveRpcOnPort failed:',
@@ -180,8 +180,9 @@ function serveWebSocketRpc(
     Layer.provide(FileWatcherRpcsLive),
     Layer.provide(sharedServicesLayer)
   )
-  const ServerLive = HttpRouter.Default.serve(HttpMiddleware.cors()).pipe(
-    Layer.provide(RpcLive),
+  const ServerLive = HttpRouter.serve(RpcLive, {
+    middleware: HttpMiddleware.cors(),
+  }).pipe(
     Layer.provide(RpcSerialization.layerJson),
     Layer.provide(
       NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })
@@ -272,11 +273,11 @@ async function main(): Promise<void> {
   })
 
   const managedRuntime = ManagedRuntime.make(FullLayer)
-  const runtime = await managedRuntime.runtime()
+  const context = await managedRuntime.context()
 
   // Extract the live WatcherManager from the managed runtime's context.
   const sharedServicesLayer = Layer.succeedContext(
-    Context.make(WatcherManager, Context.get(runtime.context, WatcherManager))
+    Context.make(WatcherManager, Context.get(context, WatcherManager))
   )
 
   const httpPort = Number(process.env.LABORER_FILE_WATCHER_HTTP_PORT ?? '0')

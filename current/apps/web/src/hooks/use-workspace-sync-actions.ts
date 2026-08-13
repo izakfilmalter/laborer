@@ -1,4 +1,4 @@
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'

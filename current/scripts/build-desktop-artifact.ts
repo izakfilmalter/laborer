@@ -120,9 +120,8 @@ const DIST_DIRS = {
 }
 
 const REQUIRED_ASAR_FILES = [
-  'node_modules/@effect/ai/package.json',
-  'node_modules/@effect/experimental/package.json',
-  'node_modules/@effect/platform/package.json',
+  'node_modules/@effect/platform-node/package.json',
+  'node_modules/@effect/platform-node-shared/package.json',
   'node_modules/effect/package.json',
   'packages/server/dist/main.mjs',
   // The bundled server resolves task-db SQL migrations relative to the

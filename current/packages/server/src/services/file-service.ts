@@ -36,6 +36,7 @@ import {
   Layer,
   Order,
   pipe,
+  Queue,
   Stream,
 } from 'effect'
 import ignore from 'ignore'
@@ -282,7 +283,7 @@ const loadIgnorePatterns = (
     const gitignoreText = yield* Effect.tryPromise({
       try: () => readFile(gitignorePath, 'utf-8'),
       catch: () => null,
-    }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+    }).pipe(Effect.catch(() => Effect.succeed(null)))
 
     if (gitignoreText !== null) {
       ig.add(gitignoreText)
@@ -292,7 +293,7 @@ const loadIgnorePatterns = (
     const ignoreText = yield* Effect.tryPromise({
       try: () => readFile(ignorePath, 'utf-8'),
       catch: () => null,
-    }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+    }).pipe(Effect.catch(() => Effect.succeed(null)))
 
     if (ignoreText !== null) {
       ig.add(ignoreText)
@@ -496,7 +497,7 @@ const parseUntrackedOutput = (
             code: 'READ_FAILED',
           }),
       }),
-      Effect.catchAll(() => Effect.succeed(0)),
+      Effect.catch(() => Effect.succeed(0)),
       Effect.map(
         (lineCount): FileInfo => ({
           path: filePath,
@@ -658,7 +659,7 @@ const buildBatchedPatchMap = (
       }
       return map
     }),
-    Effect.catchAll(() => Effect.succeed(new Map<string, string>()))
+    Effect.catch(() => Effect.succeed(new Map<string, string>()))
   )
 
 /**
@@ -691,7 +692,7 @@ const buildUntrackedPatch = (
       const patch = result.stdout.trim()
       return patch.length > 0 ? result.stdout : null
     }),
-    Effect.catchAll(() => Effect.succeed(null))
+    Effect.catch(() => Effect.succeed(null))
   )
 
 /**
@@ -811,10 +812,10 @@ const computeFileDiff = (
       }),
   }).pipe(
     // If git is unavailable, return content without diff instead of failing
-    Effect.catchAll(() => Effect.succeed({ type: 'text' as const, content }))
+    Effect.catch(() => Effect.succeed({ type: 'text' as const, content }))
   )
 
-class FileService extends Context.Tag('@laborer/FileService')<
+class FileService extends Context.Service<
   FileService,
   {
     /**
@@ -897,8 +898,8 @@ class FileService extends Context.Tag('@laborer/FileService')<
       workspaceId: string
     ) => Stream.Stream<FileWatcherEvent, RpcError>
   }
->() {
-  static readonly layer = Layer.scoped(
+>()('@laborer/FileService') {
+  static readonly layer = Layer.effect(
     FileService,
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
@@ -946,7 +947,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
                   message: 'File not found',
                   code: 'NOT_FOUND',
                 }),
-            }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+            }).pipe(Effect.catch(() => Effect.succeed(null)))
 
             if (imageResult === null) {
               return { type: 'text' as const, content: '' }
@@ -973,7 +974,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
                 message: 'File not found',
                 code: 'NOT_FOUND',
               }),
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+          }).pipe(Effect.catch(() => Effect.succeed(null)))
 
           if (fileContent === null) {
             return { type: 'text' as const, content: '' }
@@ -1077,7 +1078,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
             // Build a push-based stream that forwards filtered watcher
             // events. Uses acquireRelease so the event handler and watcher
             // subscription are properly cleaned up on stream teardown.
-            return Stream.asyncPush<FileWatcherEvent, RpcError>((emit) =>
+            return Stream.callback<FileWatcherEvent, RpcError>((queue) =>
               Effect.acquireRelease(
                 Effect.sync(() => {
                   // Register event handler filtered to this subscription
@@ -1092,7 +1093,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
                         watchEvent.fileName ??
                         relative(worktreePath, watchEvent.absolutePath)
 
-                      emit.single({
+                      Queue.offerUnsafe(queue, {
                         file: relativePath,
                         event: mapEventType(watchEvent.type),
                       })
@@ -1104,7 +1105,7 @@ class FileService extends Context.Tag('@laborer/FileService')<
                     eventSubscription.unsubscribe()
                     yield* fileWatcherClient
                       .unsubscribe(watchSubscription.id)
-                      .pipe(Effect.catchAll(() => Effect.void))
+                      .pipe(Effect.catch(() => Effect.void))
                   })
               )
             )

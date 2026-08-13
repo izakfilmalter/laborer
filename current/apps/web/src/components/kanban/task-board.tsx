@@ -12,7 +12,7 @@
  * The renderer subscribes to typed snapshots/deltas and never opens SQLite.
  */
 
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { createTaskUlid } from '@laborer/shared/task-ulid'
 import {

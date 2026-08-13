@@ -1,4 +1,4 @@
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomValue } from '@effect/atom-react/Hooks'
 import type { LeafNode, SplitNode, WindowLayout } from '@laborer/shared/types'
 import { useMemo } from 'react'
 import { workspaceViewsAtom } from '@/atoms/shared-state'

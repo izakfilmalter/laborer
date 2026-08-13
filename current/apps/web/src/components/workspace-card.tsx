@@ -12,7 +12,7 @@
  * the sidebar growing them.
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { GitBranch, GitBranchPlus, Trash2 } from 'lucide-react'
 import {

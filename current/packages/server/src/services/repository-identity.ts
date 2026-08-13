@@ -118,7 +118,7 @@ const normalizeRemote = (remote: string): string => {
   }
 }
 
-class RepositoryIdentity extends Context.Tag('@laborer/RepositoryIdentity')<
+class RepositoryIdentity extends Context.Service<
   RepositoryIdentity,
   {
     /**
@@ -130,7 +130,7 @@ class RepositoryIdentity extends Context.Tag('@laborer/RepositoryIdentity')<
       inputPath: string
     ) => Effect.Effect<RepoIdentity, RepositoryIdentityError>
   }
->() {
+>()('@laborer/RepositoryIdentity') {
   static readonly layer = Layer.effect(
     RepositoryIdentity,
     Effect.gen(function* () {

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardTask } from '@/components/kanban/board-data'
 import { TaskBoardCard, TaskDetailDialog } from '@/components/kanban/task-board'
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: () => vi.fn(),
   useAtomValue: vi.fn(),
 }))

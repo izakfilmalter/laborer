@@ -14,16 +14,15 @@
  * 2. the schedule never terminates, no matter how many failures occur.
  */
 
-import { Effect, Fiber, Option, Stream, TestClock, TestContext } from 'effect'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@effect/vitest'
+import { Effect, Fiber, Stream } from 'effect'
+import { adjust } from 'effect/testing/TestClock'
 import { sharedStateResubscribeSchedule } from '../../src/atoms/shared-state'
 
-const runWithTestClock = <A>(effect: Effect.Effect<A>): Promise<A> =>
-  Effect.runPromise(Effect.provide(effect, TestContext.TestContext))
-
 describe('sharedStateResubscribeSchedule', () => {
-  it('re-subscribes after a mid-stream failure and receives the fresh snapshot', async () => {
-    await runWithTestClock(
+  it.effect(
+    're-subscribes after a mid-stream failure and receives the fresh snapshot',
+    () =>
       Effect.gen(function* () {
         let subscriptions = 0
         // First subscription delivers a snapshot then dies (socket drop);
@@ -38,48 +37,43 @@ describe('sharedStateResubscribeSchedule', () => {
             : Stream.make(`snapshot-${subscriptions}`)
         })
 
-        const fiber = yield* Effect.fork(
-          subscription.pipe(
-            Stream.retry(sharedStateResubscribeSchedule),
-            Stream.take(2),
-            Stream.runCollect
-          )
+        const fiber = yield* subscription.pipe(
+          Stream.retry(sharedStateResubscribeSchedule),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild
         )
-        yield* TestClock.adjust('1 minute')
+        yield* adjust('1 minute')
 
         const collected = yield* Fiber.join(fiber)
         expect([...collected]).toEqual(['snapshot-1', 'snapshot-2'])
         expect(subscriptions).toBe(2)
       })
-    )
-  })
+  )
 
-  it('never exhausts, so the projection cannot freeze permanently', async () => {
-    await runWithTestClock(
-      Effect.gen(function* () {
-        let attempts = 0
-        const alwaysFailing = Stream.suspend(() => {
-          attempts += 1
-          return Stream.fail(`disconnect ${attempts}` as const)
-        })
-
-        const fiber = yield* Effect.fork(
-          alwaysFailing.pipe(
-            Stream.retry(sharedStateResubscribeSchedule),
-            Stream.runDrain,
-            Effect.ignore
-          )
-        )
-        yield* TestClock.adjust('10 minutes')
-
-        // Ten simulated minutes of outage must keep re-subscribing; a
-        // bounded budget here would recreate the frozen-board failure.
-        expect(attempts).toBeGreaterThan(8)
-        // Still retrying — the schedule must never complete on its own.
-        expect(Option.isNone(yield* Fiber.poll(fiber))).toBe(true)
-
-        yield* Fiber.interrupt(fiber)
+  it.effect('never exhausts, so the projection cannot freeze permanently', () =>
+    Effect.gen(function* () {
+      let attempts = 0
+      const alwaysFailing = Stream.suspend(() => {
+        attempts += 1
+        return Stream.fail(`disconnect ${attempts}` as const)
       })
-    )
-  })
+
+      const fiber = yield* alwaysFailing.pipe(
+        Stream.retry(sharedStateResubscribeSchedule),
+        Stream.runDrain,
+        Effect.ignore,
+        Effect.forkChild
+      )
+      yield* adjust('10 minutes')
+
+      // Ten simulated minutes of outage must keep re-subscribing; a
+      // bounded budget here would recreate the frozen-board failure.
+      expect(attempts).toBeGreaterThan(8)
+      // Still retrying — the schedule must never complete on its own.
+      expect(fiber.pollUnsafe()).toBeUndefined()
+
+      yield* Fiber.interrupt(fiber)
+    })
+  )
 })

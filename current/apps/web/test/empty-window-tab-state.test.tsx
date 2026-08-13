@@ -100,7 +100,7 @@ interface MockProject {
   name: string
 }
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomValue: (atom: symbol) =>
     atom === Symbol.for('workspaceViews')
       ? workspaceResults.current

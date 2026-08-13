@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'

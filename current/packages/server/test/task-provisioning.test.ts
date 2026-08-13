@@ -68,8 +68,8 @@ const project = {
 }
 
 const testLayer = (
-  createWorktree: WorkspaceProvider['Type']['createWorktree'],
-  findWorkspaceForTask: WorkspaceProvider['Type']['findWorkspaceForTask'] = () =>
+  createWorktree: WorkspaceProvider['Service']['createWorktree'],
+  findWorkspaceForTask: WorkspaceProvider['Service']['findWorkspaceForTask'] = () =>
     Effect.succeed(null)
 ) =>
   Layer.mergeAll(
@@ -268,7 +268,7 @@ describe('task provisioning', () => {
       title: 'Agent broken worktree',
     })
     database.close()
-    const createWorktree: WorkspaceProvider['Type']['createWorktree'] = () =>
+    const createWorktree: WorkspaceProvider['Service']['createWorktree'] = () =>
       Effect.fail(
         new RpcError({
           code: 'GIT_WORKTREE_FAILED',
@@ -431,7 +431,7 @@ describe('task provisioning', () => {
       title: 'Broken worktree',
     })
     database.close()
-    const createWorktree: WorkspaceProvider['Type']['createWorktree'] = () =>
+    const createWorktree: WorkspaceProvider['Service']['createWorktree'] = () =>
       Effect.fail(
         new RpcError({
           code: 'GIT_WORKTREE_FAILED',
@@ -476,7 +476,7 @@ describe('task provisioning', () => {
     let onFailure:
       | ((workspaceId: string, error: RpcError) => Effect.Effect<void, never>)
       | undefined
-    const createWorktree: WorkspaceProvider['Type']['createWorktree'] = (
+    const createWorktree: WorkspaceProvider['Service']['createWorktree'] = (
       _projectId,
       _branchName,
       _onReady,

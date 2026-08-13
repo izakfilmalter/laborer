@@ -133,7 +133,7 @@ const createTestLayer = (params: {
 }
 
 describe('RepositoryWatchCoordinator hardening', () => {
-  it.scoped('coalesces heavy churn into stable refresh behavior', () => {
+  it.effect('coalesces heavy churn into stable refresh behavior', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
     const subscribedPaths: string[] = []
@@ -190,7 +190,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }).pipe(Effect.provide(TestLayer))
   })
 
-  it.scoped(
+  it.effect(
     'startup restore reuses persisted repository identity without re-resolving',
     () => {
       const reconcileCalls = { current: 0 }
@@ -207,20 +207,21 @@ describe('RepositoryWatchCoordinator hardening', () => {
         FileWatcherClient,
         FileWatcherClient.of({
           subscribe: (path, options) =>
-            Effect.sync(() => {
+            Effect.promise(() => {
               const id = `test-sub-${subscribedPaths.length + 1}`
               subscribedPaths.push(path)
               subscriptionsByPath.set(path, id)
-              return {
+              return Promise.resolve({
                 id,
                 path,
                 recursive: options?.recursive ?? false,
                 ignoreGlobs: options?.ignoreGlobs ?? [],
-              }
+              })
             }),
           unsubscribe: (id) =>
-            Effect.sync(() => {
+            Effect.promise(() => {
               unsubscribedIds.push(id)
+              return Promise.resolve()
             }),
           updateIgnore: () => Effect.void,
           onFileEvent: (handler: FileEventHandler): FileEventSubscription => {
@@ -248,9 +249,11 @@ describe('RepositoryWatchCoordinator hardening', () => {
         RepositoryIdentity,
         RepositoryIdentity.of({
           resolve: () =>
-            Effect.dieSync(() => {
+            Effect.suspend(() => {
               resolveCalls.current += 1
-              return new Error('watchAll should use persisted identity')
+              return Effect.die(
+                new Error('watchAll should use persisted identity')
+              )
             }),
         })
       )
@@ -338,7 +341,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     )
   })
 
-  it.scoped('ignores late watcher callbacks after project teardown', () => {
+  it.effect('ignores late watcher callbacks after project teardown', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
     const subscribedPaths: string[] = []
@@ -394,7 +397,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }).pipe(Effect.provide(TestLayer))
   })
 
-  it.scoped('ignores late watcher callbacks after scope shutdown', () => {
+  it.effect('ignores late watcher callbacks after scope shutdown', () => {
     const reconcileCalls = { current: 0 }
     const branchRefreshCalls = { current: 0 }
     const subscribedPaths: string[] = []
@@ -446,7 +449,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     })
   })
 
-  it.scoped(
+  it.effect(
     'watchProject is idempotent — re-calling for the same project replaces previous watchers',
     () => {
       const reconcileCalls = { current: 0 }
@@ -518,7 +521,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }
   )
 
-  it.scoped(
+  it.effect(
     'only files ending with HEAD trigger branch refresh; worktrees trigger reconciliation',
     () => {
       const reconcileCalls = { current: 0 }
@@ -625,7 +628,7 @@ describe('RepositoryWatchCoordinator hardening', () => {
     }
   )
 
-  it.scoped(
+  it.effect(
     'non-HEAD git changes (refs/heads/main, index, config) do not trigger branch refresh',
     () => {
       const reconcileCalls = { current: 0 }

@@ -1,16 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { NodeHttpServer } from '@effect/platform-node'
+import { LaborerRpcs } from '@laborer/shared/rpc'
+import { Context, Effect, Layer, Option, Schema, type Scope } from 'effect'
 import {
   HttpMiddleware,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from '@effect/platform'
-import { NodeHttpServer } from '@effect/platform-node'
-import { RpcSerialization, RpcServer } from '@effect/rpc'
-import { LaborerRpcs } from '@laborer/shared/rpc'
-import { Context, Effect, Layer, Option, Schema, type Scope } from 'effect'
+} from 'effect/unstable/http'
+import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { AgentTaskService } from './services/agent-task-service.js'
 import { serverDiscoveryLayer } from './services/server-discovery.js'
@@ -21,7 +21,10 @@ import {
 } from './services/task-mcp.js'
 import { InfrastructureLayer } from './utility-main.js'
 
-const PortSchema = Schema.Number.pipe(Schema.int(), Schema.between(1, 65_535))
+const PortSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: 65_535 })
+)
 
 export interface ServerRuntimeConfigShape {
   readonly authToken: string | undefined
@@ -29,11 +32,12 @@ export interface ServerRuntimeConfigShape {
   readonly port: number
 }
 
-export class ServerRuntimeConfig extends Context.Tag(
-  '@laborer/server/ServerRuntimeConfig'
-)<ServerRuntimeConfig, ServerRuntimeConfigShape>() {}
+export class ServerRuntimeConfig extends Context.Service<
+  ServerRuntimeConfig,
+  ServerRuntimeConfigShape
+>()('@laborer/server/ServerRuntimeConfig') {}
 
-class McpLoopbackRequiredError extends Schema.TaggedError<McpLoopbackRequiredError>()(
+class McpLoopbackRequiredError extends Schema.TaggedErrorClass<McpLoopbackRequiredError>()(
   'McpLoopbackRequiredError',
   { message: Schema.String }
 ) {}
@@ -86,18 +90,15 @@ const authorizeWebSocketRequest = (authToken: string | undefined) =>
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = HttpServerRequest.toURL(request)
     if (Option.isNone(url)) {
-      return yield* HttpServerResponse.text('Invalid WebSocket URL', {
+      return HttpServerResponse.text('Invalid WebSocket URL', {
         status: 400,
       })
     }
 
     if (!isAuthorizedWebSocketUrl(url.value, authToken)) {
-      return yield* HttpServerResponse.text(
-        'Unauthorized WebSocket connection',
-        {
-          status: 401,
-        }
-      )
+      return HttpServerResponse.text('Unauthorized WebSocket connection', {
+        status: 401,
+      })
     }
 
     return undefined
@@ -112,23 +113,22 @@ const authedWebSocketRoute = (
     HttpServerRequest.HttpServerRequest | Scope.Scope
   >
 ) =>
-  HttpRouter.Default.use((router) =>
-    router.get(
-      path,
-      Effect.gen(function* () {
-        const unauthorized = yield* authorizeWebSocketRequest(authToken)
-        if (unauthorized) {
-          return unauthorized
-        }
-        return yield* websocketApp
-      })
-    )
+  HttpRouter.add(
+    'GET',
+    path,
+    Effect.gen(function* () {
+      const unauthorized = yield* authorizeWebSocketRequest(authToken)
+      if (unauthorized) {
+        return unauthorized
+      }
+      return yield* websocketApp
+    })
   )
 
-const makeRoutesLayer = Layer.unwrapScoped(
+const makeRoutesLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
-    const rpcWebSocketApp = yield* RpcServer.toHttpAppWebsocket(
+    const rpcWebSocketApp = yield* RpcServer.toHttpEffectWebsocket(
       LaborerRpcs
     ).pipe(
       Effect.provide(
@@ -142,16 +142,14 @@ const makeRoutesLayer = Layer.unwrapScoped(
     )
 
     return Layer.mergeAll(
-      HttpRouter.Default.use((router) =>
-        router.get('/', HttpServerResponse.empty({ status: 204 }))
-      ),
+      HttpRouter.add('GET', '/', HttpServerResponse.empty({ status: 204 })),
       authedWebSocketRoute('/rpc', config.authToken, rpcWebSocketApp),
       mcpLayer
-    )
+    ).pipe(Layer.provideMerge(HttpRouter.layer))
   })
 )
 
-export const makeServerLayer = Layer.unwrapEffect(
+export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerRuntimeConfig
     if (!['127.0.0.1', '::1', 'localhost'].includes(config.host)) {
@@ -173,9 +171,9 @@ export const makeServerLayer = Layer.unwrapEffect(
     )
 
     return Layer.mergeAll(
-      HttpRouter.Default.serve((app) =>
-        mcpOriginGuard(HttpMiddleware.cors()(app))
-      ).pipe(Layer.provide(makeRoutesLayer)),
+      HttpRouter.serve(makeRoutesLayer, {
+        middleware: (app) => mcpOriginGuard(HttpMiddleware.cors()(app)),
+      }),
       listeningLogLayer,
       serverDiscoveryLayer(config)
     ).pipe(

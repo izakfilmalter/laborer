@@ -21,13 +21,13 @@
  * @see packages/terminal/src/rpc/handlers.ts — terminal.events handler
  */
 
-import { Atom, Result } from '@effect-atom/atom'
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type {
   TerminalInfo as SharedTerminalInfo,
   TerminalLifecycleEventSchema,
 } from '@laborer/shared/rpc'
 import { Effect, Ref, Schedule, Stream } from 'effect'
+import { Atom, AsyncResult as Result } from 'effect/unstable/reactivity'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -239,9 +239,10 @@ const upsertInList = (
 /**
  * Retry schedule for the event stream: exponential backoff 1s → 30s cap.
  */
-const eventStreamRetrySchedule = Schedule.exponential('1 second').pipe(
-  Schedule.union(Schedule.spaced('30 seconds'))
-)
+const eventStreamRetrySchedule = Schedule.min([
+  Schedule.exponential('1 second'),
+  Schedule.spaced('30 seconds'),
+])
 
 /**
  * Atom that holds the current terminal list, updated in real time via the
@@ -296,7 +297,7 @@ const terminalListAtom = Atom.keepAlive(
         ),
         Stream.runDrain,
         Effect.retry(eventStreamRetrySchedule),
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.logWarning(`Terminal event stream ended: ${String(error)}`)
         ),
         Effect.forkScoped

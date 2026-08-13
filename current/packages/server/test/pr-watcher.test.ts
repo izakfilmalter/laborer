@@ -1,5 +1,6 @@
 import { assert, describe, it } from '@effect/vitest'
-import { Context, Duration, Effect, Layer, Logger, TestClock } from 'effect'
+import { Context, Duration, Effect, Layer, Logger } from 'effect'
+import { TestClock } from 'effect/testing'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
 import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PR_BACKGROUND_POLL_INTERVAL_MS } from '../src/services/polling-intervals.js'
@@ -7,7 +8,7 @@ import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { waitFor } from './helpers/timing-helpers.js'
 
-type PrWatcherService = Context.Tag.Service<typeof PrWatcher>
+type PrWatcherService = Context.Service.Shape<typeof PrWatcher>
 
 const waitForPollingState = (
   prWatcher: PrWatcherService,
@@ -79,7 +80,7 @@ const withDatabase = <A, E, R>(
   })
 
 describe('PrWatcher', () => {
-  it.scoped(
+  it.effect(
     'bootstraps polling for persisted active workspaces on startup',
     () =>
       withDatabase((database, databaseContext) =>
@@ -98,7 +99,7 @@ describe('PrWatcher', () => {
       )
   )
 
-  it.scoped(
+  it.effect(
     'bootstraps background polling for externally adopted workspaces on startup',
     () =>
       withDatabase((database, databaseContext) =>
@@ -118,7 +119,7 @@ describe('PrWatcher', () => {
       )
   )
 
-  it.scoped(
+  it.effect(
     'clears stale PR data without warning when a workspace path is missing',
     () => {
       const logs: string[] = []
@@ -163,11 +164,11 @@ describe('PrWatcher', () => {
             'a missing worktree should not be reported as a gh spawn failure'
           )
         })
-      ).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, logger)))
+      ).pipe(Effect.provide(Logger.layer([logger])))
     }
   )
 
-  it.scoped('refreshes polling coverage for an adopted workspace', () =>
+  it.effect('refreshes polling coverage for an adopted workspace', () =>
     withDatabase((database, databaseContext) =>
       Effect.gen(function* () {
         const prWatcher = yield* buildPrWatcher(databaseContext)
@@ -185,12 +186,12 @@ describe('PrWatcher', () => {
     )
   )
 
-  it.scoped('periodically discovers an adopted workspace', () =>
+  it.effect('periodically discovers an adopted workspace', () =>
     withDatabase((database, databaseContext) =>
       Effect.gen(function* () {
         const prWatcher = yield* buildPrWatcher(databaseContext)
 
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         insertWorkspace(database, {
           branchName: 'laborer/periodically-adopted',
           id: 'workspace-periodically-adopted',
@@ -202,7 +203,7 @@ describe('PrWatcher', () => {
           yield* prWatcher.isPolling('workspace-periodically-adopted')
         )
         yield* TestClock.adjust(Duration.millis(PR_BACKGROUND_POLL_INTERVAL_MS))
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         assert.isTrue(
           yield* prWatcher.isPolling('workspace-periodically-adopted')
         )
@@ -210,7 +211,7 @@ describe('PrWatcher', () => {
     )
   )
 
-  it.scoped('polling coverage continuously polls adopted workspaces', () =>
+  it.effect('polling coverage continuously polls adopted workspaces', () =>
     withDatabase((database, databaseContext) =>
       Effect.gen(function* () {
         database.insertTask({
@@ -256,7 +257,7 @@ describe('PrWatcher', () => {
     )
   )
 
-  it.scoped(
+  it.effect(
     'checkPr stops polling when the durable workspace task is not found',
     () =>
       withDatabase((database, databaseContext) =>

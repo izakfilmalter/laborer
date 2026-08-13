@@ -57,9 +57,10 @@ export interface LaborerDatabaseService {
   ) => Effect.Effect<A, LaborerDatabaseFailure>
 }
 
-export class LaborerDatabase extends Context.Tag(
-  '@laborer/server/LaborerDatabase'
-)<LaborerDatabase, LaborerDatabaseService>() {
+export class LaborerDatabase extends Context.Service<
+  LaborerDatabase,
+  LaborerDatabaseService
+>()('@laborer/server/LaborerDatabase') {
   static layer(
     path = taskDatabasePath(),
     options: LaborerDatabaseOptions = {}
@@ -84,7 +85,7 @@ export const makeLaborerDatabaseLayer = (
   path: string,
   options: LaborerDatabaseOptions = {}
 ): Layer.Layer<LaborerDatabase, LaborerDatabaseFailure> =>
-  Layer.scoped(
+  Layer.effect(
     LaborerDatabase,
     Effect.acquireRelease(
       attempt('open', () => NativeLaborerDatabase.connect(path, options)),
@@ -111,7 +112,7 @@ export const LaborerDatabaseLive = LaborerDatabase.layer()
 export const makeTemporaryLaborerDatabaseLayer = (
   options: LaborerDatabaseOptions = {}
 ): Layer.Layer<LaborerDatabase, LaborerDatabaseFailure> =>
-  Layer.unwrapScoped(
+  Layer.unwrap(
     Effect.acquireRelease(
       Effect.sync(() => mkdtempSync(join(tmpdir(), 'laborer-database-'))),
       (directory) =>

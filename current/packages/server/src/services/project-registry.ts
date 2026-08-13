@@ -27,7 +27,7 @@ const databaseRpcError = (operation: string, cause: unknown) =>
     message: `Could not ${operation}: ${cause instanceof Error ? cause.message : String(cause)}`,
   })
 
-class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
+class ProjectRegistry extends Context.Service<
   ProjectRegistry,
   {
     readonly addProject: (
@@ -43,7 +43,7 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
       projectId: string
     ) => Effect.Effect<ProjectRecord, RpcError>
   }
->() {
+>()('@laborer/ProjectRegistry') {
   static readonly layer = Layer.effect(
     ProjectRegistry,
     Effect.gen(function* () {
@@ -58,7 +58,7 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
           yield* worktreeReconciler
             .reconcile(project.id, project.repoPath)
             .pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.logWarning(
                   `Initial worktree reconciliation failed for project ${project.repoPath}: ${error.message}`
                 )
@@ -67,7 +67,7 @@ class ProjectRegistry extends Context.Tag('@laborer/ProjectRegistry')<
           yield* branchTracker
             .refreshBranches(project.id)
             .pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.logWarning(
                   `Initial branch refresh failed for project ${project.repoPath}: ${error.message}`
                 )

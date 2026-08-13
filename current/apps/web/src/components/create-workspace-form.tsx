@@ -16,7 +16,7 @@
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
  */
 
-import { useAtomSet } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import { useForm } from '@tanstack/react-form'
 import { pipe, String as Str } from 'effect'
 import { GitBranch, Layers, Slack } from 'lucide-react'

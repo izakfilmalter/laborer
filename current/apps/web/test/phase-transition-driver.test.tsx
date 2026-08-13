@@ -57,7 +57,7 @@ function setInitStatusResult(result: {
   }
 }
 
-vi.mock('@effect-atom/atom-react/Hooks', async () => {
+vi.mock('@effect/atom-react/Hooks', async () => {
   const React = await import('react')
   return {
     useAtomValue: () => {

@@ -135,14 +135,14 @@ const runGit = (
       }),
   })
 
-class WorktreeDetector extends Context.Tag('@laborer/WorktreeDetector')<
+class WorktreeDetector extends Context.Service<
   WorktreeDetector,
   {
     readonly detect: (
       repoPath: string
     ) => Effect.Effect<readonly DetectedWorktree[], RpcError>
   }
->() {
+>()('@laborer/WorktreeDetector') {
   static readonly layer = Layer.effect(
     WorktreeDetector,
     Effect.gen(function* () {

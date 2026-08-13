@@ -112,7 +112,7 @@ afterEach(() => {
 })
 
 describe('PrWatcher fork origin PR lookup', () => {
-  it.scoped(
+  it.effect(
     'prefers the origin repo when a fork has both origin and upstream',
     () =>
       Effect.gen(function* () {
@@ -193,7 +193,7 @@ describe('PrWatcher fork origin PR lookup', () => {
       })
   )
 
-  it.scoped(
+  it.effect(
     'falls back to default gh repo resolution when origin has no PR',
     () =>
       Effect.gen(function* () {

@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { AgentProvider } from '@laborer/shared/rpc'
 import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'

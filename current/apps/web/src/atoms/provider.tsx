@@ -11,7 +11,7 @@
  * @see Issue #20: AtomRpc client setup
  */
 
-import { RegistryProvider } from '@effect-atom/atom-react/RegistryContext'
+import { RegistryProvider } from '@effect/atom-react/RegistryContext'
 import type { ReactNode } from 'react'
 
 export function AtomRegistryProvider({ children }: { children: ReactNode }) {

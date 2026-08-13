@@ -87,7 +87,7 @@ export const translateWorktreesToTasks = (
           )
         : Effect.void
     ),
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.logWarning(
         `[worktree-task-translator] could not translate worktrees under ${input.rootPath}: ${
           error.cause instanceof Error ? error.cause.message : String(error)

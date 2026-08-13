@@ -83,7 +83,7 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 }))
 
 // Atom hooks — stub the Effect atom hooks
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: () =>
     vi.fn(async () => ({
       id: 'mock-terminal',

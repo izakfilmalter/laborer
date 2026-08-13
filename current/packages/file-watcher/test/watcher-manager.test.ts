@@ -11,7 +11,7 @@
 
 import { assert, describe, it } from '@effect/vitest'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { Effect, Layer, PubSub, Queue } from 'effect'
+import { Effect, Layer, PubSub } from 'effect'
 import {
   FileWatcher,
   type WatchEvent,
@@ -45,7 +45,7 @@ interface MockSubscription {
 const createMockFileWatcher = () => {
   const subscriptions = new Map<string, MockSubscription[]>()
 
-  const mockService: FileWatcher['Type'] = {
+  const mockService: FileWatcher['Service'] = {
     subscribe: (path, onChange, onError, options) =>
       Effect.sync(() => {
         const sub: MockSubscription = {
@@ -312,7 +312,7 @@ describe('WatcherManager', () => {
         fileName: 'src/index.ts',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.type, 'change')
       assert.strictEqual(event.fileName, 'src/index.ts')
       assert.strictEqual(event.absolutePath, '/repo/src/index.ts')
@@ -334,7 +334,7 @@ describe('WatcherManager', () => {
         nativeKind: 'create',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.type, 'add')
       assert.strictEqual(event.fileName, 'new-file.ts')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
@@ -355,7 +355,7 @@ describe('WatcherManager', () => {
         nativeKind: 'delete',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.type, 'delete')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })
@@ -375,7 +375,7 @@ describe('WatcherManager', () => {
         nativeKind: 'update',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.type, 'change')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })
@@ -409,7 +409,7 @@ describe('WatcherManager', () => {
         fileName: 'src/app.ts',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.fileName, 'src/app.ts')
       assert.strictEqual(event.type, 'change')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
@@ -438,7 +438,7 @@ describe('WatcherManager', () => {
         fileName: 'src/valid.ts',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       // The null-fileName event produces relPath of null which skips
       // the shouldIgnore check, so it gets published with the repo path
       // as absolutePath — OR if it's treated as empty string, it gets
@@ -467,7 +467,7 @@ describe('WatcherManager', () => {
         fileName: 'src/index.ts',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.subscriptionId, sub.id)
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })
@@ -492,8 +492,8 @@ describe('WatcherManager', () => {
       })
 
       const events: WatchFileEvent[] = []
-      events.push(yield* Queue.take(dequeue))
-      events.push(yield* Queue.take(dequeue))
+      events.push(yield* PubSub.take(dequeue))
+      events.push(yield* PubSub.take(dequeue))
 
       const eventA = events.find((e) => e.fileName === 'a.ts')
       const eventB = events.find((e) => e.fileName === 'b.ts')
@@ -534,7 +534,7 @@ describe('WatcherManager', () => {
         fileName: 'src/app.ts',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.fileName, 'src/app.ts')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })
@@ -554,7 +554,7 @@ describe('WatcherManager', () => {
         fileName: '.cache/some-file.json',
       })
 
-      const beforeEvent = yield* Queue.take(dequeue)
+      const beforeEvent = yield* PubSub.take(dequeue)
       assert.strictEqual(beforeEvent.fileName, '.cache/some-file.json')
 
       // Update to add .cache to ignore
@@ -572,7 +572,7 @@ describe('WatcherManager', () => {
         fileName: 'src/main.ts',
       })
 
-      const afterEvent = yield* Queue.take(dequeue)
+      const afterEvent = yield* PubSub.take(dequeue)
       assert.strictEqual(afterEvent.fileName, 'src/main.ts')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })
@@ -626,7 +626,7 @@ describe('WatcherManager', () => {
         fileName: 'src/new.ts',
       })
 
-      const event = yield* Queue.take(dequeue)
+      const event = yield* PubSub.take(dequeue)
       assert.strictEqual(event.fileName, 'src/new.ts')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })

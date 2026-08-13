@@ -1,4 +1,4 @@
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomValue } from '@effect/atom-react/Hooks'
 import { Suspense } from 'react'
 
 import { LaborerClient } from '@/atoms/laborer-client'

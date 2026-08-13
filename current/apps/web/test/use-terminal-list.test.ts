@@ -11,18 +11,18 @@ const { listTerminalsFn, mutationMap, atomValueMap } = vi.hoisted(() => ({
   atomValueMap: new Map<unknown, unknown>(),
 }))
 
-vi.mock('@effect-atom/atom', () => ({
+vi.mock('effect/unstable/reactivity', () => ({
   Atom: {
     keepAlive: (atom: unknown) => atom,
   },
-  Result: {
+  AsyncResult: {
     isSuccess: (r: { _tag: string }) => r._tag === 'Success',
     isFailure: (r: { _tag: string }) => r._tag === 'Failure',
     isInitial: (r: { _tag: string }) => r._tag === 'Initial',
   },
 }))
 
-vi.mock('@effect-atom/atom-react/Hooks', () => ({
+vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomValue: (atom: unknown) => {
     return (
       atomValueMap.get(atom) ?? {

@@ -1,4 +1,3 @@
-import { Atom } from '@effect-atom/atom'
 import {
   ROOT_WORKSPACE_BRANCH_LABEL,
   rootWorkspaceId,
@@ -10,6 +9,7 @@ import type {
   SharedTaskRow,
 } from '@laborer/shared/rpc'
 import { Duration, Effect, Schedule, Stream } from 'effect'
+import { Atom } from 'effect/unstable/reactivity'
 
 import { LaborerClient } from './laborer-client'
 import {
@@ -656,15 +656,35 @@ export const SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS = 60_000
  *
  * Like {@link wsReconnectRetrySchedule} one layer down, this schedule must
  * never terminate. Each retry opens a fresh subscription whose snapshot is
- * authoritative, so no delta lost during the outage is ever needed.
- * `Schedule.resetAfter` rewinds the backoff once the subscription has been
- * stable, so an outage after hours of uptime retries fast again.
+ * authoritative, so no delta lost during the outage is ever needed. The
+ * custom Effect 4 schedule caps its exponential delay and periodically
+ * rewinds the backoff.
  */
-export const sharedStateResubscribeSchedule = Schedule.union(
-  Schedule.exponential(SHARED_STATE_RESUBSCRIBE_INITIAL_DELAY_MS),
-  Schedule.spaced(SHARED_STATE_RESUBSCRIBE_MAX_DELAY_MS)
-).pipe(
-  Schedule.resetAfter(Duration.millis(SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS))
+export const sharedStateResubscribeSchedule = Schedule.fromStepWithMetadata(
+  Effect.sync(() => {
+    let sequenceStartedAt: number | undefined
+    let attempt = 0
+
+    return (metadata: Schedule.InputMetadata<unknown>) => {
+      if (
+        sequenceStartedAt === undefined ||
+        metadata.now - sequenceStartedAt >=
+          SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS
+      ) {
+        sequenceStartedAt = metadata.now
+        attempt = 0
+      }
+      const delay = Math.min(
+        SHARED_STATE_RESUBSCRIBE_INITIAL_DELAY_MS * 2 ** attempt,
+        SHARED_STATE_RESUBSCRIBE_MAX_DELAY_MS
+      )
+      attempt += 1
+      return Effect.succeed([delay, Duration.millis(delay)] as [
+        number,
+        Duration.Duration,
+      ])
+    }
+  })
 )
 
 export const makeSharedStateEventsAtom = () =>

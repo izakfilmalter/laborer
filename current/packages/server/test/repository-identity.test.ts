@@ -199,7 +199,7 @@ describe('RepositoryIdentity', () => {
 // ---------------------------------------------------------------------------
 
 describe('ProjectRegistry canonical deduplication', () => {
-  it.scoped('adding a repo root registers a project using canonical path', () =>
+  it.effect('adding a repo root registers a project using canonical path', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('registry-canonical', tempRoots)
       const registry = yield* ProjectRegistry
@@ -213,7 +213,7 @@ describe('ProjectRegistry canonical deduplication', () => {
     }).pipe(Effect.provide(RegistryWithIdentityTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'adding a nested directory does not create a duplicate project',
     () =>
       Effect.gen(function* () {
@@ -241,7 +241,7 @@ describe('ProjectRegistry canonical deduplication', () => {
       }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped('adding a symlinked path does not create a duplicate project', () =>
+  it.effect('adding a symlinked path does not create a duplicate project', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('registry-symlink-dedup', tempRoots)
       const symlinkDir = createTempDir('registry-symlink-dedup-link', tempRoots)
@@ -268,7 +268,7 @@ describe('ProjectRegistry canonical deduplication', () => {
     }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'adding a linked worktree path does not create a duplicate project',
     () =>
       Effect.gen(function* () {
@@ -292,7 +292,7 @@ describe('ProjectRegistry canonical deduplication', () => {
       }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'removing a project unregisters it through the public registry API',
     () =>
       Effect.gen(function* () {
@@ -314,7 +314,7 @@ describe('ProjectRegistry canonical deduplication', () => {
       }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped('addProject returns INVALID_PATH error for non-existent path', () =>
+  it.effect('addProject returns INVALID_PATH error for non-existent path', () =>
     Effect.gen(function* () {
       const registry = yield* ProjectRegistry
       const error = yield* registry
@@ -326,7 +326,7 @@ describe('ProjectRegistry canonical deduplication', () => {
     }).pipe(Effect.provide(RegistryTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'addProject returns NOT_GIT_REPO error for a directory that is not a git repository',
     () =>
       Effect.gen(function* () {

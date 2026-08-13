@@ -285,7 +285,7 @@ laborer/
 ├── e2e/                     # Playwright E2E tests
 │   ├── tests/
 │   └── playwright.config.ts
-├── AGENTS.md                # Ultracite + Effect v3 agent rules
+├── AGENTS.md                # Ultracite + Effect v4 agent rules
 ├── package.json             # Bun workspace root
 └── bun.lock
 ```

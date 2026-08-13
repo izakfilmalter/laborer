@@ -83,7 +83,7 @@ const TestLayer = BackgroundFetchService.layer.pipe(
 )
 
 describe('BackgroundFetchService', () => {
-  it.scoped('fetchNow succeeds for a workspace with a remote', () =>
+  it.effect('fetchNow succeeds for a workspace with a remote', () =>
     Effect.gen(function* () {
       const { localPath } = initRemoteRepo('fetch-now')
 
@@ -97,7 +97,7 @@ describe('BackgroundFetchService', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('fetchNow returns false for a missing workspace', () =>
+  it.effect('fetchNow returns false for a missing workspace', () =>
     Effect.gen(function* () {
       const service = yield* BackgroundFetchService
       const result = yield* service.fetchNow('missing-workspace')
@@ -106,7 +106,7 @@ describe('BackgroundFetchService', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'fetchNow updates tracking refs so new remote commits are visible',
     () =>
       Effect.gen(function* () {
@@ -141,7 +141,7 @@ describe('BackgroundFetchService', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'startFetching and stopFetching manage lifecycle without errors',
     () =>
       Effect.gen(function* () {
@@ -158,7 +158,7 @@ describe('BackgroundFetchService', () => {
       }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('stopAllFetching cleans up all schedules without errors', () =>
+  it.effect('stopAllFetching cleans up all schedules without errors', () =>
     Effect.gen(function* () {
       const { localPath: localPath1 } = initRemoteRepo('fetch-stop-all-1')
       const { localPath: localPath2 } = initRemoteRepo('fetch-stop-all-2')

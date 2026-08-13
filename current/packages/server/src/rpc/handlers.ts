@@ -20,7 +20,7 @@ import {
 } from '@laborer/shared/rpc'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
-import { Array, Effect, Stream } from 'effect'
+import { Array, Effect, Semaphore, Stream, SubscriptionRef } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
@@ -75,7 +75,7 @@ const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
           const project = yield* registry
             .addProject(rootPath, false)
             .pipe(
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 Effect.logWarning(
                   `[task-board] Could not auto-register ${rootPath}: ${error.message}`
                 ).pipe(Effect.as(undefined))
@@ -110,7 +110,7 @@ export const handleConfigGet = ({ projectId }: { projectId: string }) =>
               code: 'CONFIG_VALIDATION_ERROR',
             })
         ),
-        Effect.catchAllDefect((defect) =>
+        Effect.catchDefect((defect) =>
           Effect.fail(
             new RpcError({
               message:
@@ -298,7 +298,7 @@ const commitOrReplayTaskMove = (input: {
       )
 
 interface TaskMoveLock {
-  readonly semaphore: Effect.Semaphore
+  readonly semaphore: Semaphore.Semaphore
   users: number
 }
 
@@ -319,7 +319,7 @@ const withTaskMoveLock = <A, E, R>(
             return existing
           }
           const created: TaskMoveLock = {
-            semaphore: Effect.unsafeMakeSemaphore(1),
+            semaphore: Semaphore.makeUnsafe(1),
             users: 1,
           }
           taskMoveLocks.set(taskId, created)
@@ -332,7 +332,7 @@ const withTaskMoveLock = <A, E, R>(
     () => operation,
     (lock) =>
       lock.semaphore.release(1).pipe(
-        Effect.zipRight(
+        Effect.andThen(
           Effect.sync(() => {
             lock.users -= 1
             if (lock.users === 0 && taskMoveLocks.get(taskId) === lock) {
@@ -550,12 +550,12 @@ const handleTaskMoveAtPathUnlocked = (
           worktreePath: null,
         })
       }).pipe(
-        Effect.catchAll((bounceError) =>
+        Effect.catch((bounceError) =>
           Effect.logError(
             `[task-board] Could not return failed provisioning task ${taskId} to Todo: ${bounceError.message}`
           )
         ),
-        Effect.zipRight(
+        Effect.andThen(
           Effect.logWarning(
             `[task-board] Provisioning failed for ${taskId}: ${error.message}`
           )
@@ -629,14 +629,14 @@ const analyzeAndProvisionSlackCard = (taskId: string, databasePath: string) =>
     { expectedRevision: 1, status: 'in_progress', taskId },
     databasePath
   ).pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       markSlackAnalysisFailed(taskId, databasePath).pipe(
-        Effect.catchAll((markError) =>
+        Effect.catch((markError) =>
           Effect.logError(
             `[task-board] Slack provisioning failed for ${taskId}; the failure marker could not be stored: ${markError.message}`
           )
         ),
-        Effect.zipRight(
+        Effect.andThen(
           Effect.logWarning(
             `[task-board] Slack provisioning failed for ${taskId}: ${error.message}`
           )
@@ -671,7 +671,7 @@ export const handleTaskCreateAtPath = (
       // the card stays in the column it was added to and its workspace
       // follows once the planner has named the work.
       yield* analyzeAndProvisionSlackCard(created.id, databasePath).pipe(
-        Effect.forkDaemon
+        Effect.forkDetach
       )
       return { ...created, description: null, workspaceId: null }
     }
@@ -869,7 +869,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Stream.unwrap(
         Effect.gen(function* () {
           const { ref } = yield* DeferredServicesReady
-          return ref.changes.pipe(
+          return SubscriptionRef.changes(ref).pipe(
             Stream.map((ready) => ({ ready })),
             // Complete after emitting { ready: true } — client only needs
             // this signal once and keeping the stream open wastes resources.

@@ -7,11 +7,11 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Either, Ref, type Scope } from 'effect'
+import { Effect, Ref, Result, type Scope } from 'effect'
 import { createTempDir, git, initRepo } from '../helpers/git-helpers.js'
 import { makeScopedTestRpcContext } from './test-layer.js'
 
-type RpcTestContext = Effect.Effect.Success<typeof makeScopedTestRpcContext>
+type RpcTestContext = Effect.Success<typeof makeScopedTestRpcContext>
 
 const SETUP_ENV_FILE = '.laborer-setup-env'
 const CREATE_BRANCH_PATTERN = /feature\/rpc-create/
@@ -105,127 +105,125 @@ const initRemoteRepo = (prefix: string, tempRoots: string[]) => {
 }
 
 describe('LaborerRpcs workspace management', () => {
-  it.scopedLive(
-    'workspace.create creates a worktree and runs setup scripts',
-    () =>
-      runWithRpcTestContext(({ client, database }) =>
-        Effect.gen(function* () {
-          const tempRoots: string[] = []
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => cleanupTempRoots(tempRoots))
-          )
+  it.live('workspace.create creates a worktree and runs setup scripts', () =>
+    runWithRpcTestContext(({ client, database }) =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => cleanupTempRoots(tempRoots))
+        )
 
-          const repoPath = initRepo('rpc-workspace-create', tempRoots)
-          const worktreeRoot = createTempDir('rpc-worktree-root', tempRoots)
-          const branchName = 'feature/rpc-create'
+        const repoPath = initRepo('rpc-workspace-create', tempRoots)
+        const worktreeRoot = createTempDir('rpc-worktree-root', tempRoots)
+        const branchName = 'feature/rpc-create'
 
-          writeLaborerConfig(repoPath, {
-            setupScripts: [
-              `printf '%s' "$LABORER_WORKSPACE_ID,$LABORER_BRANCH,$LABORER_WORKSPACE_PATH" > ${SETUP_ENV_FILE}`,
-            ],
-            worktreeDir: worktreeRoot,
-          })
-          git('add laborer.json', repoPath)
-          git('commit -m "add laborer config"', repoPath)
-
-          const project = yield* client.project.add({ repoPath })
-          const workspace = yield* client.workspace.create({
-            branchName,
-            projectId: project.id,
-          })
-
-          assert.strictEqual(workspace.projectId, project.id)
-          assert.strictEqual(workspace.branchName, branchName)
-          // workspace.create returns immediately with 'creating' status;
-          // the background fiber transitions to 'running' asynchronously.
-          assert.strictEqual(workspace.status, 'creating')
-          assert.strictEqual(
-            workspace.worktreePath,
-            join(worktreeRoot, 'feature-rpc-create')
-          )
-
-          // Wait for the worktree-ready checkpoint. Setup scripts may still
-          // be running after the workspace transitions to 'running'.
-          // The fiber is forked into the layer scope so we poll the database,
-          // yielding via Effect.sleep to let the background fiber progress.
-          yield* Effect.gen(function* () {
-            const maxAttempts = 200
-            for (let i = 0; i < maxAttempts; i++) {
-              yield* Effect.sleep('100 millis')
-              const row = database.findTask(workspace.id)
-              if (row === null) {
-                return assert.fail(
-                  'Workspace row deleted — setup likely errored and rolled back'
-                )
-              }
-              if (row?.worktreeStatus === 'errored') {
-                return assert.fail(
-                  `Workspace errored: ${row.worktreeError ?? ''}`
-                )
-              }
-              if (row?.worktreeStatus === 'ready') {
-                return
-              }
-            }
-            assert.fail(
-              'Timed out waiting for workspace to transition to running'
-            )
-          })
-
-          assert.isTrue(existsSync(workspace.worktreePath))
-          assert.match(
-            git(`branch --list ${branchName}`, repoPath),
-            CREATE_BRANCH_PATTERN
-          )
-
-          // Wait for setup scripts to complete before asserting on their
-          // side effects.
-          yield* Effect.gen(function* () {
-            const maxAttempts = 200
-            for (let i = 0; i < maxAttempts; i++) {
-              yield* Effect.sleep('100 millis')
-              const row = database.findTask(workspace.id)
-              if (row?.worktreeStatus === 'errored') {
-                return assert.fail(
-                  `Workspace errored during setup scripts: ${row.worktreeError ?? ''}`
-                )
-              }
-              if (row?.setupCompletedAt !== null) {
-                return
-              }
-            }
-            assert.fail('Timed out waiting for setup scripts to complete')
-          })
-
-          const setupEnvContents = readFileSync(
-            join(workspace.worktreePath, SETUP_ENV_FILE),
-            'utf-8'
-          )
-
-          assert.strictEqual(
-            setupEnvContents,
-            `${workspace.id},${branchName},${workspace.worktreePath}`
-          )
-
-          const workspaceRow = database.findTask(workspace.id)
-          assert.isDefined(workspaceRow)
-          if (workspaceRow === null) {
-            assert.fail(
-              'Expected workspace.create to materialize a workspace task'
-            )
-          }
-
-          assert.strictEqual(workspaceRow?.branchName, branchName)
-          assert.strictEqual(workspaceRow?.id, workspace.id)
-          assert.strictEqual(workspaceRow?.rootPath, project.repoPath)
-          assert.strictEqual(workspaceRow?.worktreeStatus, 'ready')
-          assert.isNumber(workspaceRow?.setupCompletedAt)
-          assert.strictEqual(workspaceRow?.worktreePath, workspace.worktreePath)
+        writeLaborerConfig(repoPath, {
+          setupScripts: [
+            `printf '%s' "$LABORER_WORKSPACE_ID,$LABORER_BRANCH,$LABORER_WORKSPACE_PATH" > ${SETUP_ENV_FILE}`,
+          ],
+          worktreeDir: worktreeRoot,
         })
-      )
+        git('add laborer.json', repoPath)
+        git('commit -m "add laborer config"', repoPath)
+
+        const project = yield* client['project.add']({ repoPath })
+        const workspace = yield* client['workspace.create']({
+          branchName,
+          projectId: project.id,
+        })
+
+        assert.strictEqual(workspace.projectId, project.id)
+        assert.strictEqual(workspace.branchName, branchName)
+        // workspace.create returns immediately with 'creating' status;
+        // the background fiber transitions to 'running' asynchronously.
+        assert.strictEqual(workspace.status, 'creating')
+        assert.strictEqual(
+          workspace.worktreePath,
+          join(worktreeRoot, 'feature-rpc-create')
+        )
+
+        // Wait for the worktree-ready checkpoint. Setup scripts may still
+        // be running after the workspace transitions to 'running'.
+        // The fiber is forked into the layer scope so we poll the database,
+        // yielding via Effect.sleep to let the background fiber progress.
+        yield* Effect.gen(function* () {
+          const maxAttempts = 200
+          for (let i = 0; i < maxAttempts; i++) {
+            yield* Effect.sleep('100 millis')
+            const row = database.findTask(workspace.id)
+            if (row === null) {
+              return assert.fail(
+                'Workspace row deleted — setup likely errored and rolled back'
+              )
+            }
+            if (row?.worktreeStatus === 'errored') {
+              return assert.fail(
+                `Workspace errored: ${row.worktreeError ?? ''}`
+              )
+            }
+            if (row?.worktreeStatus === 'ready') {
+              return
+            }
+          }
+          assert.fail(
+            'Timed out waiting for workspace to transition to running'
+          )
+        })
+
+        assert.isTrue(existsSync(workspace.worktreePath))
+        assert.match(
+          git(`branch --list ${branchName}`, repoPath),
+          CREATE_BRANCH_PATTERN
+        )
+
+        // Wait for setup scripts to complete before asserting on their
+        // side effects.
+        yield* Effect.gen(function* () {
+          const maxAttempts = 200
+          for (let i = 0; i < maxAttempts; i++) {
+            yield* Effect.sleep('100 millis')
+            const row = database.findTask(workspace.id)
+            if (row?.worktreeStatus === 'errored') {
+              return assert.fail(
+                `Workspace errored during setup scripts: ${row.worktreeError ?? ''}`
+              )
+            }
+            if (row?.setupCompletedAt !== null) {
+              return
+            }
+          }
+          assert.fail('Timed out waiting for setup scripts to complete')
+        })
+
+        const setupEnvContents = readFileSync(
+          join(workspace.worktreePath, SETUP_ENV_FILE),
+          'utf-8'
+        )
+
+        assert.strictEqual(
+          setupEnvContents,
+          `${workspace.id},${branchName},${workspace.worktreePath}`
+        )
+
+        const workspaceRow = database.findTask(workspace.id)
+        assert.isDefined(workspaceRow)
+        if (workspaceRow === null) {
+          assert.fail(
+            'Expected workspace.create to materialize a workspace task'
+          )
+        }
+
+        assert.strictEqual(workspaceRow?.branchName, branchName)
+        assert.strictEqual(workspaceRow?.id, workspace.id)
+        assert.strictEqual(workspaceRow?.rootPath, project.repoPath)
+        assert.strictEqual(workspaceRow?.worktreeStatus, 'ready')
+        assert.isNumber(workspaceRow?.setupCompletedAt)
+        assert.strictEqual(workspaceRow?.worktreePath, workspace.worktreePath)
+      })
+    )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.create checks out a remote-only branch when it exists on origin',
     () =>
       runWithRpcTestContext(({ client, database }) =>
@@ -261,8 +259,8 @@ describe('LaborerRpcs workspace management', () => {
           commitFile(colleaguePath, 'colleague.txt', 'from remote branch')
           git(`push -u origin ${branchName}`, colleaguePath)
 
-          const project = yield* client.project.add({ repoPath: localPath })
-          const workspace = yield* client.workspace.create({
+          const project = yield* client['project.add']({ repoPath: localPath })
+          const workspace = yield* client['workspace.create']({
             branchName,
             projectId: project.id,
           })
@@ -300,7 +298,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.create ignores legacy dev-server config and creates a local worktree',
     () =>
       runWithRpcTestContext(({ client, database }) =>
@@ -333,8 +331,8 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add local config"', repoPath)
 
-          const project = yield* client.project.add({ repoPath })
-          const workspace = yield* client.workspace.create({
+          const project = yield* client['project.add']({ repoPath })
+          const workspace = yield* client['workspace.create']({
             branchName,
             projectId: project.id,
           })
@@ -384,7 +382,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.create with baseWorkspaceId branches from the parent worktree HEAD, pushes the parent branch, and records baseBranch',
     () =>
       runWithRpcTestContext(({ client, database }) =>
@@ -431,8 +429,8 @@ describe('LaborerRpcs workspace management', () => {
               assert.fail('Timed out waiting for workspace to run')
             })
 
-          const project = yield* client.project.add({ repoPath: localPath })
-          const parent = yield* client.workspace.create({
+          const project = yield* client['project.add']({ repoPath: localPath })
+          const parent = yield* client['workspace.create']({
             branchName: 'feat/big-thing',
             projectId: project.id,
           })
@@ -445,7 +443,7 @@ describe('LaborerRpcs workspace management', () => {
           git('commit -m "parent work"', parent.worktreePath)
           const parentHeadSha = git('rev-parse HEAD', parent.worktreePath)
 
-          const child = yield* client.workspace.create({
+          const child = yield* client['workspace.create']({
             branchName: 'fix/auth',
             projectId: project.id,
             baseWorkspaceId: parent.id,
@@ -491,24 +489,22 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scoped('workspace.create returns NOT_FOUND for an unknown project', () =>
+  it.effect('workspace.create returns NOT_FOUND for an unknown project', () =>
     runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
-        const result = yield* client.workspace
-          .create({
-            branchName: 'feature/missing-project',
-            projectId: 'missing-project',
-          })
-          .pipe(Effect.either)
+        const result = yield* client['workspace.create']({
+          branchName: 'feature/missing-project',
+          projectId: 'missing-project',
+        }).pipe(Effect.result)
 
-        assert.isTrue(Either.isLeft(result))
-        if (Either.isRight(result)) {
+        assert.isTrue(Result.isFailure(result))
+        if (Result.isSuccess(result)) {
           assert.fail('Expected workspace.create to fail for a missing project')
         }
 
-        assert.strictEqual(result.left.code, 'NOT_FOUND')
+        assert.strictEqual(result.failure.code, 'NOT_FOUND')
         assert.strictEqual(
-          result.left.message,
+          result.failure.message,
           'Project not found: missing-project'
         )
         assert.deepStrictEqual(database.listTasks(), [])
@@ -516,7 +512,7 @@ describe('LaborerRpcs workspace management', () => {
     )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.destroy removes laborer-managed worktrees and records terminal cleanup',
     () =>
       runWithRpcTestContext(({ client, database, terminalClientRecorder }) =>
@@ -539,13 +535,13 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 
-          const project = yield* client.project.add({ repoPath })
-          const workspace = yield* client.workspace.create({
+          const project = yield* client['project.add']({ repoPath })
+          const workspace = yield* client['workspace.create']({
             branchName,
             projectId: project.id,
           })
 
-          yield* client.workspace.destroy({ workspaceId: workspace.id })
+          yield* client['workspace.destroy']({ workspaceId: workspace.id })
 
           // destroyWorktree forks cleanup into a background daemon fiber.
           // Poll until the task releases its worktree (last cleanup step).
@@ -566,7 +562,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.destroy removes external worktrees from disk and database state',
     () =>
       runWithRpcTestContext(({ client, database, terminalClientRecorder }) =>
@@ -585,7 +581,7 @@ describe('LaborerRpcs workspace management', () => {
           )
           git(`worktree add -b ${branchName} ${externalWorktreePath}`, repoPath)
 
-          yield* client.project.add({ repoPath })
+          yield* client['project.add']({ repoPath })
           const externalWorkspace = database.findTaskByWorktreePath(
             realpathSync(externalWorktreePath)
           )
@@ -595,7 +591,9 @@ describe('LaborerRpcs workspace management', () => {
             assert.fail('Expected the external workspace fixture to exist')
           }
 
-          yield* client.workspace.destroy({ workspaceId: externalWorkspace.id })
+          yield* client['workspace.destroy']({
+            workspaceId: externalWorkspace.id,
+          })
 
           // destroyWorktree forks cleanup into a background daemon fiber.
           // Poll until the task releases its worktree (last cleanup step).
@@ -611,7 +609,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.destroy does not emit duplicate destroy events after the workspace is already gone',
     () =>
       runWithRpcTestContext(({ client, database }) =>
@@ -637,17 +635,17 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 
-          const project = yield* client.project.add({ repoPath })
-          const workspace = yield* client.workspace.create({
+          const project = yield* client['project.add']({ repoPath })
+          const workspace = yield* client['workspace.create']({
             branchName,
             projectId: project.id,
           })
 
-          yield* client.workspace.destroy({ workspaceId: workspace.id })
+          yield* client['workspace.destroy']({ workspaceId: workspace.id })
           yield* waitForWorkspaceRemoval(database, workspace.id)
           const changesAfterFirstDestroy = database.taskChangesAfter(0).length
 
-          yield* client.workspace.destroy({ workspaceId: workspace.id })
+          yield* client['workspace.destroy']({ workspaceId: workspace.id })
 
           assert.strictEqual(
             database.taskChangesAfter(0).length,
@@ -657,7 +655,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.create succeeds for a branch whose previous workspace was just destroyed',
     () =>
       runWithRpcTestContext(({ client, database }) =>
@@ -680,10 +678,10 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 
-          const project = yield* client.project.add({ repoPath })
+          const project = yield* client['project.add']({ repoPath })
 
           // 1. Create the first workspace and wait for it to be running
-          const first = yield* client.workspace.create({
+          const first = yield* client['workspace.create']({
             branchName,
             projectId: project.id,
           })
@@ -716,7 +714,7 @@ describe('LaborerRpcs workspace management', () => {
           //    cleanup to finish. This is the real-world scenario: the
           //    user destroys a workspace and immediately creates a new one
           //    for the same branch.
-          yield* client.workspace.destroy({
+          yield* client['workspace.destroy']({
             workspaceId: first.id,
             force: true,
           })
@@ -725,7 +723,7 @@ describe('LaborerRpcs workspace management', () => {
           //    The old destroy's background fiber is still running
           //    (git worktree remove, git branch -D, etc.) — the create
           //    must not race with it.
-          const second = yield* client.workspace.create({
+          const second = yield* client['workspace.create']({
             branchName,
             projectId: project.id,
           })
@@ -769,7 +767,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scopedLive(
+  it.live(
     'workspace.create transitions to errored with setup steps cleared when setup script fails',
     () =>
       runWithRpcTestContext(({ client, database }) =>
@@ -793,8 +791,8 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config with failing script"', repoPath)
 
-          const project = yield* client.project.add({ repoPath })
-          const workspace = yield* client.workspace.create({
+          const project = yield* client['project.add']({ repoPath })
+          const workspace = yield* client['workspace.create']({
             branchName,
             projectId: project.id,
           })
@@ -837,7 +835,7 @@ describe('LaborerRpcs workspace management', () => {
       )
   )
 
-  it.scopedLive('workspace.refreshSyncStatus returns ahead/behind counts', () =>
+  it.live('workspace.refreshSyncStatus returns ahead/behind counts', () =>
     runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
         const tempRoots: string[] = []
@@ -860,7 +858,7 @@ describe('LaborerRpcs workspace management', () => {
         git('push origin main', remoteClonePath)
         git('fetch origin', localPath)
 
-        const project = yield* client.project.add({ repoPath: localPath })
+        const project = yield* client['project.add']({ repoPath: localPath })
         const workspaceId = crypto.randomUUID()
         database.insertTask({
           branchName: 'main',
@@ -873,7 +871,7 @@ describe('LaborerRpcs workspace management', () => {
           worktreeStatus: 'ready',
         })
 
-        const result = yield* client.workspace.refreshSyncStatus({
+        const result = yield* client['workspace.refreshSyncStatus']({
           workspaceId,
         })
 
@@ -885,7 +883,7 @@ describe('LaborerRpcs workspace management', () => {
     )
   )
 
-  it.scopedLive('workspace.push pushes commits and refreshes sync status', () =>
+  it.live('workspace.push pushes commits and refreshes sync status', () =>
     runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
         const tempRoots: string[] = []
@@ -900,7 +898,7 @@ describe('LaborerRpcs workspace management', () => {
 
         commitFile(localPath, 'push.txt', 'push me\n')
 
-        const project = yield* client.project.add({ repoPath: localPath })
+        const project = yield* client['project.add']({ repoPath: localPath })
         const workspaceId = crypto.randomUUID()
         database.insertTask({
           branchName: 'main',
@@ -913,7 +911,7 @@ describe('LaborerRpcs workspace management', () => {
           worktreeStatus: 'ready',
         })
 
-        const result = yield* client.workspace.push({ workspaceId })
+        const result = yield* client['workspace.push']({ workspaceId })
 
         assert.deepStrictEqual(result, {
           aheadCount: 0,
@@ -924,54 +922,52 @@ describe('LaborerRpcs workspace management', () => {
     )
   )
 
-  it.scopedLive(
-    'workspace.pull pulls remote commits and refreshes sync status',
-    () =>
-      runWithRpcTestContext(({ client, database }) =>
-        Effect.gen(function* () {
-          const tempRoots: string[] = []
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => cleanupTempRoots(tempRoots))
-          )
+  it.live('workspace.pull pulls remote commits and refreshes sync status', () =>
+    runWithRpcTestContext(({ client, database }) =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => cleanupTempRoots(tempRoots))
+        )
 
-          const { localPath, remotePath } = initRemoteRepo(
-            'rpc-sync-pull',
-            tempRoots
-          )
-          const remoteClonePath = createRemoteClone(
-            remotePath,
-            'rpc-sync-pull-remote',
-            tempRoots
-          )
+        const { localPath, remotePath } = initRemoteRepo(
+          'rpc-sync-pull',
+          tempRoots
+        )
+        const remoteClonePath = createRemoteClone(
+          remotePath,
+          'rpc-sync-pull-remote',
+          tempRoots
+        )
 
-          commitFile(remoteClonePath, 'pulled.txt', 'from remote\n')
-          git('push origin main', remoteClonePath)
-          git('fetch origin', localPath)
+        commitFile(remoteClonePath, 'pulled.txt', 'from remote\n')
+        git('push origin main', remoteClonePath)
+        git('fetch origin', localPath)
 
-          const project = yield* client.project.add({ repoPath: localPath })
-          const workspaceId = crypto.randomUUID()
-          database.insertTask({
-            branchName: 'main',
-            id: workspaceId,
-            rootPath: project.repoPath,
-            source: 'worktree',
-            status: 'in_progress',
-            title: 'main',
-            worktreePath: localPath,
-            worktreeStatus: 'ready',
-          })
-
-          const result = yield* client.workspace.pull({ workspaceId })
-
-          assert.deepStrictEqual(result, {
-            aheadCount: 0,
-            behindCount: 0,
-          })
-          assert.strictEqual(
-            git('show HEAD:pulled.txt', localPath),
-            'from remote'
-          )
+        const project = yield* client['project.add']({ repoPath: localPath })
+        const workspaceId = crypto.randomUUID()
+        database.insertTask({
+          branchName: 'main',
+          id: workspaceId,
+          rootPath: project.repoPath,
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'main',
+          worktreePath: localPath,
+          worktreeStatus: 'ready',
         })
-      )
+
+        const result = yield* client['workspace.pull']({ workspaceId })
+
+        assert.deepStrictEqual(result, {
+          aheadCount: 0,
+          behindCount: 0,
+        })
+        assert.strictEqual(
+          git('show HEAD:pulled.txt', localPath),
+          'from remote'
+        )
+      })
+    )
   )
 })

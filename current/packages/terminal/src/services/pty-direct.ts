@@ -131,7 +131,7 @@ async function fixSpawnHelperPermissions(): Promise<void> {
  * Used in the utility process entry point to flatten the terminal architecture.
  * The layer is scoped: when finalized, all PTYs are killed and buffers flushed.
  */
-const directLayer = Layer.scoped(
+const directLayer = Layer.effect(
   PtyHostClient,
   Effect.gen(function* () {
     // In-process state

@@ -29,7 +29,7 @@ function showDesktopUpdateError(error: DesktopUpdateError): void {
 
 function showDesktopUpdateCause(cause: Cause.Cause<DesktopUpdateError>): void {
   pipe(
-    Cause.failureOption(cause),
+    Cause.findErrorOption(cause),
     Option.match({
       onNone: () =>
         toast.error('Update failed', { description: Cause.pretty(cause) }),

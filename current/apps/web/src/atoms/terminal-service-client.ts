@@ -14,16 +14,16 @@
  * @see packages/terminal/src/utility-main.ts — Terminal utility process entry
  */
 
-import { RpcClient } from '@effect/rpc'
-import { AtomRpc } from '@effect-atom/atom'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
 import { Effect, Layer } from 'effect'
+import { AtomRpc } from 'effect/unstable/reactivity'
+import { RpcClient } from 'effect/unstable/rpc'
 
 import { acquireServicePort } from '@/lib/desktop'
 
-const terminalProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
+const terminalProtocol: Layer.Layer<RpcClient.Protocol> = Layer.effect(
   RpcClient.Protocol,
   Effect.gen(function* () {
     const port = yield* Effect.promise(() => acquireServicePort('terminal'))
@@ -45,7 +45,7 @@ const terminalProtocol: Layer.Layer<RpcClient.Protocol> = Layer.scoped(
  * - terminal.spawn, terminal.write, terminal.resize, terminal.kill
  * - terminal.remove, terminal.restart, terminal.list
  */
-export class TerminalServiceClient extends AtomRpc.Tag<TerminalServiceClient>()(
+export class TerminalServiceClient extends AtomRpc.Service<TerminalServiceClient>()(
   'TerminalServiceClient',
   {
     group: TerminalRpcs,

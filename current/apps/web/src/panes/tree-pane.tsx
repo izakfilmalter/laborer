@@ -31,13 +31,13 @@
  * @see Issue 6: Client tree pane — Lazy per-directory fetching
  */
 
-import { Result } from '@effect-atom/atom'
 import {
   useAtomMount,
   useAtomSet,
   useAtomValue,
-} from '@effect-atom/atom-react/Hooks'
-import type { FileNode } from '@laborer/shared/rpc'
+} from '@effect/atom-react/Hooks'
+import type { FileNode, FileWatcherEvent } from '@laborer/shared/rpc'
+import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -323,7 +323,9 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
     if (!Result.isSuccess(watcherResult)) {
       return
     }
-    const { items } = watcherResult.value
+    const { items } = watcherResult.value as {
+      readonly items: readonly (FileWatcherEvent | undefined)[]
+    }
     const startIndex = lastProcessedIndexRef.current
 
     if (items.length <= startIndex) {

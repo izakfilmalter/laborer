@@ -4,7 +4,7 @@ import {
   type SharedTaskRow,
 } from '@laborer/shared/rpc'
 import { taskDatabasePath } from '@laborer/task-db/path'
-import { Effect, Stream } from 'effect'
+import { Cause, Effect, Queue, Stream } from 'effect'
 import { onLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 import {
   type LaborerDatabaseSnapshot,
@@ -78,8 +78,8 @@ export const subscribeToSharedState = (
   path = taskDatabasePath(),
   pollIntervalMs = SHARED_STATE_POLL_INTERVAL_MS
 ): Stream.Stream<SharedStateUpdate, RpcError> =>
-  Stream.asyncPush<SharedStateUpdate, RpcError>(
-    (emit) =>
+  Stream.callback<SharedStateUpdate, RpcError>(
+    (queue) =>
       Effect.acquireRelease(
         Effect.try({
           try: () => {
@@ -99,7 +99,10 @@ export const subscribeToSharedState = (
               const snapshot = database.snapshot()
               taskCursor = snapshot.taskCursor
               stateCursor = snapshot.stateCursor
-              snapshotRequired = !emit.single(snapshotUpdate(snapshot))
+              snapshotRequired = !Queue.offerUnsafe(
+                queue,
+                snapshotUpdate(snapshot)
+              )
             }
 
             const emitDeltas = () => {
@@ -113,7 +116,7 @@ export const subscribeToSharedState = (
               }
               const update = deltaUpdate(tasks, state)
               if (update !== null) {
-                snapshotRequired = !emit.single(update)
+                snapshotRequired = !Queue.offerUnsafe(queue, update)
               }
             }
 
@@ -147,7 +150,7 @@ export const subscribeToSharedState = (
               try {
                 drainReads()
               } catch (cause) {
-                emit.fail(readError(cause))
+                Queue.failCauseUnsafe(queue, Cause.fail(readError(cause)))
               } finally {
                 reading = false
               }

@@ -24,10 +24,10 @@
  * @see Issue #7: Terminal utility process: full RPC surface
  */
 
-import { RpcTest } from '@effect/rpc'
 import { assert, describe } from '@effect/vitest'
 import { TerminalRpcs } from '@laborer/shared/rpc'
-import { Effect, Either, Exit, Fiber, Layer, Scope, Stream } from 'effect'
+import { Effect, Exit, Fiber, Layer, Result, Scope, Stream } from 'effect'
+import { RpcTest } from 'effect/unstable/rpc'
 import { afterAll, beforeAll, it } from 'vitest'
 
 import { TerminalRpcsLive } from '../src/rpc/handlers.js'
@@ -60,10 +60,10 @@ const TestTerminalRpcClient = RpcTest.makeClient(TerminalRpcs)
 // Shared scope for the long-lived PtyDirectLayer
 // ---------------------------------------------------------------------------
 
-type TerminalRpcClient = Effect.Effect.Success<typeof TestTerminalRpcClient>
+type TerminalRpcClient = Effect.Success<typeof TestTerminalRpcClient>
 
-let layerScope: Scope.CloseableScope
-let clientScope: Scope.CloseableScope
+let layerScope: Scope.Closeable
+let clientScope: Scope.Closeable
 let client: TerminalRpcClient
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -81,7 +81,7 @@ beforeAll(async () => {
   client = await Effect.runPromise(
     TestTerminalRpcClient.pipe(
       Effect.provide(Layer.succeedContext(context)),
-      Scope.extend(clientScope)
+      Scope.provide(clientScope)
     )
   )
 }, 30_000)
@@ -108,7 +108,7 @@ describe(
 
     it('terminal.spawn creates a terminal and returns TerminalInfo', async () => {
       const result = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "direct-spawn-test"',
           cwd: TEST_CWD,
           cols: 80,
@@ -131,7 +131,7 @@ describe(
 
     it('terminal.spawn with args passes them correctly', async () => {
       const result = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: '/bin/echo',
           args: ['direct', 'args', 'test'],
           cwd: TEST_CWD,
@@ -154,7 +154,7 @@ describe(
 
     it('terminal.kill stops a running terminal', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -167,13 +167,13 @@ describe(
       await delay(500)
 
       // Kill it
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
 
       // Wait for exit to propagate
       await delay(1000)
 
       // Verify it shows as stopped in the list
-      const terminals = await run(client.terminal.list())
+      const terminals = await run(client['terminal.list']())
       const found = terminals.find((t) => t.id === terminal.id)
       assert.isDefined(found)
       assert.strictEqual(found?.status, 'stopped')
@@ -186,14 +186,14 @@ describe(
     it('terminal.events emits Spawned event when a terminal is created', async () => {
       // Start listening for events
       const eventsFiber = Effect.runFork(
-        Stream.runCollect(client.terminal.events().pipe(Stream.take(1)))
+        Stream.runCollect(client['terminal.events']().pipe(Stream.take(1)))
       )
 
       // Small delay to ensure subscription is active
       await delay(200)
 
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "output-test"',
           cwd: TEST_CWD,
           cols: 80,
@@ -225,7 +225,7 @@ describe(
 
     it('terminal.list returns spawned terminals', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'sleep 60',
           cwd: TEST_CWD,
           cols: 80,
@@ -236,13 +236,13 @@ describe(
 
       await delay(500)
 
-      const terminals = await run(client.terminal.list())
+      const terminals = await run(client['terminal.list']())
       const found = terminals.find((t) => t.id === terminal.id)
       assert.isDefined(found)
       assert.strictEqual(found?.status, 'running')
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
       await delay(500)
     })
 
@@ -252,10 +252,10 @@ describe(
 
     it('terminal.kill returns error for non-existent terminal', async () => {
       const result = await run(
-        Effect.either(client.terminal.kill({ id: 'non-existent-id-direct' }))
+        Effect.result(client['terminal.kill']({ id: 'non-existent-id-direct' }))
       )
 
-      assert.isTrue(result._tag === 'Left')
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------
@@ -264,7 +264,7 @@ describe(
 
     it('terminal.write sends data to a running terminal', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -277,14 +277,14 @@ describe(
 
       // Write should succeed without error
       await run(
-        client.terminal.write({
+        client['terminal.write']({
           id: terminal.id,
           data: 'direct-write-test\n',
         })
       )
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
       await delay(500)
     })
 
@@ -294,7 +294,7 @@ describe(
 
     it('terminal.resize changes dimensions of a running terminal', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -307,7 +307,7 @@ describe(
 
       // Resize should succeed without error
       await run(
-        client.terminal.resize({
+        client['terminal.resize']({
           id: terminal.id,
           cols: 120,
           rows: 40,
@@ -316,21 +316,21 @@ describe(
 
       // Verify PTY is still alive by writing to it
       await run(
-        client.terminal.write({
+        client['terminal.write']({
           id: terminal.id,
           data: 'after-direct-resize\n',
         })
       )
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
       await delay(500)
     })
 
     it('terminal.resize fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(
-          client.terminal.resize({
+        Effect.result(
+          client['terminal.resize']({
             id: 'nonexistent-resize-id',
             cols: 100,
             rows: 50,
@@ -338,7 +338,7 @@ describe(
         )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------
@@ -347,7 +347,7 @@ describe(
 
     it('terminal.remove fully deletes a terminal', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'echo "to-be-removed-direct"',
           cwd: TEST_CWD,
           cols: 80,
@@ -360,26 +360,28 @@ describe(
       await delay(2000)
 
       // Terminal should be stopped after echo exits
-      const beforeRemove = await run(client.terminal.list())
+      const beforeRemove = await run(client['terminal.list']())
       assert.strictEqual(
         beforeRemove.find((t) => t.id === terminal.id)?.status,
         'stopped'
       )
 
       // Remove it
-      await run(client.terminal.remove({ id: terminal.id }))
+      await run(client['terminal.remove']({ id: terminal.id }))
 
       // Should no longer appear in list
-      const afterRemove = await run(client.terminal.list())
+      const afterRemove = await run(client['terminal.list']())
       assert.isUndefined(afterRemove.find((t) => t.id === terminal.id))
     })
 
     it('terminal.remove fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(client.terminal.remove({ id: 'nonexistent-remove-id' }))
+        Effect.result(
+          client['terminal.remove']({ id: 'nonexistent-remove-id' })
+        )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
 
     // -----------------------------------------------------------------------
@@ -388,7 +390,7 @@ describe(
 
     it('terminal.restart respawns a stopped terminal', async () => {
       const terminal = await run(
-        client.terminal.spawn({
+        client['terminal.spawn']({
           command: 'cat',
           cwd: TEST_CWD,
           cols: 80,
@@ -400,11 +402,13 @@ describe(
       await delay(500)
 
       // Kill it first
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
       await delay(500)
 
       // Restart through RPC
-      const restarted = await run(client.terminal.restart({ id: terminal.id }))
+      const restarted = await run(
+        client['terminal.restart']({ id: terminal.id })
+      )
 
       assert.strictEqual(restarted.id, terminal.id)
       assert.strictEqual(restarted.command, 'cat')
@@ -415,23 +419,25 @@ describe(
 
       // Verify it's alive by writing
       await run(
-        client.terminal.write({
+        client['terminal.write']({
           id: terminal.id,
           data: 'after-direct-restart\n',
         })
       )
 
       // Clean up
-      await run(client.terminal.kill({ id: terminal.id }))
+      await run(client['terminal.kill']({ id: terminal.id }))
       await delay(500)
     })
 
     it('terminal.restart fails for a nonexistent terminal', async () => {
       const result = await run(
-        Effect.either(client.terminal.restart({ id: 'nonexistent-restart-id' }))
+        Effect.result(
+          client['terminal.restart']({ id: 'nonexistent-restart-id' })
+        )
       )
 
-      assert.isTrue(Either.isLeft(result))
+      assert.isTrue(Result.isFailure(result))
     })
   }
 )

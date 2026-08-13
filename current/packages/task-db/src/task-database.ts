@@ -704,7 +704,7 @@ const effectTry = <A>(operation: () => A): Effect.Effect<A, TaskDbFailure> =>
         : new TaskDatabaseError('Task database operation failed', cause),
   })
 
-export class TaskDb extends Context.Tag('@laborer/task-db/TaskDb')<
+export class TaskDb extends Context.Service<
   TaskDb,
   {
     readonly changesAfter: (
@@ -731,9 +731,9 @@ export class TaskDb extends Context.Tag('@laborer/task-db/TaskDb')<
       changedAt?: number
     ) => Effect.Effect<Task, TaskDbFailure>
   }
->() {
+>()('@laborer/task-db/TaskDb') {
   static layer(path = taskDatabasePath()): Layer.Layer<TaskDb, TaskDbFailure> {
-    return Layer.scoped(
+    return Layer.effect(
       TaskDb,
       Effect.acquireRelease(
         effectTry(() => NativeTaskDatabase.open(path)),

@@ -16,7 +16,8 @@
  *    connection retries fast instead of at the backoff cap.
  */
 
-import { Clock, Effect, Fiber, Option, TestClock, TestContext } from 'effect'
+import { Clock, Effect, Fiber } from 'effect'
+import { TestClock } from 'effect/testing'
 import { describe, expect, it } from 'vitest'
 import { wsReconnectRetrySchedule } from '@/atoms/laborer-client'
 import {
@@ -26,11 +27,11 @@ import {
 } from '@/atoms/ws-connection-state'
 
 const runWithTestClock = <A>(effect: Effect.Effect<A>): Promise<A> =>
-  Effect.runPromise(Effect.provide(effect, TestContext.TestContext))
+  Effect.runPromise(Effect.provide(effect, TestClock.layer()))
 
 describe('wsReconnectRetrySchedule', () => {
-  it('never exhausts, unlike the old bounded schedule', async () => {
-    await runWithTestClock(
+  it('never exhausts, unlike the old bounded schedule', async () =>
+    runWithTestClock(
       Effect.gen(function* () {
         let attempts = 0
         const alwaysDisconnecting = Effect.suspend(() => {
@@ -38,7 +39,7 @@ describe('wsReconnectRetrySchedule', () => {
           return Effect.fail(`disconnect ${attempts}`)
         })
 
-        const fiber = yield* Effect.fork(
+        const fiber = yield* Effect.forkChild(
           alwaysDisconnecting.pipe(
             Effect.retry(wsReconnectRetrySchedule),
             Effect.ignore
@@ -51,15 +52,14 @@ describe('wsReconnectRetrySchedule', () => {
         // must keep retrying far beyond that.
         expect(attempts).toBeGreaterThan(8)
         // Still retrying — the schedule must never complete on its own.
-        expect(Option.isNone(yield* Fiber.poll(fiber))).toBe(true)
+        expect(fiber.pollUnsafe()).toBeUndefined()
 
         yield* Fiber.interrupt(fiber)
       })
-    )
-  })
+    ))
 
-  it('backs off exponentially, then rewinds to the initial delay', async () => {
-    await runWithTestClock(
+  it('backs off exponentially, then rewinds to the initial delay', async () =>
+    runWithTestClock(
       Effect.gen(function* () {
         const attemptTimes: number[] = []
         const alwaysDisconnecting = Effect.gen(function* () {
@@ -67,7 +67,7 @@ describe('wsReconnectRetrySchedule', () => {
           return yield* Effect.fail('disconnect')
         })
 
-        const fiber = yield* Effect.fork(
+        const fiber = yield* Effect.forkChild(
           alwaysDisconnecting.pipe(
             Effect.retry(wsReconnectRetrySchedule),
             Effect.ignore
@@ -86,11 +86,10 @@ describe('wsReconnectRetrySchedule', () => {
           1000, 2000, 4000, 8000, 16_000, 1000,
         ])
       })
-    )
-  })
+    ))
 
-  it('retries at the initial delay after a long stable connection', async () => {
-    await runWithTestClock(
+  it('retries at the initial delay after a long stable connection', async () =>
+    runWithTestClock(
       Effect.gen(function* () {
         const attemptTimes: number[] = []
         let attempts = 0
@@ -105,7 +104,7 @@ describe('wsReconnectRetrySchedule', () => {
           return yield* Effect.fail('disconnect')
         })
 
-        const fiber = yield* Effect.fork(
+        const fiber = yield* Effect.forkChild(
           connection.pipe(Effect.retry(wsReconnectRetrySchedule), Effect.ignore)
         )
         yield* TestClock.adjust('3 hours')
@@ -121,8 +120,7 @@ describe('wsReconnectRetrySchedule', () => {
           failureAfterStable + WS_RECONNECT_INITIAL_DELAY_MS
         )
       })
-    )
-  })
+    ))
 })
 
 describe('getWsReconnectDelayMsForRetry', () => {

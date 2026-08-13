@@ -26,9 +26,9 @@ import { PtyHostClient } from '../src/services/pty-host-client.js'
 // Harness
 // ---------------------------------------------------------------------------
 
-type PtyHostClientService = Context.Tag.Service<typeof PtyHostClient>
+type PtyHostClientService = Context.Service.Shape<typeof PtyHostClient>
 
-let layerScope: Scope.CloseableScope
+let layerScope: Scope.Closeable
 let ptyHost: PtyHostClientService
 
 beforeAll(async () => {

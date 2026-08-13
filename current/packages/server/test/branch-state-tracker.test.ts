@@ -73,7 +73,7 @@ afterAll(() => {
 })
 
 describe('BranchStateTracker', () => {
-  it.scoped('refreshes branch name when workspace branch is stale', () =>
+  it.effect('refreshes branch name when workspace branch is stale', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('branch-refresh-stale', tempRoots)
       const worktreePath = join(repoPath, '.worktrees', 'branch-stale')
@@ -108,7 +108,7 @@ describe('BranchStateTracker', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('does not update when branch name is already current', () =>
+  it.effect('does not update when branch name is already current', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('branch-refresh-current', tempRoots)
       const worktreePath = join(repoPath, '.worktrees', 'branch-current')
@@ -140,7 +140,7 @@ describe('BranchStateTracker', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('refreshes multiple workspaces in one pass', () =>
+  it.effect('refreshes multiple workspaces in one pass', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('branch-refresh-multi', tempRoots)
       const worktreeA = join(repoPath, '.worktrees', 'branch-multi-a')
@@ -178,7 +178,7 @@ describe('BranchStateTracker', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('skips destroyed workspaces during branch refresh', () =>
+  it.effect('skips destroyed workspaces during branch refresh', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('branch-refresh-destroyed', tempRoots)
 
@@ -206,7 +206,7 @@ describe('BranchStateTracker', () => {
     }).pipe(Effect.provide(TestLayer))
   )
 
-  it.scoped('detects detached HEAD state during branch refresh', () =>
+  it.effect('detects detached HEAD state during branch refresh', () =>
     Effect.gen(function* () {
       const repoPath = initRepo('branch-refresh-detached', tempRoots)
       const worktreePath = join(repoPath, '.worktrees', 'branch-detached')
@@ -242,7 +242,7 @@ describe('BranchStateTracker', () => {
 })
 
 describe('RepositoryWatchCoordinator branch refresh integration', () => {
-  it.scoped(
+  it.effect(
     'branch switch on main worktree triggers branch refresh through the coordinator',
     () =>
       Effect.gen(function* () {
@@ -319,7 +319,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
       }).pipe(Effect.provide(CoordinatorTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'branch switch on main worktree still refreshes after linked worktrees are present',
     () =>
       Effect.gen(function* () {
@@ -399,7 +399,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
       }).pipe(Effect.provide(CoordinatorTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'branch switch on linked worktree refreshes through the dedicated worktrees watcher',
     () =>
       Effect.gen(function* () {
@@ -472,7 +472,7 @@ describe('RepositoryWatchCoordinator branch refresh integration', () => {
       }).pipe(Effect.provide(CoordinatorTestLayer))
   )
 
-  it.scoped(
+  it.effect(
     'worktree metadata changes trigger both reconciliation and branch refresh',
     () =>
       Effect.gen(function* () {

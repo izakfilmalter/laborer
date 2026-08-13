@@ -43,7 +43,7 @@
  * @see Issue #148: Focused pane border fix — replaced ring with border
  */
 
-import { useAtomValue } from '@effect-atom/atom-react/Hooks'
+import { useAtomValue } from '@effect/atom-react/Hooks'
 import type {
   LeafNode,
   PanelNode,

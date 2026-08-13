@@ -560,8 +560,10 @@ function smokeTestPackagedMcp(stageAppDir: string): void {
   )
   const smokeRoot = mkdtempSync(join(tmpdir(), 'laborer-mcp-package-smoke-'))
   const env = {
-    ...process.env,
     HOME: smokeRoot,
+    LANG: process.env.LANG ?? 'en_US.UTF-8',
+    PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
+    TMPDIR: smokeRoot,
     XDG_STATE_HOME: join(smokeRoot, 'state'),
   }
   const smokeClient = join(REPO_ROOT, 'scripts/smoke-test-packaged-mcp.mjs')

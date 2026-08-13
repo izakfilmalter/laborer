@@ -12,9 +12,9 @@
  * the sidebar growing them.
  */
 
-import { useAtomSet } from '@effect/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
-import { GitBranch, GitBranchPlus, Trash2 } from 'lucide-react'
+import { GitBranch, GitBranchPlus, Pencil, Trash2 } from 'lucide-react'
 import {
   type FC,
   type KeyboardEvent,
@@ -29,12 +29,15 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearWorkspaceDestroyOverlayAtom,
   installWorkspaceDestroyOverlayAtom,
+  tasksByIdAtom,
 } from '@/atoms/shared-state'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
+import { boardTaskFromSharedRow } from '@/components/kanban/board-data'
+import { useTaskEditor } from '@/components/kanban/task-editor'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
 import {
@@ -429,6 +432,12 @@ interface WorkspaceCardProps {
    * to the sidebar, where the workspace lives.
    */
   readonly showDestroyAction?: boolean | undefined
+  /**
+   * Whether the card offers to edit the card its work came from. The board
+   * hangs its own edit button off `actions`, so it opts out rather than
+   * growing two.
+   */
+  readonly showEditAction?: boolean | undefined
   /** Extra line under the branch — the board names the card's task there. */
   readonly subtitle?: ReactNode | undefined
   readonly workspace: WorkspaceCardWorkspace
@@ -452,6 +461,51 @@ interface WorkspaceCardWorkspace {
   readonly taskSource: string | null
   readonly worktreePath: string
   readonly worktreeSetupStep: string | null
+}
+
+/**
+ * Edit the card this workspace is doing the work of.
+ *
+ * A non-root workspace is projected from the task that owns its worktree, so
+ * the two share an id and the card is one lookup away. The button is absent
+ * for a root workspace, which is a checkout rather than a piece of work and
+ * has no card to name.
+ */
+function EditTaskCardButton({
+  branchName,
+  workspaceId,
+}: {
+  readonly branchName: string
+  readonly workspaceId: string
+}) {
+  const taskRow = useAtomValue(tasksByIdAtom).get(workspaceId)
+  const task = taskRow === undefined ? null : boardTaskFromSharedRow(taskRow)
+  const { openTaskEditor, taskEditor } = useTaskEditor(task ? [task] : [])
+
+  if (task === null) {
+    return null
+  }
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label={`Edit card for ${branchName}`}
+              onClick={() => openTaskEditor(task.id)}
+              size="icon-xs"
+              variant="ghost"
+            />
+          }
+        >
+          <Pencil className="size-3.5 text-muted-foreground" />
+        </TooltipTrigger>
+        <TooltipContent>Edit card</TooltipContent>
+      </Tooltip>
+      {taskEditor}
+    </>
+  )
 }
 
 function DestroyWorkspaceButton({
@@ -691,6 +745,7 @@ function WorkspaceCard({
   projectName,
   showCreateSubWorkspaceAction = true,
   showDestroyAction = true,
+  showEditAction = true,
   subtitle,
   workspace,
 }: WorkspaceCardProps) {
@@ -712,12 +767,6 @@ function WorkspaceCard({
     <CardShell
       actions={
         <>
-          <GitHubPrStatusBadge
-            prNumber={workspace.prNumber}
-            prState={workspace.prState}
-            prTitle={workspace.prTitle}
-            prUrl={workspace.prUrl}
-          />
           <WorkspaceSyncStatus
             aheadCount={workspace.aheadCount}
             behindCount={workspace.behindCount}
@@ -757,6 +806,12 @@ function WorkspaceCard({
               }
             />
           )}
+          {!isRootWorkspace && showEditAction && (
+            <EditTaskCardButton
+              branchName={workspace.branchName}
+              workspaceId={workspace.id}
+            />
+          )}
           {!isRootWorkspace && showDestroyAction && (
             <DestroyWorkspaceButton
               branchName={workspace.branchName}
@@ -781,6 +836,15 @@ function WorkspaceCard({
       //
       badges={
         <>
+          {/* The pull request is a status, not a control: it leads the rail
+              because it is the furthest along the work has got, and it sits
+              opposite the controls that start more of it. */}
+          <GitHubPrStatusBadge
+            prNumber={workspace.prNumber}
+            prState={workspace.prState}
+            prTitle={workspace.prTitle}
+            prUrl={workspace.prUrl}
+          />
           {showsStatus ? (
             <WorkspaceStatusBadge
               errorMessage={workspace.errorMessage}

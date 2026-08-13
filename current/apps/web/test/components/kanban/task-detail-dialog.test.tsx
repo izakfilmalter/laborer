@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { cloneElement, isValidElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardTask } from '@/components/kanban/board-data'
-import { TaskBoardCard, TaskDetailDialog } from '@/components/kanban/task-board'
+import { TaskBoardCard } from '@/components/kanban/task-board'
+import { TaskDetailDialog } from '@/components/kanban/task-editor'
 
 vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: () => vi.fn(),

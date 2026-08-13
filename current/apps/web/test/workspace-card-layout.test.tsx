@@ -15,11 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { destroyFn, mutationMap, workspaceRowsRef } = vi.hoisted(() => ({
-  destroyFn: vi.fn(),
-  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-  workspaceRowsRef: { current: [] as unknown[] },
-}))
+const { destroyFn, mutationMap, tasksByIdRef, workspaceRowsRef } = vi.hoisted(
+  () => ({
+    destroyFn: vi.fn(),
+    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+    tasksByIdRef: { current: new Map<string, unknown>() },
+    workspaceRowsRef: { current: [] as unknown[] },
+  })
+)
 
 vi.mock('@/hooks/use-terminal-list', () => ({
   useTerminalList: () => ({
@@ -35,9 +38,15 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
   useAtomValue: (atom: symbol) =>
-    atom === Symbol.for('workspaceViews')
-      ? workspaceRowsRef.current
-      : { _tag: 'Success', value: {} },
+    (() => {
+      if (atom === Symbol.for('workspaceViews')) {
+        return workspaceRowsRef.current
+      }
+      if (atom === Symbol.for('tasksById')) {
+        return tasksByIdRef.current
+      }
+      return { _tag: 'Success', value: {} }
+    })(),
 }))
 
 vi.mock('@/atoms/shared-state', () => ({
@@ -45,6 +54,11 @@ vi.mock('@/atoms/shared-state', () => ({
   installWorkspaceDestroyOverlayAtom: Symbol.for(
     'installWorkspaceDestroyOverlay'
   ),
+  clearTaskEditOverlayAtom: Symbol.for('clearTaskEditOverlay'),
+  installTaskEditOverlayAtom: Symbol.for('installTaskEditOverlay'),
+  // The card looks its task up here to offer the "Edit card" button; these
+  // fixtures have no tasks, so every card is a workspace without one.
+  tasksByIdAtom: Symbol.for('tasksById'),
   workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 
@@ -200,6 +214,39 @@ const mockStore = (workspaces: unknown[]) => {
   workspaceRowsRef.current = workspaces
 }
 
+/**
+ * A non-root workspace is projected from the task that owns its worktree, so
+ * the two share an id — which is how the card finds the card to edit.
+ */
+const mockTask = (workspaceId: string) => {
+  tasksByIdRef.current = new Map([
+    [
+      workspaceId,
+      {
+        branchName: 'feature/my-feature',
+        createdAt: Date.now(),
+        description: null,
+        executionStatus: null,
+        id: workspaceId,
+        parentTaskId: null,
+        prNumber: null,
+        prState: null,
+        prTitle: null,
+        prUrl: null,
+        revision: 1,
+        slackPermalink: null,
+        sortOrder: null,
+        source: 'manual',
+        status: 'in_progress',
+        title: 'Add feature',
+        updatedAt: Date.now(),
+        worktreeExists: true,
+        worktreePath: '/path/to/worktree',
+      },
+    ],
+  ])
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -227,6 +274,32 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
 
     expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
+  })
+})
+
+const EDIT_CARD_RE = /edit card for/i
+
+describe('Workspace card layout — editing the card behind the workspace', () => {
+  afterEach(() => {
+    cleanup()
+    tasksByIdRef.current = new Map()
+  })
+
+  it('offers to edit the card a workspace is doing the work of', () => {
+    mockStore([makeWorkspace()])
+    mockTask('ws-1')
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByRole('button', { name: EDIT_CARD_RE })).toBeTruthy()
+  })
+
+  it('offers nothing to edit when the workspace has no card', () => {
+    mockStore([makeWorkspace()])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.queryByRole('button', { name: EDIT_CARD_RE })).toBeNull()
   })
 })
 
@@ -262,6 +335,24 @@ describe('Workspace card layout — status row', () => {
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
     expect(screen.getByText(status)).toBeTruthy()
+  })
+
+  it('reads the pull request on the status rail, opposite the controls', () => {
+    mockStore([
+      makeWorkspace({
+        prNumber: 42,
+        prState: 'OPEN',
+        prTitle: 'Add feature',
+        prUrl: 'https://github.com/org/repo/pull/42',
+      }),
+    ])
+
+    const { container } = render(
+      <WorkspaceList projectId="project-1" repoPath="/repo" />
+    )
+
+    const statusRow = container.querySelector('[data-slot="card-status-row"]')
+    expect(statusRow?.contains(screen.getByText('#42'))).toBe(true)
   })
 
   it('shares the status row with the start-work controls', () => {

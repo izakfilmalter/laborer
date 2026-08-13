@@ -44,9 +44,15 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
   useAtomValue: (atom: symbol) =>
-    atom === Symbol.for('workspaceViews')
-      ? workspaceRows.current
-      : { _tag: 'Success', value: {} },
+    (() => {
+      if (atom === Symbol.for('workspaceViews')) {
+        return workspaceRows.current
+      }
+      if (atom === Symbol.for('tasksById')) {
+        return new Map()
+      }
+      return { _tag: 'Success', value: {} }
+    })(),
 }))
 
 vi.mock('@/atoms/shared-state', () => ({
@@ -54,6 +60,11 @@ vi.mock('@/atoms/shared-state', () => ({
   installWorkspaceDestroyOverlayAtom: Symbol.for(
     'installWorkspaceDestroyOverlay'
   ),
+  clearTaskEditOverlayAtom: Symbol.for('clearTaskEditOverlay'),
+  installTaskEditOverlayAtom: Symbol.for('installTaskEditOverlay'),
+  // The card looks its task up here to offer the "Edit card" button; these
+  // fixtures have no tasks, so every card is a workspace without one.
+  tasksByIdAtom: Symbol.for('tasksById'),
   workspaceViewsAtom: Symbol.for('workspaceViews'),
 }))
 

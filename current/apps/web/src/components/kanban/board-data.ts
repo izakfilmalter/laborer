@@ -50,26 +50,32 @@ const toBoardTask = (task: RpcBoardTask): BoardTask => ({
   worktreeState: worktreeState(task),
 })
 
+/**
+ * One shared-state row as a board card. Exposed on its own because a surface
+ * that shows a single card — the sidebar's workspace card — should not have
+ * to project the whole board to find it.
+ */
+export const boardTaskFromSharedRow = (task: SharedTaskRow): BoardTask => ({
+  ...toBoardTask(task),
+  parentTaskId: task.parentTaskId,
+  pr:
+    task.prNumber === null ||
+    task.prState === null ||
+    task.prTitle === null ||
+    task.prUrl === null
+      ? null
+      : {
+          number: task.prNumber,
+          state: task.prState,
+          title: task.prTitle,
+          url: task.prUrl,
+        },
+  sortOrder: task.sortOrder,
+})
+
 export const boardTasksFromSharedRows = (
   tasks: readonly SharedTaskRow[]
-): readonly BoardTask[] =>
-  tasks.map((task) => ({
-    ...toBoardTask(task),
-    parentTaskId: task.parentTaskId,
-    pr:
-      task.prNumber === null ||
-      task.prState === null ||
-      task.prTitle === null ||
-      task.prUrl === null
-        ? null
-        : {
-            number: task.prNumber,
-            state: task.prState,
-            title: task.prTitle,
-            url: task.prUrl,
-          },
-    sortOrder: task.sortOrder,
-  }))
+): readonly BoardTask[] => tasks.map(boardTaskFromSharedRow)
 
 /** Apply an RPC stream's snapshot/deltas into the renderer's task projection. */
 export const applyTaskBoardEvents = (

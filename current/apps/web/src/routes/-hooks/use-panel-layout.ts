@@ -412,14 +412,19 @@ export const decodeStoredPanelLayout = (
 const createPanelLayoutStorageKey = (windowId: string) =>
   `${PANEL_LAYOUT_STORAGE_KEY_PREFIX}${windowId}`
 
-const readStoredPanelLayout = (windowId: string): StoredPanelLayout => {
+export const readStoredPanelLayout = (windowId: string): StoredPanelLayout => {
   if (typeof window === 'undefined') {
     return { windowLayout: null }
   }
 
-  return decodeStoredPanelLayout(
-    window.localStorage.getItem(createPanelLayoutStorageKey(windowId))
-  )
+  try {
+    return decodeStoredPanelLayout(
+      window.localStorage.getItem(createPanelLayoutStorageKey(windowId))
+    )
+  } catch {
+    // Storage access itself can throw when persistence is disabled or blocked.
+    return { windowLayout: null }
+  }
 }
 
 const writeStoredPanelLayout = (

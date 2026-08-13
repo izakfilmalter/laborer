@@ -1,7 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { decodeStoredPanelLayout } from '@/routes/-hooks/use-panel-layout'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  decodeStoredPanelLayout,
+  readStoredPanelLayout,
+} from '@/routes/-hooks/use-panel-layout'
 
 describe('decodeStoredPanelLayout', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('falls back for malformed JSON', () => {
     expect(decodeStoredPanelLayout('{')).toEqual({ windowLayout: null })
   })
@@ -17,5 +24,13 @@ describe('decodeStoredPanelLayout', () => {
         JSON.stringify({ windowLayout: { tabs: [] }, futureField: true })
       )
     ).toEqual({ windowLayout: { tabs: [] } })
+  })
+
+  it('falls back when localStorage access is blocked', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('Access denied', 'SecurityError')
+    })
+
+    expect(readStoredPanelLayout('window-1')).toEqual({ windowLayout: null })
   })
 })

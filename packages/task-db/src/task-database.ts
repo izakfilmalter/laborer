@@ -407,8 +407,9 @@ export class NativeTaskDatabase {
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          description, created_at, updated_at, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          description, created_at, updated_at, revision, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
+          (SELECT COALESCE(MIN(sort_order), 0) - 1 FROM tasks WHERE status = ?))
         ON CONFLICT(execution_id) DO NOTHING`)
         .run(
           input.id,
@@ -424,7 +425,8 @@ export class NativeTaskDatabase {
           input.branchName ?? null,
           input.description ?? null,
           createdAt,
-          changedAt
+          changedAt,
+          input.status
         )
       if (result.changes === 0) {
         return false

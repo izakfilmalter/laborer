@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { NativeTaskDatabase } from '@laborer/task-db'
+import { taskDbMigrations } from '@laborer/task-db/migrations'
 import { afterEach, describe, expect, it } from 'vitest'
 import { onLaborerDatabaseWrite } from '../src/services/laborer-database-wakeup.js'
 import {
@@ -25,6 +28,48 @@ afterEach(() => {
 })
 
 describe('NativeLaborerDatabase', () => {
+  it('shares one migration ledger with the shared task database', () => {
+    const path = databasePath()
+    const shared = NativeTaskDatabase.open(path)
+    shared.close()
+
+    const server = NativeLaborerDatabase.open(path)
+    expect(server.migrationNames()).toEqual(
+      taskDbMigrations.map(({ name }) => name)
+    )
+    server.close()
+
+    const raw = new DatabaseSync(path)
+    const ledger = raw
+      .prepare(
+        'SELECT name, hash FROM __drizzle_migrations ORDER BY created_at ASC'
+      )
+      .all()
+    raw.close()
+    expect(ledger).toEqual(
+      taskDbMigrations.map(({ name, sql }) => ({
+        hash: createHash('sha256').update(sql).digest('hex'),
+        name,
+      }))
+    )
+
+    expect(() => NativeTaskDatabase.open(path).close()).not.toThrow()
+  })
+
+  it('opens the aggregate database after the shared wrapper migrates it', () => {
+    const path = databasePath()
+    const shared = NativeTaskDatabase.open(path)
+    shared.close()
+
+    const server = NativeLaborerDatabase.open(path)
+    expect(server.snapshot()).toMatchObject({
+      projects: [],
+      settings: [],
+      tasks: [],
+    })
+    server.close()
+  })
+
   it('migrates memory databases and covers all shared rows', () => {
     const database = NativeLaborerDatabase.open(':memory:')
     expect(database.migrationNames()).toHaveLength(8)

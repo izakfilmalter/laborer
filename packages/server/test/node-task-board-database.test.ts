@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { NativeTaskDatabase } from '@laborer/task-db'
 import { describe, expect, it } from 'vitest'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 
@@ -9,6 +10,33 @@ const databasePath = (): string =>
   join(mkdtempSync(join(tmpdir(), 'laborer-board-reader-')), 'tasks.sqlite')
 
 describe('NodeTaskBoardDatabase', () => {
+  it('delegates shared CRUD and read behavior to the shared wrapper', () => {
+    const path = databasePath()
+    const server = NodeTaskBoardDatabase.open(path)
+    const inserted = server.insert(
+      {
+        id: 'shared-card',
+        rootPath: '/repo',
+        source: 'manual',
+        status: 'todo',
+        title: 'Shared card',
+      },
+      10
+    )
+
+    const shared = NativeTaskDatabase.open(path)
+    expect(shared.find(inserted.id)).toMatchObject({
+      id: inserted.id,
+      title: 'Shared card',
+    })
+    expect(shared.snapshot()).toMatchObject({
+      cursor: 1,
+      tasks: [{ id: inserted.id }],
+    })
+    shared.close()
+    server.close()
+  })
+
   it('inserts and CAS-updates cards with a ledger row in each transaction', () => {
     const database = NodeTaskBoardDatabase.open(databasePath())
     const inserted = database.insert(

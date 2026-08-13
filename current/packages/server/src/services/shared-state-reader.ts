@@ -78,104 +78,108 @@ export const subscribeToSharedState = (
   path = taskDatabasePath(),
   pollIntervalMs = SHARED_STATE_POLL_INTERVAL_MS
 ): Stream.Stream<SharedStateUpdate, RpcError> =>
-  // Stream.callback uses an unbounded queue when buffer options are omitted,
-  // preserving asyncPush's delivery semantics for authoritative updates.
-  Stream.callback<SharedStateUpdate, RpcError>((queue) =>
-    Effect.acquireRelease(
-      Effect.try({
-        try: () => {
-          if (!(Number.isSafeInteger(pollIntervalMs) && pollIntervalMs >= 1)) {
-            throw new Error('Shared state poll interval must be positive')
-          }
-          const database = NativeLaborerDatabase.open(path)
-          let taskCursor = 0
-          let stateCursor = 0
-          let reading = false
-          let readAgain = false
-          let snapshotRequired = false
-
-          const emitSnapshot = () => {
-            const snapshot = database.snapshot()
-            taskCursor = snapshot.taskCursor
-            stateCursor = snapshot.stateCursor
-            snapshotRequired = !Queue.offerUnsafe(
-              queue,
-              snapshotUpdate(snapshot)
-            )
-          }
-
-          const emitDeltas = () => {
-            const tasks = database.taskUpdateAfter(taskCursor)
-            const state = database.stateUpdatesAfter(stateCursor)
-            if (tasks !== null) {
-              taskCursor = tasks.cursor
+  Stream.callback<SharedStateUpdate, RpcError>(
+    (queue) =>
+      Effect.acquireRelease(
+        Effect.try({
+          try: () => {
+            if (
+              !(Number.isSafeInteger(pollIntervalMs) && pollIntervalMs >= 1)
+            ) {
+              throw new Error('Shared state poll interval must be positive')
             }
-            if (state !== null) {
-              stateCursor = state.projects.cursor
-            }
-            const update = deltaUpdate(tasks, state)
-            if (update !== null) {
-              snapshotRequired = !Queue.offerUnsafe(queue, update)
-            }
-          }
+            const database = NativeLaborerDatabase.open(path)
+            let taskCursor = 0
+            let stateCursor = 0
+            let reading = false
+            let readAgain = false
+            let snapshotRequired = false
 
-          const readOnce = () => {
-            try {
-              if (snapshotRequired) {
-                emitSnapshot()
-              } else {
-                emitDeltas()
+            const emitSnapshot = () => {
+              const snapshot = database.snapshot()
+              taskCursor = snapshot.taskCursor
+              stateCursor = snapshot.stateCursor
+              snapshotRequired = !Queue.offerUnsafe(
+                queue,
+                snapshotUpdate(snapshot)
+              )
+            }
+
+            const emitDeltas = () => {
+              const tasks = database.taskUpdateAfter(taskCursor)
+              const state = database.stateUpdatesAfter(stateCursor)
+              if (tasks !== null) {
+                taskCursor = tasks.cursor
               }
-            } catch {
-              // A gap, pruning, cursor regression, or row decode failure
-              // invalidates deltas. A fresh transaction restores authority.
-              emitSnapshot()
+              if (state !== null) {
+                stateCursor = state.projects.cursor
+              }
+              const update = deltaUpdate(tasks, state)
+              if (update !== null) {
+                snapshotRequired = !Queue.offerUnsafe(queue, update)
+              }
             }
-          }
 
-          const drainReads = () => {
-            do {
-              readAgain = false
-              readOnce()
-            } while (readAgain)
-          }
-
-          const read = () => {
-            if (reading) {
-              readAgain = true
-              return
+            const readOnce = () => {
+              try {
+                if (snapshotRequired) {
+                  emitSnapshot()
+                } else {
+                  emitDeltas()
+                }
+              } catch {
+                // A gap, pruning, cursor regression, or row decode failure
+                // invalidates deltas. A fresh transaction restores authority.
+                emitSnapshot()
+              }
             }
-            reading = true
+
+            const drainReads = () => {
+              do {
+                readAgain = false
+                readOnce()
+              } while (readAgain)
+            }
+
+            const read = () => {
+              if (reading) {
+                readAgain = true
+                return
+              }
+              reading = true
+              try {
+                drainReads()
+              } catch (cause) {
+                Queue.failCauseUnsafe(queue, Cause.fail(readError(cause)))
+              } finally {
+                reading = false
+              }
+            }
+
+            // Register before snapshotting: a commit racing the snapshot either
+            // lands in that transaction or leaves a wakeup to tail afterward.
+            const unsubscribe = onLaborerDatabaseWrite(path, read)
+            const timer = setInterval(read, pollIntervalMs)
             try {
-              drainReads()
+              emitSnapshot()
             } catch (cause) {
-              Queue.failCauseUnsafe(queue, Cause.fail(readError(cause)))
-            } finally {
-              reading = false
+              clearInterval(timer)
+              unsubscribe()
+              database.close()
+              throw cause
             }
-          }
-
-          // Register before snapshotting: a commit racing the snapshot either
-          // lands in that transaction or leaves a wakeup to tail afterward.
-          const unsubscribe = onLaborerDatabaseWrite(path, read)
-          const timer = setInterval(read, pollIntervalMs)
-          try {
-            emitSnapshot()
-          } catch (cause) {
+            return { database, timer, unsubscribe }
+          },
+          catch: readError,
+        }),
+        ({ database, timer, unsubscribe }) =>
+          Effect.sync(() => {
             clearInterval(timer)
             unsubscribe()
             database.close()
-            throw cause
-          }
-          return { database, timer, unsubscribe }
-        },
-        catch: readError,
-      }),
-      ({ database, timer, unsubscribe }) =>
-        Effect.sync(() => {
-          clearInterval(timer)
-          unsubscribe()
-          database.close()
-        })
-    )
+          })
+      ),
+    // Bound a stalled subscriber. A dropped delta sets snapshotRequired, so
+    // the next wakeup or poll restores the subscriber's authoritative state.
+    { bufferSize: 16, strategy: 'dropping' }
   )

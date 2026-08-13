@@ -128,6 +128,40 @@ describe('subscribeToSharedState', () => {
     })
   })
 
+  it('bounds queued deltas and recovers a stalled subscriber with a snapshot', async () => {
+    const path = databasePath()
+    const events = await collectAfterSnapshot(
+      path,
+      18,
+      () => {
+        const writer = NativeLaborerDatabase.open(path)
+        try {
+          for (let index = 1; index <= 20; index += 1) {
+            writer.insertTask({
+              id: `task-${String(index)}`,
+              rootPath: '/repo',
+              source: 'manual',
+              status: 'todo',
+              title: `Task ${String(index)}`,
+            })
+          }
+        } finally {
+          writer.close()
+        }
+      },
+      20
+    )
+
+    expect(
+      events.slice(1, 17).every((event) => event.tasks?.type === 'delta')
+    ).toBe(true)
+    expect(events[17]?.tasks).toMatchObject({
+      cursor: 20,
+      type: 'snapshot',
+    })
+    expect(events[17]?.tasks?.rows).toHaveLength(20)
+  })
+
   it('falls back to a snapshot when a ledger cursor has been pruned', async () => {
     const path = databasePath()
     const seed = NativeLaborerDatabase.open(path)

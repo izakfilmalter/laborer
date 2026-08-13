@@ -3,14 +3,16 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, describe, expect, it } from 'vitest'
-import { taskDbMigrations } from '../src/migrations.ts'
 import {
   NativeTaskDatabase,
   TaskDatabaseSchemaTooNewError,
+  TaskDb,
   TaskStaleRevisionError,
   taskDatabasePath,
-} from '../src/task-database.ts'
+} from '@laborer/task-db'
+import { taskDbMigrations } from '@laborer/task-db/migrations'
+import { Effect } from 'effect'
+import { afterEach, describe, expect, it } from 'vitest'
 
 const directories: string[] = []
 const migrationNames = [
@@ -440,6 +442,115 @@ describe('NativeTaskDatabase', () => {
     database.close()
   })
 
+  it('deduplicates changed task IDs and reports deleted tasks', () => {
+    const path = temporaryDatabasePath()
+    const database = NativeTaskDatabase.open(path)
+    const changed = database.insert(
+      {
+        id: 'task-changed',
+        rootPath: '/repo',
+        title: 'Changed',
+        status: 'todo',
+        source: 'manual',
+      },
+      10
+    ).task
+    database.insert(
+      {
+        id: 'task-deleted',
+        rootPath: '/repo',
+        title: 'Deleted',
+        status: 'todo',
+        source: 'manual',
+      },
+      20
+    )
+    database.update(changed.id, changed.revision, { status: 'in_progress' }, 30)
+
+    const raw = new DatabaseSync(path)
+    raw.prepare('DELETE FROM tasks WHERE id = ?').run('task-deleted')
+    raw.close()
+
+    expect(database.readChanges(0)).toMatchObject({
+      _tag: 'delta',
+      cursor: 3,
+      deletedTaskIds: ['task-deleted'],
+      tasks: [{ id: changed.id, status: 'in_progress', revision: 2 }],
+    })
+    database.close()
+  })
+
+  it('falls back to snapshots for empty and noncontiguous change history', () => {
+    const path = temporaryDatabasePath()
+    const database = NativeTaskDatabase.open(path)
+    database.insert({
+      id: 'task-gap',
+      rootPath: '/repo',
+      title: 'Gap',
+      status: 'todo',
+      source: 'manual',
+    })
+
+    const raw = new DatabaseSync(path)
+    raw
+      .prepare('UPDATE task_changes SET sequence = ? WHERE sequence = ?')
+      .run(2, 1)
+    raw.close()
+
+    expect(database.readChanges(0)).toMatchObject({
+      _tag: 'snapshot',
+      cursor: 2,
+      tasks: [{ id: 'task-gap' }],
+    })
+
+    const empty = new DatabaseSync(path)
+    empty.prepare('DELETE FROM task_changes').run()
+    empty.close()
+    expect(database.readChanges(1)).toMatchObject({
+      _tag: 'snapshot',
+      cursor: 0,
+      tasks: [{ id: 'task-gap' }],
+    })
+    database.close()
+  })
+
+  it('validates read cursors and limits', () => {
+    const database = NativeTaskDatabase.open(temporaryDatabasePath())
+    for (const cursor of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => database.readChanges(cursor)).toThrow(
+        'A task change cursor must be a nonnegative integer'
+      )
+    }
+    for (const limit of [0, 1.5, 1001]) {
+      expect(() => database.readChanges(0, limit)).toThrow(
+        'A task change limit must be between 1 and 1000'
+      )
+    }
+    database.close()
+  })
+
+  it('bounds snapshots to 10,000 tasks', () => {
+    const path = temporaryDatabasePath()
+    const database = NativeTaskDatabase.open(path)
+    const raw = new DatabaseSync(path)
+    raw.exec(`WITH RECURSIVE task_number(value) AS (
+      SELECT 1
+      UNION ALL
+      SELECT value + 1 FROM task_number WHERE value < 10001
+    )
+    INSERT INTO tasks (
+      id, root_path, title, status, source, created_at, updated_at
+    )
+    SELECT printf('task-%05d', value), '/repo', 'Task', 'todo', 'manual', value, value
+    FROM task_number`)
+    raw.close()
+
+    expect(() => database.snapshot()).toThrow(
+      'Task database snapshot exceeds the 10000 task limit'
+    )
+    database.close()
+  })
+
   it('requests a snapshot when a cursor was pruned or is ahead', () => {
     const path = temporaryDatabasePath()
     const database = NativeTaskDatabase.open(path)
@@ -502,6 +613,36 @@ describe('NativeTaskDatabase', () => {
     raw.close()
     expect(() => NativeTaskDatabase.open(path)).toThrow(
       TaskDatabaseSchemaTooNewError
+    )
+  })
+})
+
+describe('TaskDb', () => {
+  it('exposes snapshot and delta reads through the Effect service', async () => {
+    const path = temporaryDatabasePath()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const database = yield* TaskDb
+        yield* database.insert({
+          id: 'effect-task',
+          rootPath: '/repo',
+          title: 'Effect task',
+          status: 'todo',
+          source: 'manual',
+        })
+        const snapshot = yield* database.snapshot()
+        expect(snapshot).toMatchObject({
+          _tag: 'snapshot',
+          cursor: 1,
+          tasks: [{ id: 'effect-task' }],
+        })
+        expect(yield* database.readChanges(snapshot.cursor)).toEqual({
+          _tag: 'delta',
+          cursor: snapshot.cursor,
+          deletedTaskIds: [],
+          tasks: [],
+        })
+      }).pipe(Effect.provide(TaskDb.layer(path)))
     )
   })
 })

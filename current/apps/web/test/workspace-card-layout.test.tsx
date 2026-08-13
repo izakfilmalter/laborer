@@ -80,6 +80,7 @@ vi.mock('@/panels/panel-context', () => ({
 
 vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
+  TerminalSpawnControls: () => <div data-testid="terminal-spawn-controls" />,
 }))
 
 vi.mock('@/components/copy-button', () => ({
@@ -238,14 +239,43 @@ describe('Workspace card layout — status row', () => {
     vi.clearAllMocks()
   })
 
-  it('shows the workspace status badge', () => {
-    mockStore([makeWorkspace()])
+  it('stays quiet about a healthy workspace', () => {
+    mockStore([makeWorkspace({ status: 'running' })])
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
-    expect(screen.getByText('running')).toBeTruthy()
+    // Running is what a healthy workspace simply is — chipping it would
+    // spend a slot on every card to say nothing.
+    expect(screen.queryByText('running')).toBeNull()
     expect(
       screen.getByRole('button', { name: DESTROY_WORKSPACE_RE })
     ).toBeTruthy()
+  })
+
+  it.each([
+    'errored',
+    'paused',
+    'stopped',
+  ])('shows the status badge when the workspace is %s', (status) => {
+    mockStore([makeWorkspace({ status })])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText(status)).toBeTruthy()
+  })
+
+  it('shares the status row with the start-work controls', () => {
+    mockStore([makeWorkspace({ status: 'errored' })])
+
+    const { container } = render(
+      <WorkspaceList projectId="project-1" repoPath="/repo" />
+    )
+
+    const statusRow = container.querySelector('[data-slot="card-status-row"]')
+    expect(statusRow).toBeTruthy()
+    expect(statusRow?.contains(screen.getByText('errored'))).toBe(true)
+    expect(
+      statusRow?.contains(screen.getByTestId('terminal-spawn-controls'))
+    ).toBe(true)
   })
 })

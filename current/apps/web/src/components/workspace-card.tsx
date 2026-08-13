@@ -36,7 +36,7 @@ import { CopyButton } from '@/components/copy-button'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { TerminalList } from '@/components/terminal-list'
+import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -628,6 +628,24 @@ function DestroyWorkspaceButton({
 }
 
 /**
+ * Whether a workspace's lifecycle state has earned a chip.
+ *
+ * `running` is what a healthy workspace simply is, so chipping it spends a
+ * slot on every card in the sidebar to say nothing — and buries the one
+ * workspace that is broken in a column of identical green. The chip speaks
+ * only when the state is worth reading: still being built, no longer
+ * running, or errored.
+ *
+ * The agent status beside it asks the same question of its own vocabulary
+ * (`showsWorkspaceAgentStatus`), so both halves of the status rail stay
+ * quiet when there is nothing to report and a healthy card is just its
+ * name and the two ways to work in it.
+ */
+function showsWorkspaceStatus(status: string): boolean {
+  return status !== 'running'
+}
+
+/**
  * The workspace's lifecycle state as a chip. An errored workspace carries its
  * failure in a tooltip rather than on the chip, so one bad workspace cannot
  * push every sibling card out of shape.
@@ -686,17 +704,14 @@ function WorkspaceCard({
   // unknown stay in the terminal rows that own them. The frame header answers
   // this with the same predicate, so a card and its header never disagree.
   const showsAgentStatus = showsWorkspaceAgentStatus(workspaceAgentStatus)
+  // A root workspace has no lifecycle of its own to report, and a healthy one
+  // has nothing worth reporting.
+  const showsStatus = !isRootWorkspace && showsWorkspaceStatus(workspace.status)
 
   return (
     <CardShell
       actions={
         <>
-          {showsAgentStatus ? (
-            <AggregateAgentStatusBadge
-              className="shrink-0"
-              status={workspaceAgentStatus}
-            />
-          ) : null}
           <GitHubPrStatusBadge
             prNumber={workspace.prNumber}
             prState={workspace.prState}
@@ -752,21 +767,34 @@ function WorkspaceCard({
         </>
       }
       activateLabel={activateLabel}
-      // A root workspace has no lifecycle of its own to report, so it keeps
-      // whatever chips its surface adds — and nothing at all when there are
-      // none, rather than an empty row taking up space.
+      badgeActions={
+        <TerminalSpawnControls
+          projectId={workspace.projectId}
+          workspaceId={workspace.id}
+        />
+      }
+      // The card's two live states read side by side: what the workspace is
+      // doing, then what its agents are doing. They answer the same question
+      // at two depths, so splitting them across the card — one chip in the
+      // control cluster, one in the chip row — made the operator assemble the
+      // answer themselves.
+      //
       badges={
-        isRootWorkspace ? (
-          badges
-        ) : (
-          <>
+        <>
+          {showsStatus ? (
             <WorkspaceStatusBadge
               errorMessage={workspace.errorMessage}
               status={workspace.status}
             />
-            {badges}
-          </>
-        )
+          ) : null}
+          {showsAgentStatus ? (
+            <AggregateAgentStatusBadge
+              className="shrink-0"
+              status={workspaceAgentStatus}
+            />
+          ) : null}
+          {badges}
+        </>
       }
       // Steady edges rather than a pulsing card: the whole card animating
       // made its text hard to read, so the motion now lives only in the
@@ -799,25 +827,20 @@ function WorkspaceCard({
         </span>
       }
     >
+      {/* No divider and no heading: the rows below are the only body the card
+          has, and a rule drawn across every card in the sidebar costs more
+          than it separates. A workspace with nothing running renders nothing
+          here at all. */}
       {workspace.worktreeSetupStep != null && (
-        <div className="mb-2 flex items-center gap-2 text-warning text-xs">
+        <div className="mb-1.5 flex items-center gap-1.5 text-warning text-xs">
           <Spinner className="size-3 text-warning" />
           {getWorktreeSetupLabel(workspace.worktreeSetupStep)}
         </div>
       )}
-      {/* Terminal rows own their own pointer: they are draggable onto panes,
-          and on the board this card is itself a drag handle. Without this a
-          press on a terminal row would start both drags at once. */}
-      <div
-        className="border-t pt-2"
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <TerminalList
-          onAgentStatusChange={setWorkspaceAgentStatus}
-          projectId={workspace.projectId}
-          workspaceId={workspace.id}
-        />
-      </div>
+      <TerminalList
+        onAgentStatusChange={setWorkspaceAgentStatus}
+        workspaceId={workspace.id}
+      />
     </CardShell>
   )
 }

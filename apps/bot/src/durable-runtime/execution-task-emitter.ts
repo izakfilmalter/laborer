@@ -1,13 +1,13 @@
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
-import { Console, Context, Effect, Schema } from 'effect'
-import { CreateFeatureActionInput } from '../action-catalog.ts'
-import type { ExecutionStatus } from '../durable-runtime/root-runtime.ts'
 import {
   NativeTaskDatabase,
   type Task,
   TaskStaleRevisionError,
-} from './task-database.ts'
+} from '@laborer/task-db'
+import { Console, Context, Effect, Schema } from 'effect'
+import { CreateFeatureActionInput } from '../action-catalog.ts'
+import type { ExecutionStatus } from './root-runtime.ts'
 
 export interface ExecutionTaskProjection {
   readonly acceptedAtUnixMs: number

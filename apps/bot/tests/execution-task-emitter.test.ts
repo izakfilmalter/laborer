@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { NativeTaskDatabase } from '@laborer/task-db'
 import { Effect } from 'effect'
 import { afterEach, describe, expect, it } from 'vitest'
-import { openExecutionTaskEmitter } from '../src/task-db/execution-task-emitter.ts'
-import { NativeTaskDatabase } from '../src/task-db/task-database.ts'
+import { openExecutionTaskEmitter } from '../src/durable-runtime/execution-task-emitter.ts'
 
 const directories: string[] = []
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/

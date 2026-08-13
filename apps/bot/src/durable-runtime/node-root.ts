@@ -1,12 +1,12 @@
 import { layer as makeSqliteLayer } from '@effect/sql-sqlite-node/SqliteClient'
+import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect, Layer } from 'effect'
+import { defineApplication, type LaborerApplication } from './action.ts'
 import {
   noopExecutionTaskEmitter,
   openExecutionTaskEmitter,
   TaskEmissionDiagnostic,
-} from '../task-db/execution-task-emitter.ts'
-import { taskDatabasePath } from '../task-db/task-database.ts'
-import { defineApplication, type LaborerApplication } from './action.ts'
+} from './execution-task-emitter.ts'
 import {
   makeRootDurableRuntimeLayer,
   RootDurableRuntime,

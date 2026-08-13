@@ -1,14 +1,28 @@
-import { Database } from 'bun:sqlite'
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
-import { type BunSQLiteDatabase, drizzle } from 'drizzle-orm/bun-sqlite'
-import { Context, Effect, Layer } from 'effect'
+import type { DatabaseSync } from 'node:sqlite'
+import { Context, Effect, Layer, Schema } from 'effect'
 import { taskDbMigrations } from './migrations.ts'
 import { taskDatabasePath as resolveTaskDatabasePath } from './path.ts'
-import { taskChanges, tasks } from './schema.sql.ts'
 
-const schema = { taskChanges, tasks }
+export const ACTION_TITLE_MAX_LENGTH = 100
+
+export const ActionTitle = Schema.String.check(
+  Schema.isPattern(/\S/),
+  Schema.isMaxLength(ACTION_TITLE_MAX_LENGTH)
+).annotate({
+  description: 'A short, nonblank title for the Action Execution.',
+})
+
+const require = createRequire(import.meta.url)
+
+const openDatabase = (path: string): DatabaseSync => {
+  const { DatabaseSync: NativeDatabase } =
+    require('node:sqlite') as typeof import('node:sqlite')
+  return new NativeDatabase(path, { timeout: 5000 })
+}
 
 export type TaskStatus =
   | 'todo'
@@ -48,21 +62,6 @@ export interface Task {
   readonly updatedAt: number
   readonly worktreePath: string | null
 }
-
-export interface TaskSnapshot {
-  readonly _tag: 'snapshot'
-  readonly cursor: number
-  readonly tasks: readonly Task[]
-}
-
-export interface TaskDelta {
-  readonly _tag: 'delta'
-  readonly cursor: number
-  readonly deletedTaskIds: readonly string[]
-  readonly tasks: readonly Task[]
-}
-
-export type TaskRead = TaskSnapshot | TaskDelta
 
 export interface NewTask {
   readonly actionName?: string | null
@@ -144,7 +143,6 @@ interface RetryOptions {
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   description, created_at, updated_at, revision`
-const MAX_SNAPSHOT_TASKS = 10_000
 
 const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
   title: 'title',
@@ -157,10 +155,6 @@ const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
 }
 
 type SqliteRow = Record<string, unknown>
-interface ChangeBounds {
-  readonly maximum: number | null
-  readonly minimum: number | null
-}
 const isSqliteRow = (value: unknown): value is SqliteRow =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 const sqliteRow = (value: unknown): SqliteRow => {
@@ -281,13 +275,11 @@ const rowToTask = (row: SqliteRow): Task => {
 export const taskDatabasePath = resolveTaskDatabasePath
 
 export class NativeTaskDatabase {
-  readonly #database: Database
+  readonly #database: DatabaseSync
   readonly #retry: Required<RetryOptions>
-  readonly drizzle: BunSQLiteDatabase<typeof schema>
 
-  private constructor(database: Database, retry: RetryOptions) {
+  private constructor(database: DatabaseSync, retry: RetryOptions) {
     this.#database = database
-    this.drizzle = drizzle(database, { schema })
     const attempts = retry.attempts ?? 5
     const baseDelayMs = retry.baseDelayMs ?? 10
     if (!(Number.isSafeInteger(attempts) && attempts >= 1 && attempts <= 10)) {
@@ -312,7 +304,7 @@ export class NativeTaskDatabase {
     retry: RetryOptions = {}
   ): NativeTaskDatabase {
     mkdirSync(dirname(path), { recursive: true })
-    const database = new Database(path, { create: true, strict: true })
+    const database = openDatabase(path)
     try {
       const result = new NativeTaskDatabase(database, retry)
       database.exec('PRAGMA busy_timeout = 5000')
@@ -333,52 +325,13 @@ export class NativeTaskDatabase {
 
   find(id: string): Task | null {
     const row = this.#database
-      .query(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
       .get(id)
-    return row == null ? null : rowToTask(sqliteRow(row))
+    return row === undefined ? null : rowToTask(sqliteRow(row))
   }
 
-  snapshot(): TaskSnapshot {
-    return this.#readTransaction(() => this.#snapshotUnsafe())
-  }
-
-  readChanges(sequence: number, limit = 1000): TaskRead {
-    if (!(Number.isSafeInteger(sequence) && sequence >= 0)) {
-      throw new Error('A task change cursor must be a nonnegative integer')
-    }
-    if (!(Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000)) {
-      throw new Error('A task change limit must be between 1 and 1000')
-    }
-
-    return this.#readTransaction(() => {
-      if (this.#cursorNeedsSnapshot(sequence, this.#changeBounds())) {
-        return this.#snapshotUnsafe()
-      }
-
-      const changes = this.changesAfter(sequence, limit)
-      if (!this.#changesAreContiguous(sequence, changes)) {
-        return this.#snapshotUnsafe()
-      }
-
-      const taskIds = [...new Set(changes.map(({ taskId }) => taskId))]
-      const changedTasks: Task[] = []
-      const deletedTaskIds: string[] = []
-      for (const taskId of taskIds) {
-        const task = this.find(taskId)
-        if (task) {
-          changedTasks.push(task)
-        } else {
-          deletedTaskIds.push(taskId)
-        }
-      }
-
-      return {
-        _tag: 'delta',
-        cursor: changes.at(-1)?.sequence ?? sequence,
-        tasks: changedTasks,
-        deletedTaskIds,
-      }
-    })
+  findByExecutionId(executionId: string): Task | null {
+    return this.#findByExecutionId(executionId)
   }
 
   insert(
@@ -388,7 +341,7 @@ export class NativeTaskDatabase {
     const createdAt = input.createdAt ?? changedAt
     const inserted = this.#transaction(() => {
       const result = this.#database
-        .query(`INSERT INTO tasks (
+        .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
           description, created_at, updated_at, revision
@@ -454,7 +407,7 @@ export class NativeTaskDatabase {
       )
       const values = entries.map(([, value]) => value ?? null)
       const result = this.#database
-        .query(`UPDATE tasks SET ${assignments.join(', ')},
+        .prepare(`UPDATE tasks SET ${assignments.join(', ')},
           updated_at = ?, revision = revision + 1
           WHERE id = ? AND revision = ?`)
         .run(...values, changedAt, id, expectedRevision)
@@ -480,100 +433,38 @@ export class NativeTaskDatabase {
     if (!(Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000)) {
       throw new Error('A task change limit must be between 1 and 1000')
     }
-    const rows = this.#database
-      .query(
+    return this.#database
+      .prepare(
         'SELECT sequence, task_id, changed_at FROM task_changes WHERE sequence > ? ORDER BY sequence LIMIT ?'
       )
       .all(sequence, limit)
-    return rows.map((value) => {
-      const row = sqliteRow(value)
-      return {
-        sequence: safeInteger(row.sequence, 'task_changes.sequence'),
-        taskId: requiredString(row.task_id, 'task_changes.task_id'),
-        changedAt: safeInteger(row.changed_at, 'task_changes.changed_at'),
-      }
-    })
+      .map((value) => {
+        const row = sqliteRow(value)
+        return {
+          sequence: safeInteger(row.sequence, 'task_changes.sequence'),
+          taskId: requiredString(row.task_id, 'task_changes.task_id'),
+          changedAt: safeInteger(row.changed_at, 'task_changes.changed_at'),
+        }
+      })
   }
 
   migrationNames(): readonly string[] {
-    const rows = this.#database
-      .query('SELECT name FROM __drizzle_migrations ORDER BY id')
+    return this.#database
+      .prepare('SELECT name FROM __drizzle_migrations ORDER BY id')
       .all()
-    return rows.map((value) =>
-      requiredString(sqliteRow(value).name, 'migration name')
-    )
+      .map((value) => requiredString(sqliteRow(value).name, 'migration name'))
   }
 
   #findByExecutionId(executionId: string): Task | null {
     const row = this.#database
-      .query(`SELECT ${TASK_COLUMNS} FROM tasks WHERE execution_id = ?`)
+      .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE execution_id = ?`)
       .get(executionId)
-    return row == null ? null : rowToTask(sqliteRow(row))
-  }
-
-  #changeBounds(): ChangeBounds {
-    const bounds = sqliteRow(
-      this.#database
-        .query(
-          'SELECT MIN(sequence) AS minimum, MAX(sequence) AS maximum FROM task_changes'
-        )
-        .get()
-    )
-    return {
-      minimum:
-        bounds.minimum === null
-          ? null
-          : safeInteger(bounds.minimum, 'task_changes.minimum'),
-      maximum:
-        bounds.maximum === null
-          ? null
-          : safeInteger(bounds.maximum, 'task_changes.maximum'),
-    }
-  }
-
-  #cursorNeedsSnapshot(sequence: number, bounds: ChangeBounds): boolean {
-    return (
-      (bounds.maximum === null && sequence > 0) ||
-      (bounds.maximum !== null && sequence > bounds.maximum) ||
-      (bounds.minimum !== null && bounds.minimum > sequence + 1)
-    )
-  }
-
-  #changesAreContiguous(
-    sequence: number,
-    changes: readonly { readonly sequence: number }[]
-  ): boolean {
-    return changes.every(
-      (change, index) => change.sequence === sequence + index + 1
-    )
-  }
-
-  #snapshotUnsafe(): TaskSnapshot {
-    const rows = this.#database
-      .query(
-        `SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at, id LIMIT ?`
-      )
-      .all(MAX_SNAPSHOT_TASKS + 1)
-    if (rows.length > MAX_SNAPSHOT_TASKS) {
-      throw new Error(
-        `Task database snapshot exceeds the ${MAX_SNAPSHOT_TASKS} task limit`
-      )
-    }
-    const cursorRow = sqliteRow(
-      this.#database
-        .query('SELECT COALESCE(MAX(sequence), 0) AS cursor FROM task_changes')
-        .get()
-    )
-    return {
-      _tag: 'snapshot',
-      cursor: safeInteger(cursorRow.cursor, 'task_changes.cursor'),
-      tasks: rows.map((value) => rowToTask(sqliteRow(value))),
-    }
+    return row === undefined ? null : rowToTask(sqliteRow(row))
   }
 
   #appendChange(taskId: string, changedAt: number): void {
     this.#database
-      .query('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
+      .prepare('INSERT INTO task_changes (task_id, changed_at) VALUES (?, ?)')
       .run(taskId, changedAt)
   }
 
@@ -586,7 +477,7 @@ export class NativeTaskDatabase {
         name TEXT NOT NULL UNIQUE
       )`)
       const applied = this.#database
-        .query('SELECT name, hash FROM __drizzle_migrations ORDER BY id')
+        .prepare('SELECT name, hash FROM __drizzle_migrations ORDER BY id')
         .all()
         .map((value) => {
           const row = sqliteRow(value)
@@ -618,7 +509,7 @@ export class NativeTaskDatabase {
         )
         const hash = createHash('sha256').update(migration.sql).digest('hex')
         this.#database
-          .query(
+          .prepare(
             'INSERT INTO __drizzle_migrations (hash, created_at, name) VALUES (?, ?, ?)'
           )
           .run(hash, Date.now(), migration.name)
@@ -629,24 +520,6 @@ export class NativeTaskDatabase {
   #transaction<A>(operation: () => A): A {
     return this.#withBusyRetry(() => {
       this.#database.exec('BEGIN IMMEDIATE')
-      try {
-        const result = operation()
-        this.#database.exec('COMMIT')
-        return result
-      } catch (error) {
-        try {
-          this.#database.exec('ROLLBACK')
-        } catch {
-          // Preserve the operation failure.
-        }
-        throw error
-      }
-    })
-  }
-
-  #readTransaction<A>(operation: () => A): A {
-    return this.#withBusyRetry(() => {
-      this.#database.exec('BEGIN')
       try {
         const result = operation()
         this.#database.exec('COMMIT')
@@ -707,6 +580,7 @@ const effectTry = <A>(operation: () => A): Effect.Effect<A, TaskDbFailure> =>
 export class TaskDb extends Context.Service<
   TaskDb,
   {
+    readonly find: (id: string) => Effect.Effect<Task | null, TaskDbFailure>
     readonly changesAfter: (
       sequence: number,
       limit?: number
@@ -714,12 +588,6 @@ export class TaskDb extends Context.Service<
       readonly { sequence: number; taskId: string; changedAt: number }[],
       TaskDbFailure
     >
-    readonly find: (id: string) => Effect.Effect<Task | null, TaskDbFailure>
-    readonly readChanges: (
-      sequence: number,
-      limit?: number
-    ) => Effect.Effect<TaskRead, TaskDbFailure>
-    readonly snapshot: () => Effect.Effect<TaskSnapshot, TaskDbFailure>
     readonly insert: (
       input: NewTask,
       changedAt?: number
@@ -739,22 +607,22 @@ export class TaskDb extends Context.Service<
         effectTry(() => NativeTaskDatabase.open(path)),
         (database) => Effect.sync(() => database.close())
       ).pipe(
-        Effect.map((database) =>
-          TaskDb.of({
-            changesAfter: (sequence, limit) =>
-              effectTry(() => database.changesAfter(sequence, limit)),
-            find: (id) => effectTry(() => database.find(id)),
-            readChanges: (sequence, limit) =>
-              effectTry(() => database.readChanges(sequence, limit)),
-            snapshot: () => effectTry(() => database.snapshot()),
-            insert: (input, changedAt) =>
-              effectTry(() => database.insert(input, changedAt)),
-            update: (id, expectedRevision, patch, changedAt) =>
-              effectTry(() =>
-                database.update(id, expectedRevision, patch, changedAt)
-              ),
-          })
-        )
+        Effect.map((database) => ({
+          changesAfter: (sequence: number, limit?: number) =>
+            effectTry(() => database.changesAfter(sequence, limit)),
+          find: (id: string) => effectTry(() => database.find(id)),
+          insert: (input: NewTask, changedAt?: number) =>
+            effectTry(() => database.insert(input, changedAt)),
+          update: (
+            id: string,
+            expectedRevision: number,
+            patch: TaskPatch,
+            changedAt?: number
+          ) =>
+            effectTry(() =>
+              database.update(id, expectedRevision, patch, changedAt)
+            ),
+        }))
       )
     )
   }

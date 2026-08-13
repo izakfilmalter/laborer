@@ -5,7 +5,7 @@ export interface TaskDbMigration {
   readonly sql: string
 }
 
-/** Append-only. Copy this file and the SQL migrations verbatim into current. */
+/** Append-only. The migration ledger fails closed when any SQL bytes drift. */
 export const taskDbMigrations: readonly TaskDbMigration[] = [
   {
     name: '0000_shared_task_db',

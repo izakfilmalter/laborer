@@ -20,6 +20,7 @@
     "@laborer/env": "workspace:*",
     "@laborer/shared": "workspace:*",
     "@laborer/task-db": "workspace:*",
+    "@laborer/worktree-owner": "workspace:*",
     "@opentelemetry/api": "^1.9",
     "@opentelemetry/resources": "^2.0.0",
     "@opentelemetry/sdk-logs": ">=0.203.0 <0.300.0",

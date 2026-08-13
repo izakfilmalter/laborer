@@ -39,6 +39,7 @@
     "@effect/sql-sqlite-node": "catalog:",
     "@laborer/task-db": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@laborer/worktree-owner": "workspace:*",
     "@opencode-ai/client": "0.0.0-next-17074",
     "@slack/web-api": "8.0.0",
     "@tanstack/react-router": "1.170.18",

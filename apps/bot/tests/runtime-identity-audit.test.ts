@@ -3,7 +3,7 @@ import { relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const nextRoot = resolve(import.meta.dirname, '..')
-const repositoryRoot = resolve(nextRoot, '..')
+const repositoryRoot = resolve(nextRoot, '../..')
 const CHAT_DEPENDENCY_REFERENCE =
   /["'](?:chat|@chat-adapter\/slack)(?:\/[^"']*)?["']/
 const PROTOTYPE_PATH_REFERENCE = /[/"']prototype[/"']/

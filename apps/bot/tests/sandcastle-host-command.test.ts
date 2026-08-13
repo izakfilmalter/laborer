@@ -13,7 +13,7 @@ import { assert, describe, it } from '@effect/vitest'
 import {
   boundedHostCommand,
   supervisedNoSandbox,
-} from '../../.sandcastle/host-native-provider/index.ts'
+} from '../../../.sandcastle/host-native-provider/index.ts'
 
 describe('Sandcastle host process supervision', () => {
   it('isolates concurrent global Git configuration writes', async () => {
@@ -159,7 +159,9 @@ describe('Sandcastle host process supervision', () => {
     const directory = mkdtempSync(join(tmpdir(), 'laborer-host-signal-'))
     const childPidPath = join(directory, 'child-pid')
     const scriptPath = join(directory, 'runner.ts')
-    const providerPath = resolve('../.sandcastle/host-native-provider/index.ts')
+    const providerPath = resolve(
+      '../../.sandcastle/host-native-provider/index.ts'
+    )
     writeFileSync(
       scriptPath,
       [

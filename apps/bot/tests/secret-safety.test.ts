@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 
-const repositoryRoot = resolve(process.cwd(), '..')
+const repositoryRoot = resolve(process.cwd(), '../..')
 const forbiddenPrefixes = [
   ['x', 'app', '-'].join(''),
   ['x', 'oxb', '-'].join(''),
@@ -55,13 +55,13 @@ describe('repository secret safety', () => {
 
   it('ignores local environments, runtime state, and token files while tracking the example', () => {
     const ignoredPaths = [
-      'next/.env',
-      'next/.env.local',
-      'next/.laborer-runtime/state.json',
-      'next/local.token',
-      'next/local.tokens',
-      'next/slack-token-local',
-      'next/slack-config-access-token-local',
+      '.env',
+      '.env.local',
+      'apps/bot/.laborer-runtime/state.json',
+      'apps/bot/local.token',
+      'apps/bot/local.tokens',
+      'apps/bot/slack-token-local',
+      'apps/bot/slack-config-access-token-local',
     ]
     for (const path of ignoredPaths) {
       const ignored = execFileSync('git', ['check-ignore', path], {
@@ -70,6 +70,6 @@ describe('repository secret safety', () => {
       }).trim()
       assert.strictEqual(ignored, path)
     }
-    assert.ok(trackableFiles().includes('next/.env.example'))
+    assert.ok(trackableFiles().includes('.env.example'))
   })
 })

@@ -252,7 +252,7 @@ describe('NativeTaskDatabase', () => {
     for (const migration of taskDbMigrations) {
       const currentSql = readFileSync(
         new URL(
-          `../../current/packages/task-db/src/migrations/${migration.name}.sql`,
+          `../../../packages/task-db/src/migrations/${migration.name}.sql`,
           import.meta.url
         ),
         'utf8'

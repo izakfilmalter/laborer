@@ -12,7 +12,7 @@ import {
   shellQuote,
   shouldFastForwardPreservedWorktree,
   shouldRefreshUnstartedBranch,
-} from '../../.sandcastle/fast-flow/index.ts'
+} from '../../../.sandcastle/fast-flow/index.ts'
 
 describe('Sandcastle fast flow', () => {
   it('merges without asking gh to delete a checked-out worktree branch', () => {
@@ -149,35 +149,35 @@ describe('Sandcastle fast flow', () => {
   })
 
   it('delegates verification to the final code-review agent', () => {
-    const main = readFileSync('../.sandcastle/main.ts', 'utf8')
-    const reviewPrompt = readFileSync('../.sandcastle/review-prompt.md', 'utf8')
+    const main = readFileSync('../../.sandcastle/main.ts', 'utf8')
+    const reviewPrompt = readFileSync(
+      '../../.sandcastle/review-prompt.md',
+      'utf8'
+    )
 
     assert.notInclude(main, 'enforceLocalGate')
     assert.notInclude(main, 'FULL_GATE')
     assert.notInclude(main, 'local-gate-repair')
     assert.include(main, 'after implementation for #')
     assert.include(main, 'after code review for #')
-    assert.include(reviewPrompt, 'bun run --cwd next check')
-    assert.include(reviewPrompt, 'bun run --cwd current check')
+    assert.include(reviewPrompt, 'bun run --cwd apps/bot check')
+    assert.include(reviewPrompt, 'on pre-flatten branches')
     assert.include(reviewPrompt, 'runner will trust your verification')
     assert.include(reviewPrompt, 'final checked HEAD')
   })
 
   it('isolates base refreshes and prompts from the shared checkout', () => {
-    const main = readFileSync('../.sandcastle/main.ts', 'utf8')
+    const main = readFileSync('../../.sandcastle/main.ts', 'utf8')
 
     assert.include(main, 'const RUNNER_BASE_WORKTREE')
     assert.include(main, '["-C", RUNNER_BASE_WORKTREE, ...args]')
     assert.include(main, 'promptFile: runnerPromptFile(')
     assert.include(main, 'resolve(RUNNER_BASE_WORKTREE, ".sandcastle", name)')
-    assert.include(main, 'bun install --cwd current --frozen-lockfile')
-    assert.include(main, 'bun install --cwd next --frozen-lockfile')
+    assert.include(main, "git ls-files | grep -E '(^|/)bun\\\\.lock$'")
+    assert.include(main, 'bun install --cwd "$dir" --frozen-lockfile')
     assert.include(main, 'worktreeIsDirty(sandbox.worktreePath)')
     assert.include(main, '"merge-base",\n    "HEAD",\n    runnerBaseHead()')
-    assert.include(
-      main,
-      'test -d current/node_modules && test -d next/node_modules'
-    )
+    assert.include(main, "branch's tree actually has (tracked bun.lock files)")
     assert.include(main, 'supervisedNoSandbox({')
     assert.notInclude(main, 'OPENCODE_DISABLE_AUTOUPDATE')
     assert.notInclude(main, 'prepareOpenCodeCredentialSeed')
@@ -190,7 +190,7 @@ describe('Sandcastle fast flow', () => {
   })
 
   it('persists and repeats outer runner failures', () => {
-    const main = readFileSync('../.sandcastle/main.ts', 'utf8')
+    const main = readFileSync('../../.sandcastle/main.ts', 'utf8')
 
     assert.include(main, '"logs", "failures.ndjson"')
     assert.include(main, 'appendFileSync(')
@@ -208,7 +208,7 @@ describe('Sandcastle fast flow', () => {
       'ui-prompt.md',
       'ui-review-prompt.md',
     ]) {
-      const content = readFileSync(`../.sandcastle/${prompt}`, 'utf8')
+      const content = readFileSync(`../../.sandcastle/${prompt}`, 'utf8')
       assert.notInclude(content, 'runner executes that comprehensive gate')
     }
   })

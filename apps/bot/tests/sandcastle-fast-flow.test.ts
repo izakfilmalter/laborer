@@ -160,8 +160,8 @@ describe('Sandcastle fast flow', () => {
     assert.notInclude(main, 'local-gate-repair')
     assert.include(main, 'after implementation for #')
     assert.include(main, 'after code review for #')
-    assert.include(reviewPrompt, 'bun run --cwd next check')
-    assert.include(reviewPrompt, 'bun run --cwd current check')
+    assert.include(reviewPrompt, 'bun run --cwd apps/bot check')
+    assert.include(reviewPrompt, 'on pre-flatten branches')
     assert.include(reviewPrompt, 'runner will trust your verification')
     assert.include(reviewPrompt, 'final checked HEAD')
   })
@@ -173,14 +173,11 @@ describe('Sandcastle fast flow', () => {
     assert.include(main, '["-C", RUNNER_BASE_WORKTREE, ...args]')
     assert.include(main, 'promptFile: runnerPromptFile(')
     assert.include(main, 'resolve(RUNNER_BASE_WORKTREE, ".sandcastle", name)')
-    assert.include(main, 'bun install --cwd current --frozen-lockfile')
-    assert.include(main, 'bun install --cwd next --frozen-lockfile')
+    assert.include(main, "git ls-files | grep -E '(^|/)bun\\\\.lock$'")
+    assert.include(main, 'bun install --cwd "$dir" --frozen-lockfile')
     assert.include(main, 'worktreeIsDirty(sandbox.worktreePath)')
     assert.include(main, '"merge-base",\n    "HEAD",\n    runnerBaseHead()')
-    assert.include(
-      main,
-      'test -d current/node_modules && test -d next/node_modules'
-    )
+    assert.include(main, "branch's tree actually has (tracked bun.lock files)")
     assert.include(main, 'supervisedNoSandbox({')
     assert.notInclude(main, 'OPENCODE_DISABLE_AUTOUPDATE')
     assert.notInclude(main, 'prepareOpenCodeCredentialSeed')

@@ -1,11 +1,9 @@
 import { defineConfig } from 'tsdown'
 
-export default defineConfig({
-  entry: ['src/utility-main.ts', 'src/main.ts'],
+const shared = {
   format: 'esm',
   outDir: 'dist',
   sourcemap: true,
-  clean: true,
 
   // @laborer/task-db reads its SQL migrations at runtime via
   // `new URL('./migrations/*.sql', import.meta.url)`. Once task-db is
@@ -22,5 +20,29 @@ export default defineConfig({
 
   // Bundle workspace packages into the output so the dist/ directory is
   // self-contained (no workspace: links needed at runtime).
-  noExternal: (id: string) => id.startsWith('@laborer/'),
-})
+} as const
+
+export default defineConfig([
+  {
+    ...shared,
+    clean: true,
+    entry: ['src/utility-main.ts', 'src/main.ts'],
+    noExternal: (id: string) => id.startsWith('@laborer/'),
+  },
+  {
+    ...shared,
+    clean: false,
+    entry: ['src/task-mcp-runtime.ts'],
+    // The runtime is self-contained rather than relying on the app's asar or
+    // node_modules. It remains separate from the tiny guarded launcher so an
+    // old Node never resolves node:sqlite.
+    noExternal: [/.*/],
+    outputOptions: { codeSplitting: false },
+  },
+  {
+    ...shared,
+    clean: false,
+    entry: ['src/task-mcp-main.ts'],
+    noExternal: (id: string) => id.startsWith('@laborer/'),
+  },
+])

@@ -182,6 +182,11 @@ export const TaskMcpProtocolLayer = McpServer.layerHttp({
   version: '1.0.0',
 })
 
+export const TaskMcpStdioProtocolLayer = McpServer.layerStdio({
+  name: 'laborer-current',
+  version: '1.0.0',
+})
+
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', '::1', 'localhost'])
 
 export const isAllowedMcpOrigin = (origin: string): boolean => {

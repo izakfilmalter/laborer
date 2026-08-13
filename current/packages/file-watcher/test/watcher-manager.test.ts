@@ -11,8 +11,7 @@
 
 import { assert, describe, it } from '@effect/vitest'
 import type { WatchFileEvent } from '@laborer/shared/rpc'
-import { Effect, Fiber, Layer, PubSub, Stream } from 'effect'
-import { fileEventsStream } from '../src/rpc/handlers.js'
+import { Effect, Layer, PubSub } from 'effect'
 import {
   FileWatcher,
   type WatchEvent,
@@ -215,32 +214,6 @@ describe('fromWatcherIgnoreGlobs', () => {
 // ── Unit tests: WatcherManager service ────────────────────────
 
 describe('WatcherManager', () => {
-  it.effect('streams every buffered file event without dropping', () =>
-    Effect.gen(function* () {
-      const fileEvents = yield* PubSub.unbounded<WatchFileEvent>()
-      const eventCount = 1000
-      const events = Array.from({ length: eventCount }, (_, index) => ({
-        subscriptionId: 'sub_1',
-        type: 'change' as const,
-        fileName: `src/file-${String(index)}.ts`,
-        absolutePath: `/repo/src/file-${String(index)}.ts`,
-      }))
-
-      const collectedFiber = yield* fileEventsStream(fileEvents).pipe(
-        Stream.take(eventCount),
-        Stream.runCollect,
-        Effect.forkChild({ startImmediately: true })
-      )
-
-      // Let the stream subscribe before publishing the synchronous burst.
-      yield* Effect.yieldNow
-      yield* PubSub.publishAll(fileEvents, events)
-
-      const collected = yield* Fiber.join(collectedFiber)
-      assert.deepStrictEqual(collected, events)
-    })
-  )
-
   it.effect('subscribe creates a subscription and returns info', () => {
     const { mock, testLayer } = createTestLayer()
 

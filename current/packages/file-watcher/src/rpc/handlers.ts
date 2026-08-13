@@ -12,31 +12,9 @@
  * @see PRD-file-watcher-extraction.md
  */
 
-import { FileWatcherRpcs, type WatchFileEvent } from '@laborer/shared/rpc'
-import { Effect, PubSub, Queue, Stream } from 'effect'
+import { FileWatcherRpcs } from '@laborer/shared/rpc'
+import { Effect, Stream } from 'effect'
 import { WatcherManager } from '../services/watcher-manager.js'
-
-/**
- * Bridge watcher events into the RPC stream without imposing a bounded buffer.
- * File events are authoritative invalidation signals, so dropping or sliding
- * them under load would leave consumers with stale filesystem state.
- *
- * Effect 3's `Stream.asyncPush` defaulted to an unbounded queue. Effect 4's
- * `Stream.callback` has the same default when no buffer options are supplied.
- */
-const fileEventsStream = (fileEvents: PubSub.PubSub<WatchFileEvent>) =>
-  Stream.callback<WatchFileEvent>((queue) =>
-    Effect.gen(function* () {
-      const subscription = yield* PubSub.subscribe(fileEvents)
-      yield* PubSub.take(subscription).pipe(
-        Effect.tap((event) =>
-          Effect.sync(() => Queue.offerUnsafe(queue, event))
-        ),
-        Effect.forever,
-        Effect.forkScoped({ startImmediately: true })
-      )
-    })
-  )
 
 export const FileWatcherRpcsLive = FileWatcherRpcs.toLayer(
   Effect.gen(function* () {
@@ -85,9 +63,7 @@ export const FileWatcherRpcsLive = FileWatcherRpcs.toLayer(
       // -------------------------------------------------------------------
       // watcher.events — streaming file change events
       // -------------------------------------------------------------------
-      'watcher.events': () => fileEventsStream(wm.fileEvents),
+      'watcher.events': () => Stream.fromPubSub(wm.fileEvents),
     }
   })
 )
-
-export { fileEventsStream }

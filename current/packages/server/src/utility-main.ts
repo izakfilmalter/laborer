@@ -1,9 +1,8 @@
 /**
  * Laborer Server — Utility Process Entry Point
  *
- * Alternative entry point for running the server as an Electron utility
- * process with MessagePort RPC transport. Replaces the HTTP-based
- * `main.ts` entry point for the desktop app.
+ * Runs the server as an Electron utility process with MessagePort RPC
+ * transport.
  *
  * Architecture:
  * - Runs inside an Electron utility process (forked via bootstrap script)
@@ -14,8 +13,8 @@
  * - Server-to-terminal and server-to-file-watcher connections use lazy
  *   MessagePort acquisition so startup does not wait for sidecar ports
  *
- * What's removed vs main.ts:
- * - No NodeHttpServer / ServerLive (no HTTP server binding)
+ * Transport properties:
+ * - No HTTP server binding
  * - No RpcSerialization.layerJson (MessagePort uses structured clone)
  * - No CustomRoutesLive (no HTTP health/init-status routes — init status
  *   is available via the `lifecycle.initStatus` RPC)
@@ -37,13 +36,10 @@
  * 3. This module receives the port and uses it for RPC via
  *    `layerProtocolMessagePort(port)`
  *
- * @see main.ts — HTTP-based entry point (to be removed after migration)
  * @see packages/terminal/src/utility-main.ts — Terminal utility process (reference pattern)
  * @see Issue #10: Server utility process: RPC over MessagePort
  */
 
-import { createServer } from 'node:http'
-import { NodeHttpServer } from '@effect/platform-node'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
@@ -52,16 +48,15 @@ import {
   Effect,
   Fiber,
   Layer,
+  ManagedRuntime,
   pipe,
   Ref,
   Stream,
   SubscriptionRef,
 } from 'effect'
-import { HttpRouter } from 'effect/unstable/http'
 import { RpcServer } from 'effect/unstable/rpc'
 
 import { LaborerRpcsLive } from './rpc/handlers.js'
-import { AgentTaskService } from './services/agent-task-service.js'
 import { BackgroundFetchService } from './services/background-fetch-service.js'
 import { BranchStateTracker } from './services/branch-state-tracker.js'
 import { ConfigService } from './services/config-service.js'
@@ -85,12 +80,6 @@ import { PrWatcher } from './services/pr-watcher.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
-import { serverDiscoveryLayer } from './services/server-discovery.js'
-import {
-  mcpOriginGuard,
-  TaskMcpProtocolLayer,
-  TaskMcpToolsLayer,
-} from './services/task-mcp.js'
 import { TerminalClient, TerminalRpcPort } from './services/terminal-client.js'
 import { WorkspaceProvider } from './services/workspace-provider.js'
 import { WorkspaceSyncService } from './services/workspace-sync-service.js'
@@ -444,49 +433,6 @@ export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
   Layer.provideMerge(LaborerDatabaseLive.pipe(Layer.orDie))
 )
 
-const configuredMcpPort = (): number => {
-  const port = Number(process.env.LABORER_SERVER_PORT ?? '3773')
-  if (!(Number.isSafeInteger(port) && port >= 1 && port <= 65_535)) {
-    throw new Error(
-      'LABORER_SERVER_PORT must be an integer between 1 and 65535'
-    )
-  }
-  return port
-}
-
-const selectMcpPort = (preferred: number): Promise<number> => {
-  if (process.env.LABORER_SERVER_PORT !== undefined) {
-    return Promise.resolve(preferred)
-  }
-  return new Promise((resolve, reject) => {
-    const probe = createServer()
-    probe.once('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE') {
-        resolve(0)
-      } else {
-        reject(error)
-      }
-    })
-    probe.listen(preferred, '127.0.0.1', () => {
-      probe.close((error) => (error ? reject(error) : resolve(preferred)))
-    })
-  })
-}
-
-const makeMcpHttpLayer = (port: number) => {
-  const config = { host: '127.0.0.1', port } as const
-  const routes = TaskMcpToolsLayer.pipe(
-    Layer.provideMerge(TaskMcpProtocolLayer)
-  )
-  return Layer.mergeAll(
-    HttpRouter.serve(routes, { middleware: mcpOriginGuard }),
-    serverDiscoveryLayer(config)
-  ).pipe(
-    Layer.provide(AgentTaskService.layer()),
-    Layer.provide(NodeHttpServer.layer(createServer, config))
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Service composition and launch
 // ---------------------------------------------------------------------------
@@ -511,11 +457,17 @@ const makeMcpHttpLayer = (port: number) => {
  */
 async function main(): Promise<void> {
   const { rpcPort, parentPort } = await waitForPort()
-  const mcpPort = await selectMcpPort(configuredMcpPort())
+
+  // Build the domain services exactly once. Every renderer connection must
+  // share this context; rebuilding InfrastructureLayer per MessagePort would
+  // duplicate background watchers and deferred initialization and could give
+  // each window a different in-memory view of the same database.
+  const managedRuntime = ManagedRuntime.make(InfrastructureLayer)
+  const infrastructureContext = await managedRuntime.context()
+  const sharedInfrastructureLayer = Layer.succeedContext(infrastructureContext)
 
   // Build the RPC layer with MessagePort transport.
-  // Unlike the HTTP entry point, we don't need:
-  // - NodeHttpServer / ServerLive (no HTTP server)
+  // MessagePort RPC needs no HTTP server or JSON serialization:
   // - RpcSerialization.layerJson (MessagePort uses structured clone)
   // - CustomRoutesLive (no HTTP health/init-status routes)
   // - HttpRouter / HttpMiddleware / CORS
@@ -563,11 +515,22 @@ async function main(): Promise<void> {
       fileWatcherPort.postMessage?.({ type: 'ping', timestamp: Date.now() })
       console.log('[server-utility] Sent ping to file-watcher port')
       resolveFileWatcherRpcPort?.(fileWatcherPort)
+    } else if (data?.type === 'port' && event.ports.length > 0) {
+      const additionalRpcPort = event.ports[0] as RpcMessagePort
+      additionalRpcPort.start?.()
+      const additionalProgram = RpcServer.layer(LaborerRpcs).pipe(
+        Layer.provide(layerProtocolMessagePort(additionalRpcPort)),
+        Layer.provide(LaborerRpcsLive),
+        Layer.provide(sharedInfrastructureLayer),
+        Layer.launch,
+        Effect.scoped
+      )
+      Effect.runFork(additionalProgram)
     }
   })
 
-  const program = Layer.merge(RpcLive, makeMcpHttpLayer(mcpPort)).pipe(
-    Layer.provide(InfrastructureLayer),
+  const program = RpcLive.pipe(
+    Layer.provide(sharedInfrastructureLayer),
     Layer.launch,
     Effect.scoped
   )
@@ -575,7 +538,11 @@ async function main(): Promise<void> {
   // Use Effect.runPromise instead of NodeRuntime.runMain to avoid
   // installing duplicate signal handlers in the utility process.
   // The parent process manages the lifecycle (kill/restart).
-  await Effect.runPromise(program)
+  try {
+    await Effect.runPromise(program)
+  } finally {
+    await managedRuntime.dispose()
+  }
 }
 
 if ((process as unknown as { parentPort?: unknown }).parentPort) {

@@ -371,7 +371,7 @@ PRD.md
 
 ### What to build
 
-Wire the server env validation into `packages/server/src/main.ts`. Import and validate environment variables on startup. Server should fail fast with a clear error message if env is invalid.
+Wire environment validation into the server startup composition. Import and validate environment variables on startup. Server should fail fast with a clear error message if env is invalid.
 
 ### Acceptance criteria
 

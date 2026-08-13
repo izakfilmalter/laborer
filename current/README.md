@@ -88,11 +88,16 @@ Laborer runs as multiple cooperating services:
 
 ### Agent task MCP
 
-While `current` is running, external local agents can manage board tasks through
-the token-free streamable-HTTP MCP endpoint at `http://127.0.0.1:3773/mcp`.
-Set `LABORER_SERVER_PORT` to pin another port. The active address is written to
-`~/.local/state/laborer/server.json` (or `$XDG_STATE_HOME/laborer/server.json`).
-The endpoint is loopback-only; `/rpc` retains its existing token check.
+External local agents can manage board tasks by launching the stdio MCP server
+at `~/.local/bin/laborer-mcp`. The desktop app installs or refreshes this command
+when it launches, but agents can use it even while the app is closed. The
+invoking MCP client must provide Node.js 24 or newer on its `PATH`.
+
+For example, configure an MCP client with the command (not an HTTP URL):
+
+```text
+~/.local/bin/laborer-mcp
+```
 
 In development, Turborepo runs all services as separate processes. In production, the Electron main process spawns backend services as sidecar child processes with health monitoring and automatic crash recovery.
 

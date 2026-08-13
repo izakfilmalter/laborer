@@ -28,7 +28,6 @@
  *     + WatcherManager.layer              — Watch subscription management
  *     + FileWatcher.layer                 — Low-level fs/native watcher
  *
- * @see main.ts — HTTP-based entry point (to be removed after migration)
  * @see packages/terminal/src/utility-main.ts — Terminal utility process (reference pattern)
  * @see Issue #14: File-watcher as utility process
  */

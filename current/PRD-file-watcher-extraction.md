@@ -83,7 +83,7 @@ The event normalization (including `existsSync` inference for fs.watch backend a
 9. **`packages/server/src/services/file-watcher-client.ts`** — New RPC client service (like TerminalClient)
 10. **`packages/server/src/services/repository-watch-coordinator.ts`** — Replace direct FileWatcher/RepositoryEventBus usage with FileWatcherClient
 11. **`packages/server/src/services/diff-service.ts`** — Subscribe to file events via FileWatcherClient instead of RepositoryEventBus directly
-12. **`packages/server/src/main.ts`** — Remove FileWatcher.layer + RepositoryEventBus.layer, add FileWatcherClient.layer
+12. **Server composition** — Remove FileWatcher.layer + RepositoryEventBus.layer, add FileWatcherClient.layer
 
 ### FileWatcherClient Design
 

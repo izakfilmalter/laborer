@@ -153,12 +153,6 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     triggerDownloadUpdate: vi.fn(),
     triggerInstallUpdate: vi.fn(),
   }))
-  vi.doMock('../src/backend-process-manager.js', () => ({
-    BackendProcessManager: class {
-      start = vi.fn(() => ({ wsUrl: 'ws://127.0.0.1:12345/?token=test' }))
-      stop = vi.fn()
-    },
-  }))
   vi.doMock('../src/fix-path.js', () => ({ fixPath: vi.fn() }))
   vi.doMock('../src/ipc.js', () => ({
     ACTIVATE_WORKSPACE_CHANNEL: 'desktop:activate-workspace',
@@ -175,7 +169,6 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     registerIpcHandlers: registerIpcHandlersMock,
     removeWindowPresence: vi.fn(),
     setDownloadUpdateHandler: vi.fn(),
-    setGetBackendWsUrlHandler: vi.fn(),
     setGetSidecarStatusesHandler: vi.fn(),
     setGetUpdateStateHandler: vi.fn(),
     setInstallUpdateHandler: vi.fn(),

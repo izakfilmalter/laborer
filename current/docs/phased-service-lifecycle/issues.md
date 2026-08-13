@@ -607,7 +607,7 @@ Split the server's monolithic Effect layer graph (currently ~25 layers, all must
 - `ProjectRegistry` — Project management
 - `RepositoryIdentity` — Git repository identification
 
-Restructure `packages/server/src/main.ts` so that the core layers compose and launch first. The HTTP server starts accepting connections (including the health endpoint) as soon as core layers are built. The remaining ~16 deferred layers are handled in Issue #14.
+Restructure the server composition so that the core layers compose and launch first. The transport starts accepting connections as soon as core layers are built. The remaining ~16 deferred layers are handled in Issue #14.
 
 This is a refactor of the layer composition in `main.ts` — the individual service implementations don't change, only how they're composed and when they're built.
 

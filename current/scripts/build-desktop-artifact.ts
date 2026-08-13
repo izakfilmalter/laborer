@@ -33,6 +33,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -133,7 +135,6 @@ const OPTIONAL_EFFECT_RUNTIME_PACKAGES = [
 ] as const
 
 const REQUIRED_ASAR_FILES = [
-  'packages/server/dist/main.mjs',
   // The bundled server resolves task-db SQL migrations relative to the
   // bundle (`new URL('./migrations/*.sql', import.meta.url)`). If these are
   // missing from the asar, the server sidecar crash-loops at import time and
@@ -146,6 +147,20 @@ const REQUIRED_ASAR_FILES = [
   'packages/server/dist/migrations/0005_projects.sql',
   'packages/server/dist/migrations/0006_app_settings_and_ledger.sql',
 ] as const
+
+const MCP_RESOURCE_DIRECTORY = 'laborer-mcp'
+const MCP_SCRIPT_NAME = 'laborer-mcp.mjs'
+const MCP_RUNTIME_NAME = 'task-mcp-runtime.mjs'
+const REQUIRED_MCP_MIGRATIONS = [
+  '0000_shared_task_db.sql',
+  '0001_execution_lifecycle_statuses.sql',
+  '0002_task_description_agent_source.sql',
+  '0003_worktree_task_source.sql',
+  '0004_task_worktree_pr_columns.sql',
+  '0005_projects.sql',
+  '0006_app_settings_and_ledger.sql',
+] as const
+const NODE_SHEBANG = '#!/usr/bin/env node\n'
 
 const REMOVED_PERSISTENCE_PAYLOAD_PATTERN =
   /(?:^|[/\\])(?:@livestore|sql\.js|wa-sqlite)(?:[/\\]|$)/i
@@ -461,6 +476,20 @@ function createBuildConfig(): Record<string, unknown> {
       buildResources: 'apps/desktop/resources',
     },
     files: ['**/*'],
+    extraResources: [
+      {
+        from: 'packages/server/dist/task-mcp-main.mjs',
+        to: `${MCP_RESOURCE_DIRECTORY}/${MCP_SCRIPT_NAME}`,
+      },
+      {
+        from: `packages/server/dist/${MCP_RUNTIME_NAME}`,
+        to: `${MCP_RESOURCE_DIRECTORY}/${MCP_RUNTIME_NAME}`,
+      },
+      {
+        from: 'packages/server/dist/migrations',
+        to: `${MCP_RESOURCE_DIRECTORY}/migrations`,
+      },
+    ],
     mac: {
       target: ['dmg', 'zip'],
       icon: 'icon.icns',
@@ -474,6 +503,79 @@ function createBuildConfig(): Record<string, unknown> {
   }
 
   return config
+}
+
+function resolvePackagedResourcesDirectory(stageAppDir: string): string {
+  const appName = resolveDesktopAppName({
+    isDevelopment: false,
+    version: BUILD_VERSION,
+  })
+  return join(
+    stageAppDir,
+    'dist',
+    `mac-${ARCH}`,
+    `${appName}.app`,
+    'Contents',
+    'Resources'
+  )
+}
+
+function validatePackagedMcpResources(stageAppDir: string): void {
+  const resourcesDirectory = resolvePackagedResourcesDirectory(stageAppDir)
+  const mcpDirectory = join(resourcesDirectory, MCP_RESOURCE_DIRECTORY)
+  const scriptPath = join(mcpDirectory, MCP_SCRIPT_NAME)
+  const requiredFiles = [
+    scriptPath,
+    join(mcpDirectory, MCP_RUNTIME_NAME),
+    ...REQUIRED_MCP_MIGRATIONS.map((name) =>
+      join(mcpDirectory, 'migrations', name)
+    ),
+  ]
+  const missing = requiredFiles.filter((path) => !existsSync(path))
+  if (missing.length > 0) {
+    throw new Error(
+      `Packaged MCP resources are missing: ${missing.map((path) => relative(resourcesDirectory, path)).join(', ')}`
+    )
+  }
+
+  if (!readFileSync(scriptPath, 'utf8').startsWith(NODE_SHEBANG)) {
+    throw new Error(
+      `Packaged MCP script is missing its Node shebang: ${scriptPath}`
+    )
+  }
+  // biome-ignore lint/suspicious/noBitwiseOperators: POSIX executable bits are a bit mask.
+  if ((statSync(scriptPath).mode & 0o111) === 0) {
+    throw new Error(`Packaged MCP script is not executable: ${scriptPath}`)
+  }
+
+  log(
+    `Validated executable MCP resources in ${relative(stageAppDir, mcpDirectory)}`
+  )
+}
+
+function smokeTestPackagedMcp(stageAppDir: string): void {
+  const scriptPath = join(
+    resolvePackagedResourcesDirectory(stageAppDir),
+    MCP_RESOURCE_DIRECTORY,
+    MCP_SCRIPT_NAME
+  )
+  const smokeRoot = mkdtempSync(join(tmpdir(), 'laborer-mcp-package-smoke-'))
+  const env = {
+    HOME: smokeRoot,
+    LANG: process.env.LANG ?? 'en_US.UTF-8',
+    PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
+    TMPDIR: smokeRoot,
+    XDG_STATE_HOME: join(smokeRoot, 'state'),
+  }
+  const smokeClient = join(REPO_ROOT, 'scripts/smoke-test-packaged-mcp.mjs')
+
+  try {
+    run(process.execPath, [smokeClient, process.execPath, scriptPath], { env })
+    run(process.execPath, [smokeClient, scriptPath], { env })
+    log('Packaged MCP completed initialize + tool call via Node and shebang')
+  } finally {
+    rmSync(smokeRoot, { force: true, recursive: true })
+  }
 }
 
 function validatePackagedAsar(stageAppDir: string): void {
@@ -565,22 +667,29 @@ function smokeTestPackagedApp(stageAppDir: string): void {
   const markerPath = join(smokeRoot, 'renderer-ready.json')
   const stateRoot = join(smokeRoot, 'state')
   const databasePath = join(stateRoot, 'laborer', 'laborer.sqlite')
+  const mcpCommandPath = join(smokeRoot, '.local', 'bin', 'laborer-mcp')
+  const expectedMcpScriptPath = join(
+    resolvePackagedResourcesDirectory(stageAppDir),
+    MCP_RESOURCE_DIRECTORY,
+    MCP_SCRIPT_NAME
+  )
   const output = VERBOSE ? 'inherit' : 'ignore'
+  const smokeEnv = {
+    HOME: smokeRoot,
+    LANG: process.env.LANG ?? 'en_US.UTF-8',
+    LABORER_DESKTOP_SMOKE_TEST_FILE: markerPath,
+    LABORER_DISABLE_AUTO_UPDATE: '1',
+    PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
+    SHELL: process.env.SHELL ?? '/bin/zsh',
+    TMPDIR: smokeRoot,
+    XDG_CONFIG_HOME: join(smokeRoot, 'config'),
+    XDG_STATE_HOME: stateRoot,
+  }
   let childPid: number | undefined
   try {
     const child = spawn(executablePath, [], {
       detached: true,
-      env: {
-        HOME: smokeRoot,
-        LANG: process.env.LANG ?? 'en_US.UTF-8',
-        LABORER_DESKTOP_SMOKE_TEST_FILE: markerPath,
-        LABORER_DISABLE_AUTO_UPDATE: '1',
-        PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
-        SHELL: process.env.SHELL ?? '/bin/zsh',
-        TMPDIR: smokeRoot,
-        XDG_CONFIG_HOME: join(smokeRoot, 'config'),
-        XDG_STATE_HOME: stateRoot,
-      },
+      env: smokeEnv,
       stdio: ['ignore', output, output],
     })
     // A failed spawn reports both an undefined pid and an asynchronous error.
@@ -598,9 +707,31 @@ function smokeTestPackagedApp(stageAppDir: string): void {
       if (!isProcessRunning(childPid)) {
         throw new Error('Packaged app exited before smoke readiness')
       }
-      if (hasValidSmokeMarker(markerPath) && existsSync(databasePath)) {
+      if (
+        hasValidSmokeMarker(markerPath) &&
+        existsSync(databasePath) &&
+        existsSync(mcpCommandPath)
+      ) {
+        const linkedScriptPath = readlinkSync(mcpCommandPath)
+        // macOS exposes the same temporary directory through both `/var` and
+        // `/private/var`; compare canonical paths rather than path aliases.
+        if (
+          realpathSync(linkedScriptPath) !== realpathSync(expectedMcpScriptPath)
+        ) {
+          throw new Error(
+            `Packaged app installed MCP command for ${linkedScriptPath}, expected ${expectedMcpScriptPath}`
+          )
+        }
+        run(
+          process.execPath,
+          [
+            join(REPO_ROOT, 'scripts/smoke-test-packaged-mcp.mjs'),
+            mcpCommandPath,
+          ],
+          { env: smokeEnv }
+        )
         log(
-          'Packaged app loaded its renderer against the shared laborer.sqlite'
+          'Packaged app loaded its renderer and installed a working MCP command'
         )
         return
       }
@@ -802,6 +933,8 @@ function stage(stageRoot: string): void {
   )
 
   validatePackagedAsar(stageAppDir)
+  validatePackagedMcpResources(stageAppDir)
+  smokeTestPackagedMcp(stageAppDir)
   smokeTestPackagedApp(stageAppDir)
 
   // Copy artifacts to output dir.

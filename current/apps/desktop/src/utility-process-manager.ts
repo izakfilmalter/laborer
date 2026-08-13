@@ -136,9 +136,7 @@ function resolveEntryPath(name: ServiceName): string {
   // Both dev and prod use the built output — dev uses tsdown --watch
   // for incremental builds, prod uses the final bundle.
   //
-  // The terminal service uses `utility-main.mjs` — the flattened entry
-  // point that uses node-pty directly with MessagePort RPC transport,
-  // instead of `main.mjs` which starts an HTTP server.
+  // Every service uses its MessagePort-based utility process entry.
   switch (name) {
     case 'server':
       return join(root, 'packages/server/dist/utility-main.mjs')

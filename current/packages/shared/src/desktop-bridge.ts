@@ -164,9 +164,6 @@ export interface DesktopBridge {
    */
   focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
 
-  /** Returns the server backend WebSocket URL for desktop RPC clients. */
-  getBackendWsUrl: () => string | null
-
   /**
    * Returns the current status of all sidecar services.
    * Used on mount to catch up on statuses that were broadcast before the

@@ -243,8 +243,7 @@ main.ts (Electron main process)
        |-- Create LifecycleMonitor (health tracking, crash recovery, exponential backoff)
        |-- Wire bootstrap message handler (ready/heartbeat)
        |
-       |-- Start the server backend child process
-       |-- Fork terminal and file-watcher utility processes:
+       |-- Fork server, terminal, and file-watcher utility processes:
        |     Each: utilityProcess.fork(bootstrap.cjs, { env: { LABORER_ENTRYPOINT: path } })
        |
        |-- Register IPC handlers for DesktopBridge
@@ -263,18 +262,18 @@ utility-process-bootstrap.ts (CJS entry for utilityProcess.fork)
   |-- On failure: send { type: 'error' }, exit
 ```
 
-#### Backend-to-Utility Connections
+#### Utility-to-Utility Connections
 
 ```
-startServerBackend():
-  |-- Reserve loopback ports for terminal and file-watcher utilities
-  |-- Pass their WebSocket RPC URLs to the server backend through its environment
+brokerServerServicePorts():
+  |-- Create direct MessagePort pairs after services report healthy
+  |-- Broker one end to server and one to terminal or file-watcher
 ```
 
 #### Server Backend Initialization (deferred pattern)
 
 ```
-packages/server/src/main.ts
+packages/server/src/utility-main.ts
   |
   |-- Immediate layer (fast startup):
   |     LaborerStoreLive (SQLite), ConfigService, RepositoryIdentity
@@ -308,9 +307,9 @@ apps/web/src/main.tsx
 ```
 
 **Key patterns:**
-- **Split supervision:** The server is a child process; native terminal and file-watcher services are Electron utility processes
+- **Unified supervision:** Server, terminal, and file-watcher are Electron utility processes
 - **Deferred service initialization:** `Ref`-backed proxies allow RPC server to start immediately, real services hot-swapped when ready
-- **Loopback RPC:** The backend connects to utility services through reserved loopback WebSocket endpoints
+- **MessagePort RPC:** The main process brokers direct ports between renderers and utility processes and between utility processes
 - **LiveStore event sourcing:** Bidirectional sync between server SQLite and client OPFS SQLite
 - **Effect Layer composition:** Same `Layer.provide`/`Layer.provideMerge` pattern as t3code
 
@@ -404,19 +403,19 @@ Web mode (CLI):
 
 **The one isolation boundary:** In desktop mode, the Electron main process has exponential-backoff restart logic for the server child. If the server crashes, the shell survives and restarts it.
 
-### Laborer: Backend Child + VS Code-Style Utility Processes
+### Laborer: VS Code-Style Utility Processes
 
 ```
 Electron Main Process (hub)
   |
-  |-- [child_process.spawn] --> Server Backend Process
+  |-- [utilityProcess.fork] --> Server Utility Process
   |   |                           |
   |   |                           +-- [in-process] --> Effect fibers (31+ services)
   |   |                           +-- [in-process] --> LiveStore (SQLite)
   |   |                           +-- [in-process] --> Git operations
   |   |
-  |   +-- [loopback WebSocket] ---> Terminal RPC
-  |   +-- [loopback WebSocket] ---> File-watcher RPC
+  |   +-- [brokered MessagePort] ---> Terminal RPC
+  |   +-- [brokered MessagePort] ---> File-watcher RPC
   |
   |-- [utilityProcess.fork] --> Terminal Utility Process
   |                               |
@@ -442,7 +441,7 @@ Electron Main Process (hub)
 | **File Watcher** | 1 | Filesystem watching via @parcel/watcher | Native addon isolation, event flooding protection |
 | **Renderer** | 1 per window | React UI, LiveStore client, xterm.js rendering | Chromium sandbox |
 
-**Crash resilience:** `LifecycleMonitor` tracks utility-process health via heartbeat, while `BackendProcessManager` supervises the server child. Each backend process can restart without taking down the Electron shell.
+**Crash resilience:** `LifecycleMonitor` tracks every utility process via heartbeat and restarts failures without taking down the Electron shell.
 
 **Deferred initialization:** The server backend starts with `Ref`-backed proxy services, then builds real implementations in background fibers. This means the RPC server is ready to accept connections before all domain services are fully initialized.
 
@@ -453,10 +452,10 @@ Electron Main Process (hub)
 | **Total process types** | 6 | 2-3 | 5 (main + server + 2 utility + renderer) |
 | **PTY isolation** | Separate PTY host process, auto-restarts 5x | In-server process, no isolation | Separate terminal utility process with health monitoring |
 | **File watching** | Dedicated watcher process | In-process | Separate file-watcher utility process |
-| **Heavy I/O isolation** | Shared process for network/disk ops | All in server | Server child process (separated from main) |
+| **Heavy I/O isolation** | Shared process for network/disk ops | All in server | Server utility process (separated from main) |
 | **Crash granularity** | Per-subsystem | All-or-nothing (server restart) | Per-utility-process |
 | **Concurrency model** | OS processes + event loop | Effect fibers (cooperative, single-threaded) | Effect fibers within isolated utility processes |
-| **Process communication** | MessagePort (direct, after port transfer) | WebSocket JSON | Loopback WebSocket plus direct MessagePort |
+| **Process communication** | MessagePort (direct, after port transfer) | WebSocket JSON | Direct brokered MessagePort |
 
 ---
 
@@ -852,10 +851,10 @@ User keystroke
 
 | | VS Code | t3code | Laborer |
 |---|---------|--------|---------|
-| **Primary IPC** | MessagePort (Electron) | WebSocket (JSON) | WebSocket + MessagePort |
+| **Primary IPC** | MessagePort (Electron) | WebSocket (JSON) | MessagePort |
 | **RPC framework** | Custom ProxyChannel | Custom WS_METHODS routing | @effect/rpc |
-| **Serialization** | Structured clone | JSON | JSON + structured clone |
-| **Direct process-to-process** | Yes (after port transfer) | N/A (single server) | Yes (loopback WebSockets) |
+| **Serialization** | Structured clone | JSON | Structured clone |
+| **Direct process-to-process** | Yes (after port transfer) | N/A (single server) | Yes (after port transfer) |
 
 ### Terminal
 

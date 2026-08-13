@@ -168,7 +168,7 @@ describe('useServiceStatus', () => {
     )
   })
 
-  it('includes server connection status as reconnecting initially', async () => {
+  it('tracks server connection status through the server utility lifecycle', async () => {
     mockFetch(() => pendingPromise())
 
     render(<ServiceStatusDisplay />)
@@ -177,7 +177,7 @@ describe('useServiceStatus', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByTestId('sync-state').textContent).toBe('reconnecting')
+    expect(screen.getByTestId('sync-state').textContent).toBe('starting')
   })
 
   it('updates sidecar status to healthy when health endpoint responds', async () => {

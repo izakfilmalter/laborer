@@ -80,6 +80,7 @@ vi.mock('@/panels/panel-context', () => ({
 
 vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
+  TerminalSpawnControls: () => <div data-testid="terminal-spawn-controls" />,
 }))
 
 vi.mock('@/components/copy-button', () => ({
@@ -247,5 +248,20 @@ describe('Workspace card layout — status row', () => {
     expect(
       screen.getByRole('button', { name: DESTROY_WORKSPACE_RE })
     ).toBeTruthy()
+  })
+
+  it('shares the status row with the start-work controls', () => {
+    mockStore([makeWorkspace()])
+
+    const { container } = render(
+      <WorkspaceList projectId="project-1" repoPath="/repo" />
+    )
+
+    const statusRow = container.querySelector('[data-slot="card-status-row"]')
+    expect(statusRow).toBeTruthy()
+    expect(statusRow?.contains(screen.getByText('running'))).toBe(true)
+    expect(
+      statusRow?.contains(screen.getByTestId('terminal-spawn-controls'))
+    ).toBe(true)
   })
 })

@@ -36,21 +36,21 @@ test.describe('terminal close — sidebar sync', () => {
     // Spawn a terminal via the workspace card's "New" button.
     // Retry if the terminal doesn't appear — the spawn can fail silently
     // when the workspace is still in "creating" state.
-    const terminalsOneText = workspaceCard.getByText('Terminals (1)', {
-      exact: true,
-    })
+    const terminalRows = workspaceCard.locator('[data-testid^="terminal-row-"]')
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const btn = workspaceCard.getByRole('button', { name: 'New terminal' })
       await expect(btn).toBeVisible({ timeout: 15_000 })
       await btn.click()
       try {
-        await terminalsOneText.waitFor({ state: 'visible', timeout: 10_000 })
+        await terminalRows
+          .first()
+          .waitFor({ state: 'visible', timeout: 10_000 })
         break
       } catch {
         // Terminal spawn may have failed — retry
       }
     }
-    await expect(terminalsOneText).toBeVisible({ timeout: 5000 })
+    await expect(terminalRows).toHaveCount(1, { timeout: 5000 })
 
     // Close the terminal via the sidebar X button inside this workspace card.
     // This may show a "Close terminal?" confirmation dialog if the terminal
@@ -68,10 +68,8 @@ test.describe('terminal close — sidebar sync', () => {
       // No dialog appeared — the close happened immediately
     }
 
-    // The terminal should disappear — "No terminals" should appear
-    await expect(
-      workspaceCard.getByText('No terminals', { exact: true })
-    ).toBeVisible({ timeout: 15_000 })
+    // The terminal should disappear — the card is left with no rows
+    await expect(terminalRows).toHaveCount(0, { timeout: 15_000 })
   })
 
   test('closed terminal does not reappear after spawning a new one', async ({
@@ -90,9 +88,7 @@ test.describe('terminal close — sidebar sync', () => {
     // Spawn the first terminal via the workspace card's "New" button.
     // Retry if the terminal doesn't appear — the spawn can fail silently
     // when the workspace is still in "creating" state.
-    const terminalsOneText = workspaceCard.getByText('Terminals (1)', {
-      exact: true,
-    })
+    const terminalRows = workspaceCard.locator('[data-testid^="terminal-row-"]')
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const newTerminalButton = workspaceCard.getByRole('button', {
         name: 'New terminal',
@@ -100,13 +96,15 @@ test.describe('terminal close — sidebar sync', () => {
       await expect(newTerminalButton).toBeVisible({ timeout: 15_000 })
       await newTerminalButton.click()
       try {
-        await terminalsOneText.waitFor({ state: 'visible', timeout: 10_000 })
+        await terminalRows
+          .first()
+          .waitFor({ state: 'visible', timeout: 10_000 })
         break
       } catch {
         // Terminal spawn may have failed — retry
       }
     }
-    await expect(terminalsOneText).toBeVisible({ timeout: 5000 })
+    await expect(terminalRows).toHaveCount(1, { timeout: 5000 })
 
     // Close the terminal via the sidebar X button inside this workspace card.
     // Handle the "Close terminal?" confirmation dialog if it appears.
@@ -123,10 +121,8 @@ test.describe('terminal close — sidebar sync', () => {
       // No dialog appeared — the close happened immediately
     }
 
-    // Wait for the terminal to actually disappear — "No terminals" appears
-    await expect(
-      workspaceCard.getByText('No terminals', { exact: true })
-    ).toBeVisible({ timeout: 15_000 })
+    // Wait for the terminal to actually disappear
+    await expect(terminalRows).toHaveCount(0, { timeout: 15_000 })
 
     // Spawn a new terminal
     const newTerminalButton2 = workspaceCard.getByRole('button', {
@@ -135,22 +131,13 @@ test.describe('terminal close — sidebar sync', () => {
     await expect(newTerminalButton2).toBeVisible({ timeout: 15_000 })
     await newTerminalButton2.click()
 
-    // Wait for the NEW terminal to appear — should show "Terminals (1)"
-    await expect(
-      workspaceCard.getByText('Terminals (1)', { exact: true })
-    ).toBeVisible({ timeout: 30_000 })
-
-    // The critical assertion: there should NOT be "Terminals (2)" in this
-    // workspace. Before the fix, the old terminal would reappear as a ghost.
-    await expect(
-      workspaceCard.getByText('Terminals (2)', { exact: true })
-    ).toHaveCount(0, { timeout: 10_000 })
+    // The critical assertion: the card holds exactly one row. Before the fix
+    // the old terminal would reappear as a ghost alongside the new one.
+    await expect(terminalRows).toHaveCount(1, { timeout: 30_000 })
 
     // Wait for any delayed ProcessChanged events from the 200ms
     // detection fiber, then verify the ghost still hasn't reappeared.
     await page.waitForTimeout(1000)
-    await expect(
-      workspaceCard.getByText('Terminals (2)', { exact: true })
-    ).toHaveCount(0)
+    await expect(terminalRows).toHaveCount(1)
   })
 })

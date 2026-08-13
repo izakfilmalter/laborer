@@ -23,6 +23,12 @@ interface CardShellProps
   readonly actions?: ReactNode | undefined
   /** Accessible name for the title's activation button. */
   readonly activateLabel?: string | undefined
+  /**
+   * Controls pinned to the right of the status row. Status reads on the left,
+   * what you can do about it sits on the right of the same rail, so a card
+   * never has to spend a whole row on a pair of buttons.
+   */
+  readonly badgeActions?: ReactNode | undefined
   /** Chip row beneath the title: status, source, PR, worktree state. */
   readonly badges?: ReactNode | undefined
   /** Card body, rendered below the header when present. */
@@ -58,6 +64,7 @@ const isNestedControl = (event: MouseEvent): boolean =>
 function CardShell({
   actions,
   activateLabel,
+  badgeActions,
   badges,
   children,
   className,
@@ -95,7 +102,7 @@ function CardShell({
       size="sm"
       {...props}
     >
-      <CardHeader className="gap-2">
+      <CardHeader className="gap-1.5">
         {/* Title row: the name takes the slack, controls group hard right */}
         <div className="flex min-w-0 items-start gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2 overflow-hidden">
@@ -120,11 +127,38 @@ function CardShell({
           ) : null}
         </div>
         {subtitle}
-        {badges ? (
-          <div className="flex flex-wrap items-center gap-1.5">{badges}</div>
+        {/* Status rail: chips read left, their controls sit hard right on the
+            same line. The minimum height is the height of a small button, so
+            a column of cards keeps one rhythm whether or not a given card has
+            controls — and chips stay centred against them when they do. */}
+        {badges || badgeActions ? (
+          <div
+            className="flex items-start justify-between gap-2"
+            data-slot="card-status-row"
+          >
+            <div
+              className={cn(
+                'flex min-w-0 flex-wrap items-center gap-1.5 empty:hidden',
+                // Only a row that carries controls needs to reserve their
+                // height; a chip-only row stays as short as its chips.
+                badgeActions && 'min-h-6'
+              )}
+            >
+              {badges}
+            </div>
+            {badgeActions ? (
+              <div className="flex shrink-0 items-center gap-1">
+                {badgeActions}
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </CardHeader>
-      {children ? <CardContent>{children}</CardContent> : null}
+      {/* A body that renders nothing takes no room: without this the card's
+          flex gap would still pay for a section that isn't there. */}
+      {children ? (
+        <CardContent className="empty:hidden">{children}</CardContent>
+      ) : null}
     </Card>
   )
 }

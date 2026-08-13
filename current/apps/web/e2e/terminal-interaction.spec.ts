@@ -28,8 +28,8 @@ test.describe('terminal interaction', () => {
     await expect(spawnTerminalButton).toBeVisible({ timeout: 15_000 })
     await spawnTerminalButton.click()
 
-    // Wait for the terminal to appear — the sidebar shows "Terminals (1)"
-    // and the xterm.js textarea input becomes available
+    // Wait for the terminal to appear — the xterm.js textarea input
+    // becomes available
     await expect(terminal.terminalInputs.first()).toBeVisible({
       timeout: 30_000,
     })

@@ -1,11 +1,13 @@
 /**
  * Terminal list UI component per workspace.
  *
- * Displays all terminals for a given workspace from the terminal service
- * (via the `useTerminalList` polling hook). Each terminal shows its command
- * and status. Includes a "New Terminal" button that spawns a new terminal
- * via the terminal.spawn RPC mutation. Selecting a terminal switches the
- * active pane to display it.
+ * Two pieces, because they answer two different questions. `TerminalList`
+ * shows what is running in a workspace — one row per terminal, its command
+ * and its status — and selecting a row switches the active pane to it.
+ * `TerminalSpawnControls` starts something new there, and lives up in the
+ * card's status rail rather than above the rows, so a workspace with nothing
+ * running still shows the two ways to begin without a heading or an empty
+ * state to explain itself.
  *
  * Terminal items are draggable — users can drag a terminal from the sidebar
  * and drop it onto an empty panel pane to assign it to that specific pane.
@@ -30,13 +32,7 @@ import {
   X,
 } from 'lucide-react'
 import type React from 'react'
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo } from 'react'
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
@@ -83,19 +79,15 @@ interface TerminalListProps {
   readonly onAgentStatusChange?:
     | ((status: AgentDisplayStatus | null) => void)
     | undefined
-  /** The project ID this workspace belongs to (for agent config resolution). */
-  readonly projectId: string
   /** The workspace ID to filter terminals for. */
   readonly workspaceId: string
 }
 
-/**
- * Terminal list for a single workspace.
- *
- * Shows all terminals belonging to the workspace, with a "New Terminal"
- * button, an "Agent" button (spawns the configured AI agent), and
- * click-to-select behavior for switching the active panel pane.
- */
+/** Quiet chrome: the controls recede until pointed at, so a column of cards
+ *  reads as branch names and statuses rather than as a wall of buttons. */
+const SPAWN_BUTTON_CLASS =
+  'h-6 text-muted-foreground hover:text-foreground dark:bg-transparent dark:hover:bg-muted/50'
+
 /**
  * Spawn buttons for creating new terminals and agents.
  * Extracted to encapsulate phase-gating logic and reduce complexity.
@@ -103,15 +95,11 @@ interface TerminalListProps {
 function TerminalSpawnButtons({
   agentProvider,
   isServiceAvailable,
-  isSpawning,
-  isSpawningAgent,
   onSpawnAgent,
   onSpawnTerminal,
 }: {
   readonly agentProvider: string
   readonly isServiceAvailable: boolean
-  readonly isSpawning: boolean
-  readonly isSpawningAgent: boolean
   readonly onSpawnAgent: (event: React.MouseEvent) => void
   readonly onSpawnTerminal: (event: React.MouseEvent) => void
 }) {
@@ -127,9 +115,8 @@ function TerminalSpawnButtons({
           render={
             <Button
               aria-label={`Start ${agentProvider} agent`}
-              disabled={
-                !isServerReady || isSpawningAgent || !isServiceAvailable
-              }
+              className={SPAWN_BUTTON_CLASS}
+              disabled={!(isServerReady && isServiceAvailable)}
               onClick={onSpawnAgent}
               size="xs"
               title={isServerReady ? undefined : 'Connecting to server...'}
@@ -138,21 +125,29 @@ function TerminalSpawnButtons({
           }
         >
           <AgentIcon className="size-3" />
-          {isSpawningAgent ? 'Starting...' : 'Agent'}
+          Agent
         </TooltipTrigger>
         <TooltipContent>Start {agentProvider} in a new terminal</TooltipContent>
       </Tooltip>
-      <Button
-        aria-label="New terminal"
-        disabled={!isServerReady || isSpawning || !isServiceAvailable}
-        onClick={onSpawnTerminal}
-        size="xs"
-        title={isServerReady ? undefined : 'Connecting to server...'}
-        variant="outline"
-      >
-        <Plus className="size-3" />
-        {isSpawning ? 'Spawning...' : 'New'}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="New terminal"
+              className={SPAWN_BUTTON_CLASS}
+              disabled={!(isServerReady && isServiceAvailable)}
+              onClick={onSpawnTerminal}
+              size="xs"
+              title={isServerReady ? undefined : 'Connecting to server...'}
+              variant="outline"
+            />
+          }
+        >
+          <Plus className="size-3" />
+          New
+        </TooltipTrigger>
+        <TooltipContent>Open a new terminal in this workspace</TooltipContent>
+      </Tooltip>
     </div>
   )
 }
@@ -197,24 +192,111 @@ function ConfigAwareTerminalSpawnButtons({
   return <ConfiguredTerminalSpawnButtons {...props} projectId={projectId} />
 }
 
-function TerminalList({
-  onAgentStatusChange,
+/**
+ * Opens a terminal in a workspace: beside the active pane when the operator
+ * is already in this workspace, otherwise in a new panel tab. Cmd splits
+ * down instead of across.
+ *
+ * The workspace ownership check prevents a bug where clicking "New" on
+ * workspace B (while workspace A is focused) would split workspace A's pane
+ * instead of creating a new panel in workspace B.
+ */
+function useSpawnInWorkspace(
+  workspaceId: string,
+  isServiceAvailable: boolean,
+  paneType: 'agent' | 'terminal'
+) {
+  const panelActions = usePanelActions()
+  const activePaneId = useActivePaneId()
+  const activeWorkspaceId = useActiveWorkspaceId()
+
+  return useCallback(
+    (event: React.MouseEvent) => {
+      if (!isServiceAvailable) {
+        toast.error('Terminal service unavailable')
+        return
+      }
+      if (!panelActions) {
+        return
+      }
+      const direction = event.metaKey ? 'vertical' : 'horizontal'
+      const paneIsInThisWorkspace = activeWorkspaceId === workspaceId
+      if (activePaneId && paneIsInThisWorkspace) {
+        panelActions.splitPane(activePaneId, direction, {
+          paneType,
+          workspaceId,
+        } as Partial<LeafNode>)
+      } else {
+        panelActions.addPanelTab?.(workspaceId, paneType)
+      }
+    },
+    [
+      isServiceAvailable,
+      workspaceId,
+      paneType,
+      panelActions,
+      activePaneId,
+      activeWorkspaceId,
+    ]
+  )
+}
+
+/**
+ * The "start work here" controls for a workspace — the configured agent, and
+ * a plain terminal.
+ *
+ * They live beside the workspace's status chips rather than above its
+ * terminal rows, because they are what you do to a workspace and not a label
+ * for the list below them. A workspace with no terminals then costs nothing:
+ * its card is a name, a status, and the two ways to begin.
+ */
+function TerminalSpawnControls({
   projectId,
   workspaceId,
-}: TerminalListProps) {
+}: {
+  readonly projectId: string
+  readonly workspaceId: string
+}) {
+  const { isServiceAvailable } = useTerminalList()
+  const onSpawnAgent = useSpawnInWorkspace(
+    workspaceId,
+    isServiceAvailable,
+    'agent'
+  )
+  const onSpawnTerminal = useSpawnInWorkspace(
+    workspaceId,
+    isServiceAvailable,
+    'terminal'
+  )
+
+  return (
+    <ConfigAwareTerminalSpawnButtons
+      isServiceAvailable={isServiceAvailable}
+      onSpawnAgent={onSpawnAgent}
+      onSpawnTerminal={onSpawnTerminal}
+      projectId={projectId}
+    />
+  )
+}
+
+/**
+ * The terminals running in a single workspace, one row each.
+ *
+ * The list is only the rows: it carries no heading and no empty state,
+ * because the card around it already names the workspace and offers the
+ * controls that start a terminal. A workspace with nothing running renders
+ * nothing at all, so a quiet card is a short card.
+ */
+function TerminalList({ onAgentStatusChange, workspaceId }: TerminalListProps) {
   const {
     errorMessage,
     isServiceAvailable,
     terminals: terminalList,
   } = useTerminalList()
   const panelActions = usePanelActions()
-  const activePaneId = useActivePaneId()
-  const activeWorkspaceId = useActiveWorkspaceId()
   const restartTerminal = useAtomSet(restartTerminalMutation, {
     mode: 'promise',
   })
-  const [isSpawning] = useState(false)
-  const [isSpawningAgent] = useState(false)
 
   // Filter terminals for this workspace and derive aggregate agent status
   const workspaceTerminals = terminalList.filter(
@@ -229,77 +311,6 @@ function TerminalList({
   useEffect(() => {
     onAgentStatusChange?.(workspaceAgentStatus)
   }, [onAgentStatusChange, workspaceAgentStatus])
-
-  const handleSpawnTerminal = useCallback(
-    (event: React.MouseEvent) => {
-      if (!isServiceAvailable) {
-        toast.error('Terminal service unavailable')
-        return
-      }
-      if (!panelActions) {
-        return
-      }
-      // Cmd+click → split down, default → split right.
-      // When an active pane exists AND belongs to the same workspace,
-      // split from it. Otherwise fall back to creating a new panel tab
-      // (which handles bootstrapping the workspace into the main area).
-      // Both paths auto-spawn a terminal.
-      //
-      // The workspace ownership check prevents a bug where clicking
-      // "New" on workspace B (while workspace A is focused) would split
-      // workspace A's pane instead of creating a new panel in workspace B.
-      const direction = event.metaKey ? 'vertical' : 'horizontal'
-      const paneIsInThisWorkspace = activeWorkspaceId === workspaceId
-      if (activePaneId && paneIsInThisWorkspace) {
-        panelActions.splitPane(activePaneId, direction, {
-          paneType: 'terminal',
-          workspaceId,
-        } as Partial<LeafNode>)
-      } else {
-        panelActions.addPanelTab?.(workspaceId, 'terminal')
-      }
-    },
-    [
-      isServiceAvailable,
-      workspaceId,
-      panelActions,
-      activePaneId,
-      activeWorkspaceId,
-    ]
-  )
-
-  const handleSpawnAgent = useCallback(
-    (event: React.MouseEvent) => {
-      if (!isServiceAvailable) {
-        toast.error('Terminal service unavailable')
-        return
-      }
-      if (!panelActions) {
-        return
-      }
-      // Cmd+click → split down, default → split right.
-      // When an active pane exists AND belongs to the same workspace,
-      // split from it. Otherwise fall back to creating a new panel tab.
-      // Both paths auto-spawn a terminal with the configured agent command.
-      const direction = event.metaKey ? 'vertical' : 'horizontal'
-      const paneIsInThisWorkspace = activeWorkspaceId === workspaceId
-      if (activePaneId && paneIsInThisWorkspace) {
-        panelActions.splitPane(activePaneId, direction, {
-          paneType: 'agent',
-          workspaceId,
-        } as Partial<LeafNode>)
-      } else {
-        panelActions.addPanelTab?.(workspaceId, 'agent')
-      }
-    },
-    [
-      isServiceAvailable,
-      workspaceId,
-      panelActions,
-      activePaneId,
-      activeWorkspaceId,
-    ]
-  )
 
   const handleCloseTerminal = useCallback(
     (terminalId: string) => {
@@ -345,41 +356,19 @@ function TerminalList({
     </Alert>
   )
 
-  if (workspaceTerminals.length === 0) {
-    return (
-      <div className="grid gap-2 py-1">
-        {unavailableAlert}
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground/70 text-xs">No terminals</span>
-          <ConfigAwareTerminalSpawnButtons
-            isServiceAvailable={isServiceAvailable}
-            isSpawning={isSpawning}
-            isSpawningAgent={isSpawningAgent}
-            onSpawnAgent={handleSpawnAgent}
-            onSpawnTerminal={handleSpawnTerminal}
-            projectId={projectId}
-          />
-        </div>
-      </div>
-    )
+  if (isServiceAvailable && workspaceTerminals.length === 0) {
+    return null
   }
 
   return (
-    <div className="grid gap-1">
+    // Terminal rows own their own pointer: they are draggable onto panes, and
+    // on the kanban board the card around them is itself a drag handle.
+    // Without this a press on a row would start both drags at once.
+    <div
+      className="grid gap-1"
+      onPointerDown={(event) => event.stopPropagation()}
+    >
       {unavailableAlert}
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-muted-foreground text-xs">
-          Terminals ({workspaceTerminals.length})
-        </span>
-        <ConfigAwareTerminalSpawnButtons
-          isServiceAvailable={isServiceAvailable}
-          isSpawning={isSpawning}
-          isSpawningAgent={isSpawningAgent}
-          onSpawnAgent={handleSpawnAgent}
-          onSpawnTerminal={handleSpawnTerminal}
-          projectId={projectId}
-        />
-      </div>
       {workspaceTerminals.map((terminal) => (
         <TerminalItem
           key={terminal.id}
@@ -697,7 +686,10 @@ function TerminalItem({
   return (
     <div
       className={cn(
-        'flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
+        // Rows read as a list, not as a stack of boxes: the resting edge is
+        // transparent and the resting fill is a step off the card, so the
+        // only visible edges in the card belong to rows that want something.
+        'flex w-full min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-muted/40 py-1 pr-1 pl-1.5 text-left text-xs transition-colors',
         // A row that wants something carries a steady edge from the shared
         // vocabulary — amber to act on, violet to review — and the motion
         // stays in the badge so the label remains readable. The hover
@@ -711,7 +703,7 @@ function TerminalItem({
       data-testid={`terminal-row-${terminal.id}`}
     >
       <button
-        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:cursor-grabbing"
+        className="flex min-w-0 flex-1 cursor-grab items-center gap-1.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:cursor-grabbing"
         draggable
         onClick={() => onSelect(terminal.id)}
         onDragStart={handleDragStart}
@@ -777,4 +769,4 @@ function TerminalItem({
   )
 }
 
-export { getTerminalDisplay, TerminalList }
+export { getTerminalDisplay, TerminalList, TerminalSpawnControls }

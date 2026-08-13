@@ -89,6 +89,7 @@ vi.mock('@/panels/panel-context', () => ({
 
 vi.mock('@/components/terminal-list', () => ({
   TerminalList: () => <div data-testid="terminal-list" />,
+  TerminalSpawnControls: () => <div data-testid="terminal-spawn-controls" />,
 }))
 
 vi.mock('@/components/copy-button', () => ({

@@ -221,6 +221,7 @@ export const mcpOriginGuard = HttpMiddleware.make((app) =>
 
     // McpServer accepts requests without Origin. Validate Laborer's broader
     // loopback-any-port policy above, then hide Origin from its exact matcher.
+    // Remove this shim when upstream allowedOrigins supports a predicate.
     return yield* app.pipe(
       Effect.provideService(
         HttpServerRequest.HttpServerRequest,

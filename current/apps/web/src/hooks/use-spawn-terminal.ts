@@ -40,13 +40,13 @@ interface SpawnTerminalResponse {
 /**
  * Hook that returns an independent terminal spawn function.
  *
- * Each call creates its own Effect fiber via `Runtime.runPromise`,
+ * Each call creates its own root Effect fiber via `Effect.runPromiseWith`,
  * bypassing the `AtomResultFn` mutation atom's "latest-wins"
  * behaviour. Multiple concurrent calls will all complete
  * independently — no interruption.
  *
  * Internally reads the `LaborerClient.runtime` atom to obtain the
- * Effect `Runtime` that provides the RPC client layer. The runtime
+ * Effect `Context` that provides the RPC client. The runtime
  * atom is mounted once and stays alive for the component's lifetime.
  *
  * @returns A stable callback `(args: { payload }) => Promise<SpawnTerminalResponse>`

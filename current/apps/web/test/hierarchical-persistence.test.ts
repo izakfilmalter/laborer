@@ -437,6 +437,25 @@ describe('decodeWindowLayout', () => {
     expect(result.windowLayout).toEqual(layout)
   })
 
+  it('accepts valid layouts with excess keys', () => {
+    const layout = {
+      ...makeLayout([makeWindowTab('wt-1')]),
+      futureEnvelopeField: true,
+    }
+
+    expect(decodeWindowLayout(layout)).toEqual({
+      windowLayout: makeLayout([makeWindowTab('wt-1')]),
+      wasRepaired: false,
+    })
+  })
+
+  it('returns undefined when tabs is missing', () => {
+    expect(decodeWindowLayout({ activeTabId: 'wt-1' })).toEqual({
+      windowLayout: undefined,
+      wasRepaired: true,
+    })
+  })
+
   it('returns undefined for non-object input', () => {
     expect(decodeWindowLayout(null)).toEqual({
       windowLayout: undefined,

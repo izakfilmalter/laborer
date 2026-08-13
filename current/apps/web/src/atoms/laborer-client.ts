@@ -3,8 +3,8 @@
  *
  * Communicates with the desktop-managed server backend over loopback WebSocket.
  *
- * Uses `AtomRpc.Tag` to provide typed `query` and `mutation` atoms that
- * integrate with React components via `@effect-atom/atom`.
+ * Uses `AtomRpc.Service` to provide typed `query` and `mutation` atoms that
+ * integrate with React components via `@effect/atom-react`.
  *
  * @see Issue #4: Renderer RPC client wired to MessagePort
  * @see packages/server/src/utility-main.ts — Server utility process entry

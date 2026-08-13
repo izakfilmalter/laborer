@@ -208,7 +208,7 @@ describe('makeClientProtocolMessagePort', () => {
     expect(r3).toBe('third')
   })
 
-  it('routes responses when one protocol is shared by multiple clients', async () => {
+  it('rejects sharing one protocol between multiple clients', async () => {
     const { port1, port2 } = new MessageChannel()
     const serverScope = Effect.runSync(Scope.make())
     const clientScope = Effect.runSync(Scope.make())
@@ -240,12 +240,19 @@ describe('makeClientProtocolMessagePort', () => {
       makeClient(),
     ])
 
-    const [first, second] = await Promise.all([
-      Effect.runPromise(firstClient.echo({ input: 'first client' })),
-      Effect.runPromise(secondClient.echo({ input: 'second client' })),
-    ])
+    const first = await Effect.runPromise(
+      firstClient.echo({ input: 'first client' })
+    )
     expect(first).toBe('first client')
-    expect(second).toBe('second client')
+
+    const second = await Effect.runPromise(
+      Effect.result(secondClient.echo({ input: 'second client' }))
+    )
+    expect(Result.isFailure(second)).toBe(true)
+    if (Result.isFailure(second)) {
+      expect(second.failure._tag).toBe('RpcClientError')
+      expect(second.failure.reason._tag).toBe('RpcClientDefect')
+    }
 
     await Effect.runPromise(Scope.close(clientScope, Exit.void))
     await Effect.runPromise(Scope.close(serverScope, Exit.void))

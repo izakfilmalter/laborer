@@ -141,25 +141,20 @@ export const makeClientProtocolMessagePort = (
       const messageQueue =
         yield* Queue.unbounded<RpcMessage.FromServerEncoded>()
 
-      // A protocol Layer can be shared by more than one RpcClient even though
-      // the underlying MessagePort is point-to-point. Route request-scoped
-      // responses back to the client that sent the request; connection-wide
-      // failures are broadcast to every client using this protocol.
-      const requestClients = new Map<string | number, number>()
+      // This point-to-point transport belongs to exactly one RpcClient. If a
+      // protocol ever needs to be shared, replace this fixed routing with a
+      // request-id -> client-id map before supporting multiplexing.
+      let activeClientId: number | undefined
 
       const dispatchResponse = (data: RpcMessage.FromServerEncoded) => {
-        if ('requestId' in data) {
-          const clientId = requestClients.get(data.requestId)
-          if (clientId !== undefined) {
-            if (data._tag === 'Exit') {
-              requestClients.delete(data.requestId)
-            }
-            return writeResponse(clientId, data)
-          }
+        if (data._tag === 'ClientProtocolError') {
+          return Effect.forEach(clientIds, (clientId) =>
+            writeResponse(clientId, data)
+          )
         }
-        return Effect.forEach(clientIds, (clientId) =>
-          writeResponse(clientId, data)
-        )
+        return activeClientId === undefined
+          ? Effect.void
+          : writeResponse(activeClientId, data)
       }
 
       // Mutable flag tracking whether the port has been closed by the remote
@@ -351,24 +346,32 @@ export const makeClientProtocolMessagePort = (
               })
             )
           }
-          if (request._tag === 'Request') {
-            requestClients.set(request.id, clientId)
+          if (activeClientId === undefined) {
+            activeClientId = clientId
+          } else if (activeClientId !== clientId) {
+            return Effect.fail(
+              new RpcClientError.RpcClientError({
+                reason: new RpcClientError.RpcClientDefect({
+                  message:
+                    'MessagePort RPC protocols support exactly one client',
+                  cause: new Error(
+                    'MessagePort RPC protocol was shared by multiple clients'
+                  ),
+                }),
+              })
+            )
           }
           return Effect.try({
             try: () => {
               port.postMessage(request, transferables as readonly unknown[])
             },
-            catch: (cause) => {
-              if (request._tag === 'Request') {
-                requestClients.delete(request.id)
-              }
-              return new RpcClientError.RpcClientError({
+            catch: (cause) =>
+              new RpcClientError.RpcClientError({
                 reason: new RpcClientError.RpcClientDefect({
                   message: 'Failed to send MessagePort request',
                   cause,
                 }),
-              })
-            },
+              }),
           })
         },
         supportsAck: false,

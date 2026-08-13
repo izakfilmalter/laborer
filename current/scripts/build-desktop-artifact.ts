@@ -119,15 +119,20 @@ const DIST_DIRS = {
   fileWatcherDist: join(REPO_ROOT, 'packages/file-watcher/dist'),
 }
 
-const REQUIRED_ASAR_FILES = [
-  'node_modules/@effect/platform-node/package.json',
-  'node_modules/@effect/platform-node-shared/package.json',
-  'node_modules/effect/package.json',
+const REQUIRED_EFFECT_RUNTIME_PACKAGES = [
+  'effect',
+  '@effect/platform-node',
   // The @effect/platform-node barrel eagerly loads NodeRedis, which imports
   // its required `ioredis` peer dependency at module load. If ioredis is
   // missing from the asar, every sidecar crash-loops at import time and the
   // renderer gets ERR_CONNECTION_REFUSED on the backend port.
-  'node_modules/ioredis/package.json',
+  'ioredis',
+] as const
+const OPTIONAL_EFFECT_RUNTIME_PACKAGES = [
+  '@effect/platform-node-shared',
+] as const
+
+const REQUIRED_ASAR_FILES = [
   'packages/server/dist/main.mjs',
   // The bundled server resolves task-db SQL migrations relative to the
   // bundle (`new URL('./migrations/*.sql', import.meta.url)`). If these are
@@ -213,6 +218,31 @@ function validateNoRemovedPersistencePayloads(
   throw new Error(
     `${label} contains removed persistence payloads: ${matches.slice(0, 20).join(', ')}`
   )
+}
+
+function resolveEffectRuntimeAsarMarkers(
+  productionNodeModules: string
+): readonly string[] {
+  const markerFor = (packageName: string) =>
+    `node_modules/${packageName}/package.json`
+  const packageJsonFor = (packageName: string) =>
+    join(productionNodeModules, packageName, 'package.json')
+
+  const missingRequired = REQUIRED_EFFECT_RUNTIME_PACKAGES.filter(
+    (packageName) => !existsSync(packageJsonFor(packageName))
+  )
+  if (missingRequired.length > 0) {
+    throw new Error(
+      `Staged production dependencies are missing Effect runtime packages: ${missingRequired.join(', ')}`
+    )
+  }
+
+  return [
+    ...REQUIRED_EFFECT_RUNTIME_PACKAGES.map(markerFor),
+    ...OPTIONAL_EFFECT_RUNTIME_PACKAGES.filter((packageName) =>
+      existsSync(packageJsonFor(packageName))
+    ).map(markerFor),
+  ]
 }
 
 function sleep(milliseconds: number): void {
@@ -485,7 +515,14 @@ function validatePackagedAsar(stageAppDir: string): void {
       .filter((line) => line.length > 0)
   )
 
-  const missing = REQUIRED_ASAR_FILES.filter((file) => !files.has(file))
+  // Derive the optional v4 payload marker from the production install that
+  // electron-builder actually packed. This avoids making the validator stale
+  // when platform-node stops installing platform-node-shared transitively.
+  const requiredFiles = [
+    ...resolveEffectRuntimeAsarMarkers(join(stageAppDir, 'node_modules')),
+    ...REQUIRED_ASAR_FILES,
+  ]
+  const missing = requiredFiles.filter((file) => !files.has(file))
   if (missing.length > 0) {
     throw new Error(
       `Packaged app.asar is missing runtime dependencies: ${missing.join(', ')}`

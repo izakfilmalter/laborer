@@ -33,10 +33,7 @@ import {
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
-import {
-  CreateWorkspaceForm,
-  type PendingWorkspaceCreationChangeHandler,
-} from '@/components/create-workspace-form'
+import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { TerminalList } from '@/components/terminal-list'
@@ -60,6 +57,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
+import type { PendingWorkspaceCreationChangeHandler } from '@/hooks/use-create-workspace'
 import {
   type ActiveTerminal,
   useDestroyWorkspaceChecks,

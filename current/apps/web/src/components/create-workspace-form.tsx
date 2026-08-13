@@ -1,14 +1,16 @@
 /**
- * Create Workspace form component.
+ * Create Sub-workspace form component.
  *
- * A dialog with a TanStack Form for creating a new workspace.
- * Fields: a single optional input (autofocused on open) that accepts either a
- * branch name or a Slack message/thread URL — the form detects which one was
- * entered and switches behavior accordingly.
- * On submit, calls the `workspace.create` mutation via AtomRpc.
+ * A dialog with a TanStack Form for creating a workspace that branches off an
+ * existing one. Fields: a single optional input (autofocused on open) that
+ * accepts either a branch name or a Slack message/thread URL — the form detects
+ * which one was entered and switches behavior accordingly.
  * The dialog closes immediately on submit while a temporary workspace item shows
  * Slack analysis and creation progress in the project sidebar. Success and failure
  * are reported with toasts after the background request completes.
+ *
+ * Creating a workspace at the project level is an inline sidebar composer
+ * instead — see `create-workspace-composer.tsx`.
  *
  * @see Issue #42: Create Workspace form
  * @see Issue #49: Workspace creation error display
@@ -16,14 +18,11 @@
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
  */
 
-import { useAtomSet } from '@effect/atom-react/Hooks'
 import { useForm } from '@tanstack/react-form'
-import { pipe, String as Str } from 'effect'
 import { GitBranch, Layers, Slack } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useId, useState } from 'react'
 import { IMaskInput } from 'react-imask'
-import { LaborerClient } from '@/atoms/laborer-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { Button } from '@/components/ui/button'
 import {
@@ -40,70 +39,21 @@ import { inputClassName } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  ALLOWED_INPUT_PATTERN,
+  isSlackUrlInput,
+  type PendingWorkspaceCreationChangeHandler,
+  type PendingWorkspaceCreationPhase,
+  toBranchName,
+  useCreateWorkspace,
+} from '@/hooks/use-create-workspace'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
-import { usePanelActions } from '@/panels/panel-context'
-
-const createWorkspaceMutation = LaborerClient.mutation('workspace.create')
-const planSlackWorkspaceMutation = LaborerClient.mutation(
-  'workspace.planFromSlack'
-)
-
-/** Characters the combined input accepts: branch-safe characters plus URL syntax. */
-const ALLOWED_INPUT_PATTERN = /^[a-zA-Z0-9\s\-_/.:?=&#%~+@]*$/
-const BRANCH_UNSAFE_PATTERN = /[^a-z0-9\-_/.]/g
-const HTTP_SCHEME_PATTERN = /^https?:\/\//i
-const URL_SCHEMES = ['https://', 'http://']
-/** Below this length a value is still ambiguous with a branch name like "ht". */
-const MIN_SCHEME_PREFIX_LENGTH = 4
-
-/**
- * True when the value should be treated as a Slack URL rather than a branch
- * name. Partial schemes ("http", "https:/") count so that normalization stops
- * mangling the value while a URL is still being typed.
- */
-const isSlackUrlInput = (value: string): boolean => {
-  const candidate = value.trim().toLowerCase()
-  if (candidate === '') {
-    return false
-  }
-  return (
-    HTTP_SCHEME_PATTERN.test(candidate) ||
-    candidate.includes('slack.com') ||
-    (candidate.length >= MIN_SCHEME_PREFIX_LENGTH &&
-      URL_SCHEMES.some((scheme) => scheme.startsWith(candidate)))
-  )
-}
-
-/** Slack URLs pasted without a scheme still need one for the planner. */
-const toSlackUrl = (value: string): string =>
-  HTTP_SCHEME_PATTERN.test(value) ? value : `https://${value}`
-
-const toBranchName = (value: string): string =>
-  pipe(
-    value,
-    Str.toLowerCase,
-    Str.replaceAll(' ', '-'),
-    Str.replace(BRANCH_UNSAFE_PATTERN, '')
-  )
 
 /** Strips the border/ring so the input blends into its InputGroup wrapper. */
 const inputGroupControlClassName =
   'flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent dark:bg-transparent dark:disabled:bg-transparent'
-
-type PendingWorkspaceCreationPhase = 'analyzing' | 'creating'
-
-interface PendingWorkspaceCreation {
-  readonly branchName: string | null
-  readonly id: string
-  readonly phase: PendingWorkspaceCreationPhase
-}
-
-type PendingWorkspaceCreationChangeHandler = (change: {
-  readonly creation: PendingWorkspaceCreation | null
-  readonly id: string
-}) => void
 
 interface CreateWorkspaceFormProps {
   /**
@@ -133,19 +83,11 @@ function CreateWorkspaceForm({
   trigger,
 }: CreateWorkspaceFormProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
-  const panelActions = usePanelActions()
-  const pendingCreationId = useId()
   const descriptionId = useId()
   const [open, setOpen] = useState(false)
-  const createWorkspace = useAtomSet(createWorkspaceMutation, {
-    mode: 'promise',
-  })
-  const planSlackWorkspace = useAtomSet(planSlackWorkspaceMutation, {
-    mode: 'promise',
-  })
-  const [submissionPhase, setSubmissionPhase] = useState<
-    'analyzing' | 'creating' | null
-  >(null)
+  const createWorkspace = useCreateWorkspace(onPendingCreationChange)
+  const [submissionPhase, setSubmissionPhase] =
+    useState<PendingWorkspaceCreationPhase | null>(null)
   const branchInputRef = useCallback((el: HTMLInputElement | null) => {
     if (el) {
       el.focus()
@@ -157,74 +99,26 @@ function CreateWorkspaceForm({
       branchNameOrSlackUrl: '',
     },
     onSubmit: async ({ value }) => {
-      const entered = value.branchNameOrSlackUrl.trim()
-      const slackUrl = isSlackUrlInput(entered) ? toSlackUrl(entered) : ''
-      let branchName = slackUrl ? '' : entered
-      let initialPrompt: string | undefined
-      const initialPhase: PendingWorkspaceCreationPhase = slackUrl
-        ? 'analyzing'
-        : 'creating'
-
-      setSubmissionPhase(initialPhase)
-      onPendingCreationChange?.({
-        creation: {
-          branchName: branchName || null,
-          id: pendingCreationId,
-          phase: initialPhase,
-        },
-        id: pendingCreationId,
-      })
       setOpen(false)
 
       try {
-        if (slackUrl) {
-          const plan = await planSlackWorkspace({
-            payload: { slackUrl },
-          })
-          branchName = plan.branchName
-          initialPrompt = plan.initialPrompt
-          onPendingCreationChange?.({
-            creation: {
-              branchName,
-              id: pendingCreationId,
-              phase: 'creating',
-            },
-            id: pendingCreationId,
-          })
-        }
-
-        setSubmissionPhase('creating')
-        const result = await createWorkspace({
-          payload: {
-            projectId,
-            ...(branchName ? { branchName } : {}),
-            ...(baseWorkspace ? { baseWorkspaceId: baseWorkspace.id } : {}),
-          },
+        // The RPC returns as soon as the workspace is accepted; the sidebar
+        // card shows setup progress from there via worktreeSetupStep.
+        const created = await createWorkspace({
+          branchNameOrSlackUrl: value.branchNameOrSlackUrl,
+          onPhaseChange: setSubmissionPhase,
+          projectId,
+          ...(baseWorkspace ? { baseWorkspaceId: baseWorkspace.id } : {}),
         })
-        if (initialPrompt === undefined) {
-          panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
-        } else {
-          panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id, {
-            initialPrompt,
-          })
-        }
-        // The RPC now returns immediately with status 'creating'.
-        // The workspace card will show setup progress via worktreeSetupStep.
         toast.success(
-          slackUrl
-            ? `Workspace "${result.branchName}" is being set up with its Slack prompt`
-            : `Workspace "${result.branchName}" is being set up`
+          created.fromSlack
+            ? `Workspace "${created.branchName}" is being set up with its Slack prompt`
+            : `Workspace "${created.branchName}" is being set up`
         )
       } catch (error: unknown) {
-        const message = extractErrorMessage(error)
-        toast.error(message)
+        toast.error(extractErrorMessage(error))
       } finally {
-        onPendingCreationChange?.({
-          creation: null,
-          id: pendingCreationId,
-        })
         form.reset()
-        setSubmissionPhase(null)
       }
     },
   })
@@ -377,8 +271,4 @@ function CreateWorkspaceForm({
 }
 
 export { CreateWorkspaceForm }
-export type {
-  CreateWorkspaceFormProps,
-  PendingWorkspaceCreation,
-  PendingWorkspaceCreationChangeHandler,
-}
+export type { CreateWorkspaceFormProps }

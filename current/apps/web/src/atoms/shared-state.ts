@@ -21,6 +21,12 @@ import {
   type TaskEditOverlay,
   type TaskEditOverlays,
 } from './optimistic-task-writes'
+import {
+  applyProjectRankOverlays,
+  projectRankOverlaysAtom,
+  settleProjectRankOverlays,
+  sortProjectsByRank,
+} from './project-order'
 
 export interface AuthoritativeTable<Row> {
   readonly cursor: number
@@ -363,6 +369,13 @@ export const installSharedStateUpdateAtom = Atom.writable(
     if (removeOverlays !== context.get(projectRemoveOverlaysAtom)) {
       context.set(projectRemoveOverlaysAtom, removeOverlays)
     }
+    const rankOverlays = settleProjectRankOverlays(
+      context.get(projectRankOverlaysAtom),
+      state.projects.rows
+    )
+    if (rankOverlays !== context.get(projectRankOverlaysAtom)) {
+      context.set(projectRankOverlaysAtom, rankOverlays)
+    }
     const mutationIds =
       update.tasks?.type === 'delta' ? (update.tasks.mutationIds ?? []) : []
     if (mutationIds.length === 0) {
@@ -477,10 +490,19 @@ export const taskRowsAtom = Atom.make((get) => {
   })
   return applyTaskEditOverlays(moved, get(taskEditOverlaysAtom))
 })
+/**
+ * Every project surface reads this, so the manual order is applied once: the
+ * ranks a drag is promising win over the stored ones, and the same comparator
+ * the server uses turns both into the order on screen.
+ */
 export const projectRowsAtom = Atom.make((get) => {
   const removing = get(projectRemoveOverlaysAtom)
   const rows = get(authoritativeProjectsAtom).rows
-  return removing.size === 0 ? rows : rows.filter(({ id }) => !removing.has(id))
+  const visible =
+    removing.size === 0 ? rows : rows.filter(({ id }) => !removing.has(id))
+  return sortProjectsByRank(
+    applyProjectRankOverlays(visible, get(projectRankOverlaysAtom))
+  )
 })
 /** Legacy renderer shape while workspace surfaces still call the root repoPath. */
 export const projectViewsAtom = Atom.make((get) =>

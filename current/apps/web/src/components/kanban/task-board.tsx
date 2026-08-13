@@ -81,6 +81,12 @@ import {
   WorktreeChip,
 } from '@/components/kanban/worktree-affordance'
 import {
+  ProjectDragHandle,
+  ProjectDropIndicator,
+  useProjectDragItem,
+  useProjectReorderMonitor,
+} from '@/components/project-reorder'
+import {
   Kanban,
   KanbanBoard,
   KanbanColumn,
@@ -746,6 +752,76 @@ function AddCardComposer({
         onClose={onClose}
         placeholder="Title, or paste a Slack link"
       />
+    </div>
+  )
+}
+
+/**
+ * A lane's project heading: collapse toggle, card count, and the grab area
+ * that reorders the project. Lane order is the shared project order, so a
+ * lane dragged here also moves in the sidebar.
+ */
+function ProjectLane({
+  children,
+  count,
+  expanded,
+  index,
+  onToggle,
+  project,
+  reorderEnabled,
+}: {
+  readonly children: React.ReactNode
+  readonly count: number
+  readonly expanded: boolean
+  readonly index: number
+  readonly onToggle: () => void
+  readonly project: { readonly id: string; readonly name: string }
+  readonly reorderEnabled: boolean
+}) {
+  const laneRef = useRef<HTMLDivElement | null>(null)
+  const headingRef = useRef<HTMLDivElement | null>(null)
+  const { closestEdge, isDragging } = useProjectDragItem({
+    dragHandleRef: headingRef,
+    elementRef: laneRef,
+    enabled: reorderEnabled,
+    index,
+    projectId: project.id,
+    surface: 'board',
+  })
+
+  return (
+    <div
+      className={cn(
+        'group/project relative flex flex-col gap-1.5 transition-opacity',
+        isDragging && 'opacity-40'
+      )}
+      ref={laneRef}
+    >
+      <ProjectDropIndicator edge={closestEdge} />
+      <div className="flex w-fit items-center gap-1" ref={headingRef}>
+        <ProjectDragHandle
+          disabled={!reorderEnabled}
+          projectId={project.id}
+          projectName={project.name}
+        />
+        <Button
+          className="h-8 justify-start gap-2 px-2"
+          onClick={onToggle}
+          variant="ghost"
+        >
+          {expanded ? (
+            <ChevronDown className="size-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-4 text-muted-foreground" />
+          )}
+          <FolderGit2 className="size-4 text-muted-foreground" />
+          <span className="truncate font-medium text-sm">{project.name}</span>
+          <span className="text-muted-foreground text-sm tabular-nums">
+            {count}
+          </span>
+        </Button>
+      </div>
+      {children}
     </div>
   )
 }
@@ -1421,6 +1497,8 @@ function TaskBoard({
   const taskMutationReceipt = useAtomValue(taskMutationReceiptAtom)
   const workspaceList = useAtomValue(workspaceViewsAtom)
   const panelActions = usePanelActions()
+  // Commits lane drags; the sidebar owns its own monitor.
+  useProjectReorderMonitor('board')
   const [searchQuery, setSearchQuery] = useState('')
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -1770,29 +1848,19 @@ function TaskBoard({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
-          {lanes.map(({ project, visibleTasks }) => {
+          {lanes.map(({ project, visibleTasks }, laneIndex) => {
             const expanded = searching || collapseState.isExpanded(project.id)
 
             return (
-              <div className="flex flex-col gap-1.5" key={project.id}>
-                <Button
-                  className="h-8 w-fit justify-start gap-2 px-2"
-                  onClick={() => collapseState.toggle(project.id)}
-                  variant="ghost"
-                >
-                  {expanded ? (
-                    <ChevronDown className="size-4 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="size-4 text-muted-foreground" />
-                  )}
-                  <FolderGit2 className="size-4 text-muted-foreground" />
-                  <span className="truncate font-medium text-sm">
-                    {project.name}
-                  </span>
-                  <span className="text-muted-foreground text-sm tabular-nums">
-                    {visibleTasks.length}
-                  </span>
-                </Button>
+              <ProjectLane
+                count={visibleTasks.length}
+                expanded={expanded}
+                index={laneIndex}
+                key={project.id}
+                onToggle={() => collapseState.toggle(project.id)}
+                project={project}
+                reorderEnabled={!searching}
+              >
                 {expanded && (
                   <LaneBoard
                     attachedTaskId={attachedTerminal?.taskId ?? null}
@@ -1815,7 +1883,7 @@ function TaskBoard({
                     workspaceForCard={(task) => workspaceForCard(task, project)}
                   />
                 )}
-              </div>
+              </ProjectLane>
             )
           })}
           {searching && lanes.length === 0 && (

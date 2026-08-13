@@ -27,7 +27,7 @@ afterEach(() => {
 describe('NativeLaborerDatabase', () => {
   it('migrates memory databases and covers all shared rows', () => {
     const database = NativeLaborerDatabase.open(':memory:')
-    expect(database.migrationNames()).toHaveLength(7)
+    expect(database.migrationNames()).toHaveLength(8)
 
     const task = database.insertTask(
       {
@@ -230,6 +230,106 @@ describe('NativeLaborerDatabase', () => {
     ).toThrow(LaborerDatabaseStaleRevisionError)
     expect(database.findSetting('github_desktop_token')?.value).toBe('secret')
     expect(database.stateChangesAfter(0)).toHaveLength(1)
+    database.close()
+  })
+
+  it('orders projects by rank, falling back to creation time', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    const add = (id: string, createdAt: number) =>
+      database.insertProject(
+        {
+          id,
+          name: id,
+          rootPath: `/${id}`,
+          repoId: id,
+          canonicalGitCommonDir: `/${id}/.git`,
+          createdAt,
+        },
+        null,
+        createdAt
+      ).row
+
+    const first = add('project-1', 100)
+    const second = add('project-2', 200)
+    add('project-3', 300)
+
+    // An untouched install looks exactly as it did before the column existed.
+    expect(database.listProjects().map(({ id }) => id)).toEqual([
+      'project-1',
+      'project-2',
+      'project-3',
+    ])
+    expect(database.listProjects().map(({ sortOrder }) => sortOrder)).toEqual([
+      null,
+      null,
+      null,
+    ])
+
+    // Ranking one project mixes it in against the others' creation times.
+    database.moveProject(second.id, second.revision, 50, 'move-up', 400)
+    expect(database.listProjects().map(({ id }) => id)).toEqual([
+      'project-2',
+      'project-1',
+      'project-3',
+    ])
+
+    database.moveProject(first.id, first.revision, 350, 'move-down', 500)
+    expect(database.listProjects().map(({ id }) => id)).toEqual([
+      'project-2',
+      'project-3',
+      'project-1',
+    ])
+
+    // Clearing a rank returns the project to its creation slot.
+    const ranked = database.findProject(first.id)
+    database.moveProject(first.id, ranked?.revision ?? 0, null, 'unrank', 600)
+    expect(database.listProjects().map(({ id }) => id)).toEqual([
+      'project-2',
+      'project-1',
+      'project-3',
+    ])
+    database.close()
+  })
+
+  it('CAS-guards a project move and records its mutation id', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    const project = database.insertProject(
+      {
+        id: 'project-1',
+        name: 'Laborer',
+        rootPath: '/repo',
+        repoId: 'repo-1',
+        canonicalGitCommonDir: '/repo/.git',
+      },
+      'project-insert',
+      10
+    ).row
+
+    const moved = database.moveProject(
+      project.id,
+      project.revision,
+      12.5,
+      'project-move',
+      20
+    )
+    expect(moved).toMatchObject({
+      cursor: 2,
+      row: { revision: 2, sortOrder: 12.5 },
+    })
+
+    // A stale drag must lose rather than overwrite the winning rank.
+    expect(() =>
+      database.moveProject(project.id, project.revision, 99, 'stale', 30)
+    ).toThrow(LaborerDatabaseStaleRevisionError)
+    expect(database.findProject(project.id)?.sortOrder).toBe(12.5)
+
+    // The renderer settles its optimistic rank on these ids.
+    expect(
+      database.stateChangesAfter(0).map(({ mutationId }) => mutationId)
+    ).toEqual(['project-insert', 'project-move'])
+    expect(database.stateUpdatesAfter(1)?.projects.mutationIds).toEqual([
+      'project-move',
+    ])
     database.close()
   })
 

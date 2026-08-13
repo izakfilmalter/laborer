@@ -26,8 +26,6 @@ import { basename, join } from 'node:path'
 import type { ElectronApplication, Page } from '@playwright/test'
 import { expect } from './test-fixtures.js'
 
-const CREATE_WORKSPACE_RE = /Create Workspace/
-
 /**
  * Read the temp repo path from the global setup state file.
  *
@@ -225,34 +223,25 @@ export async function addProjectAndCreateWorkspace(
   // Add the project
   const projectName = await addProject(electronApp, page)
 
-  // Create workspace via the per-project "+" button
+  // Create workspace via the per-project "+" button, which opens an inline
+  // composer under the project heading.
   await page
     .getByRole('button', {
       name: `Create workspace in ${projectName}`,
     })
     .click()
 
-  const dialogTitle = page.getByRole('heading', {
-    name: 'Create Workspace',
+  const composerInput = page.getByRole('textbox', {
+    name: `Branch name or Slack URL for ${projectName}`,
   })
-  await expect(dialogTitle).toBeVisible({ timeout: 10_000 })
+  await expect(composerInput).toBeVisible({ timeout: 10_000 })
 
   // Always fill in the branch name so we can reliably reference it in tests
-  await page
-    .getByRole('textbox', { name: 'Branch Name or Slack URL (optional)' })
-    .fill(resolvedBranch)
+  await composerInput.fill(resolvedBranch)
+  await composerInput.press('Enter')
 
-  await page.getByRole('button', { name: CREATE_WORKSPACE_RE }).click()
-
-  // Wait for the success toast which confirms the RPC completed and the
-  // dialog is about to close. This is more reliable than waiting for the
-  // dialog to close because the toast fires after the RPC resolves.
-  await expect(page.getByText('is being set up', { exact: false })).toBeVisible(
-    { timeout: 30_000 }
-  )
-
-  // Wait for the dialog to close
-  await expect(dialogTitle).not.toBeVisible({ timeout: 10_000 })
+  // The composer clears itself and stays open once the creation is committed.
+  await expect(composerInput).toHaveValue('', { timeout: 10_000 })
 
   // Wait for the workspace card to appear in the sidebar.
   // the server state stream may lag behind the RPC response, so give it time.

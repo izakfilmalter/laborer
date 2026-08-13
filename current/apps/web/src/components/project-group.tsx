@@ -11,18 +11,18 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
-import { ChevronRight, FolderGit2, Plus, Trash2 } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { ChevronRight, FolderGit2, Trash2 } from 'lucide-react'
+import { useCallback, useId, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearProjectRemoveOverlayAtom,
   installProjectRemoveOverlayAtom,
 } from '@/atoms/shared-state'
 import {
-  CreateWorkspaceForm,
-  type PendingWorkspaceCreation,
-  type PendingWorkspaceCreationChangeHandler,
-} from '@/components/create-workspace-form'
+  type ComposerCloseReason,
+  CreateWorkspaceButton,
+  CreateWorkspaceComposer,
+} from '@/components/create-workspace-composer'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
 import {
@@ -42,13 +42,16 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { DialogTrigger } from '@/components/ui/dialog'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { WorkspaceList } from '@/components/workspace-list'
+import type {
+  PendingWorkspaceCreation,
+  PendingWorkspaceCreationChangeHandler,
+} from '@/hooks/use-create-workspace'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { toast } from '@/lib/toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
@@ -68,10 +71,14 @@ interface ProjectGroupProps {
 function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
   const [pendingWorkspaceCreations, setPendingWorkspaceCreations] = useState<
     readonly PendingWorkspaceCreation[]
   >([])
   const pendingCreationIdsRef = useRef(new Set<string>())
+  const groupId = useId()
+  const composerId = `${groupId}-composer`
+  const addButtonId = `${groupId}-add`
   const removeProject = useAtomSet(removeProjectMutation, {
     mode: 'promise',
   })
@@ -108,6 +115,22 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
       [expanded, onToggle]
     )
 
+  const toggleComposer = () => {
+    const nextOpen = !composerOpen
+    setComposerOpen(nextOpen)
+    // Opening the composer reveals where its workspace will land.
+    if (nextOpen && !expanded) {
+      onToggle()
+    }
+  }
+
+  const closeComposer = (reason: ComposerCloseReason) => {
+    setComposerOpen(false)
+    if (reason === 'cancel') {
+      document.getElementById(addButtonId)?.focus()
+    }
+  }
+
   const handleRemove = () => {
     // Optimistic: the group leaves the sidebar as soon as removal is
     // confirmed. The overlay settles when the authoritative project row is
@@ -143,37 +166,13 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
           <span className="min-w-0 truncate">{project.name}</span>
         </CollapsibleTrigger>
         <div className="flex shrink-0 items-center gap-0.5">
-          <CreateWorkspaceForm
-            onPendingCreationChange={handlePendingCreationChange}
-            projectId={project.id}
+          <CreateWorkspaceButton
+            composerId={composerId}
+            disabled={!isServerReady}
+            id={addButtonId}
+            onToggle={toggleComposer}
+            open={composerOpen}
             projectName={project.name}
-            trigger={
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <DialogTrigger
-                      render={
-                        <Button
-                          aria-label={`Create workspace in ${project.name}`}
-                          className="h-7 w-7"
-                          disabled={!isServerReady}
-                          size="icon-sm"
-                          title={
-                            isServerReady
-                              ? undefined
-                              : 'Connecting to server...'
-                          }
-                          variant="ghost"
-                        />
-                      }
-                    />
-                  }
-                >
-                  <Plus className="size-3.5 text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>Create Workspace</TooltipContent>
-              </Tooltip>
-            }
           />
           <ProjectSettingsModal
             projectId={project.id}
@@ -223,6 +222,18 @@ function ProjectGroup({ project, expanded, onToggle }: ProjectGroupProps) {
           </AlertDialog>
         </div>
       </div>
+      {composerOpen && (
+        // Outside the collapsible so the composer survives a collapse mid-typing.
+        <div className="ml-2 border-l pl-2">
+          <CreateWorkspaceComposer
+            composerId={composerId}
+            onClose={closeComposer}
+            onPendingCreationChange={handlePendingCreationChange}
+            projectId={project.id}
+            projectName={project.name}
+          />
+        </div>
+      )}
       <CollapsibleContent>
         <div className="mt-1 ml-2 border-l pl-2">
           <WorkspaceList

@@ -30,11 +30,7 @@ import { ChevronRight, GitBranch, GitBranchPlus } from 'lucide-react'
 import { useMemo } from 'react'
 import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
-import {
-  CreateWorkspaceForm,
-  type PendingWorkspaceCreation,
-  type PendingWorkspaceCreationChangeHandler,
-} from '@/components/create-workspace-form'
+import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -60,6 +56,10 @@ import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
+import type {
+  PendingWorkspaceCreation,
+  PendingWorkspaceCreationChangeHandler,
+} from '@/hooks/use-create-workspace'
 import {
   type CollapseState,
   useWorkspaceGroupCollapseState,

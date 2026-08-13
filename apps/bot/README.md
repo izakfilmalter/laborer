@@ -1,7 +1,7 @@
-# Slack-native Laborer
+# Laborer bot
 
-`apps/bot/` is Laborer's primary Slack-native implementation, package
-`@laborer/bot`. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
+`apps/bot/` is Laborer's Slack bridge and local runtime, named `@laborer/bot` in
+the monorepo. Vercel Chat SDK (`chat` + `@chat-adapter/slack`) is the
 entire Slack plane: Socket Mode ingestion, normalization, routing, activation,
 subscription, delivery, streaming, and Block Kit permission UI. One Slack
 adapter serves every configured workspace through an `installationProvider`
@@ -23,6 +23,10 @@ are best effort and at-most-once; a truncated stream is not resumed and a lost
 permission click is clicked again. There is no conversational replay scheduler
 or durable Slack outbox. Action/Execution durability is independent of those
 messaging semantics.
+
+The app also contains a macOS companion that observes and controls the
+launchd-owned daemon through a versioned local protocol. The companion is a
+client: closing it does not stop ongoing work.
 
 ## Configure
 
@@ -61,6 +65,16 @@ Action/Execution runtime uses its partition's `runtime.sqlite`. Pre-Chat runtime
 state is deleted at cutover, not imported or archived; affected Slack threads
 activate again by mention.
 
+Durable Soul, Workspace-memory, and User-profile Markdown lives separately
+under `$XDG_CONFIG_HOME/laborer` (defaulting to `~/.config/laborer`). Laborer
+partitions Soul context by canonical Laborer-root identity and partitions
+Workspace memory and User profiles by authenticated Slack workspace.
+
+Implementation Actions inherit the user's OpenCode permission policy. Laborer
+does not add wildcard allows when creating implementation sessions; when it
+resumes a historical session, it removes only exact wildcard-allow entries
+installed by the retired adapter and preserves every other ordered rule.
+
 ## Stable installed identities
 
 The source package is `@laborer/bot`, but already installed external
@@ -74,16 +88,16 @@ identity and are deleted.
 
 ## Run
 
-From the repository root:
+From the repository root, start the daemon with the root alias:
 
 ```sh
-bun run --cwd apps/bot start:slack
+bun run start:bot
 ```
 
 For development, use plain Node watch restart:
 
 ```sh
-bun run --cwd apps/bot dev:slack
+bun run dev:bot
 ```
 
 A restart does not drain or replay in-flight conversational work. Changes to

@@ -5,7 +5,7 @@ Laborer turns Slack conversations into invocations of user-controlled local prog
 ## Language
 
 **Laborer**:
-The generic bridge that accepts work through Slack, invokes user-controlled local programs, and carries their deliberate replies back to the conversation. Laborer does not own the meaning or workflow of the work. The new Slack-native Laborer supersedes the legacy personal mission-control app.
+The generic bridge that accepts work through Slack, invokes user-controlled local programs, and carries their deliberate replies back to the conversation. Laborer does not own the meaning or workflow of the work. Its Slack runtime and mission-control surfaces are cooperating parts of one product.
 
 **Laborer Slack app**:
 Laborer's conversational identity in Slack. People mention it in a conversation and receive its updates there.
@@ -111,11 +111,11 @@ Net-new or intentionally changed behavior.
 **Agent session**:
 A durable conversational identity managed by the ACP Conversation runtime. The current conversation agent binds one agent session to each work thread and resumes it across daemon restarts.
 
-**Legacy Laborer app**:
-The personal mission-control app being superseded. The remaining workspace, terminal, and panel vocabulary below describes this legacy app and may be reused by registered coding applications.
+**Laborer mission control**:
+The desktop and web surfaces for managing local coding Workspaces and observing their terminals, diffs, files, and tasks. The remaining Workspace, terminal, and panel vocabulary describes mission control and may be reused by registered coding applications.
 
 **Project**:
-A git repository registered in the Legacy Laborer app. Owns workspaces.
+A git repository registered in Laborer mission control. Owns Workspaces.
 
 **Workspace**:
 An isolated working environment for a branch, backed by a git worktree, with its own terminals and PR tracking.
@@ -176,7 +176,7 @@ _Avoid_: Calling detached or restored terminals orphans
 
 **Agent status**:
 The semantic state of the agent running in a terminal: working, needs input, idle, or unknown. An agent error surfaces as needs input.
-_Avoid_: Active, waiting-for-input (the legacy two-value signal)
+_Avoid_: Active, waiting-for-input (the former two-value signal)
 
 **Seen**:
 Whether the operator has viewed a terminal since its agent last became idle. Viewing the terminal's workspace in a focused window marks it seen.

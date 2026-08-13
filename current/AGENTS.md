@@ -26,13 +26,13 @@ Run commands from the repository root:
 
 ## Effect 4
 
-`current/` and `next/` pin the same exact Effect 4 beta versions. Treat `next/package.json` as the lockstep source of truth: do not bump or independently select an Effect package in `current/`.
+`current/` and `next/` pin their shared Effect 4 beta packages in lockstep. `current/package.json` is authoritative for the packages used by this implementation; compare shared package versions with `next/package.json` and do not bump them independently.
 
 Before writing or reviewing Effect code:
 
 1. Run `effect-solutions list`.
 2. Read the relevant guides with `effect-solutions show <topic>...`.
-3. Verify examples against the installed version and existing `next/` usage; the guides may lag beta API changes.
-4. Search `@effect` for implementations and tests at the pinned version rather than guessing an API.
+3. Verify examples against `current/package.json`, installed types, and existing `current/` and `next/` usage; the guides may lag beta API changes.
+4. Search `@effect` for implementations and tests, then reconcile them with the installed version rather than guessing an API.
 
 Where Effect 4 requires a new shape, follow `next/` conventions: narrow named `Context.Service` contracts, explicit `Layer` composition, scoped acquisition and finalization, `Schema` codecs at untrusted or persisted boundaries, `Schema.TaggedError` classes for expected failures, injected and redacted config, and `@effect/vitest` Effect tests. Use only established `effect/unstable/*` imports. Otherwise preserve the existing shape rather than modernizing unrelated code.

@@ -399,7 +399,6 @@ Playwright tests run against the full stack (server + web app). They spin up the
 
 ### Issue Tracking
 
-Implementation issues derived from this PRD are tracked in two files:
+Implementation issues derived from this PRD are tracked in:
 
 - **[issues.md](./issues.md)** — Remaining issues (Ready / Blocked)
-- **[issues-done.md](./issues-done.md)** — Completed issues (Done)

@@ -20,7 +20,6 @@
  * construction. This allows the server to start and serve health checks
  * without waiting for the file-watcher utility process to be ready.
  *
- * @see PRD-file-watcher-extraction.md
  * @see Issue #14: File-watcher as utility process
  * @see Issue #20: Build script update + port reservation removal
  */

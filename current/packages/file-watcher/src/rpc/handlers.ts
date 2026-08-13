@@ -9,7 +9,6 @@
  * file-watcher service's `main.ts` via `RpcServer.layer(FileWatcherRpcs)`
  * at `POST /rpc`.
  *
- * @see PRD-file-watcher-extraction.md
  */
 
 import { FileWatcherRpcs } from '@laborer/shared/rpc'

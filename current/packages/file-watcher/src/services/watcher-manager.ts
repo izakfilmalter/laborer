@@ -13,7 +13,6 @@
  * - Expose a PubSub for the RPC streaming endpoint
  * - Track active subscriptions for listing
  *
- * @see PRD-file-watcher-extraction.md
  */
 
 import { existsSync } from 'node:fs'

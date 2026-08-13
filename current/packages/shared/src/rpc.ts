@@ -1026,7 +1026,6 @@ export class LaborerRpcs extends RpcGroup.make(
 // service. Defined here in @laborer/shared so both @laborer/server and
 // @laborer/file-watcher can import the same types.
 //
-// @see PRD-file-watcher-extraction.md
 // ---------------------------------------------------------------------------
 
 /**
@@ -1088,7 +1087,6 @@ export type WatchFileEvent = typeof WatchFileEvent.Type
  * - `watcher.list` — list all active subscriptions
  * - `watcher.events` — streaming endpoint pushing file change events
  *
- * @see PRD-file-watcher-extraction.md
  */
 export class FileWatcherRpcs extends RpcGroup.make(
   // -----------------------------------------------------------------------

@@ -36,6 +36,11 @@
     "t3code": {
       "repository": "pingdotgg/t3code",
       "description": "Use for T3 Code architecture, implementation patterns, tests, and examples"
+    },
+    "vscode": {
+      "repository": "microsoft/vscode",
+      "branch": "main",
+      "description": "Use for VS Code architecture, extension APIs, implementation patterns, tests, and examples"
     }
   }
 }

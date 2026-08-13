@@ -166,7 +166,7 @@ class PrWatcher extends Context.Service<
             // The directory may have disappeared between the existence check
             // and spawn. Treat that like the pre-spawn missing-path case.
             if (!existsSync(worktreePath)) {
-              return Effect.succeed(undefined)
+              return Effect.void
             }
 
             return Effect.logWarning(

@@ -19,6 +19,7 @@ import type { FullConfig } from '@playwright/test'
 const STATE_FILE = join(tmpdir(), 'laborer-e2e-state.json')
 
 interface SetupState {
+  readonly daemonPort: number
   readonly tempRepoDir: string
 }
 

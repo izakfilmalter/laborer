@@ -15,6 +15,7 @@
     ".": "./src/utility-main.ts",
     "./rpc/handlers": "./src/rpc/handlers.ts",
     "./services/pty-direct": "./src/services/pty-direct.ts",
+    "./services/terminal-session-persistence-layer": "./src/services/terminal-session-persistence-layer.ts",
     "./services/terminal-manager": "./src/services/terminal-manager.ts"
   },
   "dependencies": {

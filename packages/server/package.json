@@ -34,7 +34,8 @@
     "diff": "7.0.0",
     "effect": "catalog:",
     "ignore": "7.0.5",
-    "ioredis": "catalog:"
+    "ioredis": "catalog:",
+    "node-pty": "1.1.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

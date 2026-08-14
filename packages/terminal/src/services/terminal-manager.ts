@@ -2499,6 +2499,21 @@ class TerminalManager extends Context.Service<
         }
 
         revivedReplayEvents.set(terminalId, replayEvent)
+        const firstFrame = replayEvent.events[0]
+        if (firstFrame !== undefined) {
+          // Revival starts a replacement PTY, but its renderer-facing history
+          // must begin at the checkpoint rather than at the replacement
+          // shell's fresh prompt. Rehydrate the same headless/journal path
+          // used by live output so WebSocket attaches and legacy data channels
+          // observe one tier-iii history.
+          headlessManager.dispose(terminalId)
+          headlessManager.create(terminalId, firstFrame.cols, firstFrame.rows)
+          const state = getOrCreateSubscriberState(terminalId)
+          for (const frame of replayEvent.events) {
+            headlessManager.resize(terminalId, frame.cols, frame.rows)
+            processOutput(terminalId, frame.data, state)
+          }
+        }
       })
 
       const takeRevivedReplayEvent = Effect.fn(

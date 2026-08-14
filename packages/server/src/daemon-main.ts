@@ -7,6 +7,7 @@ import { DaemonRpcs } from '@laborer/shared/rpc'
 import { TerminalRpcsLive } from '@laborer/terminal/rpc/handlers'
 import { directLayer as PtyDirectLayer } from '@laborer/terminal/services/pty-direct'
 import { TerminalManager } from '@laborer/terminal/services/terminal-manager'
+import { TerminalSessionPersistenceLayer } from '@laborer/terminal/services/terminal-session-persistence-layer'
 import { Effect, Layer, SubscriptionRef } from 'effect'
 import { HttpRouter, HttpServerResponse } from 'effect/unstable/http'
 import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
@@ -31,10 +32,13 @@ const parsePort = (value: string | undefined): number => {
   return port
 }
 
-const TerminalServices = Layer.merge(
-  TerminalManager.layer,
-  PtyDirectLayer
-).pipe(Layer.provide(PtyDirectLayer))
+const TerminalCore = Layer.merge(TerminalManager.layer, PtyDirectLayer).pipe(
+  Layer.provide(PtyDirectLayer)
+)
+
+const TerminalServices = TerminalSessionPersistenceLayer.pipe(
+  Layer.provideMerge(TerminalCore)
+)
 
 const FileWatcherServices = Layer.merge(
   WatcherManager.layer,
@@ -94,7 +98,14 @@ export const makeDaemonServerLayer = (port: number) =>
     Layer.provide(ApplicationServices),
     Layer.provide(RpcSerialization.layerJson),
     Layer.provide(
-      NodeHttpServer.layer(createServer, { host: DAEMON_HOST, port })
+      NodeHttpServer.layer(createServer, {
+        // A daemon restart must checkpoint native services even while browser
+        // WebSockets remain open. Do not hold all layer finalizers behind the
+        // HTTP server's default 20-second graceful-close budget.
+        gracefulShutdownTimeout: 0,
+        host: DAEMON_HOST,
+        port,
+      })
     )
   )
 

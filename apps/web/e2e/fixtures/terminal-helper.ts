@@ -34,14 +34,13 @@ export class TerminalHelper {
 
   /** Focus a terminal pane before typing. */
   async focusTerminal(index = 0): Promise<Locator> {
-    const terminalInput = this.terminalInputs.nth(index)
-    if ((await terminalInput.count()) > 0) {
-      await terminalInput.focus()
-      return terminalInput
-    }
-
     const terminal = this.terminalPanes.nth(index)
-    await terminal.click()
+    await terminal.evaluate((element) => {
+      const xterm = Reflect.get(element, 'xterm') as
+        | { focus(): void }
+        | undefined
+      xterm?.focus()
+    })
     return terminal
   }
 
@@ -61,10 +60,38 @@ export class TerminalHelper {
    * Uses a generous timeout since PTY initialization can be slow.
    */
   async waitForOutput(text: string, timeoutMs = 10_000): Promise<Locator> {
-    const output = this.page.getByText(text, { exact: false }).first()
-    await expect(output).toBeVisible({
-      timeout: timeoutMs,
+    const terminal = this.terminalPanes.first()
+    await expect
+      .poll(() => this.bufferText(terminal), { timeout: timeoutMs })
+      .toContain(text)
+    return terminal
+  }
+
+  /** Read the live xterm buffer, independent of its WebGL/canvas renderer. */
+  bufferText(terminal = this.terminalPanes.first()): Promise<string> {
+    return terminal.evaluate((element) => {
+      const xterm = Reflect.get(element, 'xterm') as
+        | {
+            readonly buffer: {
+              readonly active: {
+                readonly length: number
+                getLine(
+                  index: number
+                ): { translateToString(trimRight: boolean): string } | undefined
+              }
+            }
+          }
+        | undefined
+      if (!xterm) {
+        return ''
+      }
+      const lines: string[] = []
+      for (let index = 0; index < xterm.buffer.active.length; index += 1) {
+        lines.push(
+          xterm.buffer.active.getLine(index)?.translateToString(true) ?? ''
+        )
+      }
+      return lines.join('\n')
     })
-    return output
   }
 }

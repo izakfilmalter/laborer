@@ -600,6 +600,7 @@ function TerminalPaneRenderer({
   } = connection
   const resizeTerminal = useAtomSet(resizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
+  const terminalElementRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
@@ -970,6 +971,9 @@ function TerminalPaneRenderer({
     })
 
     terminalRef.current = terminal
+    if (import.meta.env.DEV && terminalElementRef.current) {
+      Reflect.set(terminalElementRef.current, 'xterm', terminal)
+    }
 
     // Attach fit addon for responsive sizing
     const fitAddon = new FitAddon()
@@ -1181,6 +1185,9 @@ function TerminalPaneRenderer({
       onDataDisposable.dispose()
       onTitleChangeDisposable.dispose()
       terminal.dispose()
+      if (terminalElementRef.current) {
+        Reflect.deleteProperty(terminalElementRef.current, 'xterm')
+      }
       searchAddonRef.current = null
       terminalRef.current = null
       fitAddonRef.current = null
@@ -1237,6 +1244,7 @@ function TerminalPaneRenderer({
     <div
       className="relative h-full w-full overflow-hidden"
       data-terminal-id={terminalId}
+      ref={terminalElementRef}
     >
       {/* xterm.js container */}
       <div className="h-full w-full" ref={containerRef} />
@@ -1442,7 +1450,10 @@ function TerminalLoadingOverlay({ message }: { readonly message: string }) {
 /** Banner shown when the data channel is disconnected but the terminal is still running. */
 function DisconnectedBanner() {
   return (
-    <div className="absolute inset-x-0 top-0 border-destructive/50 border-b bg-destructive/10 px-3 py-1 text-center text-destructive text-xs backdrop-blur-sm">
+    <div
+      className="absolute inset-x-0 top-0 border-destructive/50 border-b bg-destructive/10 px-3 py-1 text-center text-destructive text-xs backdrop-blur-sm"
+      data-testid="terminal-connection-status"
+    >
       Disconnected — reconnecting...
     </div>
   )
@@ -1451,7 +1462,10 @@ function DisconnectedBanner() {
 /** Banner shown while the data channel is connecting. */
 function ReconnectingBanner() {
   return (
-    <div className="absolute inset-x-0 top-0 border-warning/50 border-b bg-warning/10 px-3 py-1 text-center text-warning text-xs backdrop-blur-sm">
+    <div
+      className="absolute inset-x-0 top-0 border-warning/50 border-b bg-warning/10 px-3 py-1 text-center text-warning text-xs backdrop-blur-sm"
+      data-testid="terminal-connection-status"
+    >
       Connecting...
     </div>
   )

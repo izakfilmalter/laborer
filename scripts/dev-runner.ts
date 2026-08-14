@@ -173,6 +173,71 @@ interface ChildDefinition {
   readonly label: string
 }
 
+interface RunningDevChild {
+  readonly definition: ChildDefinition
+  readonly process: {
+    readonly exited: Promise<number>
+    kill(signal?: NodeJS.Signals | number): unknown
+  }
+}
+
+const killChildren = (
+  children: readonly RunningDevChild[],
+  signal: NodeJS.Signals
+) => {
+  for (const child of children) {
+    try {
+      child.process.kill(signal)
+    } catch {
+      // The child may have exited between observation and cleanup.
+    }
+  }
+}
+
+/**
+ * Treat every child as required: once one exits, stop its siblings rather than
+ * waiting forever for watch processes that can no longer provide a usable dev
+ * environment. Escalate cleanup so Ctrl-C and startup failures stay bounded.
+ */
+export const superviseDevChildren = async (
+  children: readonly RunningDevChild[],
+  shutdownGraceMs = 5000
+): Promise<{
+  readonly exits: readonly {
+    readonly definition: ChildDefinition
+    readonly exitCode: number
+  }[]
+  readonly firstExit: {
+    readonly definition: ChildDefinition
+    readonly exitCode: number
+  }
+}> => {
+  if (children.length === 0) {
+    throw new Error('The dev runner requires at least one child process')
+  }
+
+  const exits = children.map(async ({ definition, process: child }) => ({
+    definition,
+    exitCode: await child.exited,
+  }))
+  const firstExit = await Promise.race(exits)
+  killChildren(children, 'SIGTERM')
+
+  const allExits = Promise.all(exits)
+  const grace = Promise.withResolvers<undefined>()
+  const graceTimer = setTimeout(grace.resolve, shutdownGraceMs)
+  const gracefulExits = await Promise.race([
+    allExits.then((results) => results as readonly (typeof firstExit)[]),
+    grace.promise,
+  ])
+  clearTimeout(graceTimer)
+  if (gracefulExits === undefined) {
+    killChildren(children, 'SIGKILL')
+  }
+
+  return { exits: await allExits, firstExit }
+}
+
 export const devChildDefinitions = (
   root: string
 ): readonly ChildDefinition[] => [
@@ -277,16 +342,18 @@ export const runDev = async (arguments_: readonly string[]) => {
   // cannot race tsdown's first watch build and leave Bun watching a missing file.
   await initialServerBuild(root, environment)
 
-  const children = devChildDefinitions(root).map((definition) => ({
-    definition,
-    process: Bun.spawn([...definition.command], {
-      cwd: definition.cwd,
-      env: environment,
-      stdin: 'inherit',
-      stdout: 'inherit',
-      stderr: 'inherit',
-    }),
-  }))
+  const children: readonly RunningDevChild[] = devChildDefinitions(root).map(
+    (definition) => ({
+      definition,
+      process: Bun.spawn([...definition.command], {
+        cwd: definition.cwd,
+        env: environment,
+        stdin: 'inherit',
+        stdout: 'inherit',
+        stderr: 'inherit',
+      }),
+    })
+  )
 
   let stopping = false
   const stop = () => {
@@ -294,26 +361,18 @@ export const runDev = async (arguments_: readonly string[]) => {
       return
     }
     stopping = true
-    for (const child of children) {
-      child.process.kill('SIGTERM')
-    }
+    killChildren(children, 'SIGTERM')
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
 
-  const exits = await Promise.all(
-    children.map(async ({ definition, process: child }) => ({
-      definition,
-      exitCode: await child.exited,
-    }))
-  )
+  const { firstExit } = await superviseDevChildren(children)
   process.removeListener('SIGINT', stop)
   process.removeListener('SIGTERM', stop)
 
-  const failed = exits.find(({ exitCode }) => exitCode !== 0)
-  if (!stopping && failed) {
+  if (!stopping) {
     throw new Error(
-      `${failed.definition.label} exited with code ${String(failed.exitCode)}`
+      `${firstExit.definition.label} exited with code ${String(firstExit.exitCode)}`
     )
   }
 }

@@ -10,6 +10,7 @@ import {
   linkedWorktreeStateHome,
   parseDevRunnerArguments,
   resolveDevStateHome,
+  superviseDevChildren,
   worktreePortOffset,
 } from './dev-runner'
 
@@ -100,5 +101,41 @@ describe('dev runner', () => {
     expect(children.find(({ label }) => label === 'web')?.command).toContain(
       '--open'
     )
+  })
+
+  it('stops sibling watchers when any required child exits', async () => {
+    const signals: string[] = []
+    let stopSibling: ((exitCode: number) => void) | undefined
+    const siblingExited = new Promise<number>((complete) => {
+      stopSibling = complete
+    })
+    const result = await superviseDevChildren(
+      [
+        {
+          definition: { label: 'web', command: ['vite'], cwd: '/repo' },
+          process: {
+            exited: Promise.resolve(1),
+            kill: (signal) => signals.push(`web:${String(signal)}`),
+          },
+        },
+        {
+          definition: { label: 'daemon', command: ['bun'], cwd: '/repo' },
+          process: {
+            exited: siblingExited,
+            kill: (signal) => {
+              signals.push(`daemon:${String(signal)}`)
+              stopSibling?.(0)
+            },
+          },
+        },
+      ],
+      100
+    )
+
+    expect(result.firstExit).toEqual({
+      definition: { label: 'web', command: ['vite'], cwd: '/repo' },
+      exitCode: 1,
+    })
+    expect(signals).toContain('daemon:SIGTERM')
   })
 })

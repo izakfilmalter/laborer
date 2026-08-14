@@ -165,7 +165,11 @@ describe('WorktreeReconciler', () => {
 
       assert.strictEqual(result.removed, 1)
 
-      assert.isNull(database.findTask('stale-workspace')?.worktreePath)
+      assert.deepInclude(database.findTask('stale-workspace'), {
+        status: 'done',
+        worktreePath: null,
+        worktreeStatus: null,
+      })
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -243,7 +247,11 @@ describe('WorktreeReconciler', () => {
       assert.strictEqual(result.unchanged, 1)
 
       assert.isNotNull(database.findTask('existing-main')?.worktreePath)
-      assert.isNull(database.findTask('stale-workspace')?.worktreePath)
+      assert.deepInclude(database.findTask('stale-workspace'), {
+        status: 'done',
+        worktreePath: null,
+        worktreeStatus: null,
+      })
       assert.isTrue(
         listSharedTasksForRoot(database, repoPath).some(
           (row) => row.branchName === 'feature/mixed'

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { taskDbMigrations } from '@laborer/task-db/migrations'
 import { Effect, Layer } from 'effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -30,7 +31,9 @@ describe('LaborerDatabase Effect adapter', () => {
     const failure = await Effect.runPromise(
       Effect.gen(function* () {
         const service = yield* LaborerDatabase
-        expect(service.database.migrationNames()).toHaveLength(9)
+        expect(service.database.migrationNames()).toHaveLength(
+          taskDbMigrations.length
+        )
         return yield* Effect.flip(
           service.run('insert task', () => {
             throw new Error('native failure')

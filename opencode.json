@@ -41,6 +41,11 @@
       "repository": "microsoft/vscode",
       "branch": "main",
       "description": "Use for VS Code architecture, extension APIs, implementation patterns, tests, and examples"
+    },
+    "github-desktop": {
+      "repository": "desktop/desktop",
+      "branch": "development",
+      "description": "Use for GitHub Desktop architecture, Electron patterns, Git integrations, tests, and examples"
     }
   }
 }

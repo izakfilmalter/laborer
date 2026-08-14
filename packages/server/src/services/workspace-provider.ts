@@ -1586,6 +1586,7 @@ class WorkspaceProvider extends Context.Service<
 
             if (workspaceTask !== null && !dirStillExists) {
               yield* updateServerTaskFacts(laborerDatabase, workspaceTask.id, {
+                status: 'done',
                 worktreeError: null,
                 worktreePath: null,
                 worktreeStatus: null,

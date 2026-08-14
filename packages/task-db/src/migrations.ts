@@ -73,9 +73,19 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
     ),
   },
   {
-    name: '0008_git_hosted_status',
+    name: '0008_complete_removed_worktrees',
     sql: readFileSync(
-      new URL('./migrations/0008_git_hosted_status.sql', import.meta.url),
+      new URL(
+        './migrations/0008_complete_removed_worktrees.sql',
+        import.meta.url
+      ),
+      'utf8'
+    ),
+  },
+  {
+    name: '0009_git_hosted_status',
+    sql: readFileSync(
+      new URL('./migrations/0009_git_hosted_status.sql', import.meta.url),
       'utf8'
     ),
   },

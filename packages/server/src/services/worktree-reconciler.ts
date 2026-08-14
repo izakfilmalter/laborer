@@ -298,6 +298,7 @@ class WorktreeReconciler extends Context.Service<
               const task = database.findTask(workspace.id)
               if (task !== null) {
                 database.updateTask(task.id, task.revision, {
+                  status: 'done',
                   worktreeError: null,
                   worktreePath: null,
                   worktreeStatus: null,

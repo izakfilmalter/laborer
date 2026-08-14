@@ -278,6 +278,11 @@ export function ConnectionReconnectBanner() {
   }, [connection.phase])
 
   const disconnected = connection.phase !== 'connected'
+  // Recovery confirmation belongs to the connected session that produced it.
+  // If that session drops again before the confirmation timeout, do not keep
+  // presenting or announcing a stale "Reconnected" state during the grace
+  // period for the new outage.
+  const showRestored = !disconnected && restored
   const status = statusOf(connection)
   const secondsRemaining = useRetryCountdown(
     disconnected && connection.phase === 'backoff' ? connection.retryAt : null
@@ -288,7 +293,7 @@ export function ConnectionReconnectBanner() {
   }
 
   const showBanner = disconnected && pastGrace
-  const announcement = announcementFor(status, showBanner, restored)
+  const announcement = announcementFor(status, showBanner, showRestored)
 
   return (
     <>
@@ -297,7 +302,7 @@ export function ConnectionReconnectBanner() {
       <output aria-live="polite" className="sr-only">
         {announcement}
       </output>
-      {(showBanner || restored) && (
+      {(showBanner || showRestored) && (
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
           {showBanner ? (
             <DisconnectPill

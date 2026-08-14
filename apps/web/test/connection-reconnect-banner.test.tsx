@@ -193,4 +193,21 @@ describe('ConnectionReconnectBanner', () => {
     expect(screen.queryByTestId('reconnect-restored')).toBeNull()
     expect(liveRegion.textContent).toBe('')
   })
+
+  it('withdraws a recovery confirmation when the restored session drops', () => {
+    render(
+      <AtomRegistryProvider>
+        <ConnectionReconnectBanner />
+      </AtomRegistryProvider>
+    )
+
+    act(() => connection.set({ phase: 'backoff', session: null }))
+    act(() => vi.advanceTimersByTime(2000))
+    act(() => connection.set({ phase: 'connected', session: 2 }))
+    expect(screen.getByTestId('reconnect-restored')).toBeTruthy()
+
+    act(() => connection.set({ phase: 'backoff', session: null }))
+    expect(screen.queryByTestId('reconnect-restored')).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe('')
+  })
 })

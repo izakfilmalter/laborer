@@ -91,6 +91,7 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
 
       assert.isFalse(existsSync(worktreePath))
       assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
+      assert.strictEqual(database.findTask(workspaceId)?.status, 'done')
     }).pipe(Effect.provide(TestLayer))
   )
 
@@ -122,6 +123,7 @@ describe('WorkspaceProvider.destroyWorktree origin behavior', () => {
 
       assert.isFalse(existsSync(worktreePath))
       assert.strictEqual(git(`branch --list ${branchName}`, repoPath), '')
+      assert.strictEqual(database.findTask(workspaceId)?.status, 'done')
     }).pipe(Effect.provide(TestLayer))
   )
 })

@@ -72,4 +72,14 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       'utf8'
     ),
   },
+  {
+    name: '0008_complete_removed_worktrees',
+    sql: readFileSync(
+      new URL(
+        './migrations/0008_complete_removed_worktrees.sql',
+        import.meta.url
+      ),
+      'utf8'
+    ),
+  },
 ]

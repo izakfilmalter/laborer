@@ -36,6 +36,10 @@ const migrationLedger = [
     '0007_projects_sort_order',
     '4d0f661e5d17a81bb63be3a8c8e87732b6a24d0404baa02687d814addd1c3351',
   ],
+  [
+    '0008_complete_removed_worktrees',
+    '949b371a78627208de4cd23376e586d3efc5000d42f3c7db631434e57cfc1766',
+  ],
 ]
 
 describe('@laborer/task-db exports', () => {

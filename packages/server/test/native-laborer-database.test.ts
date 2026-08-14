@@ -70,9 +70,49 @@ describe('NativeLaborerDatabase', () => {
     server.close()
   })
 
+  it('completes legacy worktree tasks whose worktrees were removed', () => {
+    const path = databasePath()
+    const raw = new DatabaseSync(path)
+    raw.exec(`CREATE TABLE __drizzle_migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      name TEXT NOT NULL UNIQUE
+    )`)
+    const recordMigration = raw.prepare(`INSERT INTO __drizzle_migrations
+      (hash, created_at, name) VALUES (?, ?, ?)`)
+    for (const migration of taskDbMigrations.slice(0, -1)) {
+      raw.exec(migration.sql.replaceAll('--> statement-breakpoint', ''))
+      recordMigration.run(
+        createHash('sha256').update(migration.sql).digest('hex'),
+        1,
+        migration.name
+      )
+    }
+    const insertTask = raw.prepare(`INSERT INTO tasks
+      (id, root_path, title, status, source, created_at, updated_at, revision,
+       worktree_path)
+      VALUES (?, '/repo', ?, 'in_progress', ?, 1, 1, 1, ?)`)
+    insertTask.run('removed-worktree', 'Removed', 'worktree', null)
+    insertTask.run('live-worktree', 'Live', 'worktree', '/repo.worktrees/live')
+    insertTask.run('manual-card', 'Manual', 'manual', null)
+    raw.close()
+
+    const database = NativeLaborerDatabase.open(path)
+    expect(database.findTask('removed-worktree')).toMatchObject({
+      revision: 2,
+      status: 'done',
+      worktreePath: null,
+    })
+    expect(database.findTask('live-worktree')?.status).toBe('in_progress')
+    expect(database.findTask('manual-card')?.status).toBe('in_progress')
+    expect(database.taskChangesAfter(0)).toHaveLength(1)
+    database.close()
+  })
+
   it('migrates memory databases and covers all shared rows', () => {
     const database = NativeLaborerDatabase.open(':memory:')
-    expect(database.migrationNames()).toHaveLength(8)
+    expect(database.migrationNames()).toHaveLength(9)
 
     const task = database.insertTask(
       {

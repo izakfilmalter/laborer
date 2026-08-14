@@ -24,6 +24,7 @@ const migrationNames = [
   '0005_projects',
   '0006_app_settings_and_ledger',
   '0007_projects_sort_order',
+  '0008_complete_removed_worktrees',
 ]
 
 const temporaryDatabasePath = (): string => {

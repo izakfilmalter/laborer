@@ -265,8 +265,12 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
       'terminal.setAgentStatus': ({ id, report }) =>
         tm.setAgentStatusFromHook(id, report),
 
-      'terminal.reportWorkspacePresence': ({ clientId, workspaceIds }) =>
-        tm.reportWorkspacePresence(clientId, new Set(workspaceIds)),
+      'terminal.reportWorkspacePresence': ({
+        clientId,
+        sequence,
+        workspaceIds,
+      }) =>
+        tm.reportWorkspacePresence(clientId, sequence, new Set(workspaceIds)),
 
       // -------------------------------------------------------------------
       // terminal.events — streaming lifecycle events

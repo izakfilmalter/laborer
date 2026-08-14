@@ -1559,6 +1559,8 @@ export class TerminalRpcs extends RpcGroup.make(
         Schema.isMinLength(1),
         Schema.isMaxLength(PRESENCE_CLIENT_ID_MAX_LENGTH)
       ),
+      /** Monotonic per-client ordering guard for overlapping refreshes. */
+      sequence: NonNegativeInt,
       workspaceIds: Schema.Array(
         Schema.String.check(
           Schema.isMinLength(1),

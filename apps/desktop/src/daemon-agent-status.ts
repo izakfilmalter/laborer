@@ -32,6 +32,18 @@ interface AgentOwner {
 export class AgentStatusFactProjector {
   readonly #owners = new Map<string, AgentOwner>()
 
+  /** Reconcile a fresh daemon snapshot, clearing terminals lost while offline. */
+  reconcile(terminals: readonly TerminalStatusInfo[]): AgentStatusFact[] {
+    const terminalIds = new Set(terminals.map((terminal) => terminal.id))
+    const facts = terminals.map((terminal) => this.project(terminal))
+    for (const terminalId of this.#owners.keys()) {
+      if (!terminalIds.has(terminalId)) {
+        facts.push(this.remove(terminalId))
+      }
+    }
+    return facts
+  }
+
   remove(terminalId: string): AgentStatusFact {
     const owner = this.#owners.get(terminalId)
     this.#owners.delete(terminalId)
@@ -86,7 +98,11 @@ export class AgentStatusFactProjector {
       workspaceId: terminal.workspaceId,
     }
 
-    if (detected === null && owner?.present && fact.status === 'idle') {
+    if (
+      detected === null &&
+      owner?.present &&
+      (fact.status === null || fact.status === 'idle')
+    ) {
       this.#owners.set(terminal.id, { ...owner, present: false })
     }
     return fact
@@ -115,15 +131,19 @@ export class DaemonAgentStatusSubscription {
       const client = yield* RpcClient.make(DaemonRpcs)
       const terminals = yield* client['terminal.list']()
       yield* Effect.sync(() => {
-        for (const terminal of terminals) {
-          self.#observe(self.#projector.project(terminal))
+        for (const fact of self.#projector.reconcile(terminals)) {
+          self.#observe(fact)
         }
       })
       yield* Stream.runForEach(client['terminal.events'](), (event) =>
         Effect.sync(() => {
           if (event._tag === 'ProcessChanged') {
             self.#observe(self.#projector.project(event.terminal))
-          } else if (event._tag === 'Removed') {
+          } else if (
+            event._tag === 'Exited' ||
+            event._tag === 'Removed' ||
+            event._tag === 'Restarted'
+          ) {
             self.#observe(self.#projector.remove(event.id))
           }
         })
@@ -145,6 +165,9 @@ export class DaemonAgentStatusSubscription {
     const reconnecting = connect.pipe(
       Effect.provide(protocol),
       Effect.scoped,
+      // A remotely completed stream is also a disconnect. Back off on both
+      // success and failure so an orderly close cannot create a hot loop.
+      Effect.andThen(Effect.sleep(RECONNECT_DELAY_MS)),
       Effect.catch(() => Effect.sleep(RECONNECT_DELAY_MS)),
       Effect.forever
     )

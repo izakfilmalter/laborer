@@ -628,6 +628,7 @@ export function usePanelLayout() {
     mode: 'promise',
   })
   const presenceClientId = useRef(globalThis.crypto.randomUUID())
+  const presenceSequence = useRef(0)
   // Start as "reconciling" when a persisted layout exists — this prevents
   // rendering TerminalPane components with potentially stale terminal IDs
   // before we've checked them against the live terminal service.
@@ -818,6 +819,7 @@ export function usePanelLayout() {
       reportWorkspacePresence({
         payload: {
           clientId: presenceClientId.current,
+          sequence: presenceSequence.current++,
           workspaceIds: observedWorkspaceIds,
         },
       }).catch(() => {
@@ -849,6 +851,7 @@ export function usePanelLayout() {
       reportWorkspacePresence({
         payload: {
           clientId: presenceClientId.current,
+          sequence: presenceSequence.current++,
           workspaceIds: [],
         },
       }).catch(() => undefined)

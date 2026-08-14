@@ -276,10 +276,12 @@ describe('standalone daemon', () => {
 
           yield* client['terminal.reportWorkspacePresence']({
             clientId: 'daemon-rpc-test',
+            sequence: 0,
             workspaceIds: ['workspace-a'],
           })
           yield* client['terminal.reportWorkspacePresence']({
             clientId: 'daemon-rpc-test',
+            sequence: 1,
             workspaceIds: [],
           })
 

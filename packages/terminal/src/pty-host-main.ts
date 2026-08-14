@@ -103,7 +103,8 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
     case 'reportWorkspacePresence':
       return manager.reportWorkspacePresence(
         first as string,
-        new Set(second as string[])
+        second as number,
+        new Set(third as string[])
       )
     case 'unsubscribe':
       return manager.unsubscribe(first as string, second as string)

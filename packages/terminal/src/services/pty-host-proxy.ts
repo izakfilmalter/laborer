@@ -673,10 +673,12 @@ export const ptyHostProxyLayer = Layer.effect(
           remote('setObservedWorkspaces', [[...workspaceIds]]).pipe(
             Effect.orElseSucceed(() => undefined)
           ),
-        reportWorkspacePresence: (clientId, workspaceIds) =>
-          remote('reportWorkspacePresence', [clientId, [...workspaceIds]]).pipe(
-            Effect.orElseSucceed(() => undefined)
-          ),
+        reportWorkspacePresence: (clientId, sequence, workspaceIds) =>
+          remote('reportWorkspacePresence', [
+            clientId,
+            sequence,
+            [...workspaceIds],
+          ]).pipe(Effect.orElseSucceed(() => undefined)),
         getTerminals: () => Effect.succeed([]),
         setRevivedReplayEvent: () => Effect.succeed(undefined),
         takeRevivedReplayEvent: () => Effect.succeed<undefined>(undefined),

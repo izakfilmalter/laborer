@@ -964,6 +964,7 @@ class TerminalManager extends Context.Service<
     /** Refresh one RPC client's focused-workspace presence lease. */
     readonly reportWorkspacePresence: (
       clientId: string,
+      sequence: number,
       workspaceIds: ReadonlySet<string>
     ) => Effect.Effect<void>
 
@@ -1036,10 +1037,19 @@ class TerminalManager extends Context.Service<
       const workspacePresence = new Map<
         string,
         {
+          readonly sequence: number
           readonly timer: ReturnType<typeof setTimeout>
           readonly workspaceIds: ReadonlySet<string>
         }
       >()
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const presence of workspacePresence.values()) {
+            clearTimeout(presence.timer)
+          }
+          workspacePresence.clear()
+        })
+      )
       const getStatusEngine = (terminalId: string): TerminalStatusEngine => {
         let engine = statusEngines.get(terminalId)
         if (engine === undefined) {
@@ -2672,37 +2682,43 @@ class TerminalManager extends Context.Service<
       }
       const reportWorkspacePresence = Effect.fn(
         'TerminalManager.reportWorkspacePresence'
-      )(function* (clientId: string, workspaceIds: ReadonlySet<string>) {
+      )(function* (
+        clientId: string,
+        sequence: number,
+        workspaceIds: ReadonlySet<string>
+      ) {
         const previous = workspacePresence.get(clientId)
+        if (previous !== undefined && sequence <= previous.sequence) {
+          return
+        }
         if (previous !== undefined) {
           clearTimeout(previous.timer)
         }
-        if (workspaceIds.size === 0) {
-          workspacePresence.delete(clientId)
-        } else {
-          if (
-            previous === undefined &&
-            workspacePresence.size >= WORKSPACE_PRESENCE_CLIENTS_MAX
-          ) {
-            const oldestClientId = workspacePresence.keys().next().value
-            if (oldestClientId !== undefined) {
-              const oldest = workspacePresence.get(oldestClientId)
-              if (oldest !== undefined) {
-                clearTimeout(oldest.timer)
-              }
-              workspacePresence.delete(oldestClientId)
+        if (
+          previous === undefined &&
+          workspacePresence.size >= WORKSPACE_PRESENCE_CLIENTS_MAX
+        ) {
+          const oldestClientId = workspacePresence.keys().next().value
+          if (oldestClientId !== undefined) {
+            const oldest = workspacePresence.get(oldestClientId)
+            if (oldest !== undefined) {
+              clearTimeout(oldest.timer)
             }
+            workspacePresence.delete(oldestClientId)
           }
-          const timer = setTimeout(() => {
-            workspacePresence.delete(clientId)
-            runSync(setObservedWorkspaces(aggregateWorkspacePresence()))
-          }, WORKSPACE_PRESENCE_LEASE_MS)
-          timer.unref()
-          workspacePresence.set(clientId, {
-            timer,
-            workspaceIds: new Set(workspaceIds),
-          })
         }
+        // Retain an empty lease as an ordering tombstone so a delayed focused
+        // refresh cannot overwrite a newer blur/unmount report.
+        const timer = setTimeout(() => {
+          workspacePresence.delete(clientId)
+          runSync(setObservedWorkspaces(aggregateWorkspacePresence()))
+        }, WORKSPACE_PRESENCE_LEASE_MS)
+        timer.unref()
+        workspacePresence.set(clientId, {
+          sequence,
+          timer,
+          workspaceIds: new Set(workspaceIds),
+        })
         yield* setObservedWorkspaces(aggregateWorkspacePresence())
       })
 

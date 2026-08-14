@@ -42,6 +42,25 @@ describe('AgentStatusFactProjector', () => {
     expect(replacement.agentId).not.toBe(first.agentId)
   })
 
+  it('starts a new identity after a detector clears the previous agent', () => {
+    const projector = new AgentStatusFactProjector()
+    const first = projector.project(terminal('working'))
+    projector.project(terminal(null, false))
+    const replacement = projector.project(terminal('working'))
+
+    expect(replacement.agentId).not.toBe(first.agentId)
+  })
+
+  it('clears terminals absent from a reconnect snapshot', () => {
+    const projector = new AgentStatusFactProjector()
+    projector.project(terminal('working'))
+
+    expect(projector.reconcile([])).toEqual([
+      expect.objectContaining({ status: null, terminalId: 'terminal-1' }),
+    ])
+    expect(projector.reconcile([])).toEqual([])
+  })
+
   it('clears notification state when a terminal is removed', () => {
     const projector = new AgentStatusFactProjector()
     projector.project(terminal('working'))

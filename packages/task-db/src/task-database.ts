@@ -342,7 +342,8 @@ export class NativeTaskDatabase {
     const row = this.#database
       .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
       .get(id)
-    return row === undefined ? null : rowToTask(sqliteRow(row))
+    // node:sqlite reports a miss as undefined; bun:sqlite reports null.
+    return row === undefined || row === null ? null : rowToTask(sqliteRow(row))
   }
 
   findByExecutionId(executionId: string): Task | null {
@@ -519,7 +520,7 @@ export class NativeTaskDatabase {
     const row = this.#database
       .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE execution_id = ?`)
       .get(executionId)
-    return row === undefined ? null : rowToTask(sqliteRow(row))
+    return row === undefined || row === null ? null : rowToTask(sqliteRow(row))
   }
 
   #changeBounds(): ChangeBounds {

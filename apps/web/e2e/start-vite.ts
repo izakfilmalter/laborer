@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
-import { readSetupState } from './global-setup.js'
+import { readDaemonPort } from './global-setup.js'
 
-const state = readSetupState()
+const daemonPort = readDaemonPort()
 const vitePort = process.env.VITE_PORT ?? '2101'
 
 const vite = spawn(
@@ -12,7 +12,7 @@ const vite = spawn(
     cwd: join(import.meta.dirname, '..'),
     env: {
       ...process.env,
-      LABORER_DAEMON_PORT: String(state.daemonPort),
+      LABORER_DAEMON_PORT: String(daemonPort),
       VITE_PORT: vitePort,
     },
     stdio: 'inherit',

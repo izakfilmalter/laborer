@@ -57,6 +57,22 @@ export const readSetupState = (): SetupState => {
   }
 }
 
+export const readDaemonPort = (): number => {
+  const decoded: unknown = JSON.parse(readFileSync(getStateFile(), 'utf8'))
+  if (
+    typeof decoded !== 'object' ||
+    decoded === null ||
+    !('daemonPort' in decoded) ||
+    typeof decoded.daemonPort !== 'number' ||
+    !Number.isInteger(decoded.daemonPort) ||
+    decoded.daemonPort < 1 ||
+    decoded.daemonPort > 65_535
+  ) {
+    throw new Error('E2E setup: invalid daemon port state')
+  }
+  return decoded.daemonPort
+}
+
 export const allocatePort = (): Promise<number> =>
   new Promise((resolvePort, reject) => {
     const server = createServer()
@@ -78,7 +94,7 @@ export const allocatePort = (): Promise<number> =>
     })
   })
 
-export default async function globalSetup(_config: FullConfig): Promise<void> {
+export default function globalSetup(_config: FullConfig): void {
   // 1. Create a temp git repository with an initial commit
   const tempRepoDir = mkdtempSync(join(tmpdir(), 'laborer-e2e-repo-'))
   execSync('git init', { cwd: tempRepoDir, stdio: 'pipe' })
@@ -117,15 +133,10 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     )
   }
 
-  // 3. Allocate the isolated daemon port by binding port zero and releasing
-  // it. An opted-in reused stack supplies its existing daemon port instead.
-  const daemonPort =
-    process.env.LABORER_E2E_REUSE_DEV_STACK === '1'
-      ? Number(process.env.LABORER_DAEMON_PORT ?? 2100)
-      : await allocatePort()
-  if (!Number.isInteger(daemonPort) || daemonPort < 1 || daemonPort > 65_535) {
-    throw new Error('E2E setup: daemon port must be an integer from 1 to 65535')
-  }
+  // 3. Playwright starts webServer before global setup. Configuration has
+  // already allocated and recorded the daemon port so both Vite and fixtures
+  // consume one value; validate that handoff before completing setup state.
+  const daemonPort = readDaemonPort()
 
   // 4. Save state for teardown and test access
   const state = {

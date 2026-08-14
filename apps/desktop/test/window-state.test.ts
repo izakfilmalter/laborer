@@ -1,5 +1,10 @@
 import type { Rectangle } from 'electron'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('electron', () => ({
+  app: { getPath: vi.fn() },
+  screen: { getAllDisplays: vi.fn(), getPrimaryDisplay: vi.fn() },
+}))
 
 import {
   DEFAULT_HEIGHT,

@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "exports": {
-    ".": "./src/utility-main.ts",
+    ".": "./src/rpc/handlers.ts",
     "./rpc/handlers": "./src/rpc/handlers.ts",
     "./services/pty-direct": "./src/services/pty-direct.ts",
     "./services/pty-host-proxy": "./src/services/pty-host-proxy.ts",

@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "exports": {
-    ".": "./src/utility-main.ts"
+    ".": "./src/infrastructure.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

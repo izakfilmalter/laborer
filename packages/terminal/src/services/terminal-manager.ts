@@ -154,7 +154,7 @@ interface TerminalSubscriberState {
  * the internal process identity before records cross the public RPC boundary.
  */
 interface TerminalRecord {
-  /** Internal process identity used by the utility-process notification feed. */
+  /** Internal process identity used by the agent-status notification feed. */
   readonly agentProcessIds: readonly number[]
   readonly agentStatus: AgentStatusSnapshot | null
   readonly args: readonly string[]
@@ -1345,7 +1345,7 @@ class TerminalManager extends Context.Service<
             try {
               subscriber(chunk)
             } catch {
-              // Legacy MessagePort subscriber lifetime is managed separately.
+              // A failed compatibility subscriber is cleaned up by its owner.
             }
           }
           if ((attachSubscribers.get(terminalId)?.size ?? 0) > 0) {

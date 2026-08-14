@@ -2,23 +2,15 @@
  * LaborerClient — AtomRpc client for the server's LaborerRpcs.
  *
  * Communicates with the mission-control backend through the renderer protocol
- * boundary: same-origin daemon WebSocket in a browser, legacy MessagePort in
- * Electron until the desktop migration lands.
+ * boundary: the daemon's same-origin WebSocket in browsers and Electron.
  *
  * Uses `AtomRpc.Service` to provide typed `query` and `mutation` atoms that
  * integrate with React components via `@effect/atom-react`.
  *
- * @see Issue #4: Renderer RPC client wired to MessagePort
- * @see packages/server/src/utility-main.ts — Server utility process entry
+ * @see packages/server/src/daemon-main.ts — unified RPC server entry
  */
 
-import { LaborerRpcs } from '@laborer/shared/rpc'
-import { AtomRpc } from 'effect/unstable/reactivity'
-import { localApi } from '@/lib/local-api'
 import { BrowserDaemonClient } from './browser-daemon-client'
-import { rendererRpcProtocol } from './renderer-rpc-protocol'
-
-const serverProtocol = rendererRpcProtocol('server')
 
 /**
  * LaborerClient — typed AtomRpc client for React components.
@@ -28,14 +20,4 @@ const serverProtocol = rendererRpcProtocol('server')
  */
 export const ConfigReactivityKeys = ['config'] as const
 
-class LegacyLaborerClient extends AtomRpc.Service<LegacyLaborerClient>()(
-  'LegacyLaborerClient',
-  {
-    group: LaborerRpcs,
-    protocol: serverProtocol,
-  }
-) {}
-
-export const LaborerClient: typeof LegacyLaborerClient = localApi.isDesktop
-  ? LegacyLaborerClient
-  : (BrowserDaemonClient as unknown as typeof LegacyLaborerClient)
+export const LaborerClient = BrowserDaemonClient

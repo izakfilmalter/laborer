@@ -1,15 +1,13 @@
 /**
- * React hook that tracks the live status of all sidecar services.
+ * React hook that tracks the live status of daemon-owned capabilities.
  *
- * Browser and Electron clients poll same-origin health endpoints for
- * each service through the Vite proxy and synthesizes status events.
- * The Electron main process does NOT spawn sidecars or emit IPC events in
- * dev mode — services are run separately via `turbo dev`.
+ * Browser and Electron clients poll same-origin daemon health aliases for
+ * each capability and synthesize status events. The aliases share one daemon
+ * lifecycle but preserve the existing capability-level UI model.
  *
  * @see packages/shared/src/desktop-bridge.ts — SidecarStatusEvent type
  * @see apps/web/src/lib/sidecar-statuses.ts — pure derivation logic
- * @see apps/web/vite.config.ts — /server-health, /terminal-health, /file-watcher-health proxies
- * @see apps/desktop/src/main.ts — HealthMonitor only created when !isDev
+ * @see packages/server/src/daemon-main.ts — capability health aliases
  */
 
 import type {
@@ -26,12 +24,11 @@ import {
 /** Initial state with all services unknown. */
 const INITIAL_STATUSES = deriveSidecarStatuses([])
 
-/** Polling interval for dev mode health checks (ms). */
+/** Polling interval for daemon health checks (ms). */
 const DEV_POLL_INTERVAL_MS = 3000
 
 /**
- * Health endpoint paths for each service in dev mode.
- * These are proxied by Vite to the respective service's root endpoint.
+ * Health aliases for each daemon-owned capability.
  */
 const DEV_HEALTH_ENDPOINTS: Partial<Record<SidecarName, string>> = {
   server: '/server-health',
@@ -40,7 +37,7 @@ const DEV_HEALTH_ENDPOINTS: Partial<Record<SidecarName, string>> = {
 }
 
 /**
- * Track the live status of all sidecar services.
+ * Track the live status of all daemon-owned capabilities.
  *
  * Returns a `SidecarStatuses` record mapping each service name to its
  * current state (unknown | starting | healthy | crashed | restarting).
@@ -54,7 +51,7 @@ function useSidecarStatuses(): SidecarStatuses {
     setStatuses(deriveSidecarStatuses(eventsRef.current))
   }, [])
 
-  // Dev mode (browser or Electron dev): poll health endpoints.
+  // Browser and Electron renderers poll the daemon's same-origin aliases.
   useEffect(() => {
     const healthState = new Map<SidecarName, boolean>()
     const failureCount = new Map<SidecarName, number>()

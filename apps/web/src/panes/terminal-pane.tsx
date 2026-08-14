@@ -5,21 +5,20 @@
  * Data flow:
  * 1. Terminal service PTY emits output via node-pty `onData`
  * 2. TerminalManager writes to headless terminal + notifies subscribers
- * 3. Data channel forwards output to the renderer
+ * 3. The attach RPC stream forwards output to the renderer
  * 4. This component receives data via the terminal connection hook
  * 5. Output is written directly to xterm.js Terminal instance
  *
- * Transport: MessagePort data channel via `desktopBridge.acquireTerminalDataPort()`
- * (zero-copy ArrayBuffer transfer, no HTTP/WebSocket overhead)
+ * Transport: `terminal.attach` over the daemon's shared WebSocket RPC.
  *
  * Input flow:
  * - Keystrokes captured by xterm.js `onData` callback
- * - Sent as data channel messages (NOT via terminal.write RPC)
+ * - Sent via ordered `terminal.write` RPC calls
  * - Terminal service forwards to PTY via PtyHostClient.write()
  *
  * Terminal status:
  * Terminal status is derived from control messages sent by the terminal
- * service over the MessagePort data channel:
+ * service over the attach stream:
  * - `{"type":"status","status":"running"}` — on initial connection
  * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
  * - `{"type":"status","status":"restarted"}` — terminal was restarted
@@ -31,11 +30,9 @@
  *   returned as `false` so they bubble to TanStack Hotkeys on document.
  * - Ctrl+B enters prefix mode for tmux-style sequences.
  *
- * @see packages/terminal/src/services/terminal-data-channel.ts — MessagePort endpoint
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
  * @see apps/web/src/hooks/use-terminal-rpc.ts — daemon WebSocket hook
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
- * @see Issue #9: Renderer terminal UI wired to MessagePort
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
@@ -313,7 +310,7 @@ const createResizeDebouncer = (
   return { handleResize, dispose }
 }
 
-/** Connection result shape for the MessagePort data channel hook. */
+/** Connection result shape for the terminal attach RPC hook. */
 interface TerminalConnection {
   readonly dismissRevival?: (() => void) | undefined
   readonly replayStatus: ReplayStatus
@@ -385,7 +382,7 @@ function TerminalConnectingPlaceholder() {
 }
 
 /**
- * Inner terminal pane component — connects via MessagePort data channel
+ * Inner terminal pane component — connects via the terminal attach RPC stream
  * and renders the terminal.
  */
 function TerminalPaneContent(props: TerminalPaneProps) {

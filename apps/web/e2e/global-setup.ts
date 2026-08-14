@@ -3,7 +3,7 @@
  *
  * Runs once before all E2E tests:
  * 1. Creates a temp git repository with an initial commit (for project tests)
- * 2. Verifies that Electron, utility-process, and daemon builds exist
+ * 2. Verifies that the daemon build exists
  *
  * The Electron app is launched per-test via the `electronApp` fixture
  * in test-fixtures.ts, not as a shared global process.
@@ -114,15 +114,10 @@ export default function globalSetup(_config: FullConfig): void {
     stdio: 'pipe',
   })
 
-  // 2. Verify both projects' built entries. The browser fixture owns the
-  // daemon, while the legacy Electron fixture still owns its utility stack.
+  // 2. Verify the daemon entry used by the browser fixture.
   const monorepoRoot = resolve(import.meta.dirname, '../../..')
   const requiredBuilds = [
-    join(monorepoRoot, 'apps/desktop/dist-electron/main.cjs'),
-    join(monorepoRoot, 'apps/desktop/dist-electron/preload.cjs'),
     join(monorepoRoot, 'packages/server/dist/daemon-main.mjs'),
-    join(monorepoRoot, 'packages/server/dist/utility-main.mjs'),
-    join(monorepoRoot, 'packages/terminal/dist/utility-main.mjs'),
   ]
 
   const missingBuilds = requiredBuilds.filter((path) => !existsSync(path))

@@ -193,10 +193,6 @@ const TRAFFIC_LIGHT_POSITION = { x: 12, y: 10 } as const
 const openWindows = new Set<BrowserWindow>()
 let mainWindow: BrowserWindow | null = null
 
-/**
- * Utility process manager for MessagePort-based service lifecycle.
- * Created on `app.whenReady()` in both dev and production modes.
- */
 /** Sole app-wide owner of native agent-attention notification policy. */
 let agentNotificationCoordinator: AgentNotificationCoordinator<
   ReturnType<typeof setTimeout>
@@ -525,7 +521,6 @@ app.on('window-all-closed', () => {
 //                      `window-all-closed` fires and re-triggers app.quit().
 //
 // 3. `will-quit`    — we preventDefault() to delay exit while we:
-//                     - Stop lifecycle monitor (prevent restarts)
 //                     - Stop the daemon with shutdown semantics
 //                     - Wait for the daemon and pty-host to exit
 //                     Then re-call app.quit() to actually exit.

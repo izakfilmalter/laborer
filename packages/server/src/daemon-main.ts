@@ -31,12 +31,12 @@ import {
   resolveDaemonRegistrationPath,
   resolveDaemonVersion,
 } from './daemon-registration.js'
+import { makeInfrastructureLayer } from './infrastructure.js'
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { DeferredServicesReady } from './services/deferred-service.js'
 import { FileWatcherClient } from './services/file-watcher-client.js'
 import { TerminalClient } from './services/terminal-client.js'
 import { staticAssetResponse, WEB_DIST_ENV } from './static-assets.js'
-import { makeInfrastructureLayer } from './utility-main.js'
 
 export const DAEMON_HOST = '127.0.0.1'
 export const DAEMON_PORT_ENV = 'LABORER_DAEMON_PORT'
@@ -114,6 +114,12 @@ const healthResponse = Effect.gen(function* () {
 const HealthRoutes = HttpRouter.addAll([
   HttpRouter.route('GET', '/health', healthResponse),
   HttpRouter.route('GET', '/server-health', healthResponse),
+  // Mission control still presents capability-level status indicators. All
+  // capabilities now share this daemon lifecycle, so their health aliases
+  // intentionally report the same readiness rather than falling through to
+  // the static SPA response.
+  HttpRouter.route('GET', '/terminal-health', healthResponse),
+  HttpRouter.route('GET', '/file-watcher-health', healthResponse),
 ])
 
 const stopResponse = Effect.gen(function* () {

@@ -16,8 +16,6 @@
     "./root-workspace": "./src/root-workspace.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",
     "./process-time-scheduler": "./src/process-time-scheduler.ts",
-    "./rpc-transport-messageport": "./src/rpc-transport-messageport.ts",
-    "./rpc-transport-messageport-client": "./src/rpc-transport-messageport-client.ts",
     "./slack-url": "./src/slack-url.ts"
   },
   "dependencies": {

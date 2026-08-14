@@ -56,10 +56,6 @@ vi.mock('electron', () => ({
   Menu: {
     buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
   },
-  MessageChannelMain: class {
-    port1 = { close: vi.fn(), start: vi.fn(), postMessage: vi.fn() }
-    port2 = { close: vi.fn(), start: vi.fn(), postMessage: vi.fn() }
-  },
   Notification: class {
     readonly listeners = new Map<string, Array<() => void>>()
     on(event: string, handler: () => void): void {

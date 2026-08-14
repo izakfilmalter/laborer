@@ -1,4 +1,3 @@
-import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import { Layer, Schedule } from 'effect'
 import type { Atom } from 'effect/unstable/reactivity'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
@@ -11,8 +10,6 @@ import {
   rendererConnectionGenerationAtom,
   rendererConnectionSupervisor,
 } from './renderer-connection'
-
-type RpcSidecarName = Extract<SidecarName, 'server' | 'terminal'>
 
 /** Resolve the daemon socket from the page origin so dev and production share one contract. */
 export function daemonWebSocketUrl(
@@ -40,10 +37,9 @@ const browserProtocol = (): Layer.Layer<RpcClient.Protocol> => {
 /**
  * Renderer RPC transport boundary.
  *
- * Plain browsers always use the daemon's same-origin `/ws`. Electron retains
- * its legacy MessagePort path until the desktop switch-and-delete phase.
+ * Browser and Electron renderers use the daemon's same-origin `/ws`.
  */
-export const rendererRpcProtocol = (_legacyService: RpcSidecarName) => {
+export const rendererRpcProtocol = () => {
   rendererConnectionSupervisor.start()
   return (get: Atom.AtomContext) => {
     get(rendererConnectionGenerationAtom)

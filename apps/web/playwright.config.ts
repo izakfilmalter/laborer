@@ -46,7 +46,7 @@ export default defineConfig({
   /* Reporter to use */
   reporter: 'list',
 
-  /* Shared settings. Electron supplies its own page; Chromium uses baseURL. */
+  /* Chromium uses the browser-first daemon/Vite stack. */
   use: {
     baseURL: `http://127.0.0.1:${String(vitePort)}`,
     /* Capture screenshot on failure for debugging */
@@ -54,12 +54,8 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
 
-  /* Keep the legacy Electron suite and the browser gate in one config. */
+  /* The browser project is the canonical mission-control suite. */
   projects: [
-    {
-      name: 'electron',
-      testIgnore: /browser\/.*\.spec\.ts/,
-    },
     {
       name: 'browser',
       testMatch: /browser\/.*\.spec\.ts/,

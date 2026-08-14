@@ -172,7 +172,6 @@ const loadMainWithRecords = async (
   vi.doMock('../src/ipc.js', () => ({
     ACTIVATE_WORKSPACE_CHANNEL: 'desktop:activate-workspace',
     askRenderersBeforeQuit: vi.fn(async () => false),
-    closeRendererPortsForService: vi.fn(),
     getWorkspaceWindowRegistry: vi.fn(() => ({
       branchNameForWorkspace: vi.fn(() => null),
       findWindowForWorkspace: vi.fn(() => null),
@@ -184,41 +183,10 @@ const loadMainWithRecords = async (
     registerIpcHandlers: registerIpcHandlersMock,
     removeWindowPresence: vi.fn(),
     setDownloadUpdateHandler: vi.fn(),
-    setGetSidecarStatusesHandler: vi.fn(),
     setGetUpdateStateHandler: vi.fn(),
     setInstallUpdateHandler: vi.fn(),
-    setRestartSidecarHandler: vi.fn(),
     setTrayCountHandler: vi.fn(),
-    setUtilityProcessManager: vi.fn(),
     setWorkspacePresenceHandler: vi.fn(),
-  }))
-  vi.doMock('../src/utility-process-manager.js', () => ({
-    UtilityProcessManager: class {
-      fork = vi.fn()
-      kill = vi.fn()
-      restart = vi.fn()
-      killAll = vi.fn()
-      killAllAndWait = vi.fn(async () => undefined)
-      setMessageHandler = vi.fn()
-      isRunning = vi.fn(() => false)
-      getPort = vi.fn()
-      getProcess = vi.fn()
-      brokerInterProcessPort = vi.fn()
-    },
-  }))
-  vi.doMock('../src/lifecycle-monitor.js', () => ({
-    LifecycleMonitor: class {
-      forkAllAndMonitor = vi.fn()
-      getCurrentStatuses = vi.fn(() => [])
-      handleReady = vi.fn()
-      handleHeartbeat = vi.fn()
-      handleSuspend = vi.fn()
-      handleResume = vi.fn()
-      manualRestart = vi.fn()
-      isHealthy = vi.fn(() => false)
-      areServicesHealthy = vi.fn(() => false)
-      shutdown = vi.fn()
-    },
   }))
   vi.doMock('../src/menu.js', () => ({
     configureApplicationMenu: vi.fn(),

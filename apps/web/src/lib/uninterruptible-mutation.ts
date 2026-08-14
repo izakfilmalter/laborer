@@ -8,7 +8,7 @@
  * in `Effect.uninterruptible` prevents this — the mutation runs to completion
  * regardless of component lifecycle.
  *
- * @see packages/shared/src/rpc-transport-messageport-client.ts — transport layer
+ * @see apps/web/src/atoms/renderer-rpc-protocol.ts — transport layer
  * @see Atom.ts makeResultFn line 1146 — hardcodes uninterruptible=false
  */
 

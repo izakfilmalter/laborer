@@ -1,14 +1,8 @@
 /**
  * TerminalClient — Effect Service
  *
- * RPC client connecting to the terminal utility process via a direct
- * MessagePort brokered by the Electron main process. No HTTP, no port
- * allocation — the server and terminal processes communicate via
- * structured clone over MessagePort.
- *
- * Requires a `TerminalRpcPort` service tag in the layer context,
- * provided by the server's utility-main.ts when the main process
- * brokers a server-to-terminal MessagePort.
+ * In-process adapter from server workflows to the daemon-owned terminal
+ * manager. The public renderer boundary remains typed RPC over WebSocket.
  *
  * Responsibilities:
  * - RPC client for TerminalRpcs operations (spawn, kill, list)
@@ -24,21 +18,17 @@
  * @see PRD-terminal-extraction.md
  * @see Issue #143: Server TerminalClient + remove server terminal modules
  * @see Issue #163: Worktree detection polish — worktree existence check before spawn
- * @see Issue #13: Server-to-terminal MessagePort channel
  * @see Issue #20: Build script update + port reservation removal
  */
 
 import { existsSync, realpathSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { NodeSocket } from '@effect/platform-node'
 import {
   type AgentStatusReport,
   AgentStatusSchema,
   RpcError,
   type TerminalInfo,
-  TerminalRpcs,
 } from '@laborer/shared/rpc'
-import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import {
   toLifecycleEventSchema,
   toTerminalInfo,
@@ -50,29 +40,22 @@ import {
   Data,
   Effect,
   Layer,
-  Option,
   pipe,
   Ref,
   Schema,
   Scope,
   Stream,
 } from 'effect'
-import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import { withInitialAgentPrompt } from './agent-launch-command.js'
 import { writeClaudeStatusHooks } from './claude-status-hooks.js'
 import {
   installOpenCodeStatusPlugin,
   writeAgentHookDiscovery,
 } from './opencode-status-plugin.js'
-import {
-  createMessagePortRpcClient,
-  sidecarEventStreamSchedule,
-} from './sidecar-rpc.js'
 import { WorkspaceProvider } from './workspace-provider.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'TerminalClient'
-const terminalRpcUrl = process.env.LABORER_TERMINAL_RPC_URL ?? null
 
 /**
  * Map from terminal ID to workspace ID, maintained by the event stream
@@ -91,23 +74,6 @@ export interface TerminalRecord {
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }
-
-/**
- * Service tag providing a MessagePort for direct RPC to the
- * terminal utility process. Required for `TerminalClient` to
- * communicate with the terminal service.
- *
- * Provided by the server's utility-main.ts when the main process
- * brokers a server-to-terminal MessagePort.
- *
- * @see Issue #13: Server-to-terminal MessagePort channel
- */
-class TerminalRpcPort extends Context.Service<
-  TerminalRpcPort,
-  { readonly awaitPort: Effect.Effect<RpcMessagePort> }
->()('@laborer/TerminalRpcPort') {}
-
-export { TerminalRpcPort }
 
 /** Selects direct manager calls for the standalone daemon composition. */
 class InProcessTerminalBackend extends Context.Service<
@@ -477,19 +443,12 @@ class TerminalClient extends Context.Service<
       // Populated by the event stream subscriber.
       const terminalMapRef = yield* Ref.make<TerminalWorkspaceMap>(new Map())
 
-      // Check if a MessagePort for the terminal is available (utility
-      // process mode). When running as an Electron utility process, the
-      // main process brokers a direct MessagePort between the server and
-      // terminal processes.
-      const terminalRpcPort = yield* Effect.serviceOption(TerminalRpcPort)
-      const inProcessBackend = yield* Effect.serviceOption(
-        InProcessTerminalBackend
-      )
+      const inProcessBackend = yield* InProcessTerminalBackend
 
       /**
        * Get or create the RPC client. On first call, establishes the
-       * connection to the terminal utility process via MessagePort,
-       * seeds the terminal map, and starts the event stream subscription.
+       * direct connection to the daemon-owned terminal manager, seeds the
+       * terminal map, and starts the event stream subscription.
        *
        * Uses Effect.cached to ensure only one fiber runs initialization,
        * preventing duplicate RPC connections and event stream subscriptions
@@ -530,10 +489,10 @@ class TerminalClient extends Context.Service<
               readonly rows: number
               readonly workspaceId: string
             }) => Effect.Effect<TerminalInfo, unknown>
-          } = yield* (() => {
-            if (Option.isSome(inProcessBackend)) {
-              const manager = inProcessBackend.value.manager
-              return Effect.succeed({
+          } = yield* Effect.succeed({
+            ...(() => {
+              const manager = inProcessBackend.manager
+              return {
                 'terminal.events': () =>
                   Stream.fromPubSub(manager.lifecycleEvents).pipe(
                     Stream.map(toLifecycleEventSchema)
@@ -571,82 +530,9 @@ class TerminalClient extends Context.Service<
                         input.env === undefined ? undefined : { ...input.env },
                     })
                     .pipe(Effect.map(toTerminalInfo)),
-              })
-            }
-
-            if (Option.isSome(terminalRpcPort)) {
-              return Effect.gen(function* () {
-                const port = yield* terminalRpcPort.value.awaitPort
-                const rpcClient = yield* createMessagePortRpcClient(
-                  TerminalRpcs,
-                  port,
-                  layerScope
-                )
-                return {
-                  'terminal.events': () => rpcClient['terminal.events'](),
-                  'terminal.kill': (input: { readonly id: string }) =>
-                    rpcClient['terminal.kill'](input),
-                  'terminal.list': () => rpcClient['terminal.list'](),
-                  'terminal.setAgentStatus': (input: {
-                    readonly id: string
-                    readonly report: AgentStatusReport
-                  }) => rpcClient['terminal.setAgentStatus'](input),
-                  'terminal.spawn': (input: {
-                    readonly args?: readonly string[] | undefined
-                    readonly cols: number
-                    readonly command: string
-                    readonly cwd: string
-                    readonly env?: Readonly<Record<string, string>> | undefined
-                    readonly id?: string | undefined
-                    readonly rows: number
-                    readonly workspaceId: string
-                  }) => rpcClient['terminal.spawn'](input),
-                }
-              })
-            }
-
-            if (terminalRpcUrl) {
-              return Effect.gen(function* () {
-                const socketLayer = NodeSocket.layerWebSocket(terminalRpcUrl)
-                const context = yield* Layer.build(
-                  RpcClient.layerProtocolSocket({
-                    retryTransientErrors: true,
-                  }).pipe(
-                    Layer.provide(
-                      Layer.mergeAll(socketLayer, RpcSerialization.layerJson)
-                    )
-                  )
-                )
-                const rpcClient = yield* RpcClient.make(TerminalRpcs).pipe(
-                  Effect.provide(context)
-                )
-                return {
-                  'terminal.events': () => rpcClient['terminal.events'](),
-                  'terminal.kill': (input: { readonly id: string }) =>
-                    rpcClient['terminal.kill'](input),
-                  'terminal.list': () => rpcClient['terminal.list'](),
-                  'terminal.setAgentStatus': (input: {
-                    readonly id: string
-                    readonly report: AgentStatusReport
-                  }) => rpcClient['terminal.setAgentStatus'](input),
-                  'terminal.spawn': (input: {
-                    readonly args?: readonly string[] | undefined
-                    readonly cols: number
-                    readonly command: string
-                    readonly cwd: string
-                    readonly env?: Readonly<Record<string, string>> | undefined
-                    readonly id?: string | undefined
-                    readonly rows: number
-                    readonly workspaceId: string
-                  }) => rpcClient['terminal.spawn'](input),
-                }
-              })
-            }
-
-            return Effect.die(
-              'TerminalRpcPort is not available and LABORER_TERMINAL_RPC_URL is unset — cannot connect to terminal service'
-            )
-          })()
+              }
+            })(),
+          })
 
           // Seed the map from the terminal service's current terminal list.
           // This handles the case where the server restarts but the terminal
@@ -691,8 +577,6 @@ class TerminalClient extends Context.Service<
               })
             ),
             Stream.runDrain,
-            // Retry with exponential backoff if the terminal service disconnects
-            Effect.retry(sidecarEventStreamSchedule),
             Effect.catch((error) =>
               Effect.logWarning(
                 `Terminal event stream ended: ${String(error)}`

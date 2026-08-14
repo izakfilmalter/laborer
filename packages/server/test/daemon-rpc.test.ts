@@ -258,6 +258,18 @@ describe('standalone daemon', () => {
       )
       assert.strictEqual((await fetch(`${url}/assets/app.js`)).status, 200)
       assert.strictEqual((await fetch(`${url}/assets/missing.js`)).status, 404)
+      for (const path of [
+        '/server-health',
+        '/terminal-health',
+        '/file-watcher-health',
+      ]) {
+        const response = await fetch(`${url}${path}`)
+        assert.strictEqual(response.status, 200)
+        assert.strictEqual(
+          Reflect.get((await response.json()) as object, 'ready'),
+          true
+        )
+      }
 
       await Effect.runPromise(
         Effect.gen(function* () {

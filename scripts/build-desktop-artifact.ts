@@ -782,17 +782,17 @@ interface StagePackageJson {
  *     node_modules/             <- installed via `bun install --production --omit optional`
  *     apps/
  *       desktop/
- *         dist-electron/        <- main.cjs, preload.cjs, utility-process-bootstrap.cjs
+ *         dist-electron/        <- main.cjs, preload.cjs
  *         resources/            <- icons
  *       web/
  *         dist/                 <- bundled frontend
  *     packages/
  *       server/
- *         dist/                 <- utility-main.mjs (MessagePort RPC server)
+ *         dist/                 <- daemon-main.mjs (HTTP/WebSocket server)
  *       terminal/
- *         dist/                 <- utility-main.mjs (node-pty direct, MessagePort RPC)
+ *         dist/                 <- pty-host-main.mjs
  *       file-watcher/
- *         dist/                 <- utility-main.mjs (@parcel/watcher, MessagePort RPC)
+ *         dist/                 <- bundled file-watcher module
  *     dist/                     <- electron-builder output
  */
 function stage(stageRoot: string): void {

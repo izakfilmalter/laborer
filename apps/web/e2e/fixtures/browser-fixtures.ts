@@ -10,8 +10,8 @@ import {
   layerWebSocket,
   layerWebSocketConstructorGlobal,
 } from 'effect/unstable/socket/Socket'
-import { initRepo } from '../../../../packages/server/test/helpers/git-helpers.js'
 import { readSetupState } from '../global-setup.js'
+import { initRepo } from './git-fixture.js'
 import { TerminalHelper } from './terminal-helper.js'
 
 const MAX_DIAGNOSTICS_LENGTH = 64 * 1024

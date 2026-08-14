@@ -1,12 +1,12 @@
 import { access, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Effect } from 'effect'
-import { git } from '../../../../packages/server/test/helpers/git-helpers.js'
 import {
   type DaemonFixture,
   expect,
   test,
 } from '../fixtures/browser-fixtures.js'
+import { git } from '../fixtures/git-fixture.js'
 
 interface RepoFixture {
   readonly branchName: string
@@ -25,15 +25,15 @@ const createRepo = async (
   const repoPath = join(daemon.stateDir, name)
   await mkdir(repoPath, { recursive: true })
   const path = await realpath(repoPath)
-  git('init', path)
-  git('config user.email test@example.com', path)
-  git('config user.name "E2E User"', path)
+  git(['init'], path)
+  git(['config', 'user.email', 'test@example.com'], path)
+  git(['config', 'user.name', 'E2E User'], path)
   await writeFile(join(path, 'README.md'), `# ${name}\n`)
-  git('add README.md', path)
-  git('commit -m initial', path)
+  git(['add', 'README.md'], path)
+  git(['commit', '-m', 'initial'], path)
 
   return {
-    branchName: git('branch --show-current', path),
+    branchName: git(['branch', '--show-current'], path),
     name,
     path,
   }

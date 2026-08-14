@@ -145,7 +145,12 @@ export function useTerminalRpc({
       })
     ).pipe(
       Effect.tapError(() => Effect.sync(() => setStatus('disconnected'))),
-      Effect.retry(Schedule.exponential('250 millis'))
+      Effect.retry(
+        Schedule.min([
+          Schedule.exponential('250 millis'),
+          Schedule.spaced('5 seconds'),
+        ])
+      )
     )
 
     const fiber = Effect.runForkWith(runtime)(attach)
@@ -199,13 +204,17 @@ export function useTerminalRpc({
                 })
               })
             )
+            inputQueueRef.current.shift()
+            inputBytesRef.current -= item.bytes
           } catch (error) {
             console.error('Terminal input write failed', error)
             setStatus('disconnected')
+            // A failed RPC has ambiguous delivery. Never retain later
+            // keystrokes for an automatic retry: replaying terminal input can
+            // execute a command twice or deliver it to a different prompt.
+            inputQueueRef.current.length = 0
+            inputBytesRef.current = 0
             break
-          } finally {
-            inputQueueRef.current.shift()
-            inputBytesRef.current -= item.bytes
           }
         }
         writingRef.current = false

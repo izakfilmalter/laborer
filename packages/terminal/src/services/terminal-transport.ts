@@ -117,10 +117,22 @@ export class TerminalCursorJournal {
   }
 
   retains(cursor: number): boolean {
+    if (
+      !Number.isSafeInteger(cursor) ||
+      cursor < this.minimumCursor ||
+      cursor > this.#cursor
+    ) {
+      return false
+    }
+
+    // Cursors are opaque resume tokens, not arbitrary byte offsets. Accepting
+    // an offset in the middle of a journal entry would replay the whole entry
+    // and duplicate its prefix; it would also make acknowledgement accounting
+    // over-credit the PTY flow-control lane.
     return (
-      Number.isSafeInteger(cursor) &&
-      cursor >= this.minimumCursor &&
-      cursor <= this.#cursor
+      cursor === this.minimumCursor ||
+      cursor === this.#cursor ||
+      this.#entries.some((entry) => entry.end === cursor)
     )
   }
 

@@ -970,7 +970,6 @@ class TerminalManager extends Context.Service<
     Effect.gen(function* () {
       const ptyHostClient = yield* PtyHostClient
       const gracePeriodMs = parseGracePeriodMs()
-      const transportEpoch = crypto.randomUUID()
       const journalBytes = positiveIntegerFromEnv(
         'TERMINAL_REPLAY_JOURNAL_BYTES',
         TERMINAL_REPLAY_JOURNAL_BYTES_DEFAULT
@@ -1028,6 +1027,7 @@ class TerminalManager extends Context.Service<
       const subscriberStates = new Map<string, TerminalSubscriberState>()
       const attachSubscribers = new Map<string, Map<string, AttachSubscriber>>()
       const journals = new Map<string, TerminalCursorJournal>()
+      const transportEpochs = new Map<string, string>()
       const parsedCursors = new Map<string, number>()
       const acknowledgedCursors = new Map<string, number>()
       const oldestUnackedAt = new Map<string, number>()
@@ -1230,6 +1230,30 @@ class TerminalManager extends Context.Service<
         return journal
       }
 
+      const transportEpochFor = (terminalId: string): string => {
+        let epoch = transportEpochs.get(terminalId)
+        if (epoch === undefined) {
+          epoch = crypto.randomUUID()
+          transportEpochs.set(terminalId, epoch)
+        }
+        return epoch
+      }
+
+      const removeAttachSubscriber = (
+        terminalId: string,
+        subscriberId: string
+      ): boolean => {
+        const subscribers = attachSubscribers.get(terminalId)
+        if (subscribers?.delete(subscriberId) !== true) {
+          return false
+        }
+        ptyHostClient.detachFlowControlConsumer(terminalId)
+        if (subscribers.size === 0) {
+          attachSubscribers.delete(terminalId)
+        }
+        return true
+      }
+
       const publishAttachEvent = (
         terminalId: string,
         event: TerminalAttachEvent
@@ -1240,7 +1264,7 @@ class TerminalManager extends Context.Service<
         }
         for (const [id, subscriber] of subscribers) {
           if (!subscriber(event)) {
-            subscribers.delete(id)
+            removeAttachSubscriber(terminalId, id)
           }
         }
       }
@@ -1253,10 +1277,6 @@ class TerminalManager extends Context.Service<
         for (const chunk of splitByUtf8Bytes(data, outputChunkBytes)) {
           const journal = journalFor(terminalId)
           const cursor = journal.append(chunk)
-          oldestUnackedAt.set(
-            terminalId,
-            oldestUnackedAt.get(terminalId) ?? Date.now()
-          )
           headlessManager.write(terminalId, chunk, () => {
             parsedCursors.set(terminalId, cursor)
           })
@@ -1269,6 +1289,12 @@ class TerminalManager extends Context.Service<
             } catch {
               // Legacy MessagePort subscriber lifetime is managed separately.
             }
+          }
+          if ((attachSubscribers.get(terminalId)?.size ?? 0) > 0) {
+            oldestUnackedAt.set(
+              terminalId,
+              oldestUnackedAt.get(terminalId) ?? Date.now()
+            )
           }
           publishAttachEvent(terminalId, { _tag: 'Delta', cursor, data: chunk })
         }
@@ -1751,6 +1777,7 @@ class TerminalManager extends Context.Service<
         }
         attachSubscribers.delete(terminalId)
         journals.delete(terminalId)
+        transportEpochs.delete(terminalId)
         parsedCursors.delete(terminalId)
         acknowledgedCursors.delete(terminalId)
         oldestUnackedAt.delete(terminalId)
@@ -1964,6 +1991,35 @@ class TerminalManager extends Context.Service<
         // Re-create headless terminal for the restarted PTY.
         // This disposes the old instance and creates a fresh one.
         headlessManager.create(terminalId, restartCols, restartRows)
+
+        // A restarted terminal is a new output generation with the same
+        // durable terminal identity. Invalidate old resume cursors before the
+        // replacement PTY can emit output, then re-bootstrap every attached
+        // pane from the fresh (empty) headless screen.
+        const restartedEpoch = crypto.randomUUID()
+        transportEpochs.set(terminalId, restartedEpoch)
+        journals.delete(terminalId)
+        parsedCursors.delete(terminalId)
+        acknowledgedCursors.delete(terminalId)
+        oldestUnackedAt.delete(terminalId)
+        ackLatencies.delete(terminalId)
+        resetCounts.set(terminalId, (resetCounts.get(terminalId) ?? 0) + 1)
+        publishAttachEvent(terminalId, {
+          _tag: 'Reset',
+          epoch: restartedEpoch,
+          reason: 'epoch_changed',
+        })
+        publishAttachEvent(terminalId, {
+          _tag: 'Snapshot',
+          cursor: 0,
+          data: '',
+        })
+        publishAttachEvent(terminalId, {
+          _tag: 'Meta',
+          epoch: restartedEpoch,
+          status: 'running',
+        })
+        publishAttachEvent(terminalId, { _tag: 'ReplayComplete' })
 
         // Respawn PTY
         ptyHostClient.spawn(
@@ -2270,9 +2326,7 @@ class TerminalManager extends Context.Service<
           // terminal that was claimed once is never reaped (ADR 0003).
           // Cleanup happens via explicit kill/remove (pane close) only.
         }
-        if (attachSubscribers.get(terminalId)?.delete(subscriberId) === true) {
-          ptyHostClient.detachFlowControlConsumer(terminalId)
-        }
+        removeAttachSubscriber(terminalId, subscriberId)
 
         yield* Effect.log(
           `WebSocket unsubscribed from terminal ${terminalId} (subscriber=${subscriberId})`
@@ -2293,6 +2347,7 @@ class TerminalManager extends Context.Service<
           })
         }
         const journal = journalFor(terminalId)
+        const transportEpoch = transportEpochFor(terminalId)
         const subscriberId = crypto.randomUUID()
         let subscribers = attachSubscribers.get(terminalId)
         if (!subscribers) {
@@ -2302,12 +2357,17 @@ class TerminalManager extends Context.Service<
         subscribers.set(subscriberId, subscriber)
         clearGraceTimeout(terminalId)
         ptyHostClient.attachFlowControlConsumer(terminalId)
+        // Attach resets the PTY's flow-control debt (ADR 0002). Replay bytes
+        // predate that reset and therefore must not be acknowledged as live
+        // output debt.
+        acknowledgedCursors.set(terminalId, journal.cursor)
+        oldestUnackedAt.delete(terminalId)
 
         const emit = (event: TerminalAttachEvent): boolean => {
           if (subscriber(event)) {
             return true
           }
-          subscribers?.delete(subscriberId)
+          removeAttachSubscriber(terminalId, subscriberId)
           return false
         }
 
@@ -2333,7 +2393,7 @@ class TerminalManager extends Context.Service<
         if (replayCursor === undefined) {
           const snapshot = headlessManager.getScreenState(terminalId)
           if (utf8Bytes(snapshot) > snapshotBytes) {
-            subscribers.delete(subscriberId)
+            removeAttachSubscriber(terminalId, subscriberId)
             return yield* new TerminalRpcError({
               message: `Terminal snapshot exceeds the ${snapshotBytes}-byte bound`,
               code: 'TERMINAL_SNAPSHOT_OVERFLOW',
@@ -2369,11 +2429,17 @@ class TerminalManager extends Context.Service<
         }
         const previous =
           acknowledgedCursors.get(terminalId) ?? journal.minimumCursor
-        if (cursor < previous || cursor > journal.cursor) {
+        if (cursor > journal.cursor) {
           return yield* new TerminalRpcError({
             message: `Invalid terminal acknowledgement cursor: ${cursor}`,
             code: 'TERMINAL_INVALID_CURSOR',
           })
+        }
+        // Duplicate and stale acknowledgements are normal when several panes
+        // view one terminal or an in-flight acknowledgement outlives a
+        // reconnect. They must be idempotent rather than surfacing errors.
+        if (cursor <= previous) {
+          return
         }
         const chars = journal.charactersBetween(previous, cursor)
         if (chars > 0) {
@@ -2403,7 +2469,10 @@ class TerminalManager extends Context.Service<
             backlogBytes: Math.max(
               0,
               journal.cursor -
-                (acknowledgedCursors.get(terminalId) ?? journal.minimumCursor)
+                Math.max(
+                  acknowledgedCursors.get(terminalId) ?? journal.minimumCursor,
+                  journal.minimumCursor
+                )
             ),
             resetCount: resetCounts.get(terminalId) ?? 0,
             wsBufferedBytes: null,

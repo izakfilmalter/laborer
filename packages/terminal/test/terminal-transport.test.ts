@@ -22,6 +22,8 @@ describe('terminal cursor transport', () => {
     expect(second).toBe(7)
     expect(journal.minimumCursor).toBe(3)
     expect(journal.retains(0)).toBe(false)
+    expect(journal.retains(4)).toBe(false)
+    expect(journal.deltasAfter(4)).toEqual([])
     expect(journal.deltasAfter(3)).toEqual([
       { _tag: 'Delta', cursor: 7, data: '😀' },
     ])

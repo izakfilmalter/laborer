@@ -92,6 +92,33 @@ export const TerminalLifecycleEventSchema = Schema.Union([
 export type TerminalLifecycleEventSchema =
   typeof TerminalLifecycleEventSchema.Type
 
+/** Ordered terminal data carried by the daemon's single WebSocket. */
+export const TerminalAttachEvent = Schema.Union([
+  Schema.TaggedStruct('Snapshot', {
+    cursor: NonNegativeInt,
+    data: Schema.String,
+  }),
+  Schema.TaggedStruct('Delta', {
+    cursor: NonNegativeInt,
+    data: Schema.String,
+  }),
+  Schema.TaggedStruct('Meta', {
+    epoch: Schema.String,
+    status: Schema.Literals(['running', 'stopped']),
+  }),
+  Schema.TaggedStruct('ReplayComplete', {}),
+  Schema.TaggedStruct('Reset', {
+    epoch: Schema.String,
+    reason: Schema.Literals(['epoch_changed', 'cursor_out_of_range']),
+  }),
+  Schema.TaggedStruct('Exit', {
+    exitCode: Schema.Int,
+    signal: Schema.Int,
+  }),
+])
+
+export type TerminalAttachEvent = typeof TerminalAttachEvent.Type
+
 // ---------------------------------------------------------------------------
 // Error Types
 // ---------------------------------------------------------------------------
@@ -1362,6 +1389,39 @@ export class TerminalRpcs extends RpcGroup.make(
       id: Schema.String,
       data: Schema.String,
     },
+  }),
+
+  /** Cursor-replay terminal stream used by browser clients on the shared WS. */
+  Rpc.make('terminal.attach', {
+    success: TerminalAttachEvent,
+    error: TerminalRpcError,
+    payload: {
+      id: Schema.String,
+      cursor: Schema.optional(NonNegativeInt),
+      epoch: Schema.optional(Schema.String),
+    },
+    stream: true,
+  }),
+
+  /** Commit output only after xterm has parsed and rendered it. */
+  Rpc.make('terminal.ack', {
+    error: TerminalRpcError,
+    payload: {
+      id: Schema.String,
+      cursor: NonNegativeInt,
+    },
+  }),
+
+  /** Bounded-transport diagnostics for terminal/WS fairness. */
+  Rpc.make('terminal.transportMetrics', {
+    success: Schema.Struct({
+      ackLatencyMs: NonNegativeInt,
+      backlogBytes: NonNegativeInt,
+      resetCount: NonNegativeInt,
+      wsBufferedBytes: Schema.NullOr(NonNegativeInt),
+    }),
+    error: TerminalRpcError,
+    payload: { id: Schema.String },
   }),
 
   // -----------------------------------------------------------------------

@@ -187,6 +187,57 @@ describe(
       assert.isTrue(Result.isFailure(result))
     })
 
+    it('terminal.attach replays by cursor and resets an out-of-range cursor', async () => {
+      const terminal = await run(
+        client['terminal.spawn']({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+      await delay(200)
+
+      const initial = await run(
+        client['terminal.attach']({ id: terminal.id }).pipe(
+          Stream.take(3),
+          Stream.runCollect
+        )
+      )
+      const snapshot = initial.find((event) => event._tag === 'Snapshot')
+      assert.isDefined(snapshot)
+
+      await run(
+        client['terminal.write']({ id: terminal.id, data: 'cursor-test\n' })
+      )
+      await delay(200)
+
+      const replay = await run(
+        client['terminal.attach']({
+          id: terminal.id,
+          cursor: snapshot?.cursor ?? 0,
+        }).pipe(Stream.take(3), Stream.runCollect)
+      )
+      assert.isTrue(
+        replay.some(
+          (event) =>
+            event._tag === 'Delta' && event.data.includes('cursor-test')
+        )
+      )
+
+      const reset = await run(
+        client['terminal.attach']({
+          id: terminal.id,
+          cursor: Number.MAX_SAFE_INTEGER,
+        }).pipe(Stream.take(2), Stream.runCollect)
+      )
+      assert.strictEqual(reset[0]?._tag, 'Reset')
+      assert.strictEqual(reset[1]?._tag, 'Snapshot')
+
+      await run(client['terminal.kill']({ id: terminal.id }))
+    })
+
     // -----------------------------------------------------------------------
     // terminal.resize
     // -----------------------------------------------------------------------

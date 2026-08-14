@@ -27,13 +27,15 @@
 import {
   type AgentStatusSnapshot,
   type TerminalLifecycleEventSchema,
+  TerminalRpcError,
   TerminalRpcs,
 } from '@laborer/shared/rpc'
-import { Effect, Stream } from 'effect'
+import { Cause, Effect, Queue, Stream } from 'effect'
 import {
   type TerminalLifecycleEvent,
   TerminalManager,
 } from '../services/terminal-manager.js'
+import { TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT } from '../services/terminal-transport.js'
 
 /**
  * Converts a TerminalLifecycleEvent (from TerminalManager's PubSub) to
@@ -179,6 +181,44 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
       // terminal.write — send input to a terminal
       // -------------------------------------------------------------------
       'terminal.write': ({ id, data }) => tm.write(id, data),
+
+      'terminal.attach': ({ id, cursor, epoch }) =>
+        Stream.callback(
+          (queue) =>
+            Effect.acquireRelease(
+              tm.attach(
+                id,
+                {
+                  ...(cursor === undefined ? {} : { cursor }),
+                  ...(epoch === undefined ? {} : { epoch }),
+                },
+                (event) => {
+                  const offered = Queue.offerUnsafe(queue, event)
+                  if (!offered) {
+                    Queue.failCauseUnsafe(
+                      queue,
+                      Cause.fail(
+                        new TerminalRpcError({
+                          message: 'Terminal attach callback buffer overflowed',
+                          code: 'TERMINAL_ATTACH_OVERFLOW',
+                        })
+                      )
+                    )
+                  }
+                  return offered
+                }
+              ),
+              ({ subscriberId }) => tm.unsubscribe(id, subscriberId)
+            ),
+          {
+            bufferSize: TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT,
+            strategy: 'dropping',
+          }
+        ),
+
+      'terminal.ack': ({ id, cursor }) => tm.acknowledge(id, cursor),
+
+      'terminal.transportMetrics': ({ id }) => tm.transportMetrics(id),
 
       // -------------------------------------------------------------------
       // terminal.resize — resize a terminal's PTY

@@ -26,6 +26,7 @@ import {
 import {
   type AgentStatusReport,
   type AgentStatusSnapshot,
+  type TerminalAttachEvent,
   TerminalRpcError,
 } from '@laborer/shared/rpc'
 import { Context, Effect, Layer, PubSub, Ref, Schedule } from 'effect'
@@ -36,6 +37,17 @@ import type {
   SerializedReplayEvent,
 } from './terminal-session-persistence.js'
 import { TerminalStatusEngine } from './terminal-status-engine.js'
+import {
+  positiveIntegerFromEnv,
+  splitByUtf8Bytes,
+  TERMINAL_INPUT_PENDING_BYTES_DEFAULT,
+  TERMINAL_INPUT_WRITE_BYTES_DEFAULT,
+  TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT,
+  TERMINAL_REPLAY_JOURNAL_BYTES_DEFAULT,
+  TERMINAL_SNAPSHOT_BYTES_DEFAULT,
+  TerminalCursorJournal,
+  utf8Bytes,
+} from './terminal-transport.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
 const logPrefix = 'TerminalManager'
@@ -74,6 +86,15 @@ const parseGracePeriodMs = (): number => {
  * Receives raw UTF-8 terminal output strings.
  */
 type OutputSubscriber = (data: string) => void
+
+type AttachSubscriber = (event: TerminalAttachEvent) => boolean
+
+interface TerminalTransportMetrics {
+  readonly ackLatencyMs: number
+  readonly backlogBytes: number
+  readonly resetCount: number
+  readonly wsBufferedBytes: number | null
+}
 
 /**
  * Internal representation of a managed terminal.
@@ -803,6 +824,21 @@ class TerminalManager extends Context.Service<
       data: string
     ) => Effect.Effect<void, TerminalRpcError>
 
+    readonly attach: (
+      terminalId: string,
+      options: { readonly cursor?: number; readonly epoch?: string },
+      subscriber: AttachSubscriber
+    ) => Effect.Effect<{ readonly subscriberId: string }, TerminalRpcError>
+
+    readonly acknowledge: (
+      terminalId: string,
+      cursor: number
+    ) => Effect.Effect<void, TerminalRpcError>
+
+    readonly transportMetrics: (
+      terminalId: string
+    ) => Effect.Effect<TerminalTransportMetrics, TerminalRpcError>
+
     /** Resize a terminal's PTY dimensions. */
     readonly resize: (
       terminalId: string,
@@ -934,6 +970,35 @@ class TerminalManager extends Context.Service<
     Effect.gen(function* () {
       const ptyHostClient = yield* PtyHostClient
       const gracePeriodMs = parseGracePeriodMs()
+      const transportEpoch = crypto.randomUUID()
+      const journalBytes = positiveIntegerFromEnv(
+        'TERMINAL_REPLAY_JOURNAL_BYTES',
+        TERMINAL_REPLAY_JOURNAL_BYTES_DEFAULT
+      )
+      const outputChunkBytes = positiveIntegerFromEnv(
+        'TERMINAL_OUTPUT_CHUNK_BYTES',
+        TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT
+      )
+      const snapshotBytes = positiveIntegerFromEnv(
+        'TERMINAL_SNAPSHOT_BYTES',
+        TERMINAL_SNAPSHOT_BYTES_DEFAULT
+      )
+      const inputWriteBytes = positiveIntegerFromEnv(
+        'TERMINAL_INPUT_WRITE_BYTES',
+        TERMINAL_INPUT_WRITE_BYTES_DEFAULT
+      )
+      const inputPendingBytes = positiveIntegerFromEnv(
+        'TERMINAL_INPUT_PENDING_BYTES',
+        TERMINAL_INPUT_PENDING_BYTES_DEFAULT
+      )
+      if (
+        outputChunkBytes > journalBytes ||
+        inputWriteBytes > inputPendingBytes
+      ) {
+        return yield* Effect.die(
+          'Terminal transport bounds invalid: chunks must fit journals and writes must fit pending queues'
+        )
+      }
 
       const context = yield* Effect.context<never>()
       const runSync = Effect.runSyncWith(context)
@@ -961,6 +1026,13 @@ class TerminalManager extends Context.Service<
 
       // Per-terminal subscriber state (WebSocket connections).
       const subscriberStates = new Map<string, TerminalSubscriberState>()
+      const attachSubscribers = new Map<string, Map<string, AttachSubscriber>>()
+      const journals = new Map<string, TerminalCursorJournal>()
+      const parsedCursors = new Map<string, number>()
+      const acknowledgedCursors = new Map<string, number>()
+      const oldestUnackedAt = new Map<string, number>()
+      const resetCounts = new Map<string, number>()
+      const ackLatencies = new Map<string, number>()
       const revivedReplayEvents = new Map<string, SerializedReplayEvent>()
       const graceTimeouts = new Map<string, ProcessTimeTimeout>()
 
@@ -1147,6 +1219,59 @@ class TerminalManager extends Context.Service<
           subscriberStates.set(terminalId, state)
         }
         return state
+      }
+
+      const journalFor = (terminalId: string): TerminalCursorJournal => {
+        let journal = journals.get(terminalId)
+        if (!journal) {
+          journal = new TerminalCursorJournal(journalBytes)
+          journals.set(terminalId, journal)
+        }
+        return journal
+      }
+
+      const publishAttachEvent = (
+        terminalId: string,
+        event: TerminalAttachEvent
+      ): void => {
+        const subscribers = attachSubscribers.get(terminalId)
+        if (!subscribers) {
+          return
+        }
+        for (const [id, subscriber] of subscribers) {
+          if (!subscriber(event)) {
+            subscribers.delete(id)
+          }
+        }
+      }
+
+      const processOutput = (
+        terminalId: string,
+        data: string,
+        legacyState: TerminalSubscriberState
+      ): void => {
+        for (const chunk of splitByUtf8Bytes(data, outputChunkBytes)) {
+          const journal = journalFor(terminalId)
+          const cursor = journal.append(chunk)
+          oldestUnackedAt.set(
+            terminalId,
+            oldestUnackedAt.get(terminalId) ?? Date.now()
+          )
+          headlessManager.write(terminalId, chunk, () => {
+            parsedCursors.set(terminalId, cursor)
+          })
+          if (legacyState.replayBuffer !== null) {
+            legacyState.replayBuffer.push(chunk)
+          }
+          for (const subscriber of legacyState.subscribers.values()) {
+            try {
+              subscriber(chunk)
+            } catch {
+              // Legacy MessagePort subscriber lifetime is managed separately.
+            }
+          }
+          publishAttachEvent(terminalId, { _tag: 'Delta', cursor, data: chunk })
+        }
       }
 
       const clearGraceTimeout = (terminalId: string): void => {
@@ -1353,23 +1478,7 @@ class TerminalManager extends Context.Service<
           // 2. Live subscribers — internal consumers like session
           //    persistence that subscribe with replay=false. These
           //    receive data immediately without affecting the buffer.
-          (data: string) => {
-            headlessManager.write(id, data)
-
-            // Buffer for future data channel replay (if still active).
-            if (subState.replayBuffer !== null) {
-              subState.replayBuffer.push(data)
-            }
-
-            // Deliver to all live subscribers.
-            for (const subscriber of subState.subscribers.values()) {
-              try {
-                subscriber(data)
-              } catch {
-                // Subscriber errors silently ignored
-              }
-            }
-          },
+          (data: string) => processOutput(id, data, subState),
           // Exit callback: mark as stopped (retain in memory)
           (exitCode: number, signal: number) => {
             clearGraceTimeout(id)
@@ -1388,6 +1497,7 @@ class TerminalManager extends Context.Service<
 
             emitEvent({ _tag: 'StatusChanged', id, status: 'stopped' })
             emitEvent({ _tag: 'Exited', id, exitCode, signal })
+            publishAttachEvent(id, { _tag: 'Exit', exitCode, signal })
           },
           // Spawned callback: store the shell PID for child process detection
           (pid: number) => {
@@ -1454,6 +1564,17 @@ class TerminalManager extends Context.Service<
           })
         }
 
+        const bytes = utf8Bytes(data)
+        if (bytes > inputWriteBytes || bytes > inputPendingBytes) {
+          return yield* new TerminalRpcError({
+            message: `Terminal input exceeds the ${inputWriteBytes}-byte write bound`,
+            code: 'TERMINAL_INPUT_OVERFLOW',
+          })
+        }
+
+        // PtyHostClient.write is synchronous in phase 1. Keeping all writes in
+        // this manager-owned lane preserves RPC arrival order; phase 2 can put
+        // the same byte budget around its asynchronous host queue.
         ptyHostClient.write(terminalId, data)
 
         // Mark the terminal as "running" when the user sends a newline
@@ -1618,6 +1739,23 @@ class TerminalManager extends Context.Service<
         })
 
         subscriberStates.delete(terminalId)
+        const activeAttachSubscribers = attachSubscribers.get(terminalId)
+        if (activeAttachSubscribers !== undefined) {
+          for (
+            let index = 0;
+            index < activeAttachSubscribers.size;
+            index += 1
+          ) {
+            ptyHostClient.detachFlowControlConsumer(terminalId)
+          }
+        }
+        attachSubscribers.delete(terminalId)
+        journals.delete(terminalId)
+        parsedCursors.delete(terminalId)
+        acknowledgedCursors.delete(terminalId)
+        oldestUnackedAt.delete(terminalId)
+        resetCounts.delete(terminalId)
+        ackLatencies.delete(terminalId)
         revivedReplayEvents.delete(terminalId)
         headlessManager.dispose(terminalId)
         statusEngines.delete(terminalId)
@@ -1847,24 +1985,7 @@ class TerminalManager extends Context.Service<
           // Data callback: write to headless terminal + notify subscribers.
           // Same buffering pattern as spawn — if somehow no subscribers
           // exist at restart time, data is captured until one connects.
-          (data: string) => {
-            headlessManager.write(terminalId, data)
-
-            if (
-              restartSubState.subscribers.size === 0 &&
-              restartSubState.replayBuffer !== null
-            ) {
-              restartSubState.replayBuffer.push(data)
-            } else {
-              for (const subscriber of restartSubState.subscribers.values()) {
-                try {
-                  subscriber(data)
-                } catch {
-                  // Subscriber errors silently ignored
-                }
-              }
-            }
-          },
+          (data: string) => processOutput(terminalId, data, restartSubState),
           (exitCode: number, signal: number) => {
             clearGraceTimeout(terminalId)
             emitAgentCompletionBeforeStop(terminalId)
@@ -1889,6 +2010,11 @@ class TerminalManager extends Context.Service<
               status: 'stopped',
             })
             emitEvent({ _tag: 'Exited', id: terminalId, exitCode, signal })
+            publishAttachEvent(terminalId, {
+              _tag: 'Exit',
+              exitCode,
+              signal,
+            })
           },
           // Spawned callback: store the shell PID for child process detection
           (pid: number) => {
@@ -2144,11 +2270,146 @@ class TerminalManager extends Context.Service<
           // terminal that was claimed once is never reaped (ADR 0003).
           // Cleanup happens via explicit kill/remove (pane close) only.
         }
+        if (attachSubscribers.get(terminalId)?.delete(subscriberId) === true) {
+          ptyHostClient.detachFlowControlConsumer(terminalId)
+        }
 
         yield* Effect.log(
           `WebSocket unsubscribed from terminal ${terminalId} (subscriber=${subscriberId})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
       })
+
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: protocol ordering is clearer as one linear attach transaction
+      const attach = Effect.fn('TerminalManager.attach')(function* (
+        terminalId: string,
+        options: { readonly cursor?: number; readonly epoch?: string },
+        subscriber: AttachSubscriber
+      ) {
+        const terminal = (yield* Ref.get(terminalsRef)).get(terminalId)
+        if (!terminal) {
+          return yield* new TerminalRpcError({
+            message: `Terminal not found: ${terminalId}`,
+            code: 'TERMINAL_NOT_FOUND',
+          })
+        }
+        const journal = journalFor(terminalId)
+        const subscriberId = crypto.randomUUID()
+        let subscribers = attachSubscribers.get(terminalId)
+        if (!subscribers) {
+          subscribers = new Map()
+          attachSubscribers.set(terminalId, subscribers)
+        }
+        subscribers.set(subscriberId, subscriber)
+        clearGraceTimeout(terminalId)
+        ptyHostClient.attachFlowControlConsumer(terminalId)
+
+        const emit = (event: TerminalAttachEvent): boolean => {
+          if (subscriber(event)) {
+            return true
+          }
+          subscribers?.delete(subscriberId)
+          return false
+        }
+
+        let replayCursor = options.cursor
+        const epochChanged =
+          options.epoch !== undefined && options.epoch !== transportEpoch
+        const cursorLost =
+          replayCursor !== undefined && !journal.retains(replayCursor)
+        if (epochChanged || cursorLost) {
+          resetCounts.set(terminalId, (resetCounts.get(terminalId) ?? 0) + 1)
+          if (
+            !emit({
+              _tag: 'Reset',
+              epoch: transportEpoch,
+              reason: epochChanged ? 'epoch_changed' : 'cursor_out_of_range',
+            })
+          ) {
+            return { subscriberId }
+          }
+          replayCursor = undefined
+        }
+
+        if (replayCursor === undefined) {
+          const snapshot = headlessManager.getScreenState(terminalId)
+          if (utf8Bytes(snapshot) > snapshotBytes) {
+            subscribers.delete(subscriberId)
+            return yield* new TerminalRpcError({
+              message: `Terminal snapshot exceeds the ${snapshotBytes}-byte bound`,
+              code: 'TERMINAL_SNAPSHOT_OVERFLOW',
+            })
+          }
+          replayCursor = parsedCursors.get(terminalId) ?? 0
+          if (
+            !emit({ _tag: 'Snapshot', cursor: replayCursor, data: snapshot })
+          ) {
+            return { subscriberId }
+          }
+        }
+        for (const delta of journal.deltasAfter(replayCursor)) {
+          if (!emit(delta)) {
+            return { subscriberId }
+          }
+        }
+        emit({ _tag: 'Meta', epoch: transportEpoch, status: terminal.status })
+        emit({ _tag: 'ReplayComplete' })
+        return { subscriberId }
+      })
+
+      const acknowledge = Effect.fn('TerminalManager.acknowledge')(function* (
+        terminalId: string,
+        cursor: number
+      ) {
+        const journal = journals.get(terminalId)
+        if (!journal) {
+          return yield* new TerminalRpcError({
+            message: `Terminal not found: ${terminalId}`,
+            code: 'TERMINAL_NOT_FOUND',
+          })
+        }
+        const previous =
+          acknowledgedCursors.get(terminalId) ?? journal.minimumCursor
+        if (cursor < previous || cursor > journal.cursor) {
+          return yield* new TerminalRpcError({
+            message: `Invalid terminal acknowledgement cursor: ${cursor}`,
+            code: 'TERMINAL_INVALID_CURSOR',
+          })
+        }
+        const chars = journal.charactersBetween(previous, cursor)
+        if (chars > 0) {
+          ptyHostClient.ack(terminalId, chars)
+        }
+        acknowledgedCursors.set(terminalId, cursor)
+        const startedAt = oldestUnackedAt.get(terminalId)
+        if (startedAt !== undefined) {
+          ackLatencies.set(terminalId, Math.max(0, Date.now() - startedAt))
+        }
+        if (cursor >= journal.cursor) {
+          oldestUnackedAt.delete(terminalId)
+        }
+      })
+
+      const transportMetrics = Effect.fn('TerminalManager.transportMetrics')(
+        function* (terminalId: string) {
+          const journal = journals.get(terminalId)
+          if (!journal) {
+            return yield* new TerminalRpcError({
+              message: `Terminal not found: ${terminalId}`,
+              code: 'TERMINAL_NOT_FOUND',
+            })
+          }
+          return {
+            ackLatencyMs: ackLatencies.get(terminalId) ?? 0,
+            backlogBytes: Math.max(
+              0,
+              journal.cursor -
+                (acknowledgedCursors.get(terminalId) ?? journal.minimumCursor)
+            ),
+            resetCount: resetCounts.get(terminalId) ?? 0,
+            wsBufferedBytes: null,
+          }
+        }
+      )
 
       const terminalExists = Effect.fn('TerminalManager.terminalExists')(
         function* (terminalId: string) {
@@ -2378,6 +2639,9 @@ class TerminalManager extends Context.Service<
 
       return TerminalManager.of({
         spawn,
+        attach,
+        acknowledge,
+        transportMetrics,
         write,
         resize,
         forceRedraw,

@@ -72,7 +72,9 @@ import type {
   TerminalStatus,
 } from '@/hooks/use-terminal-messageport'
 import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
+import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { isElectron } from '@/lib/desktop'
 import {
   isPrefixKey,
   isTerminalFindNextShortcut,
@@ -386,7 +388,81 @@ function TerminalConnectingPlaceholder() {
  * and renders the terminal.
  */
 function TerminalPaneContent(props: TerminalPaneProps) {
-  return <TerminalPaneMessagePort {...props} />
+  return isElectron() ? (
+    <TerminalPaneMessagePort {...props} />
+  ) : (
+    <TerminalPaneRpc {...props} />
+  )
+}
+
+/** Browser terminal transport over terminal.attach on the daemon's single WS. */
+function TerminalPaneRpc({
+  terminalId,
+  onTerminalExit,
+  onTitleChange,
+}: TerminalPaneProps) {
+  const terminalRef = useRef<Terminal | null>(null)
+  const pendingRef = useRef<Array<{ data: string; commit: () => void }>>([])
+  const [replayEpoch, setReplayEpoch] = useState(0)
+
+  const write = useCallback(
+    (data: string, _cursor: number, commit: () => void) => {
+      const terminal = terminalRef.current
+      if (!terminal) {
+        pendingRef.current.push({ data, commit })
+        return
+      }
+      if (data.length === 0) {
+        commit()
+      } else {
+        terminal.write(data, commit)
+      }
+    },
+    []
+  )
+  const snapshot = useCallback(
+    (data: string, cursor: number, commit: () => void) => {
+      terminalRef.current?.reset()
+      setReplayEpoch((value) => value + 1)
+      write(data, cursor, commit)
+    },
+    [write]
+  )
+  const connection = useTerminalRpc({
+    terminalId,
+    onData: write,
+    onSnapshot: snapshot,
+    onReset: () => terminalRef.current?.reset(),
+    onStatus: (status) => {
+      if (status === 'stopped') {
+        onTerminalExit?.()
+      }
+    },
+  })
+  const ready = useCallback(() => {
+    const terminal = terminalRef.current
+    if (!terminal) {
+      return
+    }
+    const pending = pendingRef.current.splice(0)
+    for (const item of pending) {
+      if (item.data.length === 0) {
+        item.commit()
+      } else {
+        terminal.write(item.data, item.commit)
+      }
+    }
+  }, [])
+  return (
+    <TerminalPaneRenderer
+      connection={connection}
+      onTerminalReady={ready}
+      onTitleChange={onTitleChange}
+      replayEpoch={replayEpoch}
+      terminalId={terminalId}
+      terminalRef={terminalRef}
+    />
+  )
 }
 
 /** Connects via MessagePort and renders the terminal. */

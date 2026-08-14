@@ -14,7 +14,7 @@ const openTerminal = async (
 
 test.describe('browser terminal gate', () => {
   test('spawns a shell and completes an input round-trip', async ({
-    app: _app,
+    seededWorkspaceApp: _app,
     page,
     seededWorkspace,
     terminal,
@@ -30,7 +30,7 @@ test.describe('browser terminal gate', () => {
   })
 
   test('keeps a terminal session across a UI reload', async ({
-    app: _app,
+    seededWorkspaceApp: _app,
     page,
     seededWorkspace,
     terminal,
@@ -56,7 +56,7 @@ test.describe('browser terminal gate', () => {
   })
 
   test('preserves content and interactivity across a daemon restart', async ({
-    app: _app,
+    seededWorkspaceApp: _app,
     daemon,
     page,
     seededWorkspace,
@@ -91,7 +91,7 @@ test.describe('browser terminal gate', () => {
   })
 
   test('shows the disconnect banner after grace and clears it on reconnect', async ({
-    app: _app,
+    seededWorkspaceApp: _app,
     daemon,
     page,
     seededWorkspace,

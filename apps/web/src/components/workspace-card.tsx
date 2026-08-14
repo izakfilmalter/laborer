@@ -360,6 +360,7 @@ function InlineDestroyWorkspaceDialog({
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Dialog container needs keyboard event handling for Escape and Cmd+Enter shortcuts
     <div
       className="absolute inset-0 z-50 flex items-center justify-center"
+      data-testid="destroy-workspace-dialog"
       onKeyDown={handleKeyDown}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -643,6 +644,7 @@ function DestroyWorkspaceButton({
         open={dialogOpen && visibleWorkspaceFrameElement === null}
       >
         <AlertDialogContent
+          data-testid="destroy-workspace-dialog"
           onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
             if (isExactEnter(event.nativeEvent)) {
               event.preventDefault()
@@ -889,6 +891,8 @@ function WorkspaceCard({
       className={agentSurface.cardClassName}
       data-agent-status={workspaceAgentStatus ?? undefined}
       data-testid={`workspace-card-${workspace.branchName}`}
+      data-workspace-id={workspace.id}
+      data-worktree-path={workspace.worktreePath}
       icon={
         <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       }

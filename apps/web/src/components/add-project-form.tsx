@@ -107,7 +107,7 @@ function BrowserDirectoryPicker({
       }}
       open={open}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg" data-testid="directory-picker">
         <DialogHeader>
           <DialogTitle>Choose a project folder</DialogTitle>
           <DialogDescription>
@@ -131,6 +131,7 @@ function BrowserDirectoryPicker({
             </Button>
             <span
               className="min-w-0 truncate font-mono text-xs"
+              data-testid="directory-picker-path"
               title={listing?.path}
             >
               {listing?.path ?? 'Loading…'}
@@ -140,6 +141,8 @@ function BrowserDirectoryPicker({
             {listing?.directories.map((directory) => (
               <button
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                data-directory-path={directory.path}
+                data-testid="directory-option"
                 disabled={isLoading}
                 key={directory.path}
                 onClick={() => browse(directory.path).catch(() => undefined)}
@@ -166,6 +169,7 @@ function BrowserDirectoryPicker({
             Cancel
           </Button>
           <Button
+            data-testid="directory-picker-select"
             disabled={!listing || isLoading}
             onClick={() => {
               if (listing) {
@@ -262,6 +266,7 @@ function AddProjectForm() {
   return (
     <>
       <Button
+        data-testid="add-project"
         disabled={!isServerReady || isAdding || browserPickerOpen}
         onClick={handleAddClick}
         size="sm"

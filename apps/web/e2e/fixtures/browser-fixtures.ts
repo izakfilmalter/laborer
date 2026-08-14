@@ -44,6 +44,7 @@ export interface SeededWorkspace {
 interface BrowserFixtures {
   readonly app: undefined
   readonly seededWorkspace: SeededWorkspace
+  readonly seededWorkspaceApp: undefined
   readonly terminal: TerminalHelper
 }
 
@@ -278,8 +279,15 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
     }
   },
 
-  app: async ({ page, seededWorkspace }, use) => {
+  app: async ({ daemon: _daemon, page }, use) => {
     await page.goto('/')
+    await expect(page.getByTestId('mission-control')).toBeVisible({
+      timeout: 30_000,
+    })
+    await use(undefined)
+  },
+
+  seededWorkspaceApp: async ({ app: _app, page, seededWorkspace }, use) => {
     await expect(
       page.getByTestId(`workspace-card-${seededWorkspace.branchName}`).first()
     ).toBeVisible({ timeout: 30_000 })

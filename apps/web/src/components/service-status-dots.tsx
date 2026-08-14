@@ -21,7 +21,6 @@
  * @see Issue #10: Header error state persistence and animations
  */
 
-import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import type { TerminalHostStatus } from '@laborer/shared/rpc'
 import { AlertTriangle, CircleArrowUp, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -35,7 +34,6 @@ import {
 } from '@/components/ui/tooltip'
 import { type ServiceName, useServiceStatus } from '@/hooks/use-service-status'
 import { useTerminalHostStatus } from '@/hooks/use-terminal-host-status'
-import { localApi } from '@/lib/local-api'
 import {
   getStatusColor,
   getStatusLabel,
@@ -338,17 +336,6 @@ function ServiceStatusBadge({
   )
 }
 
-/**
- * Map ServiceName to SidecarName for restart calls.
- * Only sidecar services can be restarted (not sync).
- */
-function toSidecarName(name: ServiceName): SidecarName | undefined {
-  if (name === 'sync') {
-    return undefined
-  }
-  return name
-}
-
 /** Server connection badge — always visible in the former sync-status slot. */
 function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   const color = getStatusColor(syncState)
@@ -573,11 +560,6 @@ function ServiceStatusDots() {
 
   const handleRetry = useCallback(
     (name: ServiceName) => {
-      const bridge = localApi.desktopBridge
-      const sidecarName = toSidecarName(name)
-      if (bridge && sidecarName) {
-        bridge.restartSidecar(sidecarName)
-      }
       // Clear the persisted error on retry
       dismissError(name)
     },

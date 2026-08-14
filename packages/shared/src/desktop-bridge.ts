@@ -167,13 +167,6 @@ export interface DesktopBridge {
    */
   focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
 
-  /**
-   * Returns the current status of all sidecar services.
-   * Used on mount to catch up on statuses that were broadcast before the
-   * window was created or ready to receive IPC events.
-   */
-  getSidecarStatuses: () => Promise<SidecarStatusEvent[]>
-
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>
 
@@ -226,14 +219,6 @@ export interface DesktopBridge {
   onMenuAction: (listener: (action: string) => void) => () => void
 
   /**
-   * Subscribes to sidecar status change events.
-   * Returns an unsubscribe function.
-   */
-  onSidecarStatus: (
-    listener: (status: SidecarStatusEvent) => void
-  ) => () => void
-
-  /**
    * Subscribes to auto-update state changes.
    * Returns an unsubscribe function.
    */
@@ -247,14 +232,9 @@ export interface DesktopBridge {
   /** Continues an already-confirmed application quit. */
   quitApp: () => void
 
-  /**
-   * Reports the workspace IDs currently visible in this window's panel layout.
-   * The main process uses this to route notification clicks and other
-   * workspace-targeting actions to the correct window.
-   */
-  reportVisibleWorkspaces: (
+  /** Reports native-window routing context; semantic presence uses daemon RPC. */
+  reportWindowWorkspaces: (
     workspaceIds: readonly string[],
-    focused?: boolean,
     contexts?: readonly WorkspaceNotificationContext[]
   ) => Promise<void>
 
@@ -265,9 +245,6 @@ export interface DesktopBridge {
    * @param veto  — `true` to block the quit, `false` to allow it to proceed.
    */
   respondToQuit: (id: string, veto: boolean) => void
-
-  /** Manually restarts a sidecar service by name. */
-  restartSidecar: (name: SidecarName) => Promise<void>
 
   /**
    * Shows a native context menu at the cursor or specified position.

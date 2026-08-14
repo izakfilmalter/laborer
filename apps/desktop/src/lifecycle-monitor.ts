@@ -261,7 +261,8 @@ export class LifecycleMonitor {
 
   /**
    * Manually restart a service. Resets the backoff counter.
-   * Called from the renderer via IPC (`restartSidecar(name)`).
+   * Legacy utility-process restart entry point. Desktop renderer recovery no
+   * longer calls this; daemon and terminal-host recovery use RPC.
    */
   async manualRestart(name: ServiceName): Promise<void> {
     console.info(`[lifecycle:${name}] Manual restart requested`)

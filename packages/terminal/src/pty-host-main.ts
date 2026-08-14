@@ -100,6 +100,11 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
       )
     case 'setObservedWorkspaces':
       return manager.setObservedWorkspaces(new Set(first as string[]))
+    case 'reportWorkspacePresence':
+      return manager.reportWorkspacePresence(
+        first as string,
+        new Set(second as string[])
+      )
     case 'unsubscribe':
       return manager.unsubscribe(first as string, second as string)
     default:

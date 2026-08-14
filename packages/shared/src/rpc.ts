@@ -6,6 +6,9 @@ import { TerminalStatus, WorkspaceStatus } from './types.js'
 const APP_SETTING_KEY_MAX_LENGTH = 128
 const APP_SETTING_VALUE_MAX_LENGTH = 16_384
 const MUTATION_ID_MAX_LENGTH = 128
+const PRESENCE_CLIENT_ID_MAX_LENGTH = 128
+const PRESENCE_WORKSPACE_ID_MAX_LENGTH = 1000
+const PRESENCE_WORKSPACE_MAX_ITEMS = 1000
 
 /** An integer greater than or equal to zero at RPC and persistence boundaries. */
 export const NonNegativeInt = Schema.Number.check(
@@ -1546,6 +1549,22 @@ export class TerminalRpcs extends RpcGroup.make(
     payload: {
       id: Schema.String,
       report: AgentStatusReportSchema,
+    },
+  }),
+
+  /** Refresh one mission-control client's focused-workspace presence lease. */
+  Rpc.make('terminal.reportWorkspacePresence', {
+    payload: {
+      clientId: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(PRESENCE_CLIENT_ID_MAX_LENGTH)
+      ),
+      workspaceIds: Schema.Array(
+        Schema.String.check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(PRESENCE_WORKSPACE_ID_MAX_LENGTH)
+        )
+      ).check(Schema.isMaxLength(PRESENCE_WORKSPACE_MAX_ITEMS)),
     },
   }),
 

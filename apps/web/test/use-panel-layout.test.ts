@@ -7,7 +7,8 @@ const {
   focusExistingWindowForWorkspaceMock,
   initialLayoutRef,
   persistedRowsRef,
-  reportVisibleWorkspacesMock,
+  reportWindowWorkspacesMock,
+  reportWorkspacePresenceMock,
   spawnTerminalMock,
   storeCommitMock,
   storeQueryMock,
@@ -21,7 +22,8 @@ const {
   focusExistingWindowForWorkspaceMock: vi.fn(
     async (_workspaceId: string) => false
   ),
-  reportVisibleWorkspacesMock: vi.fn(async () => undefined),
+  reportWindowWorkspacesMock: vi.fn(async () => undefined),
+  reportWorkspacePresenceMock: vi.fn(async () => undefined),
   initialLayoutRef: { current: undefined as PanelNode | undefined },
   windowLayoutUpdatedMock: vi.fn((payload) => ({
     payload,
@@ -52,7 +54,10 @@ const {
 }))
 
 vi.mock('@effect/atom-react/Hooks', () => ({
-  useAtomSet: () => spawnTerminalMock,
+  useAtomSet: (atom: symbol) =>
+    atom === Symbol.for('reportWorkspacePresence')
+      ? reportWorkspacePresenceMock
+      : spawnTerminalMock,
   useAtomValue: () => workspaceRowsRef.current,
 }))
 
@@ -68,7 +73,11 @@ vi.mock('@/atoms/laborer-client', () => ({
 
 vi.mock('@/atoms/terminal-service-client', () => ({
   TerminalServiceClient: {
-    mutation: vi.fn(() => Symbol('terminal-mutation')),
+    mutation: vi.fn((name: string) =>
+      name === 'terminal.reportWorkspacePresence'
+        ? Symbol.for('reportWorkspacePresence')
+        : Symbol('terminal-mutation')
+    ),
   },
 }))
 
@@ -90,7 +99,7 @@ vi.mock('@/lib/local-api', () => ({
   localApi: {
     get desktopBridge() {
       return currentWindowIdRef.current
-        ? { reportVisibleWorkspaces: reportVisibleWorkspacesMock }
+        ? { reportWindowWorkspaces: reportWindowWorkspacesMock }
         : undefined
     },
   },
@@ -212,7 +221,8 @@ describe('usePanelLayout', () => {
     focusExistingWindowForWorkspaceMock.mockReset()
     focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
     windowLayoutUpdatedMock.mockClear()
-    reportVisibleWorkspacesMock.mockClear()
+    reportWindowWorkspacesMock.mockClear()
+    reportWorkspacePresenceMock.mockClear()
     spawnTerminalMock.mockClear()
     spawnTerminalMock.mockImplementation(async () => ({
       id: 'spawned-terminal',

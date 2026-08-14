@@ -14,9 +14,6 @@ const CONTEXT_MENU_CHANNEL = 'desktop:context-menu'
 const OPEN_EXTERNAL_CHANNEL = 'desktop:open-external'
 const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
-const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
-const GET_SIDECAR_STATUSES_CHANNEL = 'desktop:get-sidecar-statuses'
-const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
 const REPORT_VISIBLE_WORKSPACES_CHANNEL = 'desktop:report-visible-workspaces'
 const FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL = 'desktop:focus-window-for-workspace'
 const ACTIVATE_WORKSPACE_CHANNEL = 'desktop:activate-workspace'
@@ -46,8 +43,6 @@ const { windowId } = parseWindowBootstrapArgs(process.argv)
 
 contextBridge.exposeInMainWorld('desktopBridge', {
   quitApp: () => ipcRenderer.send(QUIT_CONFIRMED_CHANNEL),
-
-  getSidecarStatuses: () => ipcRenderer.invoke(GET_SIDECAR_STATUSES_CHANNEL),
 
   ensureDaemon: () => ipcRenderer.invoke(ENSURE_DAEMON_CHANNEL),
 
@@ -118,31 +113,11 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   updateTrayWorkspaceCount: (count) =>
     ipcRenderer.invoke(UPDATE_TRAY_COUNT_CHANNEL, count),
 
-  restartSidecar: (name) => ipcRenderer.invoke(RESTART_SIDECAR_CHANNEL, name),
-
-  reportVisibleWorkspaces: (workspaceIds, focused = false, contexts = []) =>
+  reportWindowWorkspaces: (workspaceIds, contexts = []) =>
     ipcRenderer.invoke(REPORT_VISIBLE_WORKSPACES_CHANNEL, {
       contexts,
-      focused,
       workspaceIds,
     }),
-
-  onSidecarStatus: (listener) => {
-    const wrappedListener = (
-      _event: Electron.IpcRendererEvent,
-      status: unknown
-    ) => {
-      if (typeof status !== 'object' || status === null) {
-        return
-      }
-      listener(status as Parameters<typeof listener>[0])
-    }
-
-    ipcRenderer.on(SIDECAR_STATUS_CHANNEL, wrappedListener)
-    return () => {
-      ipcRenderer.removeListener(SIDECAR_STATUS_CHANNEL, wrappedListener)
-    }
-  },
 
   getUpdateState: () => ipcRenderer.invoke(UPDATE_GET_STATE_CHANNEL),
 

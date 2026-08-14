@@ -274,6 +274,15 @@ describe('standalone daemon', () => {
           assert.deepStrictEqual(terminals, [])
           assert.deepStrictEqual(watchers, [])
 
+          yield* client['terminal.reportWorkspacePresence']({
+            clientId: 'daemon-rpc-test',
+            workspaceIds: ['workspace-a'],
+          })
+          yield* client['terminal.reportWorkspacePresence']({
+            clientId: 'daemon-rpc-test',
+            workspaceIds: [],
+          })
+
           const restarted = yield* client['terminal.restartHost']()
           assert.strictEqual(restarted.state, 'healthy')
 

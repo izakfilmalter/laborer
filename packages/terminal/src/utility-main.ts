@@ -29,7 +29,6 @@
 
 import { createServer } from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
-import type { AgentStatus, TerminalInfo } from '@laborer/shared/rpc'
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
@@ -312,151 +311,6 @@ function setupSessionPersistence(
   managedRuntime.runFork(program)
 }
 
-/**
- * Forward only status facts to Electron main. Notification policy deliberately
- * stays out of this service; the generation token lets main reject delivery
- * after an agent process is replaced by another instance with the same label.
- */
-function setupAgentStatusReporting(
-  managedRuntime: ManagedRuntime.ManagedRuntime<TerminalManager, never>,
-  parentPort: ParentPort
-): void {
-  interface Owner {
-    readonly agentId: string
-    readonly agentName: string
-    readonly generation: number
-    readonly present: boolean
-    readonly processId: number | null
-  }
-
-  const owners = new Map<string, Owner>()
-  const beginsNewGeneration = (
-    previous: Owner | undefined,
-    processId: number | null,
-    agentName: string
-  ): boolean =>
-    previous === undefined ||
-    (!previous.present && previous.processId !== null) ||
-    (previous.processId !== null &&
-      processId !== null &&
-      previous.processId !== processId) ||
-    previous.agentName !== agentName
-
-  const findAgent = (terminal: TerminalInfo) =>
-    terminal.processChain.find((process) => process.category === 'agent') ??
-    (terminal.foregroundProcess?.category === 'agent'
-      ? terminal.foregroundProcess
-      : null)
-
-  interface StatusFact {
-    readonly agentId: string
-    readonly agentName: string
-    readonly status: AgentStatus | null
-    readonly workspaceId: string
-  }
-  const lastFact = new Map<string, StatusFact>()
-  const isSameFact = (
-    previous: StatusFact | undefined,
-    current: StatusFact
-  ): boolean =>
-    previous?.agentId === current.agentId &&
-    previous.agentName === current.agentName &&
-    previous.status === current.status &&
-    previous.workspaceId === current.workspaceId
-
-  const report = (
-    terminal: TerminalInfo & { readonly agentProcessIds?: readonly number[] }
-  ): void => {
-    const detectedAgent = findAgent(terminal)
-    const previousOwner = owners.get(terminal.id)
-    let owner = previousOwner
-
-    if (detectedAgent !== null) {
-      const processId = terminal.agentProcessIds?.[0] ?? null
-      const isNewGeneration = beginsNewGeneration(
-        previousOwner,
-        processId,
-        detectedAgent.label
-      )
-      const generation = isNewGeneration
-        ? (previousOwner?.generation ?? 0) + 1
-        : (previousOwner?.generation ?? 1)
-      owner = {
-        agentId: `${terminal.id}:${String(generation)}`,
-        agentName: detectedAgent.label,
-        generation,
-        processId,
-        present: true,
-      }
-      owners.set(terminal.id, owner)
-    } else if (
-      previousOwner?.present &&
-      (terminal.agentStatus === null || terminal.agentStatus.status === 'idle')
-    ) {
-      // Process inspection requires consecutive downward samples. Preserve
-      // the generation while the status engine still considers the agent
-      // active, otherwise one transient process-tree miss turns the same
-      // process into a new notification generation on the next sample.
-      owner = { ...previousOwner, present: false }
-      owners.set(terminal.id, owner)
-    }
-
-    if (terminal.agentStatus !== null && owner === undefined) {
-      owner = {
-        agentId: `${terminal.id}:1`,
-        agentName: 'Agent',
-        generation: 1,
-        processId: null,
-        present: false,
-      }
-      owners.set(terminal.id, owner)
-    }
-
-    const status: AgentStatus | null = terminal.agentStatus?.status ?? null
-    const fact = {
-      agentId: owner?.agentId ?? `${terminal.id}:none`,
-      agentName: owner?.agentName ?? 'Agent',
-      status,
-      terminalId: terminal.id,
-      type: 'terminal-agent-status' as const,
-      workspaceId: terminal.workspaceId,
-    }
-    if (isSameFact(lastFact.get(terminal.id), fact)) {
-      return
-    }
-    lastFact.set(terminal.id, fact)
-    parentPort.postMessage(fact)
-  }
-
-  const program = Effect.gen(function* () {
-    const tm = yield* TerminalManager
-    yield* Stream.runForEach(Stream.fromPubSub(tm.lifecycleEvents), (event) =>
-      Effect.sync(() => {
-        if (
-          event._tag === 'Spawned' ||
-          event._tag === 'Restarted' ||
-          event._tag === 'ProcessChanged'
-        ) {
-          report(event.terminal)
-        } else if (event._tag === 'Removed') {
-          const owner = owners.get(event.id)
-          parentPort.postMessage({
-            agentId: owner?.agentId ?? `${event.id}:none`,
-            agentName: owner?.agentName ?? 'Agent',
-            status: null,
-            terminalId: event.id,
-            type: 'terminal-agent-status',
-            workspaceId: '',
-          })
-          owners.delete(event.id)
-          lastFact.delete(event.id)
-        }
-      })
-    )
-  })
-  managedRuntime.runFork(program)
-}
-
 // ---------------------------------------------------------------------------
 // Service composition and launch
 // ---------------------------------------------------------------------------
@@ -486,7 +340,6 @@ async function main(): Promise<void> {
   type BufferedMessage =
     | { type: 'port'; port: RpcMessagePort }
     | { type: 'data-port'; port: RpcMessagePort; terminalId: string }
-    | { type: 'workspace-presence'; workspaceIds: readonly string[] }
   const bufferedMessages: BufferedMessage[] = []
   let messageHandler: ((msg: BufferedMessage) => void) | null = null
 
@@ -496,7 +349,6 @@ async function main(): Promise<void> {
     const data = event.data as {
       terminalId?: string
       type?: string
-      workspaceIds?: unknown
     }
     if (
       data?.type === 'terminal-data-port' &&
@@ -512,22 +364,6 @@ async function main(): Promise<void> {
         port: dataPort,
         terminalId: data.terminalId,
       }
-      if (messageHandler) {
-        messageHandler(msg)
-      } else {
-        bufferedMessages.push(msg)
-      }
-    } else if (
-      data?.type === 'workspace-presence' &&
-      Array.isArray(data.workspaceIds)
-    ) {
-      const workspaceIds = data.workspaceIds
-        .filter(
-          (workspaceId): workspaceId is string =>
-            typeof workspaceId === 'string' && workspaceId.length > 0
-        )
-        .slice(0, 1000)
-      const msg: BufferedMessage = { type: 'workspace-presence', workspaceIds }
       if (messageHandler) {
         messageHandler(msg)
       } else {
@@ -559,7 +395,6 @@ async function main(): Promise<void> {
 
   // Set up session persistence (replay buffers, SIGTERM handler, restore)
   setupSessionPersistence(managedRuntime, persistedState)
-  setupAgentStatusReporting(managedRuntime, parentPort)
 
   // Wire up the message handler now that the runtime is ready.
   const processMessage = (msg: BufferedMessage) => {
@@ -567,12 +402,6 @@ async function main(): Promise<void> {
       handleTerminalDataPort(msg.port, msg.terminalId, context)
     } else if (msg.type === 'port') {
       serveRpcOnPort(msg.port, sharedServicesLayer)
-    } else {
-      managedRuntime.runFork(
-        Effect.flatMap(TerminalManager, (manager) =>
-          manager.setObservedWorkspaces(new Set(msg.workspaceIds))
-        )
-      )
     }
   }
   messageHandler = processMessage

@@ -4,7 +4,6 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
   SidecarName,
-  SidecarStatusEvent,
 } from '@laborer/shared/desktop-bridge'
 import {
   BrowserWindow,
@@ -29,8 +28,6 @@ export const CONTEXT_MENU_CHANNEL = 'desktop:context-menu'
 export const OPEN_EXTERNAL_CHANNEL = 'desktop:open-external'
 export const MENU_ACTION_CHANNEL = 'desktop:menu-action'
 export const UPDATE_TRAY_COUNT_CHANNEL = 'desktop:update-tray-count'
-export const RESTART_SIDECAR_CHANNEL = 'desktop:restart-sidecar'
-export const SIDECAR_STATUS_CHANNEL = 'sidecar:status'
 export const REPORT_VISIBLE_WORKSPACES_CHANNEL =
   'desktop:report-visible-workspaces'
 export const FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL =
@@ -42,7 +39,6 @@ export const UPDATE_DOWNLOAD_CHANNEL = 'desktop:update-download'
 export const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 export const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 export const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
-export const GET_SIDECAR_STATUSES_CHANNEL = 'desktop:get-sidecar-statuses'
 export const BEFORE_QUIT_CHANNEL = 'desktop:before-quit'
 export const QUIT_REPLY_CHANNEL = 'desktop:quit-reply'
 export const QUIT_CONFIRMED_CHANNEL = 'desktop:quit-confirmed'
@@ -117,7 +113,8 @@ async function showConfirmDialog(
 
 /**
  * Tracks which workspace IDs are visible in which BrowserWindow.
- * Updated by the renderer via the `reportVisibleWorkspaces` IPC channel.
+ * Updated by renderer window-routing metadata. Semantic workspace presence is
+ * reported directly to the daemon over RPC.
  * Used by the notification click handler to route clicks to the correct window.
  */
 const workspaceRegistry = new WindowWorkspacePresenceRegistry<BrowserWindow>()
@@ -216,53 +213,22 @@ export function closeRendererPortsForService(serviceName: SidecarName): void {
 // ---------------------------------------------------------------------------
 
 type TrayCountCallback = (count: number) => void
-type RestartSidecarCallback = (name: string) => Promise<void>
-type GetSidecarStatusesCallback = () => SidecarStatusEvent[]
 type GetUpdateStateCallback = () => DesktopUpdateState
 type DownloadUpdateCallback = () => Promise<DesktopUpdateActionResult>
 type InstallUpdateCallback = () => Promise<DesktopUpdateActionResult>
-type WorkspacePresenceCallback = (workspaceIds: readonly string[]) => void
 
 let trayCountCallback: TrayCountCallback | null = null
-let restartSidecarCallback: RestartSidecarCallback | null = null
-let getSidecarStatusesCallback: GetSidecarStatusesCallback | null = null
 let getUpdateStateCallback: GetUpdateStateCallback | null = null
 let downloadUpdateCallback: DownloadUpdateCallback | null = null
 let installUpdateCallback: InstallUpdateCallback | null = null
 let utilityProcessManagerRef: UtilityProcessManager | null = null
-let workspacePresenceCallback: WorkspacePresenceCallback | null = null
-
-export function publishWorkspacePresence(): void {
-  workspacePresenceCallback?.(workspaceRegistry.focusedWorkspaceIds())
-}
-
-export function setWorkspacePresenceHandler(
-  cb: WorkspacePresenceCallback | null
-): void {
-  workspacePresenceCallback = cb
-  publishWorkspacePresence()
-}
-
 export function removeWindowPresence(window: BrowserWindow): void {
   workspaceRegistry.remove(window)
-  publishWorkspacePresence()
 }
 
 /** Set the callback invoked when the renderer updates the tray workspace count. */
 export function setTrayCountHandler(cb: TrayCountCallback): void {
   trayCountCallback = cb
-}
-
-/** Set the callback invoked when the renderer requests a sidecar restart. */
-export function setRestartSidecarHandler(cb: RestartSidecarCallback): void {
-  restartSidecarCallback = cb
-}
-
-/** Set the callback for getting current sidecar statuses. */
-export function setGetSidecarStatusesHandler(
-  cb: GetSidecarStatusesCallback
-): void {
-  getSidecarStatusesCallback = cb
 }
 
 /** Set the callback for getting current update state. */
@@ -523,27 +489,6 @@ export function registerIpcHandlers(
     trayCountCallback?.(Math.max(0, Math.floor(count)))
   })
 
-  // -- Restart sidecar -----------------------------------------------------
-  ipcMain.removeHandler(RESTART_SIDECAR_CHANNEL)
-  ipcMain.handle(RESTART_SIDECAR_CHANNEL, async (_event, name: unknown) => {
-    if (typeof name !== 'string') {
-      return
-    }
-    if (name !== 'server' && name !== 'terminal' && name !== 'file-watcher') {
-      return
-    }
-    await restartSidecarCallback?.(name)
-  })
-
-  // -- Get sidecar statuses (initial query) ----------------------------------
-  // Allows the renderer to request the current status of all services on
-  // mount, avoiding the race where broadcast events are missed because
-  // the window was created after services were already healthy.
-  ipcMain.removeHandler(GET_SIDECAR_STATUSES_CHANNEL)
-  ipcMain.handle(GET_SIDECAR_STATUSES_CHANNEL, () => {
-    return getSidecarStatusesCallback?.() ?? []
-  })
-
   // -- Get backend WebSocket URL ---------------------------------------------
   // -- Auto-update: get state -----------------------------------------------
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL)
@@ -624,7 +569,6 @@ export function registerIpcHandlers(
         focused: senderWindow.isFocused(),
         workspaceIds: validIds.slice(0, 1000),
       })
-      publishWorkspacePresence()
     }
   )
 

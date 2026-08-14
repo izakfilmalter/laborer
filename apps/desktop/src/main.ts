@@ -14,6 +14,7 @@ import {
   triggerDownloadUpdate,
   triggerInstallUpdate,
 } from './auto-updater.js'
+import { DaemonAgentStatusSubscription } from './daemon-agent-status.js'
 import { DesktopDaemonSupervisor } from './daemon-supervisor.js'
 import { fixPath } from './fix-path.js'
 import {
@@ -24,10 +25,8 @@ import {
   registerIpcHandlers,
   removeWindowPresence,
   setDownloadUpdateHandler,
-  setGetSidecarStatusesHandler,
   setGetUpdateStateHandler,
   setInstallUpdateHandler,
-  setRestartSidecarHandler,
   setTrayCountHandler,
 } from './ipc.js'
 import {
@@ -202,6 +201,7 @@ let mainWindow: BrowserWindow | null = null
 let agentNotificationCoordinator: AgentNotificationCoordinator<
   ReturnType<typeof setTimeout>
 > | null = null
+let agentStatusSubscription: DaemonAgentStatusSubscription | null = null
 
 /** System tray icon manager. */
 const trayManager = new TrayManager()
@@ -419,6 +419,12 @@ app
         notification.show()
       },
     })
+    agentStatusSubscription = new DaemonAgentStatusSubscription((fact) => {
+      agentNotificationCoordinator?.observe(fact)
+    })
+    if (daemonOrigin) {
+      agentStatusSubscription.start(daemonOrigin)
+    }
 
     // Register x-github-desktop-dev-auth:// as a protocol handler so
     // the OAuth callback from GitHub lands back in this app.
@@ -442,14 +448,6 @@ app
     // Wire tray workspace count updates from the renderer to the tray manager.
     setTrayCountHandler((count) => {
       trayManager.updateWorkspaceCount(count)
-    })
-
-    setRestartSidecarHandler(async () => undefined)
-
-    // Wire sidecar status query so the renderer can get current statuses
-    // on mount (avoids missing broadcast events due to timing).
-    setGetSidecarStatusesHandler(() => {
-      return []
     })
 
     // Wire auto-update IPC handlers.
@@ -635,6 +633,8 @@ app.once('will-quit', (event) => {
   event.preventDefault()
   agentNotificationCoordinator?.dispose()
   agentNotificationCoordinator = null
+  agentStatusSubscription?.stop()
+  agentStatusSubscription = null
 
   shutdownDaemon()
     .then(() => {

@@ -1,10 +1,7 @@
 /**
  * React hook that tracks the live status of all sidecar services.
  *
- * In Electron production mode, subscribes to SidecarStatusEvent IPC from the
- * DesktopBridge (events emitted by HealthMonitor in the main process).
- *
- * In dev mode (both browser and Electron dev), polls health endpoints for
+ * Browser and Electron clients poll same-origin health endpoints for
  * each service through the Vite proxy and synthesizes status events.
  * The Electron main process does NOT spawn sidecars or emit IPC events in
  * dev mode — services are run separately via `turbo dev`.
@@ -21,7 +18,6 @@ import type {
 } from '@laborer/shared/desktop-bridge'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { localApi } from '@/lib/local-api'
 import {
   deriveSidecarStatuses,
   type SidecarStatuses,
@@ -32,17 +28,6 @@ const INITIAL_STATUSES = deriveSidecarStatuses([])
 
 /** Polling interval for dev mode health checks (ms). */
 const DEV_POLL_INTERVAL_MS = 3000
-
-/**
- * Whether sidecar status should come from IPC events (Electron production)
- * rather than HTTP health polling (dev mode).
- *
- * In Electron dev mode, the bridge exists but the main process does NOT
- * create a HealthMonitor or emit sidecar status events (sidecars are run
- * externally via `turbo dev`). So we must use HTTP polling in dev mode
- * regardless of whether the bridge is present.
- */
-const useIpcEvents = Boolean(localApi.desktopBridge) && import.meta.env.PROD
 
 /**
  * Health endpoint paths for each service in dev mode.
@@ -69,36 +54,8 @@ function useSidecarStatuses(): SidecarStatuses {
     setStatuses(deriveSidecarStatuses(eventsRef.current))
   }, [])
 
-  // Electron production: subscribe to sidecar status events via IPC,
-  // and query current statuses on mount to catch up on events that
-  // were broadcast before the window was ready.
-  useEffect(() => {
-    if (!useIpcEvents) {
-      return
-    }
-
-    const bridge = localApi.desktopBridge
-    if (!bridge) {
-      return
-    }
-
-    // Query current statuses immediately to catch up on events
-    // that were broadcast before the window was created.
-    bridge.getSidecarStatuses().then((statuses) => {
-      for (const status of statuses) {
-        handleEvent(status)
-      }
-    })
-
-    return bridge.onSidecarStatus(handleEvent)
-  }, [handleEvent])
-
   // Dev mode (browser or Electron dev): poll health endpoints.
   useEffect(() => {
-    if (useIpcEvents) {
-      return
-    }
-
     const healthState = new Map<SidecarName, boolean>()
     const failureCount = new Map<SidecarName, number>()
 

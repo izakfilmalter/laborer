@@ -961,6 +961,12 @@ class TerminalManager extends Context.Service<
       workspaceIds: ReadonlySet<string>
     ) => Effect.Effect<void>
 
+    /** Refresh one RPC client's focused-workspace presence lease. */
+    readonly reportWorkspacePresence: (
+      clientId: string,
+      workspaceIds: ReadonlySet<string>
+    ) => Effect.Effect<void>
+
     /**
      * Get all terminal metadata without process detection.
      * Returns the raw ManagedTerminal data synchronously via an Effect.
@@ -1027,6 +1033,13 @@ class TerminalManager extends Context.Service<
 
       const statusEngines = new Map<string, TerminalStatusEngine>()
       let observedWorkspaceIds: ReadonlySet<string> = new Set()
+      const workspacePresence = new Map<
+        string,
+        {
+          readonly timer: ReturnType<typeof setTimeout>
+          readonly workspaceIds: ReadonlySet<string>
+        }
+      >()
       const getStatusEngine = (terminalId: string): TerminalStatusEngine => {
         let engine = statusEngines.get(terminalId)
         if (engine === undefined) {
@@ -2646,6 +2659,53 @@ class TerminalManager extends Context.Service<
         }
       })
 
+      const WORKSPACE_PRESENCE_LEASE_MS = 15_000
+      const WORKSPACE_PRESENCE_CLIENTS_MAX = 1000
+      const aggregateWorkspacePresence = (): ReadonlySet<string> => {
+        const workspaceIds = new Set<string>()
+        for (const presence of workspacePresence.values()) {
+          for (const workspaceId of presence.workspaceIds) {
+            workspaceIds.add(workspaceId)
+          }
+        }
+        return workspaceIds
+      }
+      const reportWorkspacePresence = Effect.fn(
+        'TerminalManager.reportWorkspacePresence'
+      )(function* (clientId: string, workspaceIds: ReadonlySet<string>) {
+        const previous = workspacePresence.get(clientId)
+        if (previous !== undefined) {
+          clearTimeout(previous.timer)
+        }
+        if (workspaceIds.size === 0) {
+          workspacePresence.delete(clientId)
+        } else {
+          if (
+            previous === undefined &&
+            workspacePresence.size >= WORKSPACE_PRESENCE_CLIENTS_MAX
+          ) {
+            const oldestClientId = workspacePresence.keys().next().value
+            if (oldestClientId !== undefined) {
+              const oldest = workspacePresence.get(oldestClientId)
+              if (oldest !== undefined) {
+                clearTimeout(oldest.timer)
+              }
+              workspacePresence.delete(oldestClientId)
+            }
+          }
+          const timer = setTimeout(() => {
+            workspacePresence.delete(clientId)
+            runSync(setObservedWorkspaces(aggregateWorkspacePresence()))
+          }, WORKSPACE_PRESENCE_LEASE_MS)
+          timer.unref()
+          workspacePresence.set(clientId, {
+            timer,
+            workspaceIds: new Set(workspaceIds),
+          })
+        }
+        yield* setObservedWorkspaces(aggregateWorkspacePresence())
+      })
+
       const setAgentStatusFromHook = Effect.fn(
         'TerminalManager.setAgentStatusFromHook'
       )(function* (terminalId: string, report: AgentStatusReport) {
@@ -2831,6 +2891,7 @@ class TerminalManager extends Context.Service<
         terminalExists,
         setAgentStatusFromHook,
         setObservedWorkspaces,
+        reportWorkspacePresence,
         getTerminals: () =>
           Effect.map(Ref.get(terminalsRef), (map) => [...map.values()]),
         setRevivedReplayEvent,

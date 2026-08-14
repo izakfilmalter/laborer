@@ -477,6 +477,10 @@ const writeStoredPanelLayout = (
 const configGetMutation = LaborerClient.mutation('config.get')
 
 const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
+const reportWorkspacePresenceMutation = TerminalServiceClient.mutation(
+  'terminal.reportWorkspacePresence'
+)
+const WORKSPACE_PRESENCE_HEARTBEAT_MS = 5000
 
 /**
  * Manages the panel layout state, providing split and close actions
@@ -620,6 +624,10 @@ export function usePanelLayout() {
   const removeTerminal = useAtomSet(removeTerminalMutation, {
     mode: 'promise',
   })
+  const reportWorkspacePresence = useAtomSet(reportWorkspacePresenceMutation, {
+    mode: 'promise',
+  })
+  const presenceClientId = useRef(globalThis.crypto.randomUUID())
   // Start as "reconciling" when a persisted layout exists — this prevents
   // rendering TerminalPane components with potentially stale terminal IDs
   // before we've checked them against the live terminal service.
@@ -781,13 +789,13 @@ export function usePanelLayout() {
   ])
 
   // -------------------------------------------------------------------
-  // Report visible workspaces to the desktop main process.
+  // Report semantic presence over daemon RPC. The native bridge receives only
+  // window-routing metadata used by Electron chrome.
   // -------------------------------------------------------------------
   // Report only renderer facts. Electron main owns the shared presence
   // registry and the terminal service owns Seen policy.
   useEffect(() => {
-    const bridge = localApi.desktopBridge
-    if (!(bridge && persistedWindowLayout)) {
+    if (!persistedWindowLayout) {
       return
     }
 
@@ -806,10 +814,18 @@ export function usePanelLayout() {
     const report = () => {
       const focused =
         document.visibilityState === 'visible' && document.hasFocus()
-      bridge
-        .reportVisibleWorkspaces(
+      const observedWorkspaceIds = focused ? workspaceIds : []
+      reportWorkspacePresence({
+        payload: {
+          clientId: presenceClientId.current,
+          workspaceIds: observedWorkspaceIds,
+        },
+      }).catch(() => {
+        // Best-effort lease refresh; reconnect and the heartbeat self-heal.
+      })
+      localApi.desktopBridge
+        ?.reportWindowWorkspaces(
           workspaceIds,
-          focused,
           workspaceList.map((workspace) => ({
             branchName: workspace.branchName,
             workspaceId: workspace.id,
@@ -821,15 +837,26 @@ export function usePanelLayout() {
     }
 
     report()
+    const heartbeat = window.setInterval(
+      report,
+      WORKSPACE_PRESENCE_HEARTBEAT_MS
+    )
     window.addEventListener('focus', report)
     window.addEventListener('blur', report)
     document.addEventListener('visibilitychange', report)
     return () => {
+      window.clearInterval(heartbeat)
+      reportWorkspacePresence({
+        payload: {
+          clientId: presenceClientId.current,
+          workspaceIds: [],
+        },
+      }).catch(() => undefined)
       window.removeEventListener('focus', report)
       window.removeEventListener('blur', report)
       document.removeEventListener('visibilitychange', report)
     }
-  }, [persistedWindowLayout, workspaceList])
+  }, [persistedWindowLayout, reportWorkspacePresence, workspaceList])
 
   /**
    * Ref to hold the latest `handleAssignTerminalToPane` callback.

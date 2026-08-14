@@ -14,6 +14,7 @@ export type PtyHostMethod =
   | 'shutdown'
   | 'setAgentStatusFromHook'
   | 'setObservedWorkspaces'
+  | 'reportWorkspacePresence'
   | 'spawn'
   | 'terminalExists'
   | 'transportMetrics'

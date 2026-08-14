@@ -20,6 +20,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ExternalLink,
   FolderGit2,
   GitBranch,
@@ -119,6 +120,17 @@ import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+/**
+ * Every column stands at least five cards tall, so a lane reads as a board
+ * rather than four ragged stacks, and no column can be shorter than its
+ * neighbours.
+ */
+const COLUMN_MIN_HEIGHT = 'min-h-[24rem]'
+/**
+ * Done is an archive, not the work. Past this many cards it offers to unfold
+ * rather than growing; until then it is already as tall as the lane allows.
+ */
+const DONE_COLLAPSED_CARD_LIMIT = 5
 const createTaskMutation = LaborerClient.mutation('task.create')
 const moveTaskMutation = LaborerClient.mutation('task.move')
 const attachTaskTerminalMutation = LaborerClient.mutation(
@@ -778,6 +790,8 @@ function LaneBoard({
   const [composerColumn, setComposerColumn] = useState<
     BoardColumn['id'] | null
   >(null)
+  // Done is clipped by default so the archive never sets the lane's height.
+  const [doneExpanded, setDoneExpanded] = useState(false)
   const laneId = useId()
 
   // Server-side card changes reset the local drag state without remounting the
@@ -834,11 +848,16 @@ function LaneBoard({
       onValueChange={setColumnTasks}
       value={columnTasks}
     >
-      <KanbanBoard className="grid min-w-0 grid-cols-4 gap-2 sm:grid-cols-4">
+      <KanbanBoard className="grid max-h-[80vh] min-h-0 min-w-0 grid-cols-4 grid-rows-[minmax(0,1fr)] gap-2 sm:grid-cols-4">
         {BOARD_COLUMNS.map((column) => {
           const composerId = `${laneId}-${column.id}-composer`
           const addButtonId = `${laneId}-${column.id}-add`
           const composerOpen = composerColumn === column.id
+          const cards = columnTasks[column.id] ?? []
+          const isDone = column.id === 'done'
+          // Clipped Done is laid out over its own footprint, so its cards
+          // cannot stretch the lane; every other column still can.
+          const clipped = isDone && !doneExpanded
           const closeComposer = (reason: ComposerCloseReason) => {
             setComposerColumn(null)
             if (reason === 'cancel') {
@@ -847,9 +866,13 @@ function LaneBoard({
           }
 
           return (
-            <KanbanColumn className="min-w-0" key={column.id} value={column.id}>
-              <div className="flex min-w-0 flex-col rounded-lg bg-muted/50">
-                <div className="flex min-w-0 items-center gap-2 pt-1.5 pr-1.5 pb-0.5 pl-3">
+            <KanbanColumn
+              className="min-h-0 min-w-0"
+              key={column.id}
+              value={column.id}
+            >
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg bg-muted/50">
+                <div className="flex min-w-0 shrink-0 items-center gap-2 pt-1.5 pr-1.5 pb-0.5 pl-3">
                   <span
                     className={cn(
                       'inline-block size-2 shrink-0 rounded-full',
@@ -860,7 +883,7 @@ function LaneBoard({
                     {column.title}
                   </span>
                   <span className="text-muted-foreground text-sm tabular-nums">
-                    {(columnTasks[column.id] ?? []).length}
+                    {cards.length}
                   </span>
                   <AddCardButton
                     columnTitle={column.title}
@@ -882,55 +905,89 @@ function LaneBoard({
                     projectRootPath={projectRootPath}
                   />
                 )}
-                <KanbanColumnContent
-                  className="flex min-h-24 flex-1 flex-col gap-2 px-2 pt-1.5 pb-2"
-                  value={column.id}
+                <div
+                  className={cn(
+                    'min-h-0 min-w-0 flex-1',
+                    COLUMN_MIN_HEIGHT,
+                    clipped && 'relative'
+                  )}
                 >
-                  {(columnTasks[column.id] ?? []).map((task) => (
-                    <KanbanItem key={task.id} value={task.id}>
-                      <KanbanItemHandle>
-                        <TaskBoardCard
-                          attachBlocked={
-                            attachingTaskId !== null &&
-                            attachingTaskId !== task.id
-                          }
-                          attached={attachedTaskId === task.id}
-                          attaching={attachingTaskId === task.id}
-                          onActivate={onActivateTask}
-                          onAttach={onAttach}
-                          onCancel={onCancelTask}
-                          onOpen={onOpenTask}
-                          parentTitle={
-                            task.parentTaskId === null
-                              ? undefined
-                              : tasksById.get(task.parentTaskId)?.title
-                          }
-                          task={task}
-                          workspace={workspaceForCard(task)}
-                        />
-                      </KanbanItemHandle>
-                    </KanbanItem>
-                  ))}
-                  {(columnTasks[column.id] ?? []).length === 0 &&
-                    (composerOpen ? (
-                      <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
-                        No cards
-                      </div>
-                    ) : (
+                  <div className={cn(clipped && 'absolute inset-0')}>
+                    <ScrollArea className="min-h-0" overscrollContain>
+                      <KanbanColumnContent
+                        className="flex min-h-24 flex-col gap-2 px-2 pt-1.5 pb-2"
+                        value={column.id}
+                      >
+                        {cards.map((task) => (
+                          <KanbanItem key={task.id} value={task.id}>
+                            <KanbanItemHandle>
+                              <TaskBoardCard
+                                attachBlocked={
+                                  attachingTaskId !== null &&
+                                  attachingTaskId !== task.id
+                                }
+                                attached={attachedTaskId === task.id}
+                                attaching={attachingTaskId === task.id}
+                                onActivate={onActivateTask}
+                                onAttach={onAttach}
+                                onCancel={onCancelTask}
+                                onOpen={onOpenTask}
+                                parentTitle={
+                                  task.parentTaskId === null
+                                    ? undefined
+                                    : tasksById.get(task.parentTaskId)?.title
+                                }
+                                task={task}
+                                workspace={workspaceForCard(task)}
+                              />
+                            </KanbanItemHandle>
+                          </KanbanItem>
+                        ))}
+                        {cards.length === 0 &&
+                          (composerOpen ? (
+                            <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
+                              No cards
+                            </div>
+                          ) : (
+                            <button
+                              aria-label={`Add the first card to ${column.title}`}
+                              className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => setComposerColumn(column.id)}
+                              type="button"
+                            >
+                              No cards — add one
+                            </button>
+                          ))}
+                      </KanbanColumnContent>
+                    </ScrollArea>
+                  </div>
+                </div>
+                {isDone && (
+                  <div className="flex min-w-0 items-center gap-2 px-3 pb-2">
+                    <p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70">
+                      Done cards auto-hide after 7 days
+                    </p>
+                    {cards.length > DONE_COLLAPSED_CARD_LIMIT && (
                       <button
-                        aria-label={`Add the first card to ${column.title}`}
-                        className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => setComposerColumn(column.id)}
+                        aria-expanded={doneExpanded}
+                        className="flex shrink-0 items-center gap-1 rounded-sm text-[10px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => setDoneExpanded(!doneExpanded)}
                         type="button"
                       >
-                        No cards — add one
+                        {doneExpanded ? (
+                          <>
+                            <ChevronUp className="size-3" />
+                            Show less
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="size-3" />
+                            Show all {cards.length}
+                          </>
+                        )}
                       </button>
-                    ))}
-                </KanbanColumnContent>
-                {column.id === 'done' && (
-                  <p className="px-3 pb-2 text-[10px] text-muted-foreground/70">
-                    Done cards auto-hide after 7 days
-                  </p>
+                    )}
+                  </div>
                 )}
               </div>
             </KanbanColumn>

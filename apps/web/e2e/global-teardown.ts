@@ -10,36 +10,28 @@
  * @see PRD-e2e-test-coverage.md — Global Setup / Teardown
  */
 
-import { existsSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { existsSync, rmSync } from 'node:fs'
 import type { FullConfig } from '@playwright/test'
-
-/** Path to the state file shared between setup and teardown. */
-const STATE_FILE = join(tmpdir(), 'laborer-e2e-state.json')
-
-interface SetupState {
-  readonly daemonPort: number
-  readonly tempRepoDir: string
-}
+import { getStateFile, readSetupState } from './global-setup.js'
 
 export default function globalTeardown(_config: FullConfig): void {
-  if (!existsSync(STATE_FILE)) {
+  const stateFile = getStateFile()
+  if (!existsSync(stateFile)) {
     return
   }
 
-  let state: SetupState
+  let tempRepoDir: string | undefined
   try {
-    state = JSON.parse(readFileSync(STATE_FILE, 'utf-8')) as SetupState
+    tempRepoDir = readSetupState().tempRepoDir
   } catch {
-    return
+    // The invocation-scoped state file is still safe to remove if corrupt.
   }
 
   // 1. Remove the temp git repository
-  if (state.tempRepoDir && existsSync(state.tempRepoDir)) {
-    rmSync(state.tempRepoDir, { recursive: true, force: true })
+  if (tempRepoDir && existsSync(tempRepoDir)) {
+    rmSync(tempRepoDir, { recursive: true, force: true })
   }
 
   // 2. Clean up the state file
-  rmSync(STATE_FILE, { force: true })
+  rmSync(stateFile, { force: true })
 }

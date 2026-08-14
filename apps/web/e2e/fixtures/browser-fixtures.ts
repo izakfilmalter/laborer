@@ -1,5 +1,4 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -12,15 +11,11 @@ import {
   layerWebSocketConstructorGlobal,
 } from 'effect/unstable/socket/Socket'
 import { initRepo } from '../../../../packages/server/test/helpers/git-helpers.js'
+import { readSetupState } from '../global-setup.js'
 import { TerminalHelper } from './terminal-helper.js'
 
 const MAX_DIAGNOSTICS_LENGTH = 64 * 1024
-const STATE_FILE = join(tmpdir(), 'laborer-e2e-state.json')
 export const expect = playwrightExpect
-
-interface SetupState {
-  readonly daemonPort: number
-}
 
 const MakeDaemonClient = RpcClient.make(DaemonRpcs)
 type DaemonClient = Effect.Success<typeof MakeDaemonClient>
@@ -60,13 +55,30 @@ const stopChild = async (child: ChildProcess | undefined): Promise<void> => {
   if (!child || child.exitCode !== null) {
     return
   }
-  child.kill('SIGTERM')
   await new Promise<void>((resolveExit) => {
-    const force = setTimeout(() => child.kill('SIGKILL'), 5000)
-    child.once('exit', () => {
+    let settled = false
+    const finish = () => {
+      if (settled) {
+        return
+      }
+      settled = true
       clearTimeout(force)
+      child.off('exit', finish)
       resolveExit()
-    })
+    }
+    const force = setTimeout(() => {
+      if (child.exitCode === null) {
+        child.kill('SIGKILL')
+      } else {
+        finish()
+      }
+    }, 5000)
+    child.once('exit', finish)
+    if (child.exitCode !== null) {
+      finish()
+      return
+    }
+    child.kill('SIGTERM')
   })
 }
 
@@ -74,9 +86,7 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
   daemon: [
     // biome-ignore lint/correctness/noEmptyPattern: Playwright requires object destructuring for fixture dependencies
     async ({}, use) => {
-      const { daemonPort } = JSON.parse(
-        readFileSync(STATE_FILE, 'utf8')
-      ) as SetupState
+      const { daemonPort } = readSetupState()
       const reuseDevStack = process.env.LABORER_E2E_REUSE_DEV_STACK === '1'
       const stateDir = reuseDevStack
         ? (process.env.LABORER_E2E_STATE_DIR ?? '')
@@ -185,23 +195,28 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
           ),
       }
 
-      await start()
-      await use({
-        rpc,
-        stateDir,
-        url,
-        restart: async () => {
-          if (reuseDevStack) {
-            throw new Error('The fixture cannot restart an opted-in dev daemon')
-          }
-          await stop()
-          await start()
-        },
-        stop,
-      })
-      await stop()
-      if (!reuseDevStack) {
-        await rm(stateDir, { recursive: true, force: true })
+      try {
+        await start()
+        await use({
+          rpc,
+          stateDir,
+          url,
+          restart: async () => {
+            if (reuseDevStack) {
+              throw new Error(
+                'The fixture cannot restart an opted-in dev daemon'
+              )
+            }
+            await stop()
+            await start()
+          },
+          stop,
+        })
+      } finally {
+        await stop()
+        if (!reuseDevStack) {
+          await rm(stateDir, { recursive: true, force: true })
+        }
       }
     },
     { scope: 'worker' },
@@ -232,9 +247,12 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
       })
     )
 
-    await use(seeded)
-    for (const root of tempRoots) {
-      await rm(root, { recursive: true, force: true })
+    try {
+      await use(seeded)
+    } finally {
+      for (const root of tempRoots) {
+        await rm(root, { recursive: true, force: true })
+      }
     }
   },
 

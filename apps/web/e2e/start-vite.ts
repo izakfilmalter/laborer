@@ -1,15 +1,8 @@
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readSetupState } from './global-setup.js'
 
-interface SetupState {
-  readonly daemonPort: number
-}
-
-const state = JSON.parse(
-  readFileSync(join(tmpdir(), 'laborer-e2e-state.json'), 'utf8')
-) as SetupState
+const state = readSetupState()
 const vitePort = process.env.VITE_PORT ?? '2101'
 
 const vite = spawn(

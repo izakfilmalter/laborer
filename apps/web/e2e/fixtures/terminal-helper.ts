@@ -35,12 +35,19 @@ export class TerminalHelper {
   /** Focus a terminal pane before typing. */
   async focusTerminal(index = 0): Promise<Locator> {
     const terminal = this.terminalPanes.nth(index)
-    await terminal.evaluate((element) => {
+    const focused = await terminal.evaluate((element) => {
       const xterm = Reflect.get(element, 'xterm') as
         | { focus(): void }
         | undefined
-      xterm?.focus()
+      if (!xterm) {
+        return false
+      }
+      xterm.focus()
+      return true
     })
+    if (!focused) {
+      throw new Error('Terminal xterm driver is unavailable')
+    }
     return terminal
   }
 

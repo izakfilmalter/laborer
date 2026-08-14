@@ -14,14 +14,48 @@
  */
 
 import { execSync } from 'node:child_process'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { FullConfig } from '@playwright/test'
 
-/** Path to the state file shared between setup and teardown. */
-export const STATE_FILE = join(tmpdir(), 'laborer-e2e-state.json')
+export const E2E_STATE_FILE_ENV = 'LABORER_E2E_STATE_FILE'
+
+interface SetupState {
+  readonly daemonPort: number
+  readonly tempRepoDir: string
+}
+
+/** Path to this Playwright invocation's setup state. */
+export const getStateFile = (): string => {
+  const stateFile = process.env[E2E_STATE_FILE_ENV]
+  if (stateFile === undefined || stateFile === '') {
+    throw new Error(`E2E setup: ${E2E_STATE_FILE_ENV} is not configured`)
+  }
+  return stateFile
+}
+
+export const readSetupState = (): SetupState => {
+  const decoded: unknown = JSON.parse(readFileSync(getStateFile(), 'utf8'))
+  if (
+    typeof decoded !== 'object' ||
+    decoded === null ||
+    !('daemonPort' in decoded) ||
+    typeof decoded.daemonPort !== 'number' ||
+    !Number.isInteger(decoded.daemonPort) ||
+    decoded.daemonPort < 1 ||
+    decoded.daemonPort > 65_535 ||
+    !('tempRepoDir' in decoded) ||
+    typeof decoded.tempRepoDir !== 'string'
+  ) {
+    throw new Error('E2E setup: invalid setup state')
+  }
+  return {
+    daemonPort: decoded.daemonPort,
+    tempRepoDir: decoded.tempRepoDir,
+  }
+}
 
 export const allocatePort = (): Promise<number> =>
   new Promise((resolvePort, reject) => {
@@ -44,7 +78,7 @@ export const allocatePort = (): Promise<number> =>
     })
   })
 
-export default function globalSetup(_config: FullConfig): void {
+export default async function globalSetup(_config: FullConfig): Promise<void> {
   // 1. Create a temp git repository with an initial commit
   const tempRepoDir = mkdtempSync(join(tmpdir(), 'laborer-e2e-repo-'))
   execSync('git init', { cwd: tempRepoDir, stdio: 'pipe' })
@@ -83,11 +117,14 @@ export default function globalSetup(_config: FullConfig): void {
     )
   }
 
-  // 3. Allocate the daemon port by binding port zero and releasing it. Vite's
-  // launcher and the daemon fixture both consume this state file.
-  const daemonPort = Number(process.env.LABORER_E2E_DAEMON_PORT)
+  // 3. Allocate the isolated daemon port by binding port zero and releasing
+  // it. An opted-in reused stack supplies its existing daemon port instead.
+  const daemonPort =
+    process.env.LABORER_E2E_REUSE_DEV_STACK === '1'
+      ? Number(process.env.LABORER_DAEMON_PORT ?? 2100)
+      : await allocatePort()
   if (!Number.isInteger(daemonPort) || daemonPort < 1 || daemonPort > 65_535) {
-    throw new Error('E2E setup: daemon port precondition was not established')
+    throw new Error('E2E setup: daemon port must be an integer from 1 to 65535')
   }
 
   // 4. Save state for teardown and test access
@@ -95,7 +132,7 @@ export default function globalSetup(_config: FullConfig): void {
     daemonPort,
     tempRepoDir,
   }
-  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2))
+  writeFileSync(getStateFile(), JSON.stringify(state, null, 2))
 
   // Set env vars so tests can access the temp repo path
   process.env.E2E_TEMP_REPO_DIR = tempRepoDir

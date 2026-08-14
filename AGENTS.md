@@ -67,5 +67,6 @@ OpenCode-managed references are readable under `~/.local/share/opencode/repos/`:
 - `@chat` — `github.com/vercel/chat`
 - `@t3code` — `github.com/pingdotgg/t3code`
 - `@vscode` — `github.com/microsoft/vscode`
+- `@github-desktop` — `github.com/desktop/desktop`
 
 Use them for specifications, implementation patterns, tests, and examples. Prefer this repository's installed dependency versions when APIs differ.

@@ -11,7 +11,7 @@ import {
   rendererConnectionSupervisor,
 } from '@/atoms/renderer-connection'
 import { Button } from '@/components/ui/button'
-import { isElectron } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { cn } from '@/lib/utils'
 
 /** How long the "Reconnected" confirmation stays up after a session returns. */
@@ -228,7 +228,7 @@ function useRetryCountdown(retryAt: number | null): number | null {
 
 /** Keeps RPC runtime generation synchronized and presents post-grace status. */
 export function ConnectionReconnectBanner() {
-  const desktop = isElectron()
+  const desktop = localApi.isDesktop
   const connection = useSyncExternalStore(
     rendererConnectionSupervisor.subscribe,
     rendererConnectionSupervisor.getSnapshot,
@@ -244,7 +244,7 @@ export function ConnectionReconnectBanner() {
       return
     }
     rendererConnectionSupervisor.start()
-  }, [desktop])
+  }, [])
 
   useEffect(() => {
     setGeneration(connection.generation)

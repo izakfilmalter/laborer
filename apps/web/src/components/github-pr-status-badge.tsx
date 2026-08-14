@@ -15,7 +15,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { isElectron, openExternalUrl } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { cn } from '@/lib/utils'
 
 interface GitHubPrStatusBadgeProps {
@@ -80,12 +80,12 @@ function GitHubPrStatusBadge({
   }
 
   const handleClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!isElectron()) {
+    if (!localApi.isDesktop) {
       return
     }
 
     event.preventDefault()
-    await openExternalUrl(prUrl ?? '')
+    await localApi.openExternal(prUrl ?? '')
   }
 
   const identityContent = (

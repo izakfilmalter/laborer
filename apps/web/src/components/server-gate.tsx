@@ -26,7 +26,7 @@ import { type ReactNode, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
-import { getDesktopBridge, isElectron } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import {
   areCoreServicesHealthy,
   CORE_SIDECAR_NAMES,
@@ -146,10 +146,10 @@ function useBrowserHealthPoll(): {
  * Uses sidecar events in Electron production, HTTP polling in dev.
  */
 function ServerGate({ children }: { readonly children: ReactNode }) {
-  const bridge = getDesktopBridge()
+  const bridge = localApi.desktopBridge
 
   // Electron production: use sidecar status events from the DesktopBridge.
-  if (bridge && isElectronProduction()) {
+  if (bridge && isDesktopProduction()) {
     return <ElectronServerGate bridge={bridge}>{children}</ElectronServerGate>
   }
 
@@ -163,8 +163,8 @@ function ServerGate({ children }: { readonly children: ReactNode }) {
 }
 
 /** Check if running in Electron production (not dev). */
-function isElectronProduction(): boolean {
-  return isElectron() && import.meta.env.PROD
+function isDesktopProduction(): boolean {
+  return localApi.isDesktop && import.meta.env.PROD
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ function ElectronServerGate({
   bridge,
   children,
 }: {
-  readonly bridge: NonNullable<ReturnType<typeof getDesktopBridge>>
+  readonly bridge: NonNullable<typeof localApi.desktopBridge>
   readonly children: ReactNode
 }) {
   const statuses = useSidecarStatuses()

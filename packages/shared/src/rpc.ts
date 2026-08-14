@@ -660,6 +660,27 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
 
+  /**
+   * Lists child directories on the daemon host for the browser folder picker.
+   * An omitted path starts at the daemon user's home directory.
+   */
+  Rpc.make('local.directory.list', {
+    success: Schema.Struct({
+      directories: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          path: Schema.String,
+        })
+      ),
+      parentPath: Schema.NullOr(Schema.String),
+      path: Schema.String,
+    }),
+    error: RpcError,
+    payload: {
+      path: Schema.optional(Schema.String),
+    },
+  }),
+
   /** Revision-CAS manual-order write used by project drags. Rank is the only field it writes. */
   Rpc.make('project.move', {
     success: Schema.Struct({

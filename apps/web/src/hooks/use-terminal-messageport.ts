@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { acquireTerminalDataPort } from '@/lib/desktop'
+import { acquireTerminalDataPort } from '@/lib/local-api'
 
 /** Connection state for UI indicators — same shape as WebSocket hook. */
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'

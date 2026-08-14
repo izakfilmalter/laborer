@@ -5,8 +5,8 @@ const { openExternalUrlMock } = vi.hoisted(() => ({
   openExternalUrlMock: vi.fn(async () => true),
 }))
 
-vi.mock('../src/lib/desktop', () => ({
-  openExternalUrl: openExternalUrlMock,
+vi.mock('../src/lib/local-api', () => ({
+  localApi: { openExternal: openExternalUrlMock },
 }))
 
 import {

@@ -5,7 +5,7 @@ import type {
 import { RPC_PORT_DEAD_EVENT } from '@laborer/shared/rpc-transport-messageport-client'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { resetTerminalListStore } from '@/hooks/use-terminal-list'
-import { getDesktopBridge, isElectron } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 
 const RESETTABLE_SIDECARS: readonly SidecarName[] = ['server', 'terminal']
 
@@ -30,11 +30,11 @@ export function SidecarRuntimeBoundary({
   const pendingRecoveryRef = useRef(new Set<SidecarName>())
 
   useEffect(() => {
-    if (!isElectron()) {
+    if (!localApi.isDesktop) {
       return
     }
 
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }

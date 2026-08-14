@@ -6,7 +6,7 @@ import { useTerminalMessagePort } from '../src/hooks/use-terminal-messageport'
 const acquireTerminalDataPortMock =
   vi.fn<(terminalId: string) => Promise<MessagePort | null>>()
 
-vi.mock('@/lib/desktop', () => ({
+vi.mock('@/lib/local-api', () => ({
   acquireTerminalDataPort: (terminalId: string) =>
     acquireTerminalDataPortMock(terminalId),
 }))

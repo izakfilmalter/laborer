@@ -114,7 +114,7 @@ import {
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
-import { openExternalUrl } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
@@ -307,7 +307,7 @@ function TaskBoardCard({
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
     if (task.slackPermalink) {
-      openExternalUrl(task.slackPermalink)
+      localApi.openExternal(task.slackPermalink)
     }
   }
 

@@ -14,7 +14,7 @@
 
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { AtomRpc } from 'effect/unstable/reactivity'
-import { isElectron } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { BrowserDaemonClient } from './browser-daemon-client'
 import { rendererRpcProtocol } from './renderer-rpc-protocol'
 
@@ -36,6 +36,6 @@ class LegacyLaborerClient extends AtomRpc.Service<LegacyLaborerClient>()(
   }
 ) {}
 
-export const LaborerClient: typeof LegacyLaborerClient = isElectron()
+export const LaborerClient: typeof LegacyLaborerClient = localApi.isDesktop
   ? LegacyLaborerClient
   : (BrowserDaemonClient as unknown as typeof LegacyLaborerClient)

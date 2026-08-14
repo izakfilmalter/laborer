@@ -83,15 +83,17 @@ vi.mock('@/hooks/use-terminal-list', () => ({
   useTerminalList: vi.fn(() => terminalListRef.current),
 }))
 
-vi.mock('@/lib/desktop', () => ({
+vi.mock('@/lib/local-api', () => ({
   focusExistingWindowForWorkspace: (workspaceId: string) =>
     focusExistingWindowForWorkspaceMock(workspaceId),
   getCurrentWindowId: vi.fn(() => currentWindowIdRef.current),
-  getDesktopBridge: vi.fn(() =>
-    currentWindowIdRef.current
-      ? { reportVisibleWorkspaces: reportVisibleWorkspacesMock }
-      : undefined
-  ),
+  localApi: {
+    get desktopBridge() {
+      return currentWindowIdRef.current
+        ? { reportVisibleWorkspaces: reportVisibleWorkspacesMock }
+        : undefined
+    },
+  },
 }))
 
 vi.mock('@/panels/panel-group-registry', () => ({

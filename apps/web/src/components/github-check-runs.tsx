@@ -21,7 +21,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from '@/components/ui/hover-card'
-import { isElectron, openExternalUrl } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { cn } from '@/lib/utils'
 
 type CheckStatus = 'pending' | 'success' | 'failure'
@@ -135,11 +135,11 @@ function groupChecks(
 /** In the desktop shell a check belongs in the OS browser, not in a frame. */
 function openInBrowser(url: string) {
   return async (event: MouseEvent<HTMLAnchorElement>) => {
-    if (!isElectron()) {
+    if (!localApi.isDesktop) {
       return
     }
     event.preventDefault()
-    await openExternalUrl(url)
+    await localApi.openExternal(url)
   }
 }
 
@@ -311,7 +311,7 @@ function GitHubCheckRunsSegment({
 
   return (
     <HoverCard>
-      <HoverCardTrigger nativeButton={checksUrl === null} render={trigger} />
+      <HoverCardTrigger render={trigger} />
       <HoverCardContent align="start" className="w-72 p-0">
         <GitHubCheckRunsSummary checkStatus={checkStatus} checks={checks} />
       </HoverCardContent>

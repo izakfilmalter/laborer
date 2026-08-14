@@ -9,7 +9,7 @@ import {
   layerWebSocketConstructorGlobal,
 } from 'effect/unstable/socket/Socket'
 
-import { acquireServicePort, isElectron } from '@/lib/desktop'
+import { acquireServicePort, localApi } from '@/lib/local-api'
 import {
   rendererConnectionGenerationAtom,
   rendererConnectionSupervisor,
@@ -65,7 +65,7 @@ const messagePortProtocol = (
  * its legacy MessagePort path until the desktop switch-and-delete phase.
  */
 export const rendererRpcProtocol = (legacyService: RpcSidecarName) => {
-  if (isElectron()) {
+  if (localApi.isDesktop) {
     return messagePortProtocol(legacyService)
   }
   rendererConnectionSupervisor.start()

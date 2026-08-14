@@ -4,7 +4,7 @@ import {
   isRendererConnected,
   RECONNECT_MUTATION_MESSAGE,
 } from '@/atoms/renderer-connection'
-import { isElectron } from './desktop'
+import { localApi } from './local-api'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -40,7 +40,7 @@ function unwrapCause(error: unknown): unknown {
 export function extractErrorMessage(error: unknown): string {
   const unwrapped = unwrapCause(error)
   if (
-    !(isElectron() || isRendererConnected()) &&
+    !(localApi.isDesktop || isRendererConnected()) &&
     typeof unwrapped === 'object' &&
     unwrapped !== null &&
     '_tag' in unwrapped &&

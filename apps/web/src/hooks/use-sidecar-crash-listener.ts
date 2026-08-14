@@ -15,8 +15,8 @@
 
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import { useEffect, useRef } from 'react'
-import { getDesktopBridge } from '@/lib/desktop'
 import { haptics } from '@/lib/haptics'
+import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 
 /** Human-readable display names for sidecar services. */
@@ -41,7 +41,7 @@ function useSidecarCrashListener(): void {
   const toastIdsRef = useRef<Map<SidecarName, string | number>>(new Map())
 
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }

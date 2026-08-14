@@ -21,7 +21,7 @@ import type {
 } from '@laborer/shared/desktop-bridge'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { getDesktopBridge } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import {
   deriveSidecarStatuses,
   type SidecarStatuses,
@@ -42,7 +42,7 @@ const DEV_POLL_INTERVAL_MS = 3000
  * externally via `turbo dev`). So we must use HTTP polling in dev mode
  * regardless of whether the bridge is present.
  */
-const useIpcEvents = Boolean(getDesktopBridge()) && import.meta.env.PROD
+const useIpcEvents = Boolean(localApi.desktopBridge) && import.meta.env.PROD
 
 /**
  * Health endpoint paths for each service in dev mode.
@@ -77,7 +77,7 @@ function useSidecarStatuses(): SidecarStatuses {
       return
     }
 
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }

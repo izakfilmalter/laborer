@@ -16,7 +16,7 @@ import { isRootWorkspaceId } from '@laborer/shared/root-workspace'
 import { useEffect, useRef } from 'react'
 
 import { workspaceViewsAtom } from '@/atoms/shared-state'
-import { getDesktopBridge } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 
 /**
  * Sync the running workspace count to the Electron system tray tooltip.
@@ -35,7 +35,7 @@ function useTrayWorkspaceCount(): void {
   const prevCountRef = useRef<number>(-1)
 
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }

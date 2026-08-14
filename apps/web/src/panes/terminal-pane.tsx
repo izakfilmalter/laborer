@@ -74,7 +74,6 @@ import type {
 import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
 import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { isElectron } from '@/lib/desktop'
 import {
   isPrefixKey,
   isTerminalFindNextShortcut,
@@ -82,6 +81,7 @@ import {
   isTerminalFindShortcut,
   shouldBypassTerminal,
 } from '@/lib/keybinds'
+import { localApi } from '@/lib/local-api'
 import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
 
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
@@ -388,7 +388,7 @@ function TerminalConnectingPlaceholder() {
  * and renders the terminal.
  */
 function TerminalPaneContent(props: TerminalPaneProps) {
-  return isElectron() ? (
+  return localApi.isDesktop ? (
     <TerminalPaneMessagePort {...props} />
   ) : (
     <TerminalPaneRpc {...props} />
@@ -1039,7 +1039,7 @@ function TerminalPaneRenderer({
 
     // Load Web Links addon for clickable URL detection.
     // Agent TUIs frequently output URLs — file paths, PR URLs, docs links.
-    // Custom handler routes link clicks through openExternalUrl() which
+    // Custom handler routes link clicks through localApi.openExternal() which
     // delegates to shell.openExternal via the Electron IPC bridge.
     try {
       const webLinksAddon = new WebLinksAddon((_event, url) => {

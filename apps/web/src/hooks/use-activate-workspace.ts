@@ -14,7 +14,7 @@
 import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
 import { useEffect, useRef } from 'react'
 
-import { getDesktopBridge } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 
 /**
  * Subscribe to workspace activation events from the desktop main process
@@ -29,7 +29,7 @@ function useActivateWorkspace(
   onActivateRef.current = onActivate
 
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge?.onActivateWorkspace) {
       return
     }

@@ -8,8 +8,8 @@ import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
 import { parseGithubOAuthCallback } from '@/lib/github-oauth-callback'
+import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { Button } from './ui/button'
@@ -166,7 +166,7 @@ export function AppSettingsModal() {
 
   // Listen for the protocol handler callback (Electron only)
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge?.onGithubOAuthCallback) {
       return
     }
@@ -185,7 +185,7 @@ export function AppSettingsModal() {
     csrfStateRef.current = state
     setError(null)
 
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (bridge?.startGithubOAuth) {
       // Electron: use the protocol handler to open the browser and
       // automatically capture the callback.
@@ -199,7 +199,7 @@ export function AppSettingsModal() {
         `?client_id=${GITHUB_OAUTH_CLIENT_ID}` +
         `&scope=${scope}` +
         `&state=${state}`
-      await openExternalUrl(url)
+      await localApi.openExternal(url)
     }
   }, [])
 

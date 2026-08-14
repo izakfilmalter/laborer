@@ -10,9 +10,15 @@ const { getDesktopBridgeMock, isElectronMock, resetTerminalListStoreMock } =
     resetTerminalListStoreMock: vi.fn(),
   }))
 
-vi.mock('@/lib/desktop', () => ({
-  getDesktopBridge: getDesktopBridgeMock,
-  isElectron: isElectronMock,
+vi.mock('@/lib/local-api', () => ({
+  localApi: {
+    get desktopBridge() {
+      return getDesktopBridgeMock()
+    },
+    get isDesktop() {
+      return isElectronMock()
+    },
+  },
 }))
 
 vi.mock('@/hooks/use-terminal-list', () => ({

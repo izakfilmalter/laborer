@@ -43,7 +43,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { Textarea } from '@/components/ui/textarea'
-import { openExternalUrl } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 
 const updateTaskMutation = LaborerClient.mutation('task.update')
@@ -83,7 +83,7 @@ function TaskDetailMeta({ task }: { readonly task: BoardTask }) {
       {slackPermalink && (
         <button
           className="flex items-center gap-1.5 rounded-sm underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => openExternalUrl(slackPermalink)}
+          onClick={() => localApi.openExternal(slackPermalink)}
           type="button"
         >
           <ExternalLink aria-hidden="true" className="size-3 shrink-0" />

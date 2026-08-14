@@ -29,40 +29,11 @@ export function getDesktopBridge(): DesktopBridge | undefined {
 }
 
 /**
- * Check if running inside the Electron desktop shell.
- * Returns true when the DesktopBridge is available (preload script loaded).
- */
-export function isElectron(): boolean {
-  return getDesktopBridge() !== undefined
-}
-
-/**
  * Returns the stable identity of the current native window when running in
  * Electron. Browser-based development does not have a native window ID.
  */
 export function getCurrentWindowId(): string | null {
   return getDesktopBridge()?.getWindowId() ?? null
-}
-
-/**
- * Open a URL in the user's default browser.
- *
- * In Electron, this delegates to the preload bridge so the OS browser opens
- * instead of a new Electron window. In plain browser mode, it falls back to
- * `window.open()`.
- */
-export async function openExternalUrl(url: string): Promise<boolean> {
-  const bridge = getDesktopBridge()
-  if (bridge) {
-    return await bridge.openExternal(url)
-  }
-
-  if (typeof window === 'undefined') {
-    return false
-  }
-
-  const openedWindow = window.open(url, '_blank', 'noopener,noreferrer')
-  return openedWindow !== null
 }
 
 /**

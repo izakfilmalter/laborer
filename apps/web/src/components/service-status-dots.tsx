@@ -31,7 +31,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { type ServiceName, useServiceStatus } from '@/hooks/use-service-status'
-import { getDesktopBridge } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import {
   getStatusColor,
   getStatusLabel,
@@ -372,7 +372,7 @@ function ServiceStatusDots() {
 
   const handleRetry = useCallback(
     (name: ServiceName) => {
-      const bridge = getDesktopBridge()
+      const bridge = localApi.desktopBridge
       const sidecarName = toSidecarName(name)
       if (bridge && sidecarName) {
         bridge.restartSidecar(sidecarName)

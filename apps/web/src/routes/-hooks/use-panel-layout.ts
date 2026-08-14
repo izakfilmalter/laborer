@@ -18,8 +18,8 @@ import {
 import {
   focusExistingWindowForWorkspace,
   getCurrentWindowId,
-  getDesktopBridge,
-} from '@/lib/desktop'
+  localApi,
+} from '@/lib/local-api'
 
 import type { AutoOpenAgentOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
@@ -786,7 +786,7 @@ export function usePanelLayout() {
   // Report only renderer facts. Electron main owns the shared presence
   // registry and the terminal service owns Seen policy.
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!(bridge && persistedWindowLayout)) {
       return
     }

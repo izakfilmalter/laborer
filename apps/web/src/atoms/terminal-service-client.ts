@@ -15,7 +15,7 @@
 
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import { AtomRpc } from 'effect/unstable/reactivity'
-import { isElectron } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { BrowserDaemonClient } from './browser-daemon-client'
 import { rendererRpcProtocol } from './renderer-rpc-protocol'
 
@@ -38,6 +38,6 @@ class LegacyTerminalServiceClient extends AtomRpc.Service<LegacyTerminalServiceC
 
 /** Browser terminal calls share the exact daemon client/runtime with all other RPCs. */
 export const TerminalServiceClient: typeof LegacyTerminalServiceClient =
-  isElectron()
+  localApi.isDesktop
     ? LegacyTerminalServiceClient
     : (BrowserDaemonClient as unknown as typeof LegacyTerminalServiceClient)

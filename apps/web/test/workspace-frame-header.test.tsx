@@ -16,9 +16,13 @@ const { isElectronMock, openExternalUrlMock } = vi.hoisted(() => ({
   openExternalUrlMock: vi.fn(async () => true),
 }))
 
-vi.mock('@/lib/desktop', () => ({
-  isElectron: isElectronMock,
-  openExternalUrl: openExternalUrlMock,
+vi.mock('@/lib/local-api', () => ({
+  localApi: {
+    get isDesktop() {
+      return isElectronMock()
+    },
+    openExternal: openExternalUrlMock,
+  },
   serverRpcUrl: () => 'http://localhost:2100/rpc',
 }))
 

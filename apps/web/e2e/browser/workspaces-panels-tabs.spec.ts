@@ -312,6 +312,10 @@ test.describe('workspaces, panels, and window tabs journeys', () => {
         `[data-testid="tree-pane"][data-workspace-id="${second.id}"]`
       )
       await expect(tree).toBeVisible()
+      const readme = tree.getByRole('treeitem', { name: 'README.md' })
+      await expect(readme).toBeVisible()
+      await readme.click()
+      await expect(readme).toHaveAttribute('aria-selected', 'true')
       await expect(
         frameFor(page, first.id).locator('[data-testid="tree-pane"]')
       ).toHaveCount(0)

@@ -841,6 +841,9 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
     <div
       className={`group/pane relative h-full w-full overflow-hidden ${borderClass}`}
       data-pane-id={node.id}
+      data-pane-type={node.paneType}
+      data-terminal-id={node.terminalId}
+      data-testid="panel-pane"
       onClickCapture={handleClickCapture}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}

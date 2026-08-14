@@ -281,6 +281,7 @@ function TabBarTab({
             : 'text-muted-foreground hover:text-foreground',
           isDragging && 'opacity-40'
         )}
+        data-tab-id={item.id}
         data-testid="tab-bar-tab"
         onClick={() => {
           if (!isEditing) {
@@ -679,6 +680,7 @@ function TabBarInner({
         'flex h-8 shrink-0 items-stretch border-b bg-muted/30',
         className
       )}
+      data-tab-bar-label={label}
       data-testid="tab-bar"
       role="tablist"
     >

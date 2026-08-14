@@ -151,6 +151,7 @@ function WindowTabContent({
   return (
     <div
       className={isActive ? 'relative h-full w-full' : 'relative'}
+      data-testid="window-tab-content"
       data-window-tab-id={tab.id}
       style={isActive ? undefined : { display: 'none' }}
     >

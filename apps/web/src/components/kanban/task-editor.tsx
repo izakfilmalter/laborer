@@ -333,7 +333,10 @@ function TaskDetailDialog({
       }}
       open
     >
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
+        data-testid="task-detail-dialog"
+      >
         <DialogHeader className="gap-2 pr-8">
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle>Card details</DialogTitle>

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defineConfig } from '@playwright/test'
@@ -15,10 +15,13 @@ process.env[E2E_STATE_FILE_ENV] ??= join(
   tmpdir(),
   `laborer-e2e-state-${String(process.pid)}-${randomUUID()}.json`
 )
-const daemonPort = reuseDevStack
-  ? Number(process.env.LABORER_DAEMON_PORT ?? 2100)
-  : await allocatePort()
-writeFileSync(getStateFile(), JSON.stringify({ daemonPort }))
+const stateFile = getStateFile()
+if (!existsSync(stateFile)) {
+  const daemonPort = reuseDevStack
+    ? Number(process.env.LABORER_DAEMON_PORT ?? 2100)
+    : await allocatePort()
+  writeFileSync(stateFile, JSON.stringify({ daemonPort }))
+}
 
 export default defineConfig({
   testDir: './e2e',

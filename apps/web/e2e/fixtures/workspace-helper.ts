@@ -21,9 +21,9 @@ import {
   rmSync,
   unlinkSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { ElectronApplication, Page } from '@playwright/test'
+import { readSetupState } from '../global-setup.js'
 import { expect } from './test-fixtures.js'
 
 /**
@@ -33,11 +33,7 @@ import { expect } from './test-fixtures.js'
  * on macOS) so the path matches what the backend reports.
  */
 export function getTempRepoDir(): string {
-  const stateFile = join(tmpdir(), 'laborer-e2e-state.json')
-  const state = JSON.parse(readFileSync(stateFile, 'utf-8')) as {
-    readonly tempRepoDir: string
-  }
-  return realpathSync(state.tempRepoDir)
+  return realpathSync(readSetupState().tempRepoDir)
 }
 
 /**

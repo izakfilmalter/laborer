@@ -35,6 +35,7 @@ import { LaborerRpcsLive } from './rpc/handlers.js'
 import { DeferredServicesReady } from './services/deferred-service.js'
 import { FileWatcherClient } from './services/file-watcher-client.js'
 import { TerminalClient } from './services/terminal-client.js'
+import { staticAssetResponse, WEB_DIST_ENV } from './static-assets.js'
 import { makeInfrastructureLayer } from './utility-main.js'
 
 export const DAEMON_HOST = '127.0.0.1'
@@ -115,27 +116,40 @@ const HealthRoutes = HttpRouter.addAll([
   HttpRouter.route('GET', '/server-health', healthResponse),
 ])
 
-const shutdownResponse = Effect.gen(function* () {
+const stopResponse = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest
   const body = yield* request.json.pipe(Effect.orElseSucceed(() => null))
   if (
     typeof body !== 'object' ||
     body === null ||
-    Reflect.get(body, 'mode') !== 'shutdown'
+    (Reflect.get(body, 'mode') !== 'shutdown' &&
+      Reflect.get(body, 'mode') !== 'restart')
   ) {
     return yield* HttpServerResponse.json(
-      { error: 'Expected shutdown mode' },
+      { error: 'Expected shutdown or restart mode' },
       { status: 400 }
     )
   }
-  yield* Effect.tryPromise(() => shutdownPtyHost())
+  if (Reflect.get(body, 'mode') === 'shutdown') {
+    yield* Effect.tryPromise(() => shutdownPtyHost())
+  }
   setImmediate(() => process.kill(process.pid, 'SIGTERM'))
   return yield* HttpServerResponse.json({ stopping: true }, { status: 202 })
 })
 
 const ControlRoutes = HttpRouter.addAll([
-  HttpRouter.route('POST', '/daemon/stop', shutdownResponse),
+  HttpRouter.route('POST', '/daemon/stop', stopResponse),
 ])
+
+const webDist = process.env[WEB_DIST_ENV]
+const StaticRoutes =
+  webDist === undefined
+    ? Layer.empty
+    : HttpRouter.addAll([
+        HttpRouter.route('GET', '*', (request) =>
+          staticAssetResponse(webDist, request.url)
+        ),
+      ])
 
 const registerDaemon = (server: Server): (() => void) => {
   const address = server.address()
@@ -182,7 +196,9 @@ export const makeDaemonServerLayer = (
   port: number,
   options: { readonly register?: boolean } = {}
 ) =>
-  HttpRouter.serve(Layer.mergeAll(RpcRoute, HealthRoutes, ControlRoutes)).pipe(
+  HttpRouter.serve(
+    Layer.mergeAll(RpcRoute, HealthRoutes, ControlRoutes, StaticRoutes)
+  ).pipe(
     Layer.provide(ApplicationServices),
     Layer.provide(RpcSerialization.layerJson),
     Layer.provide(

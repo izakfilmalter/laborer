@@ -101,12 +101,9 @@ function useBeforeQuit(): UseBeforeQuitResult {
     // without re-checking for running terminals.
     forceAllowNextQuit = true
 
-    // Trigger quit via the bridge. We need to add a quitApp method to
-    // the bridge for this. For now, use ipcSend to tell the main process
-    // to re-trigger app.quit().
     const bridge = localApi.desktopBridge
     if (bridge) {
-      bridge.ipcSend('desktop:quit-confirmed')
+      bridge.quitApp()
     }
   }, [])
 

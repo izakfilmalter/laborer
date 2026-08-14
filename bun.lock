@@ -5,8 +5,8 @@
     "": {
       "name": "laborer",
       "dependencies": {
-        "@laborer/env": "workspace:*",
         "@laborer/ensure": "workspace:*",
+        "@laborer/env": "workspace:*",
         "dotenv": "catalog:",
         "zod": "catalog:",
       },
@@ -78,6 +78,7 @@
       "name": "@laborer/desktop",
       "version": "0.0.0",
       "dependencies": {
+        "@laborer/ensure": "workspace:*",
         "@laborer/shared": "workspace:*",
         "electron": "40.6.0",
         "electron-updater": "^6.6.2",
@@ -224,8 +225,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@effect/platform-node": "catalog:",
-        "@laborer/env": "workspace:*",
         "@laborer/ensure": "workspace:*",
+        "@laborer/env": "workspace:*",
         "@laborer/file-watcher": "workspace:*",
         "@laborer/shared": "workspace:*",
         "@laborer/task-db": "workspace:*",

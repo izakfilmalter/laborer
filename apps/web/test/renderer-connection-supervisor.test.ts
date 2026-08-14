@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   RENDERER_RECONNECT_DELAYS_MS,
+  RendererConnectionBlockedError,
   type RendererConnectionLease,
   RendererConnectionSupervisor,
 } from '../src/atoms/renderer-connection'
@@ -106,5 +107,18 @@ describe('RendererConnectionSupervisor', () => {
       phase: 'connected',
     })
     supervisor.stop()
+  })
+
+  it('enters a terminal blocked state when production ensure is exhausted', async () => {
+    const supervisor = new RendererConnectionSupervisor(() =>
+      Promise.reject(new RendererConnectionBlockedError())
+    )
+    supervisor.start()
+    await flush()
+
+    expect(supervisor.getSnapshot()).toMatchObject({
+      phase: 'blocked',
+      retryAt: null,
+    })
   })
 })

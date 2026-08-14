@@ -1,4 +1,4 @@
-import { watch, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
 import {
@@ -14,14 +14,12 @@ import {
   triggerDownloadUpdate,
   triggerInstallUpdate,
 } from './auto-updater.js'
-import { DevWatcher } from './dev-watcher.js'
+import { DesktopDaemonSupervisor } from './daemon-supervisor.js'
 import { fixPath } from './fix-path.js'
 import {
   ACTIVATE_WORKSPACE_CHANNEL,
   askRenderersBeforeQuit,
-  closeRendererPortsForService,
   getWorkspaceWindowRegistry,
-  publishWorkspacePresence,
   QUIT_CONFIRMED_CHANNEL,
   registerIpcHandlers,
   removeWindowPresence,
@@ -31,23 +29,13 @@ import {
   setInstallUpdateHandler,
   setRestartSidecarHandler,
   setTrayCountHandler,
-  setUtilityProcessManager,
-  setWorkspacePresenceHandler,
 } from './ipc.js'
 import {
   laborerMcpBundleScriptPath,
   refreshLaborerMcpSymlink,
 } from './laborer-mcp-symlink.js'
-import { LifecycleMonitor } from './lifecycle-monitor.js'
 import { configureApplicationMenu } from './menu.js'
-import {
-  DESKTOP_SCHEME,
-  registerDesktopProtocol,
-  registerSchemeAsPrivileged,
-  resolveStaticRoot,
-} from './protocol.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
-import { UtilityProcessManager } from './utility-process-manager.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
 import { type WindowRecord, WindowStateManager } from './window-state.js'
 
@@ -55,10 +43,6 @@ import { type WindowRecord, WindowStateManager } from './window-state.js'
 // any child processes are spawned. On macOS, apps launched from
 // Finder/Dock inherit a minimal PATH from launchd.
 fixPath()
-
-// Register the custom laborer:// protocol scheme as privileged.
-// MUST happen synchronously before app.whenReady().
-registerSchemeAsPrivileged()
 
 // ---------------------------------------------------------------------------
 // Guard against write-to-broken-pipe errors during shutdown
@@ -123,6 +107,7 @@ const GITHUB_OAUTH_PROTOCOL = 'x-github-desktop-dev-auth'
 
 /** Pending OAuth URL received before a window was ready. */
 let pendingOAuthUrl: string | null = null
+let pendingLaborerUrl: string | null = null
 
 /**
  * Broadcast a GitHub OAuth callback URL to all renderer windows.
@@ -147,22 +132,34 @@ app.on('open-url', (event, url) => {
   if (url.startsWith(`${GITHUB_OAUTH_PROTOCOL}://`)) {
     event.preventDefault()
     handleGithubOAuthUrl(url)
+  } else if (url.startsWith('laborer://')) {
+    event.preventDefault()
+    const parsed = new URL(url)
+    const target = `${parsed.pathname}${parsed.search}${parsed.hash}` || '/'
+    const window = BrowserWindow.getAllWindows()[0]
+    if (window && daemonOrigin) {
+      window.loadURL(new URL(target, daemonOrigin).href).catch(console.error)
+    } else {
+      pendingLaborerUrl = target
+    }
   }
 })
 
 /**
  * Vite dev server URL, set by the dev-electron script.
- * When present, the renderer loads from the dev server instead of a custom protocol.
+ * When present, the renderer loads from the Vite development origin.
  */
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 /**
  * Whether we are in development mode.
  * In dev mode, the renderer loads from the Vite dev server.
- * Utility processes are forked in both dev and production modes.
+ * Production instead ensures the detached daemon and loads its HTTP origin.
  */
 const isDev = Boolean(VITE_DEV_SERVER_URL)
 const desktopSmokeTestFile = process.env.LABORER_DESKTOP_SMOKE_TEST_FILE
+let daemonOrigin: string | null = VITE_DEV_SERVER_URL ?? null
+let daemonSupervisor: DesktopDaemonSupervisor | null = null
 
 /**
  * Headless-style mode for E2E tests: keep windows hidden so Playwright can
@@ -201,21 +198,6 @@ let mainWindow: BrowserWindow | null = null
  * Utility process manager for MessagePort-based service lifecycle.
  * Created on `app.whenReady()` in both dev and production modes.
  */
-let utilityProcessManager: UtilityProcessManager | null = null
-
-/**
- * Lifecycle monitor for utility process health, crash detection, and
- * automatic restart with exponential backoff and heartbeat monitoring.
- */
-let lifecycleMonitor: LifecycleMonitor | null = null
-
-/**
- * Dev mode file watcher for hot reload. Watches sidecar dist directories
- * and triggers utility process restarts when files change.
- * Only created in dev mode, unless `LABORER_SKIP_WATCH=1` is set.
- */
-let devWatcher: DevWatcher | null = null
-
 /** Sole app-wide owner of native agent-attention notification policy. */
 let agentNotificationCoordinator: AgentNotificationCoordinator<
   ReturnType<typeof setTimeout>
@@ -236,16 +218,6 @@ let unregisterShortcut: (() => void) | null = null
  * "actually quit" (Cmd+Q, tray Quit, or `app.quit()`).
  */
 let isQuitting = false
-
-/** Get the utility process manager (null before app.whenReady). */
-export function getUtilityProcessManager(): UtilityProcessManager | null {
-  return utilityProcessManager
-}
-
-/** Get the lifecycle monitor (null before app.whenReady). */
-export function getLifecycleMonitor(): LifecycleMonitor | null {
-  return lifecycleMonitor
-}
 
 function getMainWindow(): BrowserWindow | null {
   const focusedWindow = BrowserWindow.getFocusedWindow()
@@ -322,6 +294,15 @@ function createWindow(record?: WindowRecord): BrowserWindow {
     }
     return { action: 'deny' }
   })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (daemonOrigin && new URL(url).origin === new URL(daemonOrigin).origin) {
+      return
+    }
+    event.preventDefault()
+    if (url.startsWith('https:') || url.startsWith('http:')) {
+      shell.openExternal(url).catch(console.error)
+    }
+  })
 
   window.once('ready-to-show', () => {
     if (!hideWindowsForTests) {
@@ -329,13 +310,10 @@ function createWindow(record?: WindowRecord): BrowserWindow {
     }
   })
 
-  if (VITE_DEV_SERVER_URL) {
-    window.loadURL(VITE_DEV_SERVER_URL).catch(console.error)
-  } else {
-    // Production: serve the frontend via the custom laborer:// protocol.
-    // Load the root path (not /index.html) so TanStack Router matches "/".
-    window.loadURL(`${DESKTOP_SCHEME}://app/`).catch(console.error)
+  if (!daemonOrigin) {
+    throw new Error('Cannot create a desktop window before the daemon is ready')
   }
+  window.loadURL(daemonOrigin).catch(console.error)
 
   window.webContents.on('did-finish-load', () => {
     broadcastUpdateStateToWindow(window)
@@ -385,36 +363,9 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   return window
 }
 
-/** Reconnect server dependencies whenever either utility process restarts. */
-function brokerServerServicePorts(): void {
-  if (
-    lifecycleMonitor?.isHealthy('server') &&
-    lifecycleMonitor.isHealthy('terminal')
-  ) {
-    utilityProcessManager?.brokerInterProcessPort(
-      'server',
-      { type: 'terminal-rpc-port' },
-      'terminal',
-      { type: 'port' }
-    )
-  }
-
-  if (
-    lifecycleMonitor?.isHealthy('server') &&
-    lifecycleMonitor.isHealthy('file-watcher')
-  ) {
-    utilityProcessManager?.brokerInterProcessPort(
-      'server',
-      { type: 'file-watcher-rpc-port' },
-      'file-watcher',
-      { type: 'port' }
-    )
-  }
-}
-
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     // In hidden test mode, drop the dock icon so launching the app does
     // not steal focus or bounce the dock on macOS.
     if (hideWindowsForTests) {
@@ -427,25 +378,21 @@ app
       })
     }
 
-    // In production, register the custom laborer:// protocol handler
-    // that serves the built frontend from disk.
     if (!isDev) {
       const appRoot = join(import.meta.dirname, '..', '..', '..')
-      const staticRoot = resolveStaticRoot(appRoot)
-
-      if (staticRoot) {
-        registerDesktopProtocol(staticRoot)
-      } else {
-        console.error(
-          '[main] Could not find built frontend (apps/web/dist/). ' +
-            'The laborer:// protocol will not be available.'
-        )
-      }
+      daemonSupervisor = new DesktopDaemonSupervisor({
+        daemonEntry: join(
+          appRoot,
+          'packages',
+          'server',
+          'dist',
+          'daemon-main.mjs'
+        ),
+        webDist: join(appRoot, 'apps', 'web', 'dist'),
+      })
+      daemonOrigin = await daemonSupervisor.launch()
     }
 
-    // Create the utility process manager for MessagePort-based services.
-    // All services run as utility processes in both dev and production.
-    utilityProcessManager = new UtilityProcessManager()
     const workspaceRegistry = getWorkspaceWindowRegistry()
     agentNotificationCoordinator = new AgentNotificationCoordinator({
       contextForWorkspace: (workspaceId) =>
@@ -473,74 +420,10 @@ app
       },
     })
 
-    // Create the lifecycle monitor for utility process health monitoring.
-    // Uses native process events and heartbeat messages instead of HTTP
-    // health polling.
-    lifecycleMonitor = new LifecycleMonitor(utilityProcessManager, {
-      onProcessExit: (name) => {
-        closeRendererPortsForService(name)
-        if (name === 'terminal') {
-          // A dead status source cannot satisfy delivery-time revalidation.
-          // The restored service will hydrate fresh history after restart.
-          agentNotificationCoordinator?.dispose()
-        }
-      },
-    })
-
-    // Wire bootstrap messages (ready, heartbeat) from utility processes
-    // to the lifecycle monitor for startup detection and liveness.
-    utilityProcessManager.setMessageHandler((name, message) => {
-      if (message.type === 'ready') {
-        lifecycleMonitor?.handleReady(name)
-        brokerServerServicePorts()
-        if (name === 'terminal') {
-          publishWorkspacePresence()
-        }
-      } else if (message.type === 'heartbeat') {
-        lifecycleMonitor?.handleHeartbeat(name)
-      } else if (
-        name === 'terminal' &&
-        message.type === 'terminal-agent-status'
-      ) {
-        agentNotificationCoordinator?.observe(message)
-      }
-    })
-
-    // Share the utility process manager with the IPC module so the
-    // renderer can acquire direct MessagePort connections to services.
-    setUtilityProcessManager(utilityProcessManager)
-    setWorkspacePresenceHandler((workspaceIds) => {
-      utilityProcessManager
-        ?.getProcess('terminal')
-        ?.postMessage({ type: 'workspace-presence', workspaceIds })
-    })
-
-    // Fork utility processes via the lifecycle monitor, which handles
-    // startup detection, crash recovery, and status events.
-    lifecycleMonitor.forkAllAndMonitor(['server', 'terminal', 'file-watcher'])
-
-    // No powerMonitor suspend/resume wiring is needed for heartbeats:
-    // the lifecycle monitor counts awake time (process-time countdowns),
-    // so OS sleep — including DarkWake, which emits no suspend/resume —
-    // can never advance a heartbeat timeout (ADR 0003).
-
-    // In dev mode, watch sidecar dist directories for changes and auto-restart
-    // utility processes. `tsdown --watch` rebuilds dist/utility-main.mjs on
-    // source changes; DevWatcher detects the rebuild and triggers a restart.
-    // Disabled by setting LABORER_SKIP_WATCH=1 for debugging.
-    if (isDev && process.env.LABORER_SKIP_WATCH !== '1') {
-      const repoRoot = join(import.meta.dirname, '..', '..', '..')
-      devWatcher = new DevWatcher({
-        lifecycleMonitor,
-        repoRoot,
-        watchFn: watch,
-      })
-      devWatcher.startWatching()
-    }
-
     // Register x-github-desktop-dev-auth:// as a protocol handler so
     // the OAuth callback from GitHub lands back in this app.
     app.setAsDefaultProtocolClient(GITHUB_OAUTH_PROTOCOL)
+    app.setAsDefaultProtocolClient('laborer')
 
     // Deliver any pending OAuth URL that arrived before windows were ready.
     if (pendingOAuthUrl) {
@@ -552,36 +435,21 @@ app
     // Handlers use event.sender to resolve the requesting window,
     // so they work correctly regardless of which window invokes them.
     registerIpcHandlers(() => getMainWindow())
+    ipcMain.handle('desktop:ensure-daemon', async () => {
+      await daemonSupervisor?.reconnect()
+    })
 
     // Wire tray workspace count updates from the renderer to the tray manager.
     setTrayCountHandler((count) => {
       trayManager.updateWorkspaceCount(count)
     })
 
-    // Wire sidecar restart requests from the renderer to the lifecycle
-    // monitor or utility process manager.
-    setRestartSidecarHandler(async (name) => {
-      const validNames = ['server', 'terminal', 'file-watcher'] as const
-      type ValidName = (typeof validNames)[number]
-      if (!validNames.includes(name as ValidName)) {
-        return
-      }
-      // Try the lifecycle monitor first (proper health tracking),
-      // then fall back to direct restart via the utility process manager.
-      if (
-        lifecycleMonitor &&
-        utilityProcessManager?.isRunning(name as ValidName)
-      ) {
-        await lifecycleMonitor.manualRestart(name as ValidName)
-      } else if (utilityProcessManager?.isRunning(name as ValidName)) {
-        await utilityProcessManager.restart(name as ValidName)
-      }
-    })
+    setRestartSidecarHandler(async () => undefined)
 
     // Wire sidecar status query so the renderer can get current statuses
     // on mount (avoids missing broadcast events due to timing).
     setGetSidecarStatusesHandler(() => {
-      return lifecycleMonitor?.getCurrentStatuses() ?? []
+      return []
     })
 
     // Wire auto-update IPC handlers.
@@ -597,6 +465,12 @@ app
       }
     } else {
       createWindow()
+    }
+
+    if (pendingLaborerUrl && daemonOrigin) {
+      const target = new URL(pendingLaborerUrl, daemonOrigin).href
+      pendingLaborerUrl = null
+      mainWindow?.loadURL(target).catch(console.error)
     }
 
     // Build the macOS-native application menu (About, Settings, Edit, View, Window).
@@ -654,22 +528,22 @@ app.on('window-all-closed', () => {
 //
 // 3. `will-quit`    — we preventDefault() to delay exit while we:
 //                     - Stop lifecycle monitor (prevent restarts)
-//                     - Kill utility processes with killAllAndWait()
-//                     - Wait for them to serialize state (terminal sessions, etc.)
+//                     - Stop the daemon with shutdown semantics
+//                     - Wait for the daemon and pty-host to exit
 //                     Then re-call app.quit() to actually exit.
 //
 // Force-quit safety: a timeout ensures the app always exits even if
-// cleanup hangs (e.g., a utility process ignores SIGTERM).
+// cleanup hangs.
 // ---------------------------------------------------------------------------
 
 /** Maximum time to wait for renderer veto replies. */
 const RENDERER_QUIT_TIMEOUT_MS = 5000
 
-/** Maximum time to wait for utility processes to exit after SIGTERM. */
-const UTILITY_QUIT_TIMEOUT_MS = 5000
+/** Maximum time reserved for daemon and pty-host shutdown. */
+const DAEMON_QUIT_TIMEOUT_MS = 5000
 
 /** Absolute upper bound for app shutdown once quit is accepted. */
-const FORCE_EXIT_TIMEOUT_MS = UTILITY_QUIT_TIMEOUT_MS + 1000
+const FORCE_EXIT_TIMEOUT_MS = DAEMON_QUIT_TIMEOUT_MS + 1000
 
 let forceExitTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -689,12 +563,6 @@ function cleanupMainProcessResources(): void {
 
   // Stop auto-update timers.
   shutdownAutoUpdater()
-
-  // Stop the dev watcher first — prevents file changes from triggering
-  // restarts during shutdown.
-  if (devWatcher) {
-    devWatcher.shutdown()
-  }
 }
 
 function scheduleForceExit(): void {
@@ -715,25 +583,9 @@ function beginQuit(): void {
   scheduleForceExit()
 }
 
-/**
- * Async shutdown: stop lifecycle monitor, then kill all utility processes
- * and WAIT for them to exit (so they can serialize state like terminal
- * sessions before the process dies).
- */
-async function shutdownUtilityProcesses(): Promise<void> {
-  // Stop the lifecycle monitor — cancels pending restart timers and
-  // heartbeat timers so killed processes aren't immediately re-spawned.
-  if (lifecycleMonitor) {
-    lifecycleMonitor.shutdown()
-  }
-
-  // Kill all utility processes and wait for them to finish cleanup.
-  // This is critical: the terminal utility process serializes session
-  // state on SIGTERM. Using killAllAndWait ensures we don't exit before
-  // that serialization completes.
-  if (utilityProcessManager) {
-    await utilityProcessManager.killAllAndWait(UTILITY_QUIT_TIMEOUT_MS)
-  }
+/** Stop the daemon with the explicit flavor that also stops the pty-host. */
+async function shutdownDaemon(): Promise<void> {
+  await daemonSupervisor?.shutdown()
 }
 
 // Phase 1: `before-quit` — ask renderers for permission, with veto support.
@@ -777,19 +629,19 @@ ipcMain.on(QUIT_CONFIRMED_CHANNEL, () => {
   app.quit()
 })
 
-// Phase 3: `will-quit` — async cleanup of utility processes.
+// Phase 3: `will-quit` — async daemon cleanup.
 // We preventDefault() and re-quit after cleanup completes.
 app.once('will-quit', (event) => {
   event.preventDefault()
   agentNotificationCoordinator?.dispose()
   agentNotificationCoordinator = null
 
-  shutdownUtilityProcesses()
+  shutdownDaemon()
     .then(() => {
       app.exit(0)
     })
     .catch((error: unknown) => {
-      console.error('[main] Error during utility process shutdown:', error)
+      console.error('[main] Error during daemon shutdown:', error)
       app.exit(0)
     })
 })
@@ -803,7 +655,7 @@ if (process.platform !== 'win32') {
     }
     beginQuit()
 
-    shutdownUtilityProcesses()
+    shutdownDaemon()
       .then(() => {
         app.exit(0)
       })

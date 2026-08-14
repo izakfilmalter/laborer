@@ -3,8 +3,6 @@ import type {
   DesktopBridge,
 } from '@laborer/shared/desktop-bridge'
 import {
-  acquireServicePort as acquireDesktopServicePort,
-  acquireTerminalDataPort as acquireDesktopTerminalDataPort,
   focusExistingWindowForWorkspace as focusExistingDesktopWindowForWorkspace,
   getDesktopBridge,
   getCurrentWindowId as getDesktopWindowId,
@@ -64,11 +62,15 @@ class LocalApi {
 
 export const localApi = new LocalApi()
 
-export const acquireServicePort = (name: string) =>
-  acquireDesktopServicePort(name)
+/** @deprecated Desktop clients use the daemon WebSocket; no port is exposed. */
+export const acquireServicePort = (
+  _name: string
+): Promise<MessagePort | null> => Promise.resolve(null)
 
-export const acquireTerminalDataPort = (terminalId: string) =>
-  acquireDesktopTerminalDataPort(terminalId)
+/** @deprecated Terminal I/O uses terminal.attach on the daemon WebSocket. */
+export const acquireTerminalDataPort = (
+  _terminalId: string
+): Promise<MessagePort | null> => Promise.resolve(null)
 
 export const focusExistingWindowForWorkspace = (workspaceId: string) =>
   focusExistingDesktopWindowForWorkspace(workspaceId)

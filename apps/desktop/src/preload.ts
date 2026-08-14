@@ -27,12 +27,9 @@ const UPDATE_INSTALL_CHANNEL = 'desktop:update-install'
 const GITHUB_OAUTH_CALLBACK_CHANNEL = 'desktop:github-oauth-callback'
 const START_GITHUB_OAUTH_CHANNEL = 'desktop:start-github-oauth'
 const BEFORE_QUIT_CHANNEL = 'desktop:before-quit'
+const ENSURE_DAEMON_CHANNEL = 'desktop:ensure-daemon'
 const QUIT_REPLY_CHANNEL = 'desktop:quit-reply'
-// Port acquisition channel constants are no longer needed in the preload.
-// The renderer sends IPC requests directly via `ipcSend()` and the preload
-// only needs to relay ports via `ipcMessagePort.acquire(responseChannel, nonce)`.
-// Channel constants now live in `apps/web/src/lib/desktop.ts`.
-
+const QUIT_CONFIRMED_CHANNEL = 'desktop:quit-confirmed'
 // ---------------------------------------------------------------------------
 // Window identity — injected via `additionalArguments` from the main process.
 //
@@ -48,62 +45,11 @@ const { windowId } = parseWindowBootstrapArgs(process.argv)
 // ---------------------------------------------------------------------------
 
 contextBridge.exposeInMainWorld('desktopBridge', {
-  // -----------------------------------------------------------------------
-  // MessagePort relay — VS Code's ipcMessagePort.acquire() pattern
-  //
-  // MessagePort objects cannot traverse contextBridge (structured clone
-  // strips them). The preload relays ports via window.postMessage() with
-  // the port in the transfer array. The renderer listens on window for
-  // the relayed port.
-  //
-  // @see .reference/vscode/src/vs/base/parts/sandbox/electron-browser/preload.ts
-  // -----------------------------------------------------------------------
-
-  ipcMessagePort: {
-    acquire: (responseChannel: string, nonce: string) => {
-      console.log(
-        `[preload] ipcMessagePort.acquire(${responseChannel}, ${nonce})`
-      )
-      let timeout: ReturnType<typeof setTimeout> | null = null
-      const listener = (
-        _event: Electron.IpcRendererEvent,
-        responseNonce: unknown
-      ) => {
-        console.log(
-          `[preload] IPC response on ${responseChannel}: nonce=${JSON.stringify(responseNonce)} ports=${_event.ports.length} match=${responseNonce === nonce}`
-        )
-        if (responseNonce !== nonce) {
-          return
-        }
-        if (timeout !== null) {
-          clearTimeout(timeout)
-          timeout = null
-        }
-        ipcRenderer.off(responseChannel, listener)
-        console.log(
-          `[preload] Relaying ${_event.ports.length} port(s) via window.postMessage nonce=${nonce}`
-        )
-        window.postMessage(nonce, '*', _event.ports)
-      }
-      ipcRenderer.on(responseChannel, listener)
-      timeout = setTimeout(() => {
-        ipcRenderer.off(responseChannel, listener)
-        timeout = null
-        console.warn(
-          `[preload] Timed out waiting for ${responseChannel} nonce=${nonce}; removed IPC relay listener`
-        )
-      }, 10_000)
-    },
-  },
-
-  ipcSend: (channel: string, ...args: unknown[]) => {
-    console.log(
-      `[preload] ipcSend(${channel}, ${JSON.stringify(args[0])?.slice(0, 100)})`
-    )
-    ipcRenderer.send(channel, ...args)
-  },
+  quitApp: () => ipcRenderer.send(QUIT_CONFIRMED_CHANNEL),
 
   getSidecarStatuses: () => ipcRenderer.invoke(GET_SIDECAR_STATUSES_CHANNEL),
+
+  ensureDaemon: () => ipcRenderer.invoke(ENSURE_DAEMON_CHANNEL),
 
   getWindowId: () => windowId,
 

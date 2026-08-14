@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -13,6 +13,7 @@ import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import { FileWatcherClient } from '../src/services/file-watcher-client.js'
 
 const MAX_DIAGNOSTICS_LENGTH = 64 * 1024
+const DAEMON_WEB_CLIENT_PATTERN = /daemon web client/
 
 const allocatePort = (): Promise<number> =>
   new Promise((resolvePort, reject) => {
@@ -205,6 +206,13 @@ describe('standalone daemon', () => {
   it('serves all three RPC groups over one WebSocket', async () => {
     const port = await allocatePort()
     const stateHome = await mkdtemp(join(tmpdir(), 'laborer-daemon-test-'))
+    const webDist = join(stateHome, 'web-dist')
+    await mkdir(join(webDist, 'assets'), { recursive: true })
+    await writeFile(
+      join(webDist, 'index.html'),
+      '<main>daemon web client</main>'
+    )
+    await writeFile(join(webDist, 'assets', 'app.js'), 'export {}')
     const daemonPath = resolve(import.meta.dirname, '../dist/daemon-main.mjs')
     let diagnostics = ''
     const daemonEnvironment = {
@@ -215,6 +223,7 @@ describe('standalone daemon', () => {
         import.meta.dirname,
         '../../terminal/dist/pty-host-main.mjs'
       ),
+      LABORER_WEB_DIST: webDist,
       NODE_ENV: 'test',
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       SHELL: '/bin/sh',
@@ -243,6 +252,12 @@ describe('standalone daemon', () => {
     const url = `http://127.0.0.1:${String(port)}`
     try {
       await waitForReady(url, child)
+      assert.match(
+        await fetch(url).then((response) => response.text()),
+        DAEMON_WEB_CLIENT_PATTERN
+      )
+      assert.strictEqual((await fetch(`${url}/assets/app.js`)).status, 200)
+      assert.strictEqual((await fetch(`${url}/assets/missing.js`)).status, 404)
 
       await Effect.runPromise(
         Effect.gen(function* () {
@@ -288,7 +303,20 @@ describe('standalone daemon', () => {
         )
       )
       const originalHostPid = await readHostPid(stateHome)
-      await stopChild(child)
+      const daemonExit = new Promise<void>((resolveExit) => {
+        if (child.exitCode !== null) {
+          resolveExit()
+          return
+        }
+        child.once('exit', () => resolveExit())
+      })
+      const restartResponse = await fetch(`${url}/daemon/stop`, {
+        body: JSON.stringify({ mode: 'restart' }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      })
+      assert.strictEqual(restartResponse.status, 202)
+      await daemonExit
       child = spawnDaemon()
       child.stdout?.on('data', (chunk) => appendDiagnostics(chunk))
       child.stderr?.on('data', (chunk) => appendDiagnostics(chunk))

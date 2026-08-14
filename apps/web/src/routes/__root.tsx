@@ -13,7 +13,6 @@ import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-li
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { ServerGate } from '@/components/server-gate'
 import { SharedStateBridge } from '@/components/shared-state-bridge'
-import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -89,25 +88,21 @@ function RootComponent() {
           <HotkeysProvider>
             <TooltipProvider>
               <ServerGate>
-                <SidecarRuntimeBoundary>
-                  {(generation) => (
-                    <AtomRegistryProvider key={`atom-registry-${generation}`}>
-                      <SharedStateBridge />
-                      <ConnectionReconnectBanner />
-                      <AppSettingsProvider>
-                        <div className="h-svh">
-                          <AppSettingsModal />
-                          <Outlet />
-                        </div>
-                      </AppSettingsProvider>
-                      <Toaster richColors />
-                      <PhaseTransitionDriver />
-                      <BeforeQuitHandler />
-                      <SidecarCrashListener />
-                      <DesktopUpdateToastListener />
-                    </AtomRegistryProvider>
-                  )}
-                </SidecarRuntimeBoundary>
+                <AtomRegistryProvider>
+                  <SharedStateBridge />
+                  <ConnectionReconnectBanner />
+                  <AppSettingsProvider>
+                    <div className="h-svh">
+                      <AppSettingsModal />
+                      <Outlet />
+                    </div>
+                  </AppSettingsProvider>
+                  <Toaster richColors />
+                  <PhaseTransitionDriver />
+                  <BeforeQuitHandler />
+                  <SidecarCrashListener />
+                  <DesktopUpdateToastListener />
+                </AtomRegistryProvider>
               </ServerGate>
             </TooltipProvider>
           </HotkeysProvider>

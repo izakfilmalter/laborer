@@ -1,4 +1,5 @@
 import { Atom } from 'effect/unstable/reactivity'
+import { getDesktopBridge } from '@/lib/desktop'
 
 export const RENDERER_RECONNECT_DELAYS_MS = [3000, 4000, 8000, 16_000] as const
 export const RENDERER_RECONNECT_STABILITY_RESET_MS = 30_000
@@ -6,7 +7,11 @@ export const RENDERER_DISCONNECT_GRACE_MS = 2000
 export const RECONNECT_MUTATION_MESSAGE =
   'Reconnecting — try again once connected'
 
-export type RendererConnectionPhase = 'connecting' | 'connected' | 'backoff'
+export type RendererConnectionPhase =
+  | 'connecting'
+  | 'connected'
+  | 'backoff'
+  | 'blocked'
 
 export interface RendererConnectionState {
   readonly attempt: number
@@ -25,6 +30,13 @@ export interface RendererConnectionLease {
 export type RendererConnector = (
   signal: AbortSignal
 ) => Promise<RendererConnectionLease>
+
+export class RendererConnectionBlockedError extends Error {
+  constructor() {
+    super('The desktop daemon could not be restarted')
+    this.name = 'RendererConnectionBlockedError'
+  }
+}
 
 const retryDelay = (failureCount: number): number =>
   RENDERER_RECONNECT_DELAYS_MS[
@@ -151,8 +163,17 @@ export class RendererConnectionSupervisor {
         if (this.now() - connectedAt >= RENDERER_RECONNECT_STABILITY_RESET_MS) {
           failureCount = 0
         }
-      } catch {
+      } catch (error) {
         // Transport failures are represented by phase, not thrown into views.
+        if (error instanceof RendererConnectionBlockedError) {
+          this.publish({
+            ...this.state,
+            phase: 'blocked',
+            retryAt: null,
+            session: null,
+          })
+          break
+        }
       } finally {
         this.interrupt = undefined
       }
@@ -180,8 +201,16 @@ export class RendererConnectionSupervisor {
   }
 }
 
-const connectWebSocket: RendererConnector = (signal) =>
-  new Promise((resolve, reject) => {
+const connectWebSocket: RendererConnector = async (signal) => {
+  const bridge = getDesktopBridge()
+  if (bridge && import.meta.env.PROD) {
+    try {
+      await bridge.ensureDaemon()
+    } catch {
+      throw new RendererConnectionBlockedError()
+    }
+  }
+  return new Promise((resolve, reject) => {
     const url = new URL('/ws', globalThis.location.origin)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(url)
@@ -218,6 +247,7 @@ const connectWebSocket: RendererConnector = (signal) =>
       { once: true }
     )
   })
+}
 
 export const rendererConnectionSupervisor = new RendererConnectionSupervisor(
   connectWebSocket

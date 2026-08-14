@@ -99,10 +99,17 @@ const createBrowserWindowMock = () => {
   return MockBrowserWindow
 }
 
-const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
+const loadMainWithRecords = async (
+  savedWindowRecords: MockWindowRecord[],
+  options: { readonly production?: boolean } = {}
+) => {
   vi.resetModules()
 
-  vi.stubEnv('VITE_DEV_SERVER_URL', 'http://127.0.0.1:5173')
+  if (options.production) {
+    vi.stubEnv('VITE_DEV_SERVER_URL', '')
+  } else {
+    vi.stubEnv('VITE_DEV_SERVER_URL', 'http://127.0.0.1:5173')
+  }
   vi.stubEnv('LABORER_SKIP_WATCH', '1')
 
   const BrowserWindow = createBrowserWindowMock()
@@ -110,6 +117,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
   const setName = vi.fn()
   const track = vi.fn()
   const registerIpcHandlersMock = vi.fn()
+  const launchDaemon = vi.fn(async () => 'http://127.0.0.1:2117')
 
   vi.doMock('electron', () => ({
     app: {
@@ -154,6 +162,13 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     triggerInstallUpdate: vi.fn(),
   }))
   vi.doMock('../src/fix-path.js', () => ({ fixPath: vi.fn() }))
+  vi.doMock('../src/daemon-supervisor.js', () => ({
+    DesktopDaemonSupervisor: class {
+      launch = launchDaemon
+      reconnect = vi.fn(async () => undefined)
+      shutdown = vi.fn(async () => undefined)
+    },
+  }))
   vi.doMock('../src/ipc.js', () => ({
     ACTIVATE_WORKSPACE_CHANNEL: 'desktop:activate-workspace',
     askRenderersBeforeQuit: vi.fn(async () => false),
@@ -209,13 +224,6 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     configureApplicationMenu: vi.fn(),
   }))
 
-  vi.doMock('../src/protocol.js', () => ({
-    DESKTOP_SCHEME: 'laborer',
-    registerDesktopProtocol: vi.fn(),
-    registerSchemeAsPrivileged: vi.fn(),
-    resolveStaticRoot: vi.fn(() => null),
-  }))
-
   vi.doMock('../src/tray.js', () => ({
     TrayManager: class {
       create = noop
@@ -255,6 +263,7 @@ const loadMainWithRecords = async (savedWindowRecords: MockWindowRecord[]) => {
     removeWindowRecord,
     appOn,
     setName,
+    launchDaemon,
   }
 }
 
@@ -328,6 +337,27 @@ describe('main multi-window restore', () => {
       },
     })
     expect(BrowserWindow.instances[1]?.maximize).toHaveBeenCalledTimes(1)
+    expect(BrowserWindow.instances[0]?.loadURL).toHaveBeenCalledWith(
+      'http://127.0.0.1:5173'
+    )
+  })
+
+  it('loads the production web client from the ensured daemon origin', async () => {
+    const { BrowserWindow, launchDaemon } = await loadMainWithRecords(
+      [
+        {
+          windowId: 'window-alpha',
+          bounds: { x: 10, y: 20, width: 800, height: 600 },
+          isMaximized: false,
+        },
+      ],
+      { production: true }
+    )
+
+    expect(launchDaemon).toHaveBeenCalledTimes(1)
+    expect(BrowserWindow.instances[0]?.loadURL).toHaveBeenCalledWith(
+      'http://127.0.0.1:2117'
+    )
   })
 
   it('closes a non-last visible window instead of hiding it to the tray', async () => {

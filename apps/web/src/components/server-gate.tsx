@@ -1,49 +1,25 @@
 /**
  * ServerGate — blocks the main app UI until backend services are reachable.
  *
- * Two runtime strategies:
- *
- * 1. **Electron production** — subscribes to sidecar status events via
- *    the DesktopBridge. Shows per-service status and offers restart
- *    buttons when services crash.
- *
- * 2. **Browser** — polls the daemon's same-origin `/health` endpoint with
- *    exponential backoff until a 2xx response is received.
+ * Browser and Electron both poll the daemon's same-origin `/health` endpoint
+ * with exponential backoff until a 2xx response is received.
  *
  * In both cases the gate prevents route content from
  * rendering until the backend is confirmed ready, avoiding the
  * first-boot race condition where server requests would time out
  * against a not-yet-running server.
  *
- * @see apps/desktop/src/health.ts — HealthMonitor event emission
- * @see apps/web/src/lib/sidecar-statuses.ts — pure derivation logic
  * @see apps/web/vite.config.ts — /health proxy
  */
 
-import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import { Loader2 } from 'lucide-react'
-import { type ReactNode, useEffect, useState } from 'react'
-
-import { Button } from '@/components/ui/button'
-import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
-import { localApi } from '@/lib/local-api'
 import {
-  areCoreServicesHealthy,
-  CORE_SIDECAR_NAMES,
-  getDisplayName,
-  getStatusColor,
-  getStatusLabel,
-  hasAnyCoreServiceCrashed,
-} from '@/lib/sidecar-statuses'
-import { cn } from '@/lib/utils'
-
-/** Dot color classes matching the service-status-pills component. */
-const DOT_CLASSES: Record<ReturnType<typeof getStatusColor>, string> = {
-  green: 'bg-success',
-  yellow: 'bg-warning',
-  red: 'bg-destructive',
-  gray: 'bg-muted-foreground',
-}
+  type ReactNode,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import { rendererConnectionSupervisor } from '@/atoms/renderer-connection'
 
 // ---------------------------------------------------------------------------
 // Browser health polling
@@ -146,25 +122,7 @@ function useBrowserHealthPoll(): {
  * Uses sidecar events in Electron production, HTTP polling in dev.
  */
 function ServerGate({ children }: { readonly children: ReactNode }) {
-  const bridge = localApi.desktopBridge
-
-  // Electron production: use sidecar status events from the DesktopBridge.
-  if (bridge && isDesktopProduction()) {
-    return <ElectronServerGate bridge={bridge}>{children}</ElectronServerGate>
-  }
-
-  // Electron dev still uses the utility-process path and has no daemon yet.
-  if (bridge) {
-    return <>{children}</>
-  }
-
-  // Plain browser: wait for the standalone daemon.
   return <BrowserServerGate>{children}</BrowserServerGate>
-}
-
-/** Check if running in Electron production (not dev). */
-function isDesktopProduction(): boolean {
-  return localApi.isDesktop && import.meta.env.PROD
 }
 
 // ---------------------------------------------------------------------------
@@ -173,9 +131,26 @@ function isDesktopProduction(): boolean {
 
 function BrowserServerGate({ children }: { readonly children: ReactNode }) {
   const { state } = useBrowserHealthPoll()
+  const connection = useSyncExternalStore(
+    rendererConnectionSupervisor.subscribe,
+    rendererConnectionSupervisor.getSnapshot,
+    rendererConnectionSupervisor.getSnapshot
+  )
 
-  if (state === 'healthy') {
+  if (state === 'healthy' && connection.phase !== 'blocked') {
     return <>{children}</>
+  }
+
+  if (connection.phase === 'blocked') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+        <h2 className="font-medium text-lg">Daemon restart failed</h2>
+        <p className="max-w-sm text-muted-foreground text-sm">
+          Laborer could not start a healthy daemon after several attempts. Quit
+          and reopen the desktop app to try again.
+        </p>
+      </div>
+    )
   }
 
   const unreachable = state === 'unreachable'
@@ -201,81 +176,6 @@ function BrowserServerGate({ children }: { readonly children: ReactNode }) {
             : 'Connecting to backend services…'}
         </p>
       </output>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Electron production gate
-// ---------------------------------------------------------------------------
-
-function ElectronServerGate({
-  bridge,
-  children,
-}: {
-  readonly bridge: NonNullable<typeof localApi.desktopBridge>
-  readonly children: ReactNode
-}) {
-  const statuses = useSidecarStatuses()
-  const allHealthy = areCoreServicesHealthy(statuses)
-
-  if (allHealthy) {
-    return <>{children}</>
-  }
-
-  const hasCrash = hasAnyCoreServiceCrashed(statuses)
-
-  const handleRestartAll = () => {
-    for (const name of CORE_SIDECAR_NAMES) {
-      if (statuses[name].state === 'crashed') {
-        bridge.restartSidecar(name as SidecarName)
-      }
-    }
-  }
-
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
-      <div className="flex flex-col items-center gap-3">
-        {!hasCrash && (
-          <Loader2 className="size-8 animate-spin text-muted-foreground" />
-        )}
-        <h2 className="font-medium text-lg">
-          {hasCrash ? 'Service startup failed' : 'Starting services'}
-        </h2>
-        <p className="text-muted-foreground text-sm">
-          {hasCrash
-            ? 'One or more services failed to start. You can retry below.'
-            : 'Waiting for backend services to become ready...'}
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        {CORE_SIDECAR_NAMES.map((name) => {
-          const state = statuses[name]
-          const color = getStatusColor(state)
-          const label = getStatusLabel(state)
-
-          return (
-            <div className="flex items-center gap-3 text-sm" key={name}>
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'inline-block size-2 rounded-full',
-                  DOT_CLASSES[color]
-                )}
-              />
-              <span className="w-28 font-medium">{getDisplayName(name)}</span>
-              <span className="text-muted-foreground">{label}</span>
-            </div>
-          )
-        })}
-      </div>
-
-      {hasCrash && (
-        <Button onClick={handleRestartAll} variant="outline">
-          Restart failed services
-        </Button>
-      )}
     </div>
   )
 }

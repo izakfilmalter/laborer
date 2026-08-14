@@ -303,11 +303,19 @@ function hasValidSmokeMarker(markerPath: string): boolean {
 
   try {
     const marker: unknown = JSON.parse(readFileSync(markerPath, 'utf8'))
+    if (
+      typeof marker !== 'object' ||
+      marker === null ||
+      !('url' in marker) ||
+      typeof marker.url !== 'string'
+    ) {
+      return false
+    }
+    const url = new URL(marker.url)
     return (
-      typeof marker === 'object' &&
-      marker !== null &&
-      'url' in marker &&
-      marker.url === 'laborer://app/'
+      url.protocol === 'http:' &&
+      url.hostname === '127.0.0.1' &&
+      url.pathname === '/'
     )
   } catch {
     return false

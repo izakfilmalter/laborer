@@ -33,7 +33,7 @@
  *
  * @see packages/terminal/src/services/terminal-data-channel.ts — MessagePort endpoint
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
- * @see apps/web/src/hooks/use-terminal-messageport.ts — MessagePort hook
+ * @see apps/web/src/hooks/use-terminal-rpc.ts — daemon WebSocket hook
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
  * @see Issue #9: Renderer terminal UI wired to MessagePort
  */
@@ -70,12 +70,6 @@ import {
 } from '@/components/ui/input-group'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
-import type {
-  ReplayControlMessage,
-  ReplayStatus,
-  TerminalStatus,
-} from '@/hooks/use-terminal-messageport'
-import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
 import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import {
@@ -85,10 +79,11 @@ import {
   isTerminalFindShortcut,
   shouldBypassTerminal,
 } from '@/lib/keybinds'
-import { localApi } from '@/lib/local-api'
 import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
 
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
+type ReplayStatus = 'idle' | 'replaying' | 'complete'
+type TerminalStatus = 'running' | 'stopped' | 'restarted'
 
 /**
  * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
@@ -394,11 +389,7 @@ function TerminalConnectingPlaceholder() {
  * and renders the terminal.
  */
 function TerminalPaneContent(props: TerminalPaneProps) {
-  return localApi.isDesktop ? (
-    <TerminalPaneMessagePort {...props} />
-  ) : (
-    <TerminalPaneRpc {...props} />
-  )
+  return <TerminalPaneRpc {...props} />
 }
 
 /** Browser terminal transport over terminal.attach on the daemon's single WS. */
@@ -463,103 +454,6 @@ function TerminalPaneRpc({
     <TerminalPaneRenderer
       connection={connection}
       onTerminalReady={ready}
-      onTitleChange={onTitleChange}
-      replayEpoch={replayEpoch}
-      terminalId={terminalId}
-      terminalRef={terminalRef}
-    />
-  )
-}
-
-/** Connects via MessagePort and renders the terminal. */
-function TerminalPaneMessagePort({
-  terminalId,
-  onTerminalExit,
-  onTitleChange,
-}: TerminalPaneProps) {
-  const terminalRef = useRef<Terminal | null>(null)
-  const pendingDataRef = useRef<string[]>([])
-  const [replayEpoch, setReplayEpoch] = useState(0)
-
-  const handleTerminalData = useCallback((data: string) => {
-    const terminal = terminalRef.current
-    if (!terminal) {
-      pendingDataRef.current.push(data)
-      return
-    }
-
-    terminal.write(data)
-  }, [])
-
-  const flushPendingTerminalData = useCallback(() => {
-    const terminal = terminalRef.current
-    if (!terminal || pendingDataRef.current.length === 0) {
-      return
-    }
-
-    const pendingData = pendingDataRef.current
-    pendingDataRef.current = []
-    for (const data of pendingData) {
-      terminal.write(data)
-    }
-  }, [])
-
-  const handleReplayStart = useCallback((replayEvent: ReplayControlMessage) => {
-    const terminal = terminalRef.current
-    if (!terminal) {
-      return
-    }
-
-    terminal.reset()
-    setReplayEpoch((current) => current + 1)
-
-    queueMicrotask(() => {
-      const activeTerminal = terminalRef.current
-      if (!activeTerminal) {
-        return
-      }
-
-      for (const frame of replayEvent.events) {
-        const dimensions = normalizeTerminalDimensions(frame)
-        if (!hasTerminalDimensions(dimensions)) {
-          continue
-        }
-        if (
-          activeTerminal.cols !== dimensions.cols ||
-          activeTerminal.rows !== dimensions.rows
-        ) {
-          activeTerminal.resize(dimensions.cols, dimensions.rows)
-        }
-        if (frame.data.length > 0) {
-          activeTerminal.write(frame.data)
-        }
-      }
-    })
-  }, [])
-
-  const handleTerminalStatus = useCallback(
-    (status: TerminalStatus, _exitCode: number | undefined) => {
-      if (status === 'restarted') {
-        terminalRef.current?.clear()
-      }
-      if (status === 'stopped') {
-        onTerminalExit?.()
-      }
-    },
-    [onTerminalExit]
-  )
-
-  const connection = useTerminalMessagePort({
-    terminalId,
-    onData: handleTerminalData,
-    onReplayStart: handleReplayStart,
-    onStatus: handleTerminalStatus,
-  })
-
-  return (
-    <TerminalPaneRenderer
-      connection={connection}
-      onTerminalReady={flushPendingTerminalData}
       onTitleChange={onTitleChange}
       replayEpoch={replayEpoch}
       terminalId={terminalId}

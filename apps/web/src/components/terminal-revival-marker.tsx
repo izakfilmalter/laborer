@@ -1,9 +1,18 @@
 import { History, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 export const isTerminalRevival = (
   resetReason: 'epoch_changed' | 'cursor_out_of_range'
 ): boolean => resetReason === 'epoch_changed'
+
+/**
+ * Spoken form of the marker. It is announced from an always-mounted region
+ * owned by the terminal pane, because a live region that mounts together with
+ * its own content is routinely swallowed by screen readers.
+ */
+export const TERMINAL_REVIVAL_ANNOUNCEMENT =
+  'History restored. The terminal process was restarted, so this output is restored history rather than a live session.'
 
 /**
  * Tier-iii marker: revival is explicit and is never presented as survival.
@@ -14,14 +23,19 @@ export const isTerminalRevival = (
  * than a live process, and stays until the operator dismisses it.
  */
 export function TerminalRevivalMarker({
+  belowBanner = false,
   onDismiss,
 }: {
+  /** Connection banners own the top edge; drop below them instead of overlapping. */
+  readonly belowBanner?: boolean
   readonly onDismiss?: (() => void) | undefined
 }) {
   return (
-    <output
-      aria-live="polite"
-      className="slide-in-from-top-1 fade-in absolute inset-x-0 top-2 z-20 mx-auto flex w-fit max-w-[calc(100%-1rem)] animate-in items-center gap-2 rounded-full border border-warning/40 bg-background/95 py-1 pr-1 pl-3 text-xs shadow-sm backdrop-blur-sm duration-300"
+    <div
+      className={cn(
+        'motion-safe:slide-in-from-top-1 motion-safe:fade-in absolute inset-x-0 z-20 mx-auto flex w-fit max-w-[calc(100%-1rem)] items-center gap-2 rounded-full border border-warning/40 bg-background/95 py-1 pr-1 pl-3 text-xs shadow-sm backdrop-blur-sm motion-safe:animate-in motion-safe:duration-300',
+        belowBanner ? 'top-8' : 'top-2'
+      )}
       data-testid="terminal-revival-marker"
     >
       <History aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
@@ -40,6 +54,6 @@ export function TerminalRevivalMarker({
       >
         <X className="size-3" />
       </Button>
-    </output>
+    </div>
   )
 }

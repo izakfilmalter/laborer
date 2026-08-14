@@ -1,11 +1,16 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TerminalHostStatusPill } from '../src/components/service-status-dots'
+import {
+  describeHostStatus,
+  TerminalHostStatusPill,
+} from '../src/components/service-status-dots'
 import {
   isTerminalRevival,
   TerminalRevivalMarker,
 } from '../src/components/terminal-revival-marker'
+
+const RESTART_BUTTON_NAME = /restart terminal host/i
 
 describe('terminal host UX', () => {
   afterEach(() => {
@@ -131,7 +136,9 @@ describe('terminal host UX', () => {
     expect(screen.getByTestId('terminal-host-status').dataset.tone).toBe(
       'advisory'
     )
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: RESTART_BUTTON_NAME })
+    ).toBeNull()
   })
 
   it('shows an in-flight restart without re-offering the action', () => {
@@ -150,6 +157,37 @@ describe('terminal host UX', () => {
     expect(
       screen.getByRole('button', { name: 'Restart terminal host' })
     ).toHaveProperty('disabled', true)
+  })
+
+  it('announces the host state and its detail from a stable live region', () => {
+    expect(
+      describeHostStatus({
+        expectedVersion: '2',
+        runningVersion: '1',
+        state: 'outdated',
+      })
+    ).toBe(
+      'Terminal host outdated. Running 1, expected 2. The running terminal host is older than this build. Restarting checkpoints your terminals, restarts the host, and restores their history.'
+    )
+    expect(describeHostStatus({ expectedVersion: '1', state: 'healthy' })).toBe(
+      ''
+    )
+    expect(describeHostStatus(undefined)).toBe('')
+  })
+
+  it('reaches the host detail by keyboard, not only by hover', () => {
+    render(
+      <TerminalHostStatusPill
+        onRestart={() => undefined}
+        status={{ expectedVersion: '1', state: 'unavailable' }}
+      />
+    )
+
+    const summary = screen
+      .getByText('Terminal host unavailable')
+      .closest('button')
+    expect(summary).not.toBeNull()
+    expect(summary?.textContent).toContain('No terminal host is running.')
   })
 
   it('keeps healthy host detail out of the status hierarchy', () => {

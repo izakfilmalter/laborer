@@ -57,7 +57,10 @@ import {
 } from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { TerminalRevivalMarker } from '@/components/terminal-revival-marker'
+import {
+  TERMINAL_REVIVAL_ANNOUNCEMENT,
+  TerminalRevivalMarker,
+} from '@/components/terminal-revival-marker'
 import {
   InputGroup,
   InputGroupAddon,
@@ -665,6 +668,8 @@ function TerminalPaneRenderer({
   }, [replayEpoch])
 
   const isRunning = terminalStatus !== 'stopped'
+  /** Revival is only truthful once the restored history is fully on screen. */
+  const showRevivalMarker = wasRevived && replayStatus === 'complete'
 
   /** Ref for isRunning so the xterm.js onData callback can check it. */
   const isRunningRef = useRef(isRunning)
@@ -1315,9 +1320,17 @@ function TerminalPaneRenderer({
 
       {/* Tier-iii revival marker — the shell is new, so the restored output
           is labelled rather than passed off as a surviving process. It waits
-          for replay to finish and stays until acknowledged. */}
-      {wasRevived && replayStatus === 'complete' && (
-        <TerminalRevivalMarker onDismiss={dismissRevival} />
+          for replay to finish and stays until acknowledged. The spoken form
+          sits in an always-mounted region so it is not swallowed by the
+          region appearing with its own content. */}
+      <output aria-live="polite" className="sr-only">
+        {showRevivalMarker ? TERMINAL_REVIVAL_ANNOUNCEMENT : ''}
+      </output>
+      {showRevivalMarker && (
+        <TerminalRevivalMarker
+          belowBanner={isRunning && connectionStatus !== 'connected'}
+          onDismiss={dismissRevival}
+        />
       )}
 
       {/* Status banner — shown when terminal process has exited */}

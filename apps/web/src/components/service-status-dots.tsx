@@ -437,6 +437,9 @@ const HOST_PRESENTATION: Record<
   },
 }
 
+/** Progress labels keep their ellipsis on screen but not when spoken. */
+const TRAILING_ELLIPSIS = /…$/
+
 /** Version context belongs in the detail, never in the one-line summary. */
 function describeHostVersions(status: TerminalHostStatus): string | undefined {
   if (status.runningVersion === undefined) {
@@ -446,6 +449,34 @@ function describeHostVersions(status: TerminalHostStatus): string | undefined {
     return undefined
   }
   return `Running ${status.runningVersion}, expected ${status.expectedVersion}.`
+}
+
+/** Full explanation behind the one-line label, versions first when they differ. */
+function hostDetail(status: TerminalHostStatus): string {
+  if (status.state === 'healthy') {
+    return ''
+  }
+  const presentation = HOST_PRESENTATION[status.state]
+  const versions = describeHostVersions(status)
+  return versions === undefined
+    ? presentation.detail
+    : `${versions} ${presentation.detail}`
+}
+
+/**
+ * Spoken form of the pill, rendered from an always-mounted live region so a
+ * status change is announced rather than swallowed by the region itself
+ * appearing — the same rule the connection banner follows.
+ */
+function describeHostStatus(status: TerminalHostStatus | undefined): string {
+  if (status === undefined || status.state === 'healthy') {
+    return ''
+  }
+  const label = HOST_PRESENTATION[status.state].label.replace(
+    TRAILING_ELLIPSIS,
+    ''
+  )
+  return `${label}. ${hostDetail(status)}`
 }
 
 /**
@@ -485,16 +516,11 @@ function TerminalHostStatusPill({
   }
 
   const presentation = HOST_PRESENTATION[status.state]
-  const versions = describeHostVersions(status)
-  const detail =
-    versions === undefined
-      ? presentation.detail
-      : `${versions} ${presentation.detail}`
+  const detail = hostDetail(status)
   const restarting = status.state === 'restarting'
 
   return (
     <span
-      aria-live="polite"
       className={cn(
         'flex basis-full items-center gap-2 rounded-lg border px-2 py-1 text-xs transition-colors duration-300',
         HOST_TONE_CLASSES[presentation.tone]
@@ -504,15 +530,21 @@ function TerminalHostStatusPill({
       data-tone={presentation.tone}
     >
       <Tooltip>
+        {/* A real button, so the explanation is reachable by keyboard and not
+            only on hover; the same text is carried in the announcement
+            region for assistive technology. */}
         <TooltipTrigger
-          render={<span className="flex min-w-0 flex-1 items-center gap-2" />}
+          render={
+            <button
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              type="button"
+            />
+          }
         >
           <HostStateIcon state={status.state} />
           <span className="min-w-0 truncate font-medium">
             {presentation.label}
           </span>
-          {/* The tooltip is pointer-only, so the same detail is carried in the
-              live region for assistive technology. */}
           <span className="sr-only">{detail}</span>
         </TooltipTrigger>
         <TooltipContent>{detail}</TooltipContent>
@@ -557,6 +589,11 @@ function ServiceStatusDots() {
       aria-label="Service statuses"
       className="flex flex-wrap items-center gap-1 transition-all duration-300"
     >
+      {/* This row is already a polite live region, so the spoken host summary
+          lives here rather than on the pill: a live region that mounts with
+          its own content is routinely swallowed, and nesting a second one
+          would announce the same change twice. */}
+      <span className="sr-only">{describeHostStatus(host.status)}</span>
       <TerminalHostStatusPill
         onRestart={() => {
           host.restart().catch((error: unknown) => {
@@ -581,6 +618,7 @@ function ServiceStatusDots() {
 }
 
 export {
+  describeHostStatus,
   MIN_DISPLAY_DURATION_MS,
   ServiceStatusDots,
   STATUS_DOT_SERVICES,

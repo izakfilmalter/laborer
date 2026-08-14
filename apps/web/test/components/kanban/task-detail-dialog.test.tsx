@@ -122,6 +122,107 @@ describe('task card details', () => {
     ).toBeTruthy()
   })
 
+  it('hands the draft to onSave with the card revision and closes at once', async () => {
+    const onOpenChange = vi.fn()
+    const onSave = vi.fn()
+    render(
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        onSave={onSave}
+        task={task()}
+      />
+    )
+
+    expect(screen.getByText('Agent staged')).toBeTruthy()
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+      'Improve task details'
+    )
+    expect(
+      (screen.getByLabelText('Description') as HTMLTextAreaElement).value
+    ).toBe('Run the focused tests.')
+
+    await userEvent.clear(screen.getByLabelText('Title'))
+    await userEvent.type(screen.getByLabelText('Title'), 'Polish task details')
+    await userEvent.clear(screen.getByLabelText('Description'))
+    await userEvent.type(
+      screen.getByLabelText('Description'),
+      'Keep this plain.'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    expect(onSave).toHaveBeenCalledWith({
+      description: 'Keep this plain.',
+      expectedRevision: 4,
+      title: 'Polish task details',
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('never advances the CAS under a live draft, so a rival write must lose honestly', async () => {
+    const onOpenChange = vi.fn()
+    const onSave = vi.fn()
+    const view = render(
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        onSave={onSave}
+        task={task()}
+      />
+    )
+
+    await userEvent.type(screen.getByLabelText('Description'), ' More.')
+    view.rerender(
+      <TaskDetailDialog
+        onOpenChange={onOpenChange}
+        onSave={onSave}
+        task={task({ description: 'Winning edit.', revision: 5 })}
+      />
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'This card changed elsewhere'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    // Still the draft's revision: the server rejects it, and the recovery
+    // reopen — not a silent CAS advance — decides the overwrite.
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedRevision: 4 })
+    )
+  })
+
+  it('reopens from a rejected save with the draft, the failure, and the winning revision', async () => {
+    const onSave = vi.fn()
+    render(
+      <TaskDetailDialog
+        initialBanner={{
+          message: 'This card changed elsewhere while saving.',
+          tone: 'warning',
+        }}
+        initialDraft={{
+          description: 'Run the focused tests. More.',
+          title: 'Improve task details',
+        }}
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+        task={task({ description: 'Winning edit.', revision: 5 })}
+      />
+    )
+
+    // The rescued draft, not the winning card, fills the fields.
+    expect(
+      (screen.getByLabelText('Description') as HTMLTextAreaElement).value
+    ).toBe('Run the focused tests. More.')
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'changed elsewhere while saving'
+    )
+
+    // A deliberate second Save applies the draft over the newer version.
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedRevision: 5 })
+    )
+  })
+
   it('asks before dropping unsaved edits and can go back to editing', async () => {
     const onOpenChange = vi.fn()
     render(

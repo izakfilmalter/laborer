@@ -72,7 +72,7 @@ describe('NativeLaborerDatabase', () => {
 
   it('migrates memory databases and covers all shared rows', () => {
     const database = NativeLaborerDatabase.open(':memory:')
-    expect(database.migrationNames()).toHaveLength(8)
+    expect(database.migrationNames()).toHaveLength(9)
 
     const task = database.insertTask(
       {

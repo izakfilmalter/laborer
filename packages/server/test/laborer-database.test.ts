@@ -30,7 +30,7 @@ describe('LaborerDatabase Effect adapter', () => {
     const failure = await Effect.runPromise(
       Effect.gen(function* () {
         const service = yield* LaborerDatabase
-        expect(service.database.migrationNames()).toHaveLength(8)
+        expect(service.database.migrationNames()).toHaveLength(9)
         return yield* Effect.flip(
           service.run('insert task', () => {
             throw new Error('native failure')

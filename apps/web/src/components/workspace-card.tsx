@@ -35,6 +35,7 @@ import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
+import { GitHubHostedStatus } from '@/components/github-hosted-status'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { boardTaskFromSharedRow } from '@/components/kanban/board-data'
 import { useTaskEditor } from '@/components/kanban/task-editor'
@@ -452,6 +453,9 @@ interface WorkspaceCardWorkspace {
   readonly errorMessage: string | null
   readonly id: string
   readonly origin: WorkspaceOrigin | string
+  readonly prBaseBranch: string | null
+  readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
+  readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
   readonly prState: string | null
@@ -699,6 +703,14 @@ function showsWorkspaceStatus(status: string): boolean {
   return status !== 'running'
 }
 
+/** Card summaries reserve status chrome for work that needs attention.
+ * In-flight work remains visible on the terminal row that owns it. */
+function showsWorkspaceCardAgentStatus(
+  status: AgentDisplayStatus | null
+): status is Extract<AgentDisplayStatus, 'done' | 'needs_input'> {
+  return status !== 'working' && showsWorkspaceAgentStatus(status)
+}
+
 /**
  * The workspace's lifecycle state as a chip. An errored workspace carries its
  * failure in a tooltip rather than on the chip, so one bad workspace cannot
@@ -755,10 +767,10 @@ function WorkspaceCard({
   const isActiveWorkspace = activeWorkspaceId === workspace.id
 
   const agentSurface = getAgentStatusSurface(workspaceAgentStatus)
-  // Attention and in-flight work surface at card level; acknowledged idle and
-  // unknown stay in the terminal rows that own them. The frame header answers
-  // this with the same predicate, so a card and its header never disagree.
-  const showsAgentStatus = showsWorkspaceAgentStatus(workspaceAgentStatus)
+  // The card only summarizes states that ask for the operator. Working stays
+  // on the terminal row that owns the activity; repeating it on every parent
+  // card made a busy sidebar read like a wall of blue status chrome.
+  const showsAgentStatus = showsWorkspaceCardAgentStatus(workspaceAgentStatus)
   // A root workspace has no lifecycle of its own to report, and a healthy one
   // has nothing worth reporting.
   const showsStatus = !isRootWorkspace && showsWorkspaceStatus(workspace.status)
@@ -845,6 +857,11 @@ function WorkspaceCard({
             prTitle={workspace.prTitle}
             prUrl={workspace.prUrl}
           />
+          <GitHubHostedStatus
+            baseBranch={workspace.prBaseBranch}
+            checkStatus={workspace.prCheckStatus}
+            mergeStatus={workspace.prMergeStatus}
+          />
           {showsStatus ? (
             <WorkspaceStatusBadge
               errorMessage={workspace.errorMessage}
@@ -909,5 +926,5 @@ function WorkspaceCard({
   )
 }
 
-export { WorkspaceCard }
+export { showsWorkspaceCardAgentStatus, WorkspaceCard }
 export type { WorkspaceCardWorkspace }

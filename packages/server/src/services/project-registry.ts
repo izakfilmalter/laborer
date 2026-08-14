@@ -1,7 +1,7 @@
 import { basename } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
-import { BranchStateTracker } from './branch-state-tracker.js'
+import { BranchStateTracker, getCurrentBranch } from './branch-state-tracker.js'
 import { LaborerDatabase } from './laborer-database.js'
 import type { Project } from './native-laborer-database.js'
 import { RepositoryIdentity } from './repository-identity.js'
@@ -120,6 +120,9 @@ class ProjectRegistry extends Context.Service<
           })
         }
         const name = basename(identity.canonicalRoot)
+        const branchName = yield* getCurrentBranch(identity.canonicalRoot).pipe(
+          Effect.catch(() => Effect.succeed(null))
+        )
         const stored = existing
           ? yield* database
               .run(
@@ -127,6 +130,7 @@ class ProjectRegistry extends Context.Service<
                 (db) =>
                   db.updateProject(existing.id, existing.revision, {
                     canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                    branchName,
                     name,
                     rootPath: identity.canonicalRoot,
                   }).row
@@ -146,6 +150,7 @@ class ProjectRegistry extends Context.Service<
                     rootPath: identity.canonicalRoot,
                     repoId: identity.repoId,
                     canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                    branchName,
                   }).row
               )
               .pipe(

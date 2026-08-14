@@ -166,6 +166,7 @@ vi.mock('@/components/ui/alert-dialog', () => ({
   ),
 }))
 
+import { showsWorkspaceCardAgentStatus } from '../src/components/workspace-card'
 // Import after mocks
 import { WorkspaceList } from '../src/components/workspace-list'
 
@@ -189,6 +190,9 @@ const makeWorkspace = (
     taskSource: string | null
     worktreeSetupStep: string | null
     prNumber: number | null
+    prBaseBranch: string | null
+    prCheckStatus: 'pending' | 'success' | 'failure' | null
+    prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
     prUrl: string | null
     prTitle: string | null
     prState: string | null
@@ -204,6 +208,9 @@ const makeWorkspace = (
   taskSource: null,
   worktreeSetupStep: null,
   prNumber: null,
+  prBaseBranch: null,
+  prCheckStatus: null,
+  prMergeStatus: null,
   prUrl: null,
   prTitle: null,
   prState: null,
@@ -325,6 +332,12 @@ describe('Workspace card layout — status row', () => {
     ).toBeTruthy()
   })
 
+  it('keeps working status on terminal rows instead of repeating it on the card', () => {
+    expect(showsWorkspaceCardAgentStatus('working')).toBe(false)
+    expect(showsWorkspaceCardAgentStatus('needs_input')).toBe(true)
+    expect(showsWorkspaceCardAgentStatus('done')).toBe(true)
+  })
+
   it.each([
     'errored',
     'paused',
@@ -368,5 +381,20 @@ describe('Workspace card layout — status row', () => {
     expect(
       statusRow?.contains(screen.getByTestId('terminal-spawn-controls'))
     ).toBe(true)
+  })
+
+  it('shows merge conflicts and the GitHub Actions result compactly', () => {
+    mockStore([
+      makeWorkspace({
+        prBaseBranch: 'dev',
+        prCheckStatus: 'failure',
+        prMergeStatus: 'conflicting',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+
+    expect(screen.getByText('conflicts with dev')).toBeTruthy()
+    expect(screen.getByText('failed')).toBeTruthy()
   })
 })

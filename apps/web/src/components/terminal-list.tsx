@@ -700,7 +700,7 @@ function TerminalItem({
         // glance; hover lifts it one further step. `bg-muted/40` blended back
         // down to almost the card colour, which is what made a column of rows
         // read as one grey smear.
-        'group/row flex w-full min-w-0 items-center gap-1.5 rounded-md border border-border bg-muted py-1 pr-1 pl-1.5 text-left text-xs transition-colors',
+        'group/row flex w-full min-w-0 items-center gap-1.5 rounded-md border border-foreground/8 bg-muted/25 py-1 pr-1 pl-1.5 text-left text-xs transition-colors',
         // A row that wants something carries a steady edge from the shared
         // vocabulary — amber to act on, violet to review — and the motion
         // stays in the badge so the label remains readable. The hover

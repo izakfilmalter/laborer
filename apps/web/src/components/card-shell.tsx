@@ -85,7 +85,7 @@ function CardShell({
         // stays free for a status that actually wants the operator. The edge
         // is only nudged up a step, which the light theme needs — its accent
         // and card sit a hair apart and the fill alone would say nothing.
-        selected && 'bg-accent/50 ring-foreground/25',
+        selected && 'bg-accent/20 ring-foreground/20',
         className
       )}
       data-slot="card-shell"

@@ -23,6 +23,9 @@ export interface WorkspaceRecord {
   readonly errorMessage: string | null
   readonly id: string
   readonly origin: 'laborer' | 'external'
+  readonly prBaseBranch: string | null
+  readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
+  readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
   readonly prState: 'OPEN' | 'CLOSED' | 'MERGED' | null
@@ -89,6 +92,9 @@ const toWorkspaceRecord = (
     errorMessage: task.worktreeError,
     id: task.id,
     origin: task.source === 'worktree' ? 'external' : 'laborer',
+    prBaseBranch: task.prBaseBranch,
+    prCheckStatus: task.prCheckStatus,
+    prMergeStatus: task.prMergeStatus,
     prNumber: task.prNumber,
     prState: workspacePrState(task.prState),
     prTitle: task.prTitle,
@@ -128,11 +134,14 @@ const rootWorkspaceRecord = (project: Project): WorkspaceRecord => ({
   baseBranch: null,
   baseSha: null,
   behindCount: null,
-  branchName: ROOT_WORKSPACE_BRANCH_LABEL,
+  branchName: project.branchName ?? ROOT_WORKSPACE_BRANCH_LABEL,
   createdAt: new Date(project.createdAt).toISOString(),
   errorMessage: null,
   id: rootWorkspaceId(project.id),
   origin: 'external',
+  prBaseBranch: null,
+  prCheckStatus: null,
+  prMergeStatus: null,
   prNumber: null,
   prState: null,
   prTitle: null,

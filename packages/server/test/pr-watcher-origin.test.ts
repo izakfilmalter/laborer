@@ -112,6 +112,52 @@ afterEach(() => {
 })
 
 describe('PrWatcher fork origin PR lookup', () => {
+  it.effect('checks local mergeability even before a PR exists', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            exitCode: 1,
+            stderr: 'no pull requests found',
+            stdout: '',
+          },
+          'git merge-tree --write-tree dev HEAD': {
+            exitCode: 1,
+            stdout: 'conflicted.ts',
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath)
+      const task = database.findTask('workspace-1')
+      assert.isNotNull(task)
+      database.updateTask('workspace-1', task.revision, { baseBranch: 'dev' })
+
+      const prWatcherContext = yield* Layer.build(
+        PrWatcher.layer.pipe(
+          Layer.provide(PrTaskTransitions.noopLayer),
+          Layer.provide(Layer.succeedContext(databaseContext))
+        )
+      )
+      const prWatcher = Context.get(prWatcherContext, PrWatcher)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      assert.deepInclude(prData, {
+        baseBranch: 'dev',
+        mergeStatus: 'conflicting',
+        number: null,
+      })
+      assert.deepInclude(database.findTask('workspace-1'), {
+        prBaseBranch: 'dev',
+        prMergeStatus: 'conflicting',
+      })
+    })
+  )
+
   it.effect(
     'prefers the origin repo when a fork has both origin and upstream',
     () =>
@@ -121,9 +167,16 @@ describe('PrWatcher fork origin PR lookup', () => {
           createSpawnMock({
             '--repo acme/fork': {
               stdout: JSON.stringify({
+                baseRefName: 'dev',
                 isDraft: true,
+                mergeable: 'CONFLICTING',
+                mergeStateStatus: 'DIRTY',
                 number: 42,
                 state: 'OPEN',
+                statusCheckRollup: [
+                  { conclusion: 'SUCCESS', status: 'COMPLETED' },
+                  { conclusion: 'FAILURE', status: 'COMPLETED' },
+                ],
                 title: 'Origin fork PR',
                 url: 'https://github.com/acme/fork/pull/42',
               }),
@@ -131,7 +184,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state,isDraft':
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup':
               {
                 stdout: '',
                 stderr: 'no pull requests found',
@@ -168,7 +221,10 @@ describe('PrWatcher fork origin PR lookup', () => {
         assert.strictEqual(prData.number, 42)
         assert.strictEqual(prData.url, 'https://github.com/acme/fork/pull/42')
         assert.deepInclude(database.findTask('workspace-1'), {
+          prBaseBranch: 'dev',
+          prCheckStatus: 'failure',
           prIsDraft: true,
+          prMergeStatus: 'conflicting',
           prNumber: 42,
           prState: 'open',
           prTitle: 'Origin fork PR',
@@ -188,7 +244,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         assert.isAtLeast(ghCalls.length, 1)
         assert.include(
           ghCalls[0]?.[0].join(' '),
-          'gh pr view feature/fork-pr --json number,url,title,state,isDraft --repo acme/fork'
+          'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup --repo acme/fork'
         )
       })
   )
@@ -207,11 +263,14 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state,isDraft':
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup':
               {
                 stdout: JSON.stringify({
                   number: 7,
                   state: 'OPEN',
+                  statusCheckRollup: [
+                    { conclusion: 'CANCELLED', status: 'COMPLETED' },
+                  ],
                   title: 'Upstream PR',
                   url: 'https://github.com/upstream/repo/pull/7',
                 }),
@@ -234,6 +293,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         const prData = yield* prWatcher.checkPr('workspace-1')
 
         assert.strictEqual(prData.number, 7)
+        assert.strictEqual(prData.checkStatus, 'failure')
         assert.strictEqual(
           prData.url,
           'https://github.com/upstream/repo/pull/7'
@@ -246,7 +306,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             cmd
               .join(' ')
               .includes(
-                'gh pr view feature/fork-pr --json number,url,title,state,isDraft --repo acme/fork'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup --repo acme/fork'
               )
           )
         )
@@ -255,7 +315,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             const call = cmd.join(' ')
             return (
               call.includes(
-                'gh pr view feature/fork-pr --json number,url,title,state,isDraft'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup'
               ) && !call.includes('--repo')
             )
           })

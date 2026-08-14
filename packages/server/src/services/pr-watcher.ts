@@ -11,8 +11,9 @@
  * - 30s when workspace has no open panel (background)
  *
  * Responsibilities:
- * - Run `gh pr view --json number,url,title,state,isDraft` in a workspace's worktree
- * - Persist PR facts on tasks
+ * - Read PR identity, mergeability, and check-rollup facts through `gh`
+ * - Simulate merges locally when a branch does not have a PR yet
+ * - Persist hosted and local branch-status facts on tasks
  * - Poll on adaptive interval based on panel visibility
  * - Start/stop polling per workspace
  * - Deduplicate unchanged PR state
@@ -20,6 +21,7 @@
 
 import { existsSync } from 'node:fs'
 import { Context, Duration, Effect, Fiber, Layer, Ref, Schema } from 'effect'
+import { spawn } from '../lib/spawn.js'
 import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
 import { LaborerDatabase } from './laborer-database.js'
 import {
@@ -42,34 +44,203 @@ import {
  * All fields are nullable because the branch may not have a PR.
  */
 interface PrData {
+  readonly baseBranch: string | null
+  readonly checkStatus: 'pending' | 'success' | 'failure' | null
   readonly isDraft: boolean
+  readonly mergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly number: number | null
   readonly state: string | null
   readonly title: string | null
   readonly url: string | null
 }
 
+const GhCheck = Schema.Struct({
+  conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  status: Schema.optional(Schema.NullOr(Schema.String)),
+})
+
 const GhPrData = Schema.Struct({
+  baseRefName: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
+  mergeable: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
   number: Schema.optional(Schema.NullOr(Schema.Number)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   title: Schema.optional(Schema.NullOr(Schema.String)),
   url: Schema.optional(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(GhCheck))),
 })
 const GhPrDataJson = Schema.fromJsonString(GhPrData)
 
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
-  JSON.stringify([data.number, data.url, data.title, data.state, data.isDraft])
+  JSON.stringify([
+    data.number,
+    data.url,
+    data.title,
+    data.state,
+    data.isDraft,
+    data.baseBranch,
+    data.mergeStatus,
+    data.checkStatus,
+  ])
+
+const FAILURE_CONCLUSIONS = new Set([
+  'ACTION_REQUIRED',
+  'ERROR',
+  'FAILURE',
+  'STARTUP_FAILURE',
+  'TIMED_OUT',
+])
+const SUCCESS_CONCLUSIONS = new Set(['NEUTRAL', 'SKIPPED', 'SUCCESS'])
+const REMOTE_BRANCH_PREFIX = /^refs\/remotes\/[^/]+\//
+
+const singleCheckStatus = (
+  check: typeof GhCheck.Type
+): NonNullable<PrData['checkStatus']> => {
+  const state = check.state?.toUpperCase() ?? null
+  const status = check.status?.toUpperCase() ?? null
+  const conclusion = check.conclusion?.toUpperCase() ?? null
+  if (state !== null) {
+    if (state === 'PENDING' || state === 'EXPECTED') {
+      return 'pending'
+    }
+    return state === 'SUCCESS' ? 'success' : 'failure'
+  }
+  if (status !== null && status !== 'COMPLETED') {
+    return 'pending'
+  }
+  if (conclusion === null) {
+    return 'pending'
+  }
+  return FAILURE_CONCLUSIONS.has(conclusion) ||
+    !SUCCESS_CONCLUSIONS.has(conclusion)
+    ? 'failure'
+    : 'success'
+}
+
+const checkStatus = (
+  checks: readonly (typeof GhCheck.Type)[] | null | undefined
+): PrData['checkStatus'] => {
+  if (checks == null || checks.length === 0) {
+    return null
+  }
+  let pending = false
+  for (const check of checks) {
+    const status = singleCheckStatus(check)
+    if (status === 'failure') {
+      return 'failure'
+    }
+    pending ||= status === 'pending'
+  }
+  return pending ? 'pending' : 'success'
+}
+
+const mergeStatus = (
+  mergeable: string | null | undefined,
+  state: string | null | undefined
+): PrData['mergeStatus'] => {
+  if (
+    mergeable?.toUpperCase() === 'CONFLICTING' ||
+    state?.toUpperCase() === 'DIRTY'
+  ) {
+    return 'conflicting'
+  }
+  if (mergeable?.toUpperCase() === 'MERGEABLE') {
+    return 'clean'
+  }
+  return mergeable == null && state == null ? null : 'unknown'
+}
 
 /** Empty PR data (no PR found). */
 const EMPTY_PR: PrData = {
+  baseBranch: null,
+  checkStatus: null,
   isDraft: false,
+  mergeStatus: null,
   number: null,
   url: null,
   title: null,
   state: null,
 }
+
+const runGit = Effect.fn('PrWatcher.runGit')(function* (
+  worktreePath: string,
+  args: readonly string[]
+) {
+  return yield* Effect.promise(async () => {
+    try {
+      const proc = spawn(['git', ...args], {
+        cwd: worktreePath,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const exitCode = await proc.exited
+      return {
+        exitCode,
+        stdout: await new Response(proc.stdout).text(),
+      }
+    } catch {
+      return { exitCode: -1, stdout: '' }
+    }
+  })
+})
+
+const shortBranchName = (ref: string): string =>
+  ref.replace(REMOTE_BRANCH_PREFIX, '')
+
+/** GitHub Desktop's advisory merge check, kept local so branches without a PR
+ * still say when they conflict with their base branch. */
+const loadLocalMergeData = Effect.fn('PrWatcher.loadLocalMergeData')(function* (
+  worktreePath: string,
+  storedBaseBranch: string | null
+) {
+  let baseRef = storedBaseBranch
+  if (baseRef === null) {
+    const remoteHead = yield* runGit(worktreePath, [
+      'symbolic-ref',
+      'refs/remotes/origin/HEAD',
+    ])
+    if (remoteHead.exitCode === 0 && remoteHead.stdout.trim().length > 0) {
+      baseRef = remoteHead.stdout.trim()
+    }
+  }
+  if (baseRef === null) {
+    for (const candidate of ['dev', 'main', 'master']) {
+      const exists = yield* runGit(worktreePath, [
+        'rev-parse',
+        '--verify',
+        candidate,
+      ])
+      if (exists.exitCode === 0) {
+        baseRef = candidate
+        break
+      }
+    }
+  }
+  if (baseRef === null) {
+    return EMPTY_PR
+  }
+
+  const result = yield* runGit(worktreePath, [
+    'merge-tree',
+    '--write-tree',
+    baseRef,
+    'HEAD',
+  ])
+  let localMergeStatus: NonNullable<PrData['mergeStatus']> = 'unknown'
+  if (result.exitCode === 0) {
+    localMergeStatus = 'clean'
+  } else if (result.exitCode === 1) {
+    localMergeStatus = 'conflicting'
+  }
+  return {
+    ...EMPTY_PR,
+    baseBranch: shortBranchName(baseRef),
+    mergeStatus: localMergeStatus,
+  }
+})
 
 class PrWatcher extends Context.Service<
   PrWatcher,
@@ -146,7 +317,8 @@ class PrWatcher extends Context.Service<
        */
       const loadPrData = Effect.fn('PrWatcher.loadPrData')(function* (
         worktreePath: string,
-        branchName: string
+        branchName: string,
+        baseBranch: string | null
       ) {
         // A workspace can outlive its directory (for example when its project
         // is removed). Node reports a missing cwd as `spawn gh ENOENT`, which
@@ -159,7 +331,7 @@ class PrWatcher extends Context.Service<
         const spawnResult = yield* runGhPrViewWithOriginFallback(
           worktreePath,
           branchName,
-          'number,url,title,state,isDraft',
+          'number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup',
           (error) => error
         ).pipe(
           Effect.catch((error) => {
@@ -181,7 +353,7 @@ class PrWatcher extends Context.Service<
 
         // gh pr view returns exit code 1 when no PR is found
         if (spawnResult.exitCode !== 0) {
-          return EMPTY_PR
+          return yield* loadLocalMergeData(worktreePath, baseBranch)
         }
 
         const parseResult = yield* Schema.decodeUnknownEffect(GhPrDataJson)(
@@ -198,8 +370,25 @@ class PrWatcher extends Context.Service<
           return EMPTY_PR
         }
 
+        const hostedMergeStatus = mergeStatus(
+          parseResult.mergeable,
+          parseResult.mergeStateStatus
+        )
+        const localMergeData = yield* loadLocalMergeData(
+          worktreePath,
+          parseResult.baseRefName ?? baseBranch
+        )
+        const localMergeStatus = localMergeData.mergeStatus
+
         return {
+          baseBranch:
+            parseResult.baseRefName ?? localMergeData.baseBranch ?? null,
+          checkStatus: checkStatus(parseResult.statusCheckRollup),
           isDraft: parseResult.isDraft ?? false,
+          mergeStatus:
+            localMergeStatus === null || localMergeStatus === 'unknown'
+              ? hostedMergeStatus
+              : localMergeStatus,
           number: parseResult.number ?? null,
           url: parseResult.url ?? null,
           title: parseResult.title ?? null,
@@ -226,14 +415,18 @@ class PrWatcher extends Context.Service<
 
         const prData = yield* loadPrData(
           workspace.worktreePath,
-          workspace.branchName
+          workspace.branchName,
+          workspace.baseBranch
         )
 
         // Deduplicate: only commit event if PR state changed
         const serialized = serializePrData(prData)
         const persistedSerialized = serializePrData({
+          baseBranch: workspace.prBaseBranch,
+          checkStatus: workspace.prCheckStatus,
           number: workspace.prNumber,
           isDraft: false,
+          mergeStatus: workspace.prMergeStatus,
           url: workspace.prUrl,
           title: workspace.prTitle,
           state: workspace.prState,
@@ -284,7 +477,10 @@ class PrWatcher extends Context.Service<
             }
           })()
           yield* updateServerTaskFacts(laborerDatabase, task.id, {
+            prBaseBranch: prData.baseBranch,
+            prCheckStatus: prData.checkStatus,
             prIsDraft: prData.isDraft,
+            prMergeStatus: prData.mergeStatus,
             prNumber: prData.number,
             prState: normalizedState,
             prTitle: prData.title,

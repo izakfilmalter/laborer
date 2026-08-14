@@ -179,6 +179,25 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
         child = undefined
       }
 
+      const shutdown = async () => {
+        if (reuseDevStack || !child || child.exitCode !== null) {
+          return
+        }
+        try {
+          await fetch(`${url}/daemon/stop`, {
+            body: JSON.stringify({ mode: 'shutdown' }),
+            headers: { 'content-type': 'application/json' },
+            method: 'POST',
+            signal: AbortSignal.timeout(20_000),
+          })
+        } catch {
+          // stopChild remains the bounded fallback when setup failed before
+          // the control route became available.
+        }
+        await stopChild(child)
+        child = undefined
+      }
+
       const socket = layerWebSocket(
         `ws://127.0.0.1:${String(daemonPort)}/ws`
       ).pipe(Layer.provide(layerWebSocketConstructorGlobal))
@@ -213,7 +232,10 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
           stop,
         })
       } finally {
-        await stop()
+        // Restart journeys deliberately leave the detached pty-host alive.
+        // Suite teardown is an explicit shutdown so the fixture never leaks a
+        // host, PTY children, or a socket in the soon-to-be-removed state dir.
+        await shutdown()
         if (!reuseDevStack) {
           await rm(stateDir, { recursive: true, force: true })
         }

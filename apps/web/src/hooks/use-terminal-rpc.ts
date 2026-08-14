@@ -27,6 +27,25 @@ interface Options {
   readonly terminalId: string
 }
 
+interface TerminalInputLane {
+  active: boolean
+  bytes: number
+  readonly queue: Array<{ readonly bytes: number; readonly data: string }>
+  readonly terminalId: string
+  writing: boolean
+}
+
+const makeInputLane = (
+  terminalId: string,
+  active = true
+): TerminalInputLane => ({
+  active,
+  bytes: 0,
+  queue: [],
+  terminalId,
+  writing: false,
+})
+
 export function useTerminalRpc({
   terminalId,
   onData,
@@ -164,19 +183,38 @@ export function useTerminalRpc({
     }
   }, [runtimeResult, terminalId])
 
-  const inputQueueRef = useRef<Array<{ data: string; bytes: number }>>([])
-  const inputBytesRef = useRef(0)
-  const writingRef = useRef(false)
+  const inputRuntime =
+    runtimeResult._tag === 'Success' ? runtimeResult.value : undefined
+  const inputLaneRef = useRef<TerminalInputLane>(
+    makeInputLane(terminalId, inputRuntime !== undefined)
+  )
+
+  useEffect(() => {
+    const lane = makeInputLane(terminalId, inputRuntime !== undefined)
+    inputLaneRef.current = lane
+    return () => {
+      // A pane can adopt another terminal while a write is in flight. Keep
+      // later keystrokes out of the old drain rather than sending them to the
+      // previous terminal or automatically replaying an ambiguous write.
+      lane.active = false
+      lane.queue.length = 0
+      lane.bytes = 0
+    }
+  }, [inputRuntime, terminalId])
 
   const send = useCallback(
     (data: string) => {
-      if (runtimeResult._tag !== 'Success') {
+      if (inputRuntime === undefined) {
+        return
+      }
+      const lane = inputLaneRef.current
+      if (!(lane.active && lane.terminalId === terminalId)) {
         return
       }
       const bytes = encoder.encode(data).length
       if (
         bytes > INPUT_WRITE_BYTES ||
-        inputBytesRef.current + bytes > INPUT_PENDING_BYTES
+        lane.bytes + bytes > INPUT_PENDING_BYTES
       ) {
         console.error(
           `Terminal input overflow for ${terminalId}; input was not dropped silently`
@@ -184,16 +222,16 @@ export function useTerminalRpc({
         setStatus('disconnected')
         return
       }
-      inputQueueRef.current.push({ data, bytes })
-      inputBytesRef.current += bytes
-      if (writingRef.current) {
+      lane.queue.push({ data, bytes })
+      lane.bytes += bytes
+      if (lane.writing) {
         return
       }
-      writingRef.current = true
-      const runtime = runtimeResult.value
+      lane.writing = true
+      const runtime = inputRuntime
       const drain = async () => {
-        while (inputQueueRef.current.length > 0) {
-          const item = inputQueueRef.current[0]
+        while (lane.active && lane.queue.length > 0) {
+          const item = lane.queue[0]
           if (!item) {
             break
           }
@@ -207,26 +245,28 @@ export function useTerminalRpc({
                 })
               })
             )
-            inputQueueRef.current.shift()
-            inputBytesRef.current -= item.bytes
+            lane.queue.shift()
+            lane.bytes -= item.bytes
           } catch (error) {
             console.error('Terminal input write failed', error)
-            setStatus('disconnected')
+            if (lane.active) {
+              setStatus('disconnected')
+            }
             // A failed RPC has ambiguous delivery. Never retain later
             // keystrokes for an automatic retry: replaying terminal input can
             // execute a command twice or deliver it to a different prompt.
-            inputQueueRef.current.length = 0
-            inputBytesRef.current = 0
+            lane.queue.length = 0
+            lane.bytes = 0
             break
           }
         }
-        writingRef.current = false
+        lane.writing = false
       }
       drain().catch((error: unknown) => {
         console.error('Terminal input queue failed', error)
       })
     },
-    [runtimeResult, terminalId]
+    [inputRuntime, terminalId]
   )
 
   /**

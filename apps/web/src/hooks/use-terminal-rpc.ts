@@ -229,5 +229,20 @@ export function useTerminalRpc({
     [runtimeResult, terminalId]
   )
 
-  return { replayStatus, send, status, terminalStatus, wasRevived }
+  /**
+   * Acknowledging the revival marker only hides it. A later epoch change is a
+   * new revival and raises the marker again.
+   */
+  const dismissRevival = useCallback(() => {
+    setWasRevived(false)
+  }, [])
+
+  return {
+    dismissRevival,
+    replayStatus,
+    send,
+    status,
+    terminalStatus,
+    wasRevived,
+  }
 }

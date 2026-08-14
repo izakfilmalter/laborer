@@ -317,6 +317,7 @@ const createResizeDebouncer = (
 
 /** Connection result shape for the MessagePort data channel hook. */
 interface TerminalConnection {
+  readonly dismissRevival?: (() => void) | undefined
   readonly replayStatus: ReplayStatus
   readonly send: (data: string) => void
   readonly status: 'connecting' | 'connected' | 'disconnected'
@@ -595,6 +596,7 @@ function TerminalPaneRenderer({
   terminalRef,
 }: TerminalPaneRendererProps) {
   const {
+    dismissRevival,
     send: connectionSend,
     status: connectionStatus,
     replayStatus,
@@ -1311,7 +1313,12 @@ function TerminalPaneRenderer({
       {/* Connecting indicator */}
       {connectionStatus === 'connecting' && isRunning && <ReconnectingBanner />}
 
-      {wasRevived && replayStatus === 'complete' && <TerminalRevivalMarker />}
+      {/* Tier-iii revival marker — the shell is new, so the restored output
+          is labelled rather than passed off as a surviving process. It waits
+          for replay to finish and stays until acknowledged. */}
+      {wasRevived && replayStatus === 'complete' && (
+        <TerminalRevivalMarker onDismiss={dismissRevival} />
+      )}
 
       {/* Status banner — shown when terminal process has exited */}
       {!isRunning && (

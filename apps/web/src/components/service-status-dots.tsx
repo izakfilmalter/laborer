@@ -23,9 +23,11 @@
 
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import type { TerminalHostStatus } from '@laborer/shared/rpc'
-import { AlertTriangle, RotateCcw, X } from 'lucide-react'
+import { AlertTriangle, CircleArrowUp, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
@@ -367,6 +369,110 @@ function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   )
 }
 
+/**
+ * Severity tone for the terminal host pill.
+ *
+ * The host is a supervised process, not the terminals themselves, so its
+ * states carry different weight: a late heartbeat is advisory, an outdated
+ * host is an expected consequence of a rebuild, and only a lost host is
+ * critical. Tone drives color so the hierarchy is visible before the copy
+ * is read.
+ */
+type HostTone = 'advisory' | 'critical' | 'busy' | 'update'
+
+const HOST_TONE_CLASSES: Record<HostTone, string> = {
+  advisory: 'border-warning/40 bg-warning/10 text-warning',
+  critical: 'border-destructive/40 bg-destructive/10 text-destructive',
+  busy: 'border-border bg-muted/60 text-muted-foreground',
+  update: 'border-primary/40 bg-primary/10 text-primary',
+}
+
+interface HostPresentation {
+  readonly actionable: boolean
+  readonly detail: string
+  readonly label: string
+  readonly tone: HostTone
+}
+
+/**
+ * Copy is deliberately reassuring about what did *not* happen: nothing is
+ * killed automatically (ADR 0003), so every restart is the operator's call.
+ */
+const HOST_PRESENTATION: Record<
+  Exclude<TerminalHostStatus['state'], 'healthy'>,
+  HostPresentation
+> = {
+  warning: {
+    actionable: false,
+    detail: 'The terminal host is slow to answer. Terminals keep running.',
+    label: 'Terminal host delayed',
+    tone: 'advisory',
+  },
+  unresponsive: {
+    actionable: true,
+    detail:
+      'The terminal host stopped answering. Nothing was killed — restart it when you are ready and history is restored.',
+    label: 'Terminal host unresponsive',
+    tone: 'critical',
+  },
+  outdated: {
+    actionable: true,
+    detail:
+      'The running terminal host is older than this build. Restarting checkpoints your terminals, restarts the host, and restores their history.',
+    label: 'Terminal host outdated',
+    tone: 'update',
+  },
+  restarting: {
+    actionable: false,
+    detail: 'Checkpointing terminals, restarting the host, restoring history.',
+    label: 'Restarting terminal host…',
+    tone: 'busy',
+  },
+  unavailable: {
+    actionable: true,
+    detail:
+      'No terminal host is running. Restart it to bring your terminals back.',
+    label: 'Terminal host unavailable',
+    tone: 'critical',
+  },
+}
+
+/** Version context belongs in the detail, never in the one-line summary. */
+function describeHostVersions(status: TerminalHostStatus): string | undefined {
+  if (status.runningVersion === undefined) {
+    return undefined
+  }
+  if (status.runningVersion === status.expectedVersion) {
+    return undefined
+  }
+  return `Running ${status.runningVersion}, expected ${status.expectedVersion}.`
+}
+
+/**
+ * The leading glyph carries the same hierarchy as the tone: an outdated host
+ * is a pending upgrade rather than a fault, so it never wears an alert
+ * triangle, and an in-flight restart shows progress instead of a warning.
+ */
+function HostStateIcon({
+  state,
+}: {
+  readonly state: Exclude<TerminalHostStatus['state'], 'healthy'>
+}) {
+  if (state === 'restarting') {
+    return <Spinner aria-hidden="true" className="size-3.5 shrink-0" />
+  }
+  if (state === 'outdated') {
+    return <CircleArrowUp aria-hidden="true" className="size-3.5 shrink-0" />
+  }
+  return <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
+}
+
+/**
+ * Terminal host health, shown above the service badges because it can make
+ * every terminal unusable while the rest of the app stays healthy. Healthy
+ * hosts render nothing: this row exists only when there is something to know
+ * or something to do.
+ */
 function TerminalHostStatusPill({
   onRestart,
   status,
@@ -377,35 +483,51 @@ function TerminalHostStatusPill({
   if (status === undefined || status.state === 'healthy') {
     return null
   }
-  const copy = {
-    warning: 'Terminal host delayed',
-    unresponsive: 'Terminal host unresponsive',
-    outdated: 'Terminal host outdated',
-    restarting: 'Restarting terminal host…',
-    unavailable: 'Terminal host unavailable',
-  }[status.state]
-  const actionable =
-    status.state === 'unresponsive' ||
-    status.state === 'outdated' ||
-    status.state === 'unavailable'
+
+  const presentation = HOST_PRESENTATION[status.state]
+  const versions = describeHostVersions(status)
+  const detail =
+    versions === undefined
+      ? presentation.detail
+      : `${versions} ${presentation.detail}`
+  const restarting = status.state === 'restarting'
 
   return (
     <span
       aria-live="polite"
-      className="flex basis-full items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-warning text-xs"
+      className={cn(
+        'flex basis-full items-center gap-2 rounded-lg border px-2 py-1 text-xs transition-colors duration-300',
+        HOST_TONE_CLASSES[presentation.tone]
+      )}
       data-state={status.state}
       data-testid="terminal-host-status"
+      data-tone={presentation.tone}
     >
-      <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="min-w-0 flex-1">{copy}</span>
-      {actionable && (
-        <button
-          className="shrink-0 rounded border border-warning/50 bg-background/70 px-1.5 py-0.5 font-medium hover:bg-background"
-          onClick={onRestart}
-          type="button"
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="flex min-w-0 flex-1 items-center gap-2" />}
         >
+          <HostStateIcon state={status.state} />
+          <span className="min-w-0 truncate font-medium">
+            {presentation.label}
+          </span>
+          {/* The tooltip is pointer-only, so the same detail is carried in the
+              live region for assistive technology. */}
+          <span className="sr-only">{detail}</span>
+        </TooltipTrigger>
+        <TooltipContent>{detail}</TooltipContent>
+      </Tooltip>
+      {(presentation.actionable || restarting) && (
+        <Button
+          className="shrink-0"
+          disabled={restarting}
+          onClick={onRestart}
+          size="xs"
+          variant="outline"
+        >
+          <RotateCcw aria-hidden="true" />
           Restart terminal host
-        </button>
+        </Button>
       )}
     </span>
   )

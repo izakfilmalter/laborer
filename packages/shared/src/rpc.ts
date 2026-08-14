@@ -1419,6 +1419,7 @@ export class TerminalRpcs extends RpcGroup.make(
     error: TerminalRpcError,
     payload: {
       id: Schema.String,
+      leaseId: Schema.String,
       cursor: Schema.optional(NonNegativeInt),
       epoch: Schema.optional(Schema.String),
     },
@@ -1430,6 +1431,7 @@ export class TerminalRpcs extends RpcGroup.make(
     error: TerminalRpcError,
     payload: {
       id: Schema.String,
+      leaseId: Schema.String,
       cursor: NonNegativeInt,
     },
   }),

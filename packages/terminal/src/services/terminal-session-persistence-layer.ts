@@ -1,4 +1,4 @@
-import { Effect, Layer, Result, Stream } from 'effect'
+import { Effect, Layer, Result } from 'effect'
 import { TerminalManager } from './terminal-manager.js'
 import { createTerminalSessionPersistence } from './terminal-session-persistence.js'
 
@@ -42,23 +42,6 @@ export const TerminalSessionPersistenceLayer = Layer.effectDiscard(
         }
       }
     }
-
-    yield* Stream.runForEach(
-      Stream.fromPubSub(terminalManager.lifecycleEvents),
-      (event) =>
-        Effect.gen(function* () {
-          if (event._tag === 'Spawned') {
-            persistence.registerTerminal(event.terminal.id, 80, 24)
-            yield* terminalManager.subscribe(
-              event.terminal.id,
-              (data) => persistence.writeOutput(event.terminal.id, data),
-              { replay: false }
-            )
-          } else if (event._tag === 'Removed') {
-            persistence.unregisterTerminal(event.id)
-          }
-        })
-    ).pipe(Effect.forkScoped)
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {

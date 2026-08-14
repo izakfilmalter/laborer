@@ -122,6 +122,56 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 // ---------------------------------------------------------------------------
 
 describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
+  it('holds flow-control commits at the slowest attached lease', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminal = yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+        let firstCursor = 0
+        let secondCursor = 0
+        yield* tm.attach(terminal.id, { leaseId: 'first-lease' }, (event) => {
+          if (event._tag === 'Delta') {
+            firstCursor = event.cursor
+          }
+          return true
+        })
+        yield* tm.attach(terminal.id, { leaseId: 'second-lease' }, (event) => {
+          if (event._tag === 'Delta') {
+            secondCursor = event.cursor
+          }
+          return true
+        })
+        yield* tm.write(terminal.id, 'lease-test\n')
+        for (
+          let attempt = 0;
+          attempt < 200 && (firstCursor === 0 || secondCursor === 0);
+          attempt += 1
+        ) {
+          yield* Effect.sleep('10 millis')
+        }
+        if (firstCursor === 0 || secondCursor === 0) {
+          throw new Error('Timed out waiting for terminal lease output')
+        }
+
+        yield* tm.acknowledge(terminal.id, 'first-lease', firstCursor)
+        const held = yield* tm.transportMetrics(terminal.id)
+        yield* tm.acknowledge(terminal.id, 'second-lease', secondCursor)
+        const committed = yield* tm.transportMetrics(terminal.id)
+        yield* tm.kill(terminal.id)
+        return { committed, held }
+      })
+    )
+
+    expect(result.held.backlogBytes).toBeGreaterThan(0)
+    expect(result.committed.backlogBytes).toBe(0)
+  })
+
   it('spawn() accepts full payload and returns terminal info', async () => {
     const result = await runEffect(
       Effect.gen(function* () {

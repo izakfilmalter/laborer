@@ -182,7 +182,7 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
       // -------------------------------------------------------------------
       'terminal.write': ({ id, data }) => tm.write(id, data),
 
-      'terminal.attach': ({ id, cursor, epoch }) =>
+      'terminal.attach': ({ id, leaseId, cursor, epoch }) =>
         Stream.callback(
           (queue) =>
             Effect.acquireRelease(
@@ -191,6 +191,7 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
                 {
                   ...(cursor === undefined ? {} : { cursor }),
                   ...(epoch === undefined ? {} : { epoch }),
+                  leaseId,
                 },
                 (event) => {
                   const offered = Queue.offerUnsafe(queue, event)
@@ -216,7 +217,8 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
           }
         ),
 
-      'terminal.ack': ({ id, cursor }) => tm.acknowledge(id, cursor),
+      'terminal.ack': ({ id, leaseId, cursor }) =>
+        tm.acknowledge(id, leaseId, cursor),
 
       'terminal.transportMetrics': ({ id }) => tm.transportMetrics(id),
 

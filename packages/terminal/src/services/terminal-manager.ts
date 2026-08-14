@@ -826,12 +826,17 @@ class TerminalManager extends Context.Service<
 
     readonly attach: (
       terminalId: string,
-      options: { readonly cursor?: number; readonly epoch?: string },
+      options: {
+        readonly cursor?: number
+        readonly epoch?: string
+        readonly leaseId?: string
+      },
       subscriber: AttachSubscriber
     ) => Effect.Effect<{ readonly subscriberId: string }, TerminalRpcError>
 
     readonly acknowledge: (
       terminalId: string,
+      leaseId: string,
       cursor: number
     ) => Effect.Effect<void, TerminalRpcError>
 
@@ -1030,6 +1035,7 @@ class TerminalManager extends Context.Service<
       const transportEpochs = new Map<string, string>()
       const parsedCursors = new Map<string, number>()
       const acknowledgedCursors = new Map<string, number>()
+      const leaseCursors = new Map<string, Map<string, number>>()
       const oldestUnackedAt = new Map<string, number>()
       const resetCounts = new Map<string, number>()
       const ackLatencies = new Map<string, number>()
@@ -1248,6 +1254,22 @@ class TerminalManager extends Context.Service<
           return false
         }
         ptyHostClient.detachFlowControlConsumer(terminalId)
+        const cursors = leaseCursors.get(terminalId)
+        cursors?.delete(subscriberId)
+        if (cursors?.size === 0) {
+          leaseCursors.delete(terminalId)
+          acknowledgedCursors.set(terminalId, journalFor(terminalId).cursor)
+        } else if (cursors !== undefined) {
+          const journal = journalFor(terminalId)
+          const previous =
+            acknowledgedCursors.get(terminalId) ?? journal.minimumCursor
+          const committed = Math.min(...cursors.values())
+          const chars = journal.charactersBetween(previous, committed)
+          if (chars > 0) {
+            ptyHostClient.ack(terminalId, chars)
+          }
+          acknowledgedCursors.set(terminalId, committed)
+        }
         if (subscribers.size === 0) {
           attachSubscribers.delete(terminalId)
         }
@@ -1780,6 +1802,7 @@ class TerminalManager extends Context.Service<
         transportEpochs.delete(terminalId)
         parsedCursors.delete(terminalId)
         acknowledgedCursors.delete(terminalId)
+        leaseCursors.delete(terminalId)
         oldestUnackedAt.delete(terminalId)
         resetCounts.delete(terminalId)
         ackLatencies.delete(terminalId)
@@ -2000,7 +2023,13 @@ class TerminalManager extends Context.Service<
         transportEpochs.set(terminalId, restartedEpoch)
         journals.delete(terminalId)
         parsedCursors.delete(terminalId)
-        acknowledgedCursors.delete(terminalId)
+        acknowledgedCursors.set(terminalId, 0)
+        const restartedLeaseCursors = leaseCursors.get(terminalId)
+        if (restartedLeaseCursors !== undefined) {
+          for (const leaseId of restartedLeaseCursors.keys()) {
+            restartedLeaseCursors.set(leaseId, 0)
+          }
+        }
         oldestUnackedAt.delete(terminalId)
         ackLatencies.delete(terminalId)
         resetCounts.set(terminalId, (resetCounts.get(terminalId) ?? 0) + 1)
@@ -2336,7 +2365,11 @@ class TerminalManager extends Context.Service<
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: protocol ordering is clearer as one linear attach transaction
       const attach = Effect.fn('TerminalManager.attach')(function* (
         terminalId: string,
-        options: { readonly cursor?: number; readonly epoch?: string },
+        options: {
+          readonly cursor?: number
+          readonly epoch?: string
+          readonly leaseId?: string
+        },
         subscriber: AttachSubscriber
       ) {
         const terminal = (yield* Ref.get(terminalsRef)).get(terminalId)
@@ -2348,11 +2381,17 @@ class TerminalManager extends Context.Service<
         }
         const journal = journalFor(terminalId)
         const transportEpoch = transportEpochFor(terminalId)
-        const subscriberId = crypto.randomUUID()
+        const subscriberId = options.leaseId ?? crypto.randomUUID()
         let subscribers = attachSubscribers.get(terminalId)
         if (!subscribers) {
           subscribers = new Map()
           attachSubscribers.set(terminalId, subscribers)
+        }
+        if (subscribers.has(subscriberId)) {
+          return yield* new TerminalRpcError({
+            message: `Terminal attach lease already exists: ${subscriberId}`,
+            code: 'TERMINAL_INVALID_CURSOR',
+          })
         }
         subscribers.set(subscriberId, subscriber)
         clearGraceTimeout(terminalId)
@@ -2361,6 +2400,18 @@ class TerminalManager extends Context.Service<
         // predate that reset and therefore must not be acknowledged as live
         // output debt.
         acknowledgedCursors.set(terminalId, journal.cursor)
+        let cursors = leaseCursors.get(terminalId)
+        if (cursors === undefined) {
+          cursors = new Map()
+          leaseCursors.set(terminalId, cursors)
+        }
+        // Every attach resets flow-control debt (ADR 0002), including debt
+        // held by existing leases. New output is thereafter governed by the
+        // minimum committed cursor across all attached clients.
+        for (const leaseId of cursors.keys()) {
+          cursors.set(leaseId, journal.cursor)
+        }
+        cursors.set(subscriberId, journal.cursor)
         oldestUnackedAt.delete(terminalId)
 
         const emit = (event: TerminalAttachEvent): boolean => {
@@ -2418,6 +2469,7 @@ class TerminalManager extends Context.Service<
 
       const acknowledge = Effect.fn('TerminalManager.acknowledge')(function* (
         terminalId: string,
+        leaseId: string,
         cursor: number
       ) {
         const journal = journals.get(terminalId)
@@ -2427,30 +2479,40 @@ class TerminalManager extends Context.Service<
             code: 'TERMINAL_NOT_FOUND',
           })
         }
-        const previous =
-          acknowledgedCursors.get(terminalId) ?? journal.minimumCursor
-        if (cursor > journal.cursor) {
+        const cursors = leaseCursors.get(terminalId)
+        const previousLeaseCursor = cursors?.get(leaseId)
+        if (previousLeaseCursor === undefined || cursors === undefined) {
           return yield* new TerminalRpcError({
-            message: `Invalid terminal acknowledgement cursor: ${cursor}`,
-            code: 'TERMINAL_INVALID_CURSOR',
+            message: `Terminal acknowledgement lease not found: ${leaseId}`,
+            code: 'TERMINAL_NOT_FOUND',
           })
         }
         // Duplicate and stale acknowledgements are normal when several panes
         // view one terminal or an in-flight acknowledgement outlives a
         // reconnect. They must be idempotent rather than surfacing errors.
-        if (cursor <= previous) {
+        if (cursor <= previousLeaseCursor) {
           return
         }
-        const chars = journal.charactersBetween(previous, cursor)
+        if (!journal.retains(cursor)) {
+          return yield* new TerminalRpcError({
+            message: `Invalid terminal acknowledgement cursor: ${cursor}`,
+            code: 'TERMINAL_INVALID_CURSOR',
+          })
+        }
+        cursors.set(leaseId, cursor)
+        const previous =
+          acknowledgedCursors.get(terminalId) ?? journal.minimumCursor
+        const committed = Math.min(...cursors.values())
+        const chars = journal.charactersBetween(previous, committed)
         if (chars > 0) {
           ptyHostClient.ack(terminalId, chars)
         }
-        acknowledgedCursors.set(terminalId, cursor)
+        acknowledgedCursors.set(terminalId, committed)
         const startedAt = oldestUnackedAt.get(terminalId)
         if (startedAt !== undefined) {
           ackLatencies.set(terminalId, Math.max(0, Date.now() - startedAt))
         }
-        if (cursor >= journal.cursor) {
+        if (committed >= journal.cursor) {
           oldestUnackedAt.delete(terminalId)
         }
       })

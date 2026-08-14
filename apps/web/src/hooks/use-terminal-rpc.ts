@@ -54,6 +54,7 @@ export function useTerminalRpc({
       return
     }
     const runtime = runtimeResult.value
+    const leaseId = globalThis.crypto.randomUUID()
     let active = true
 
     const sendAck = (cursor: number, chars: number, force = false) => {
@@ -69,7 +70,11 @@ export function useTerminalRpc({
       Effect.runForkWith(runtime)(
         Effect.gen(function* () {
           const client = yield* TerminalServiceClient
-          yield* client('terminal.ack', { id: terminalId, cursor })
+          yield* client('terminal.ack', {
+            id: terminalId,
+            leaseId,
+            cursor,
+          })
         }).pipe(Effect.catch(() => Effect.void))
       )
     }
@@ -132,6 +137,7 @@ export function useTerminalRpc({
         const client = yield* TerminalServiceClient
         const stream = client('terminal.attach', {
           id: terminalId,
+          leaseId,
           ...(cursorRef.current === undefined
             ? {}
             : { cursor: cursorRef.current }),

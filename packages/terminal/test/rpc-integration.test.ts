@@ -200,10 +200,10 @@ describe(
       await delay(200)
 
       const initial = await run(
-        client['terminal.attach']({ id: terminal.id }).pipe(
-          Stream.take(3),
-          Stream.runCollect
-        )
+        client['terminal.attach']({
+          id: terminal.id,
+          leaseId: 'initial-replay',
+        }).pipe(Stream.take(3), Stream.runCollect)
       )
       const snapshot = initial.find((event) => event._tag === 'Snapshot')
       assert.isDefined(snapshot)
@@ -216,6 +216,7 @@ describe(
       const replay = await run(
         client['terminal.attach']({
           id: terminal.id,
+          leaseId: 'cursor-replay',
           cursor: snapshot?.cursor ?? 0,
         }).pipe(Stream.take(3), Stream.runCollect)
       )
@@ -229,6 +230,7 @@ describe(
       const reset = await run(
         client['terminal.attach']({
           id: terminal.id,
+          leaseId: 'reset-replay',
           cursor: Number.MAX_SAFE_INTEGER,
         }).pipe(Stream.take(2), Stream.runCollect)
       )
@@ -260,7 +262,10 @@ describe(
       })
       let replayCount = 0
       const streamFiber = Effect.runFork(
-        client['terminal.attach']({ id: terminal.id }).pipe(
+        client['terminal.attach']({
+          id: terminal.id,
+          leaseId: 'restart-stream',
+        }).pipe(
           Stream.runForEach((event) =>
             Effect.sync(() => {
               events.push(event)

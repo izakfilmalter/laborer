@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync, rmSync } from 'node:fs'
+import { chmodSync, rmSync } from 'node:fs'
 import { connect, createServer, type Socket } from 'node:net'
 import { writeJsonRegistration } from '@laborer/ensure'
 import { Effect, Fiber, Layer, ManagedRuntime, Stream } from 'effect'
 import { directLayer } from './services/pty-direct.js'
 import {
   PTY_HOST_PROTOCOL_VERSION,
+  preparePtyHostSocketPath,
   resolvePtyHostPaths,
 } from './services/pty-host-paths.js'
 import type {
@@ -28,12 +29,21 @@ const runtime = ManagedRuntime.make(HostLayer)
 const manager = await runtime.runPromise(TerminalManager)
 const paths = resolvePtyHostPaths()
 
-mkdirSync(paths.stateDir, { mode: 0o700, recursive: true })
+preparePtyHostSocketPath(paths)
 
-const send = (socket: Socket, message: PtyHostServerMessage): boolean =>
-  socket.writable && socket.write(`${JSON.stringify(message)}\n`)
+const send = (socket: Socket, message: PtyHostServerMessage): boolean => {
+  if (!socket.writable) {
+    return false
+  }
+  // `write()` returning false is normal stream backpressure, not delivery
+  // failure. The terminal's committed-cursor lane bounds live output while
+  // Node drains this local socket buffer.
+  socket.write(`${JSON.stringify(message)}\n`)
+  return true
+}
 
 const connections = new Set<Socket>()
+const MAX_PROTOCOL_FRAME_BYTES = 1024 * 1024
 
 const invoke = (socket: Socket, request: PtyHostRequest) => {
   const [first, second, third] = request.args
@@ -56,7 +66,11 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
           })
       )
     case 'acknowledge':
-      return manager.acknowledge(first as string, second as number)
+      return manager.acknowledge(
+        first as string,
+        second as string,
+        third as number
+      )
     case 'transportMetrics':
       return manager.transportMetrics(first as string)
     case 'resize':
@@ -125,36 +139,50 @@ const server = createServer((socket) => {
         socket.destroy()
         return
       }
-      requestLane = requestLane.then(async () => {
-        const result = await runtime.runPromise(
-          Effect.result(invoke(socket, request))
-        )
-        if (result._tag === 'Success') {
-          if (request.method === 'attach') {
-            const subscriberId = (
-              result.success as unknown as { subscriberId: string }
-            ).subscriberId
-            attachLeases.set(subscriberId, request.args[0] as string)
-          } else if (request.method === 'unsubscribe') {
-            attachLeases.delete(request.args[1] as string)
+      requestLane = requestLane
+        .then(async () => {
+          const result = await runtime.runPromise(
+            Effect.result(invoke(socket, request))
+          )
+          if (result._tag === 'Success') {
+            if (request.method === 'attach') {
+              const subscriberId = (
+                result.success as unknown as { subscriberId: string }
+              ).subscriberId
+              attachLeases.set(subscriberId, request.args[0] as string)
+            } else if (request.method === 'unsubscribe') {
+              attachLeases.delete(request.args[1] as string)
+            }
+            send(socket, {
+              type: 'response',
+              requestId: request.requestId,
+              result: result.success,
+            })
+            return
           }
           send(socket, {
             type: 'response',
             requestId: request.requestId,
-            result: result.success,
+            error: {
+              ...(result.failure?.code === undefined
+                ? {}
+                : { code: result.failure.code }),
+              message: result.failure?.message ?? String(result.failure),
+            },
           })
-          return
-        }
-        const failure = result.failure as { code?: string; message?: string }
-        send(socket, {
-          type: 'response',
-          requestId: request.requestId,
-          error: {
-            ...(failure?.code === undefined ? {} : { code: failure.code }),
-            message: failure?.message ?? String(result.failure),
-          },
         })
-      })
+        .catch((error: unknown) => {
+          send(socket, {
+            type: 'response',
+            requestId: request.requestId,
+            error: {
+              message: error instanceof Error ? error.message : String(error),
+            },
+          })
+        })
+    }
+    if (Buffer.byteLength(buffer, 'utf8') > MAX_PROTOCOL_FRAME_BYTES) {
+      socket.destroy()
     }
   })
   socket.on('close', () => {
@@ -204,6 +232,7 @@ writeJsonRegistration(paths.registrationPath, {
   version: PTY_HOST_PROTOCOL_VERSION,
 })
 
+let stopPromise: Promise<void> | undefined
 const stop = async () => {
   rmSync(paths.registrationPath, { force: true })
   for (const socket of connections) {
@@ -212,11 +241,15 @@ const stop = async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()))
   await runtime.dispose()
   rmSync(paths.socketPath, { force: true })
+  if ('socketAliasPath' in paths) {
+    rmSync(paths.socketAliasPath, { force: true })
+  }
   process.exit(0)
 }
 
 const requestStop = () => {
-  stop().catch((error: unknown) => console.error(error))
+  stopPromise ??= stop()
+  stopPromise.catch((error: unknown) => console.error(error))
 }
 process.on('SIGINT', requestStop)
 process.on('SIGTERM', requestStop)

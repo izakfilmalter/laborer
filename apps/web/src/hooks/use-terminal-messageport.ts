@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { localApi } from '@/lib/local-api'
+import { acquireTerminalDataPort } from '@/lib/local-api'
 
 /** Connection state for UI indicators — same shape as WebSocket hook. */
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
@@ -411,7 +411,7 @@ function useTerminalMessagePort({
 
     const acquire = async (): Promise<MessagePort | null> => {
       try {
-        return await localApi.acquireTerminalDataPort(terminalId)
+        return await acquireTerminalDataPort(terminalId)
       } catch {
         return null
       }

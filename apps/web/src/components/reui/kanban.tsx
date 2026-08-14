@@ -98,8 +98,20 @@ const ItemContext = createContext<{
 
 const IsOverlayContext = createContext(false)
 
-const animateLayoutChanges: AnimateLayoutChanges = (args) =>
-  defaultAnimateLayoutChanges({ ...args, wasDragging: true })
+// Upstream reui forces `wasDragging: true` here. That flag is dnd-kit's guard
+// confining `useDerivedTransform`'s FLIP measurement to an actual drag — it is
+// normally `previous.activeId != null` and clears shortly after drag end.
+// Forcing it on leaves the FLIP path armed permanently, for items as well as
+// columns, so index changes the board makes *after* a drop (the optimistic
+// overlay, then the confirming server row) still apply a derived transform to
+// the node `DndContext` is measuring via `useRect`. Paired with
+// `MeasuringStrategy.Always` below that feeds itself: transform moves the node,
+// measuring re-reads the moved rect, the layout effect measures again. In the
+// prod build it surfaced as React error #185 (maximum update depth) thrown out
+// of dnd-kit's `useRect` layout effect when dragging In Progress -> Done, where
+// the card also swaps between `WorkspaceCard` and `CardShell` and so genuinely
+// changes height mid-drop.
+const animateLayoutChanges: AnimateLayoutChanges = defaultAnimateLayoutChanges
 
 const dropAnimationConfig: DropAnimation = {
   sideEffects: defaultDropAnimationSideEffects({

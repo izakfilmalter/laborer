@@ -749,7 +749,12 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
           {deferredFileDiffs.map(({ entry, fileDiff }) => {
             if (fileDiff === null) {
               return (
-                <div data-diff-file-path={entry.path} key={entry.path}>
+                <div
+                  data-diff-file-path={entry.path}
+                  data-file-path={entry.path}
+                  data-testid="diff-file"
+                  key={entry.path}
+                >
                   <TruncatedDiffPlaceholder entry={entry} />
                 </div>
               )
@@ -761,7 +766,12 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
               !forcedPaths.has(entry.path)
             if (tooLarge) {
               return (
-                <div data-diff-file-path={entry.path} key={entry.path}>
+                <div
+                  data-diff-file-path={entry.path}
+                  data-file-path={entry.path}
+                  data-testid="diff-file"
+                  key={entry.path}
+                >
                   <LargeDiffPlaceholder
                     entry={entry}
                     onRender={() => forceRenderPath(entry.path)}
@@ -772,7 +782,12 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
 
             const hugePatch = (entry.patch?.length ?? 0) > LARGE_PATCH_BYTES
             return (
-              <div data-diff-file-path={entry.path} key={entry.path}>
+              <div
+                data-diff-file-path={entry.path}
+                data-file-path={entry.path}
+                data-testid="diff-file"
+                key={entry.path}
+              >
                 <FileDiff
                   className="select-text"
                   fileDiff={fileDiff}
@@ -795,14 +810,20 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
 function DiffPane({ onClose, workspaceId }: DiffPaneProps) {
   const isEventually = useWhenPhase(LifecyclePhase.Eventually)
 
-  if (!isEventually) {
-    return <DiffPaneLoading onClose={onClose} />
-  }
-
   return (
-    <DiffWorkerPoolProvider>
-      <DiffPaneContent onClose={onClose} workspaceId={workspaceId} />
-    </DiffWorkerPoolProvider>
+    <div
+      className="h-full"
+      data-testid="diff-pane"
+      data-workspace-id={workspaceId}
+    >
+      {isEventually ? (
+        <DiffWorkerPoolProvider>
+          <DiffPaneContent onClose={onClose} workspaceId={workspaceId} />
+        </DiffWorkerPoolProvider>
+      ) : (
+        <DiffPaneLoading onClose={onClose} />
+      )}
+    </div>
   )
 }
 

@@ -131,6 +131,8 @@ function TreeBranch({
               'group flex h-6 w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               isSelected && 'bg-accent'
             )}
+            data-file-path={node.path}
+            data-testid="file-tree-item"
             data-tree-item="true"
             onClick={() => {
               onSelect(selectionItem)
@@ -197,6 +199,9 @@ function TreeBranch({
           'group flex h-6 w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           isSelected && 'bg-accent'
         )}
+        data-file-path={node.path}
+        data-git-status={itemStatus}
+        data-testid="file-tree-item"
         data-tree-item="true"
         key={node.path}
         onClick={() => {

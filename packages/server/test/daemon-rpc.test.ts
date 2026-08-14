@@ -69,15 +69,27 @@ const stopChild = async (child: ChildProcess): Promise<void> => {
   if (child.exitCode !== null) {
     return
   }
-  child.kill('SIGTERM')
   await new Promise<void>((resolveExit) => {
+    let settled = false
+    const finish = () => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timeout)
+      resolveExit()
+    }
     const timeout = setTimeout(() => {
       child.kill('SIGKILL')
     }, 5000)
-    child.once('exit', () => {
-      clearTimeout(timeout)
-      resolveExit()
-    })
+    child.once('exit', finish)
+    if (child.exitCode !== null) {
+      finish()
+      return
+    }
+    // Register before signalling: the detached-host proxy lets the daemon
+    // finalize quickly enough that registering afterward can miss `exit`.
+    child.kill('SIGTERM')
   })
 }
 

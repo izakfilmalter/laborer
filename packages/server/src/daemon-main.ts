@@ -5,9 +5,7 @@ import { FileWatcher } from '@laborer/file-watcher/services/file-watcher'
 import { WatcherManager } from '@laborer/file-watcher/services/watcher-manager'
 import { DaemonRpcs } from '@laborer/shared/rpc'
 import { TerminalRpcsLive } from '@laborer/terminal/rpc/handlers'
-import { directLayer as PtyDirectLayer } from '@laborer/terminal/services/pty-direct'
-import { TerminalManager } from '@laborer/terminal/services/terminal-manager'
-import { TerminalSessionPersistenceLayer } from '@laborer/terminal/services/terminal-session-persistence-layer'
+import { ptyHostProxyLayer } from '@laborer/terminal/services/pty-host-proxy'
 import { Effect, Layer, SubscriptionRef } from 'effect'
 import { HttpRouter, HttpServerResponse } from 'effect/unstable/http'
 import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
@@ -32,13 +30,9 @@ const parsePort = (value: string | undefined): number => {
   return port
 }
 
-const TerminalCore = Layer.merge(TerminalManager.layer, PtyDirectLayer).pipe(
-  Layer.provide(PtyDirectLayer)
-)
-
-const TerminalServices = TerminalSessionPersistenceLayer.pipe(
-  Layer.provideMerge(TerminalCore)
-)
+// The detached host owns terminal state. The daemon only holds this proxy and
+// cannot destroy PTYs when its watch process restarts.
+const TerminalServices = ptyHostProxyLayer
 
 const FileWatcherServices = Layer.merge(
   WatcherManager.layer,

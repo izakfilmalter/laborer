@@ -1233,7 +1233,7 @@ class TerminalManager extends Context.Service<
       const transportEpochFor = (terminalId: string): string => {
         let epoch = transportEpochs.get(terminalId)
         if (epoch === undefined) {
-          epoch = crypto.randomUUID()
+          epoch = process.env.LABORER_PTY_HOST_EPOCH ?? crypto.randomUUID()
           transportEpochs.set(terminalId, epoch)
         }
         return epoch

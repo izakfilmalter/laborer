@@ -32,8 +32,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolvePtyHostPaths } from './pty-host-paths.js'
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -51,10 +51,10 @@ const DEFAULT_REPLAY_BUFFER_SIZE = 200 * 1024
 const REPLAY_BUFFER_SIZE_ENV = 'LABORER_TERMINAL_REPLAY_BUFFER_SIZE'
 
 /**
- * Directory for persisted terminal state files.
- * Uses a subdirectory of the OS temp directory.
+ * Directory for graceful-shutdown revival checkpoints. This sits beside the
+ * host registration/socket in the worktree-scoped state root.
  */
-const PERSISTENCE_DIR = join(tmpdir(), 'laborer-terminal-persistence')
+const PERSISTENCE_DIR = join(resolvePtyHostPaths().stateDir, 'checkpoints')
 
 /**
  * File name for the serialized terminal state.

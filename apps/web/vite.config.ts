@@ -41,9 +41,11 @@ function patchXtermEnumPlugin() {
 const root = path.resolve(import.meta.dirname, '../..')
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, root)
+  const env = loadEnv(mode, root, '')
 
   const vitePort = Number(env.VITE_PORT ?? 2101)
+  const daemonPort = Number(env.LABORER_DAEMON_PORT ?? 2100)
+  const daemonOrigin = `http://127.0.0.1:${String(daemonPort)}`
 
   return {
     plugins: [
@@ -61,6 +63,11 @@ export default defineConfig(({ mode }) => {
     server: {
       port: vitePort,
       fs: { strict: false },
+      proxy: {
+        '/api': { target: daemonOrigin },
+        '/health': { target: daemonOrigin },
+        '/ws': { target: daemonOrigin, ws: true },
+      },
       // Explicit HMR config for Electron compatibility.
       // Electron loads the Vite dev server via http://localhost, but the
       // default HMR WebSocket may try to connect via the page origin which

@@ -1,8 +1,9 @@
 /**
  * LaborerClient — AtomRpc client for the server's LaborerRpcs.
  *
- * Communicates directly with the desktop-managed server utility process over
- * MessagePort.
+ * Communicates with the mission-control backend through the renderer protocol
+ * boundary: same-origin daemon WebSocket in a browser, legacy MessagePort in
+ * Electron until the desktop migration lands.
  *
  * Uses `AtomRpc.Service` to provide typed `query` and `mutation` atoms that
  * integrate with React components via `@effect/atom-react`.
@@ -12,33 +13,15 @@
  */
 
 import { LaborerRpcs } from '@laborer/shared/rpc'
-import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
-import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
-import { Effect, Layer } from 'effect'
 import { AtomRpc } from 'effect/unstable/reactivity'
-import { RpcClient } from 'effect/unstable/rpc'
+import { rendererRpcProtocol } from './renderer-rpc-protocol'
 
-import { acquireServicePort } from '@/lib/desktop'
-
-const serverProtocol: Layer.Layer<RpcClient.Protocol> = Layer.effect(
-  RpcClient.Protocol,
-  Effect.gen(function* () {
-    const port = yield* Effect.promise(() => acquireServicePort('server'))
-    if (!port) {
-      return yield* Effect.die(
-        'Server utility process is not running — could not acquire MessagePort'
-      )
-    }
-    return yield* makeClientProtocolMessagePort(
-      port as unknown as RpcMessagePort
-    )
-  })
-)
+const serverProtocol = rendererRpcProtocol('server')
 
 /**
  * LaborerClient — typed AtomRpc client for React components.
  *
- * Uses MessagePort RPC to the desktop-managed server utility process.
+ * Uses WS RPC in a plain browser and the existing desktop transport in Electron.
  * Provides `mutation` and `query` helpers for all LaborerRpcs endpoints.
  */
 export const ConfigReactivityKeys = ['config'] as const

@@ -10,6 +10,7 @@ import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { ServerGate } from '@/components/server-gate'
 import { SharedStateBridge } from '@/components/shared-state-bridge'
 import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -86,24 +87,26 @@ function RootComponent() {
         >
           <HotkeysProvider>
             <TooltipProvider>
-              <SidecarRuntimeBoundary>
-                {(generation) => (
-                  <AtomRegistryProvider key={`atom-registry-${generation}`}>
-                    <SharedStateBridge />
-                    <AppSettingsProvider>
-                      <div className="h-svh">
-                        <AppSettingsModal />
-                        <Outlet />
-                      </div>
-                    </AppSettingsProvider>
-                    <Toaster richColors />
-                    <PhaseTransitionDriver />
-                    <BeforeQuitHandler />
-                    <SidecarCrashListener />
-                    <DesktopUpdateToastListener />
-                  </AtomRegistryProvider>
-                )}
-              </SidecarRuntimeBoundary>
+              <ServerGate>
+                <SidecarRuntimeBoundary>
+                  {(generation) => (
+                    <AtomRegistryProvider key={`atom-registry-${generation}`}>
+                      <SharedStateBridge />
+                      <AppSettingsProvider>
+                        <div className="h-svh">
+                          <AppSettingsModal />
+                          <Outlet />
+                        </div>
+                      </AppSettingsProvider>
+                      <Toaster richColors />
+                      <PhaseTransitionDriver />
+                      <BeforeQuitHandler />
+                      <SidecarCrashListener />
+                      <DesktopUpdateToastListener />
+                    </AtomRegistryProvider>
+                  )}
+                </SidecarRuntimeBoundary>
+              </ServerGate>
             </TooltipProvider>
           </HotkeysProvider>
         </ThemeProvider>

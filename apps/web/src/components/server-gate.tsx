@@ -7,9 +7,8 @@
  *    the DesktopBridge. Shows per-service status and offers restart
  *    buttons when services crash.
  *
- * 2. **Dev mode (browser or Electron dev)** — polls the server health
- *    endpoint (`/server-health`, proxied by Vite) with exponential
- *    backoff until a 2xx response is received.
+ * 2. **Browser** — polls the daemon's same-origin `/health` endpoint with
+ *    exponential backoff until a 2xx response is received.
  *
  * In both cases the gate prevents route content from
  * rendering until the backend is confirmed ready, avoiding the
@@ -18,7 +17,7 @@
  *
  * @see apps/desktop/src/health.ts — HealthMonitor event emission
  * @see apps/web/src/lib/sidecar-statuses.ts — pure derivation logic
- * @see apps/web/vite.config.ts — /server-health proxy
+ * @see apps/web/vite.config.ts — /health proxy
  */
 
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
@@ -59,21 +58,16 @@ const DEV_POLL_MAX_MS = 3000
 /** Backoff multiplier. */
 const DEV_POLL_BACKOFF = 1.5
 
-/** Max consecutive failures before showing the error state. */
-const DEV_POLL_ERROR_THRESHOLD = 10
-
-type DevGateState = 'polling' | 'healthy' | 'failed'
+type DevGateState = 'polling' | 'healthy'
 
 /**
- * Hook that polls `/server-health` (Vite-proxied to the server root)
+ * Hook that polls `/health` (Vite-proxied to the daemon)
  * with exponential backoff until it receives a 2xx response.
  */
 function useDevHealthPoll(): {
   state: DevGateState
-  retry: () => void
 } {
   const [state, setState] = useState<DevGateState>('polling')
-  const failureCount = useRef(0)
   const intervalRef = useRef(DEV_POLL_INITIAL_MS)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
@@ -82,11 +76,10 @@ function useDevHealthPoll(): {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 2000)
-      const response = await fetch('/server-health', {
+      const response = await fetch('/health', {
         signal: controller.signal,
         redirect: 'error',
-      })
-      clearTimeout(timeoutId)
+      }).finally(() => clearTimeout(timeoutId))
 
       if (response.ok) {
         if (mountedRef.current) {
@@ -102,12 +95,6 @@ function useDevHealthPoll(): {
       return
     }
 
-    failureCount.current += 1
-
-    if (failureCount.current >= DEV_POLL_ERROR_THRESHOLD) {
-      setState('failed')
-    }
-
     // Schedule next poll with backoff.
     intervalRef.current = Math.min(
       intervalRef.current * DEV_POLL_BACKOFF,
@@ -117,17 +104,6 @@ function useDevHealthPoll(): {
       poll()
     }, intervalRef.current)
   }, [])
-
-  const retry = useCallback(() => {
-    // Reset state and restart polling.
-    failureCount.current = 0
-    intervalRef.current = DEV_POLL_INITIAL_MS
-    setState('polling')
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
-    }
-    poll()
-  }, [poll])
 
   useEffect(() => {
     mountedRef.current = true
@@ -141,7 +117,7 @@ function useDevHealthPoll(): {
     }
   }, [poll])
 
-  return { state, retry }
+  return { state }
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +136,12 @@ function ServerGate({ children }: { readonly children: ReactNode }) {
     return <ElectronServerGate bridge={bridge}>{children}</ElectronServerGate>
   }
 
-  // Dev mode (browser or Electron dev): poll the health endpoint.
+  // Electron dev still uses the utility-process path and has no daemon yet.
+  if (bridge) {
+    return <>{children}</>
+  }
+
+  // Plain browser: wait for the standalone daemon.
   return <DevServerGate>{children}</DevServerGate>
 }
 
@@ -174,7 +155,7 @@ function isElectronProduction(): boolean {
 // ---------------------------------------------------------------------------
 
 function DevServerGate({ children }: { readonly children: ReactNode }) {
-  const { state, retry } = useDevHealthPoll()
+  const { state } = useDevHealthPoll()
 
   if (state === 'healthy') {
     return <>{children}</>
@@ -183,24 +164,12 @@ function DevServerGate({ children }: { readonly children: ReactNode }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
       <div className="flex flex-col items-center gap-3">
-        {state === 'polling' && (
-          <Loader2 className="size-8 animate-spin text-muted-foreground" />
-        )}
-        <h2 className="font-medium text-lg">
-          {state === 'failed' ? 'Cannot reach server' : 'Waiting for server'}
-        </h2>
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
+        <h2 className="font-medium text-lg">Starting daemon</h2>
         <p className="max-w-sm text-center text-muted-foreground text-sm">
-          {state === 'failed'
-            ? 'The backend server is not responding. Make sure your dev services are running (turbo dev).'
-            : 'Connecting to backend services...'}
+          Connecting to backend services...
         </p>
       </div>
-
-      {state === 'failed' && (
-        <Button onClick={retry} variant="outline">
-          Retry
-        </Button>
-      )}
     </div>
   )
 }

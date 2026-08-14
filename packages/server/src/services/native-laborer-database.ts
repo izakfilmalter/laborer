@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from '@laborer/task-db/database-sync'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
 import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 

@@ -25,7 +25,10 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
-    clean: true,
+    // The dev runner seeds dist before launching Bun's watcher. Preserve that
+    // complete entry while the first watch build replaces its chunks, or Bun
+    // can observe a transient missing entry and stay dead until another save.
+    clean: process.env.LABORER_DEV_WATCH !== '1',
     entry: ['src/utility-main.ts', 'src/daemon-main.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
     // Native addons are loaded from the installed package at runtime.

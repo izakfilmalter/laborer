@@ -62,6 +62,7 @@ export default defineConfig(({ mode }) => {
     envDir: root,
     server: {
       port: vitePort,
+      strictPort: true,
       fs: { strict: false },
       proxy: {
         '/api': { target: daemonOrigin },

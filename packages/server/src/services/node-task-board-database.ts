@@ -1,6 +1,5 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import {
   type ExecutionStatus,
   NativeTaskDatabase,
@@ -13,6 +12,7 @@ import {
   TaskStaleRevisionError,
   type TaskStatus,
 } from '@laborer/task-db'
+import { DatabaseSync } from '@laborer/task-db/database-sync'
 import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,

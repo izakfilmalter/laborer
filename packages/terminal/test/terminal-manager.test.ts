@@ -2467,9 +2467,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
 
   it('setAgentStatusFromHook emits ProcessChanged immediately', async () => {
     // When a hook sets the agent status, a ProcessChanged event should
-    // be emitted immediately (not waiting for the next 200ms tick).
-    const collectedEvents: TerminalLifecycleEvent[] = []
-
+    // be published before the hook update completes.
     await runEffect(
       Effect.scoped(
         Effect.gen(function* () {
@@ -2487,37 +2485,15 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           // Subscribe to lifecycle events
           const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-          const collectFiber = yield* Effect.forkChild(
-            Effect.gen(function* () {
-              while (true) {
-                const event = yield* PubSub.take(dequeue)
-                collectedEvents.push(event)
-              }
-            })
-          )
-
-          // Wait a moment for the subscriber to be fully wired
-          yield* Effect.sleep(100)
-
-          // Clear any previously collected events
-          collectedEvents.length = 0
-
           // Set agent status via hook — should emit ProcessChanged immediately
           yield* tm.setAgentStatusFromHook(terminal.id, {
             status: 'working',
             sequence: 1,
           })
 
-          // Only wait 50ms — way less than a detection tick (200ms).
-          // If ProcessChanged arrives, it came from the hook, not the fiber.
-          yield* Effect.sleep(50)
-
-          yield* Fiber.interrupt(collectFiber)
-
-          // A detection event can already be queued when the array is reset,
-          // so identify the hook result by its payload rather than assuming
-          // the first event observed in this window came from the hook.
-          const hookEvents = collectedEvents.filter(
+          // The hook update does not return until its event is published, so
+          // draining the subscription is deterministic even under suite load.
+          const hookEvents = (yield* PubSub.takeAll(dequeue)).filter(
             (event) =>
               event._tag === 'ProcessChanged' &&
               event.terminal.id === terminal.id &&

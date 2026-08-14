@@ -2486,12 +2486,15 @@ class TerminalManager extends Context.Service<
        */
       const emitProcessChangedForTerminal = (
         terminal: ManagedTerminal
-      ): void => {
+      ): Effect.Effect<boolean> => {
         // Process detection fields come from the last snapshot if available,
         // but agent status is always fresh from the maps.
         const cachedDetection = lastProcessSnapshot.get(terminal.id)
         const record = toTerminalRecord(terminal, cachedDetection)
-        emitEvent({ _tag: 'ProcessChanged', terminal: record })
+        return PubSub.publish(lifecyclePubSub, {
+          _tag: 'ProcessChanged',
+          terminal: record,
+        })
       }
 
       const setObservedWorkspaces = Effect.fn(
@@ -2508,7 +2511,7 @@ class TerminalManager extends Context.Service<
           const wasSeen = engine.current?.seen
           engine.setObserved(observedWorkspaceIds.has(terminal.workspaceId))
           if (engine.current?.seen !== wasSeen) {
-            emitProcessChangedForTerminal(terminal)
+            yield* emitProcessChangedForTerminal(terminal)
           }
         }
       })
@@ -2587,7 +2590,7 @@ class TerminalManager extends Context.Service<
         // Push the updated state to stream subscribers immediately so
         // the UI reflects hook-reported agent status without waiting
         // for the next detection tick.
-        emitProcessChangedForTerminal(terminal)
+        yield* emitProcessChangedForTerminal(terminal)
       })
 
       // ---------------------------------------------------------------

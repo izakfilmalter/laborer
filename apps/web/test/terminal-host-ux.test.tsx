@@ -9,6 +9,7 @@ import {
   isTerminalRevival,
   TerminalRevivalMarker,
 } from '../src/components/terminal-revival-marker'
+import { statusAfterRestartFailure } from '../src/hooks/use-terminal-host-status'
 
 const RESTART_BUTTON_NAME = /restart terminal host/i
 
@@ -157,6 +158,24 @@ describe('terminal host UX', () => {
     expect(
       screen.getByRole('button', { name: 'Restart terminal host' })
     ).toHaveProperty('disabled', true)
+  })
+
+  it('restores an actionable host state when restart fails', () => {
+    const outdated = {
+      expectedVersion: '2',
+      runningVersion: '1',
+      state: 'outdated' as const,
+    }
+
+    expect(
+      statusAfterRestartFailure({ ...outdated, state: 'restarting' }, outdated)
+    ).toEqual(outdated)
+    expect(
+      statusAfterRestartFailure(
+        { expectedVersion: '2', state: 'unavailable' },
+        outdated
+      )
+    ).toEqual({ expectedVersion: '2', state: 'unavailable' })
   })
 
   it('announces the host state and its detail from a stable live region', () => {

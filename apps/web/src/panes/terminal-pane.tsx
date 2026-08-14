@@ -57,6 +57,7 @@ import {
 } from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { TerminalRevivalMarker } from '@/components/terminal-revival-marker'
 import {
   InputGroup,
   InputGroupAddon,
@@ -320,6 +321,7 @@ interface TerminalConnection {
   readonly send: (data: string) => void
   readonly status: 'connecting' | 'connected' | 'disconnected'
   readonly terminalStatus: TerminalStatus
+  readonly wasRevived?: boolean
 }
 
 interface TerminalPaneProps {
@@ -597,6 +599,7 @@ function TerminalPaneRenderer({
     status: connectionStatus,
     replayStatus,
     terminalStatus,
+    wasRevived = false,
   } = connection
   const resizeTerminal = useAtomSet(resizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1307,6 +1310,8 @@ function TerminalPaneRenderer({
 
       {/* Connecting indicator */}
       {connectionStatus === 'connecting' && isRunning && <ReconnectingBanner />}
+
+      {wasRevived && replayStatus === 'complete' && <TerminalRevivalMarker />}
 
       {/* Status banner — shown when terminal process has exited */}
       {!isRunning && (

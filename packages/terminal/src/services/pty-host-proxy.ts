@@ -9,12 +9,17 @@ import {
   type ProcessRegistration,
   readJsonRegistration,
 } from '@laborer/ensure'
-import { type TerminalAttachEvent, TerminalRpcError } from '@laborer/shared/rpc'
-import { Effect, Layer, PubSub } from 'effect'
 import {
-  PTY_HOST_PROTOCOL_VERSION,
-  resolvePtyHostPaths,
-} from './pty-host-paths.js'
+  type ProcessTimeTimeout,
+  scheduleProcessTimeTimeout,
+} from '@laborer/shared/process-time-scheduler'
+import {
+  type TerminalAttachEvent,
+  type TerminalHostStatus,
+  TerminalRpcError,
+} from '@laborer/shared/rpc'
+import { Effect, Layer, PubSub } from 'effect'
+import { resolvePtyHostPaths, resolvePtyHostVersion } from './pty-host-paths.js'
 import type {
   PtyHostClientMessage,
   PtyHostMethod,
@@ -30,9 +35,52 @@ interface PtyHostRegistration extends ProcessRegistration {
   readonly socketPath: string
 }
 
-const HEALTH_TIMEOUT_MS = 500
+interface PendingRequest {
+  readonly reject: (error: Error) => void
+  readonly resolve: (value: unknown) => void
+  readonly timeout: ReturnType<typeof setTimeout>
+}
+
+interface AttachRecord {
+  cursor?: number
+  epoch?: string
+  hostSubscriberId?: string
+  readonly leaseId: string
+  readonly localId: string
+  readonly subscriber: (event: TerminalAttachEvent) => boolean
+  readonly terminalId: string
+}
+
+/** Named, configurable defaults from the browser-first mission-control spec. */
+export const PTY_HOST_HEARTBEAT_INTERVAL_MS_DEFAULT = 5000
+export const PTY_HOST_HEARTBEAT_WARN_MS_DEFAULT = 6000
+export const PTY_HOST_HEARTBEAT_UNRESPONSIVE_MS_DEFAULT = 15_000
+export const PTY_HOST_MAX_RESTARTS_DEFAULT = 5
+
 const REQUEST_TIMEOUT_MS = 5000
 const MAX_PROTOCOL_FRAME_BYTES = 1024 * 1024
+
+const positiveIntegerFromEnv = (name: string, fallback: number): number => {
+  const parsed = Number(process.env[name])
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const heartbeatIntervalMs = positiveIntegerFromEnv(
+  'LABORER_PTY_HOST_HEARTBEAT_INTERVAL_MS',
+  PTY_HOST_HEARTBEAT_INTERVAL_MS_DEFAULT
+)
+const heartbeatWarnMs = positiveIntegerFromEnv(
+  'LABORER_PTY_HOST_HEARTBEAT_WARN_MS',
+  PTY_HOST_HEARTBEAT_WARN_MS_DEFAULT
+)
+const heartbeatUnresponsiveMs = positiveIntegerFromEnv(
+  'LABORER_PTY_HOST_HEARTBEAT_UNRESPONSIVE_MS',
+  PTY_HOST_HEARTBEAT_UNRESPONSIVE_MS_DEFAULT
+)
+const maxRestarts = positiveIntegerFromEnv(
+  'LABORER_PTY_HOST_MAX_RESTARTS',
+  PTY_HOST_MAX_RESTARTS_DEFAULT
+)
 
 const isRegistration = (
   value: ProcessRegistration | null
@@ -44,6 +92,18 @@ const isRegistration = (
   typeof value.socketPath === 'string' &&
   typeof value.startedAt === 'string'
 
+const processExists = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const delay = (milliseconds: number) =>
+  new Promise<void>((resume) => setTimeout(resume, milliseconds))
+
 const openSocket = (socketPath: string): Promise<Socket> =>
   new Promise((resolveSocket, reject) => {
     const socket = connect(socketPath)
@@ -51,21 +111,25 @@ const openSocket = (socketPath: string): Promise<Socket> =>
     socket.once('error', reject)
   })
 
-const health = async (registration: PtyHostRegistration): Promise<boolean> => {
+const probeHealth = async (
+  registration: PtyHostRegistration
+): Promise<boolean> => {
+  let socket: Socket | undefined
   try {
-    const socket = await openSocket(registration.socketPath)
-    const healthy = await new Promise<boolean>((resolveHealth) => {
+    socket = await openSocket(registration.socketPath)
+    const activeSocket = socket
+    return await new Promise<boolean>((resolveHealth) => {
       const timeout = setTimeout(() => {
-        socket.destroy()
+        activeSocket.destroy()
         resolveHealth(false)
-      }, HEALTH_TIMEOUT_MS)
+      }, REQUEST_TIMEOUT_MS)
       let buffer = ''
-      socket.setEncoding('utf8')
-      socket.on('data', (chunk: string) => {
+      activeSocket.setEncoding('utf8')
+      activeSocket.on('data', (chunk: string) => {
         buffer += chunk
         if (Buffer.byteLength(buffer, 'utf8') > MAX_PROTOCOL_FRAME_BYTES) {
           clearTimeout(timeout)
-          socket.destroy()
+          activeSocket.destroy()
           resolveHealth(false)
           return
         }
@@ -81,22 +145,22 @@ const health = async (registration: PtyHostRegistration): Promise<boolean> => {
               readonly version?: string
             }
           }
-          socket.destroy()
           resolveHealth(
             response.result?.epoch === registration.epoch &&
               response.result.version === registration.version
           )
         } catch {
-          socket.destroy()
           resolveHealth(false)
+        } finally {
+          activeSocket.destroy()
         }
       })
-      socket.write(
+      activeSocket.write(
         `${JSON.stringify({ type: 'request', requestId: 'health', method: 'health', args: [] })}\n`
       )
     })
-    return healthy
   } catch {
+    socket?.destroy()
     return false
   }
 }
@@ -124,19 +188,29 @@ const resolveHostEntry = (): string => {
   return entry
 }
 
-const ensurePtyHost = async (): Promise<PtyHostRegistration> => {
+const spawnPtyHost = (): void => {
+  const child = spawn(process.execPath, [resolveHostEntry()], {
+    detached: true,
+    env: { ...process.env },
+    stdio: 'ignore',
+  })
+  child.unref()
+}
+
+/** Adopt a live host even when outdated so the user, not a watcher, decides when it dies. */
+const ensurePtyHost = async (
+  expectedVersion: string
+): Promise<PtyHostRegistration> => {
   const paths = resolvePtyHostPaths()
   const incumbent = readJsonRegistration<ProcessRegistration>(
     paths.registrationPath
   )
   if (
     isRegistration(incumbent) &&
-    (await health(incumbent)) &&
-    incumbent.version !== PTY_HOST_PROTOCOL_VERSION
+    processExists(incumbent.pid) &&
+    (await probeHealth(incumbent))
   ) {
-    throw new Error(
-      `Terminal host outdated (running ${incumbent.version}, expected ${PTY_HOST_PROTOCOL_VERSION}); restart it explicitly`
-    )
+    return incumbent
   }
   return ensure({
     policy: 'adopt',
@@ -145,108 +219,72 @@ const ensurePtyHost = async (): Promise<PtyHostRegistration> => {
         paths.registrationPath
       )
       return isRegistration(registration) &&
-        registration.version === PTY_HOST_PROTOCOL_VERSION
+        registration.version === expectedVersion
         ? registration
         : null
     },
-    health,
-    spawn: () => {
-      const child = spawn(process.execPath, [resolveHostEntry()], {
-        detached: true,
-        env: { ...process.env },
-        stdio: 'ignore',
-      })
-      child.unref()
-    },
+    health: probeHealth,
+    spawn: spawnPtyHost,
   })
 }
 
-interface PendingRequest {
-  readonly reject: (error: Error) => void
-  readonly resolve: (value: unknown) => void
-  readonly timeout: ReturnType<typeof setTimeout>
-}
+const statusFor = (
+  registration: PtyHostRegistration,
+  expectedVersion: string
+): TerminalHostStatus => ({
+  expectedVersion,
+  runningVersion: registration.version,
+  state: registration.version === expectedVersion ? 'healthy' : 'outdated',
+})
 
-/** Daemon-side PtyHostService: an adoption-first, terminal-data-stateless proxy. */
+/** Daemon-side PtyHostService: adoption-first and terminal-data-stateless. */
 export const ptyHostProxyLayer = Layer.effect(
   TerminalManager,
   Effect.acquireRelease(
     Effect.tryPromise(async () => {
-      const registration = await ensurePtyHost()
-      const socket = await openSocket(registration.socketPath)
-      socket.setEncoding('utf8')
       const lifecycleEvents = Effect.runSync(
         PubSub.unbounded<TerminalLifecycleEvent>()
       )
       const pending = new Map<string, PendingRequest>()
-      const attachSubscribers = new Map<
-        string,
-        (event: TerminalAttachEvent) => boolean
-      >()
-      const hostSubscriberIds = new Map<string, string>()
-      let buffer = ''
+      const attachments = new Map<string, AttachRecord>()
+      const expectedVersion = resolvePtyHostVersion(resolveHostEntry())
+      let registration = await ensurePtyHost(expectedVersion)
+      let hostStatus: TerminalHostStatus = statusFor(
+        registration,
+        expectedVersion
+      )
+      let socket: Socket | undefined
+      let heartbeatInterval: ReturnType<typeof setInterval> | undefined
+      let heartbeatWarnTimer: ProcessTimeTimeout | undefined
+      let heartbeatUnresponsiveTimer: ProcessTimeTimeout | undefined
+      let recoveryPromise: Promise<void> | undefined
+      let disposed = false
 
-      const handleMessage = (message: PtyHostServerMessage): void => {
-        if (message.type === 'response') {
-          const waiter = pending.get(message.requestId)
-          if (waiter === undefined) {
-            return
-          }
-          pending.delete(message.requestId)
-          clearTimeout(waiter.timeout)
-          if (message.error !== undefined) {
-            waiter.reject(
-              new TerminalRpcError({
-                code: message.error.code ?? 'PTY_HOST_ERROR',
-                message: message.error.message,
-              })
-            )
-          } else {
-            waiter.resolve(message.result)
-          }
-          return
-        }
-        if (message.type === 'attach-event') {
-          attachSubscribers.get(message.subscriberId)?.(message.event)
-          return
-        }
-        PubSub.publishUnsafe(lifecycleEvents, message.event)
+      const cancelHeartbeatTimers = (): void => {
+        heartbeatWarnTimer?.cancel()
+        heartbeatUnresponsiveTimer?.cancel()
+        heartbeatWarnTimer = undefined
+        heartbeatUnresponsiveTimer = undefined
       }
 
-      socket.on('data', (chunk: string) => {
-        buffer += chunk
-        while (true) {
-          const newline = buffer.indexOf('\n')
-          if (newline < 0) {
-            break
-          }
-          const line = buffer.slice(0, newline)
-          buffer = buffer.slice(newline + 1)
-          if (line === '') {
-            continue
-          }
-          try {
-            handleMessage(JSON.parse(line) as PtyHostServerMessage)
-          } catch {
-            socket.destroy(new Error('PTY host sent invalid JSON'))
-            return
-          }
-        }
-        if (Buffer.byteLength(buffer, 'utf8') > MAX_PROTOCOL_FRAME_BYTES) {
-          socket.destroy(new Error('PTY host protocol frame exceeded limit'))
-        }
-      })
-      socket.on('error', () => undefined)
-      socket.on('close', () => {
+      const rejectPending = (message: string): void => {
         for (const waiter of pending.values()) {
           clearTimeout(waiter.timeout)
-          waiter.reject(new Error('PTY host connection closed'))
+          waiter.reject(new Error(message))
         }
         pending.clear()
-      })
+      }
 
-      const request = <A>(method: PtyHostMethod, args: readonly unknown[]) =>
+      const request = <A>(
+        method: PtyHostMethod,
+        args: readonly unknown[]
+      ): Promise<A> =>
         new Promise<A>((resolveRequest, reject) => {
+          const activeSocket = socket
+          if (activeSocket === undefined || !activeSocket.writable) {
+            reject(new Error('PTY host connection is unavailable'))
+            return
+          }
           const requestId = randomUUID()
           const timeout = setTimeout(() => {
             const waiter = pending.get(requestId)
@@ -269,19 +307,236 @@ export const ptyHostProxyLayer = Layer.effect(
             method,
             args,
           }
-          if (!socket.write(`${JSON.stringify(message)}\n`)) {
-            // Backpressure is handled by the socket. The request timeout keeps
-            // a permanently stalled local transport bounded.
-          }
+          activeSocket.write(`${JSON.stringify(message)}\n`)
         })
 
-      // Boot barrier: ensure -> list before the public daemon can start.
-      try {
-        await request('listTerminals', [])
-      } catch (error) {
-        socket.destroy()
-        throw error
+      const armHeartbeatTimers = (): void => {
+        cancelHeartbeatTimers()
+        heartbeatWarnTimer = scheduleProcessTimeTimeout(
+          () => {
+            if (hostStatus.state === 'healthy') {
+              hostStatus = { ...hostStatus, state: 'warning' }
+            }
+          },
+          heartbeatWarnMs,
+          { unref: true }
+        )
+        heartbeatUnresponsiveTimer = scheduleProcessTimeTimeout(
+          () => {
+            if (
+              hostStatus.state !== 'outdated' &&
+              hostStatus.state !== 'restarting'
+            ) {
+              // Advisory only (ADR 0003): do not close or kill the host.
+              hostStatus = { ...hostStatus, state: 'unresponsive' }
+            }
+          },
+          heartbeatUnresponsiveMs,
+          { unref: true }
+        )
       }
+
+      const markHeartbeat = (result: {
+        readonly epoch: string
+        readonly version: string
+      }): void => {
+        if (result.epoch !== registration.epoch) {
+          return
+        }
+        hostStatus = statusFor(
+          { ...registration, version: result.version },
+          expectedVersion
+        )
+        armHeartbeatTimers()
+      }
+
+      const handleMessage = (message: PtyHostServerMessage): void => {
+        if (message.type === 'response') {
+          const waiter = pending.get(message.requestId)
+          if (waiter === undefined) {
+            return
+          }
+          pending.delete(message.requestId)
+          clearTimeout(waiter.timeout)
+          if (message.error !== undefined) {
+            waiter.reject(
+              new TerminalRpcError({
+                code: message.error.code ?? 'PTY_HOST_ERROR',
+                message: message.error.message,
+              })
+            )
+          } else {
+            waiter.resolve(message.result)
+          }
+          return
+        }
+        if (message.type === 'attach-event') {
+          attachments.get(message.subscriberId)?.subscriber(message.event)
+          return
+        }
+        PubSub.publishUnsafe(lifecycleEvents, message.event)
+      }
+
+      const attachSocket = async (nextRegistration: PtyHostRegistration) => {
+        const nextSocket = await openSocket(nextRegistration.socketPath)
+        let buffer = ''
+        socket = nextSocket
+        registration = nextRegistration
+        nextSocket.setEncoding('utf8')
+        nextSocket.on('data', (chunk: string) => {
+          buffer += chunk
+          while (true) {
+            const newline = buffer.indexOf('\n')
+            if (newline < 0) {
+              break
+            }
+            const line = buffer.slice(0, newline)
+            buffer = buffer.slice(newline + 1)
+            if (line === '') {
+              continue
+            }
+            try {
+              handleMessage(JSON.parse(line) as PtyHostServerMessage)
+            } catch {
+              nextSocket.destroy(new Error('PTY host sent invalid JSON'))
+              return
+            }
+          }
+          if (Buffer.byteLength(buffer, 'utf8') > MAX_PROTOCOL_FRAME_BYTES) {
+            nextSocket.destroy(
+              new Error('PTY host protocol frame exceeded limit')
+            )
+          }
+        })
+        nextSocket.on('error', () => undefined)
+        nextSocket.on('close', () => {
+          if (socket !== nextSocket) {
+            return
+          }
+          socket = undefined
+          cancelHeartbeatTimers()
+          rejectPending('PTY host connection closed')
+          if (!(disposed || recoveryPromise)) {
+            recover(false).catch(() => undefined)
+          }
+        })
+        await request('listTerminals', [])
+        hostStatus = statusFor(registration, expectedVersion)
+        armHeartbeatTimers()
+      }
+
+      const reattach = async (): Promise<void> => {
+        for (const record of attachments.values()) {
+          try {
+            const result = await request<{ readonly subscriberId: string }>(
+              'attach',
+              [
+                record.terminalId,
+                {
+                  leaseId: record.leaseId,
+                  ...(record.cursor === undefined
+                    ? {}
+                    : { cursor: record.cursor }),
+                  ...(record.epoch === undefined
+                    ? {}
+                    : { epoch: record.epoch }),
+                },
+                record.localId,
+              ]
+            )
+            record.hostSubscriberId = result.subscriberId
+            record.epoch = registration.epoch
+          } catch {
+            // Never disguise a host epoch change as a seamless gap, even when
+            // a particular terminal could not be revived from its checkpoint.
+            record.subscriber({
+              _tag: 'Reset',
+              epoch: registration.epoch,
+              reason: 'epoch_changed',
+            })
+          }
+        }
+      }
+
+      const waitForExit = async (pid: number): Promise<void> => {
+        const deadline = Date.now() + REQUEST_TIMEOUT_MS
+        while (processExists(pid) && Date.now() < deadline) {
+          await delay(25)
+        }
+        if (processExists(pid)) {
+          // This path is reachable only after an explicit operator action.
+          process.kill(pid, 'SIGTERM')
+          const escalationDeadline = Date.now() + REQUEST_TIMEOUT_MS
+          while (processExists(pid) && Date.now() < escalationDeadline) {
+            await delay(25)
+          }
+        }
+        if (processExists(pid)) {
+          process.kill(pid, 'SIGKILL')
+        }
+      }
+
+      function recover(manual: boolean): Promise<void> {
+        if (recoveryPromise !== undefined) {
+          return recoveryPromise
+        }
+        const run = async () => {
+          hostStatus = {
+            expectedVersion,
+            runningVersion: registration.version,
+            state: 'restarting',
+          }
+          cancelHeartbeatTimers()
+          if (manual) {
+            const previousPid = registration.pid
+            await request('shutdown', []).catch(() => undefined)
+            await waitForExit(previousPid)
+          }
+          const previousSocket = socket
+          socket = undefined
+          previousSocket?.destroy()
+          rejectPending('PTY host is restarting')
+
+          let lastError: unknown
+          for (let attempt = 0; attempt < maxRestarts; attempt += 1) {
+            try {
+              const ensured = await ensurePtyHost(expectedVersion)
+              await attachSocket(ensured)
+              await reattach()
+              return
+            } catch (error) {
+              lastError = error
+              if (attempt + 1 < maxRestarts) {
+                await delay(Math.min(500 * 2 ** attempt, 10_000))
+              }
+            }
+          }
+          hostStatus = {
+            expectedVersion,
+            runningVersion: registration.version,
+            state: 'unavailable',
+          }
+          throw lastError
+        }
+        recoveryPromise = run().finally(() => {
+          recoveryPromise = undefined
+        })
+        return recoveryPromise
+      }
+
+      await attachSocket(registration)
+      heartbeatInterval = setInterval(() => {
+        if (socket === undefined || recoveryPromise !== undefined) {
+          return
+        }
+        request<{ readonly epoch: string; readonly version: string }>(
+          'health',
+          []
+        )
+          .then(markHeartbeat)
+          .catch(() => undefined)
+      }, heartbeatIntervalMs)
+      ;(heartbeatInterval as unknown as { unref?: () => void }).unref?.()
 
       const remote = <A>(method: PtyHostMethod, args: readonly unknown[]) =>
         Effect.tryPromise({
@@ -302,21 +557,52 @@ export const ptyHostProxyLayer = Layer.effect(
         attach: (id, options, subscriber) =>
           Effect.gen(function* () {
             const localId = randomUUID()
-            attachSubscribers.set(localId, subscriber)
+            const leaseId = options.leaseId ?? localId
+            const record: AttachRecord = {
+              ...(options.cursor === undefined
+                ? {}
+                : { cursor: options.cursor }),
+              ...(options.epoch === undefined ? {} : { epoch: options.epoch }),
+              leaseId,
+              localId,
+              subscriber,
+              terminalId: id,
+            }
+            attachments.set(localId, record)
             const result = yield* remote<{ readonly subscriberId: string }>(
               'attach',
-              [id, options, localId]
+              [id, { ...options, leaseId }, localId]
             ).pipe(
               Effect.tapError(() =>
-                Effect.sync(() => attachSubscribers.delete(localId))
+                Effect.sync(() => attachments.delete(localId))
               )
             )
-            hostSubscriberIds.set(`${id}:${localId}`, result.subscriberId)
+            record.hostSubscriberId = result.subscriberId
+            record.epoch = registration.epoch
             return { subscriberId: localId }
           }),
-        acknowledge: (id, leaseId, cursor) =>
-          remote('acknowledge', [id, leaseId, cursor]),
+        acknowledge: (id, leaseId, cursor) => {
+          for (const record of attachments.values()) {
+            if (record.terminalId === id && record.leaseId === leaseId) {
+              record.cursor = cursor
+            }
+          }
+          return remote('acknowledge', [id, leaseId, cursor])
+        },
         transportMetrics: (id) => remote('transportMetrics', [id]),
+        hostStatus: () => Effect.succeed(hostStatus),
+        restartHost: () =>
+          Effect.tryPromise({
+            try: async () => {
+              await recover(true)
+              return hostStatus
+            },
+            catch: (error) =>
+              new TerminalRpcError({
+                code: 'PTY_HOST_RESTART_FAILED',
+                message: error instanceof Error ? error.message : String(error),
+              }),
+          }),
         resize: (id, cols, rows) => remote('resize', [id, cols, rows]),
         kill: (id) => remote('kill', [id]),
         listTerminals: (workspaceId) =>
@@ -341,12 +627,10 @@ export const ptyHostProxyLayer = Layer.effect(
           }),
         unsubscribe: (id, localId) =>
           Effect.gen(function* () {
-            attachSubscribers.delete(localId)
-            const key = `${id}:${localId}`
-            const hostId = hostSubscriberIds.get(key)
-            hostSubscriberIds.delete(key)
-            if (hostId !== undefined) {
-              yield* remote('unsubscribe', [id, hostId]).pipe(
+            const record = attachments.get(localId)
+            attachments.delete(localId)
+            if (record?.hostSubscriberId !== undefined) {
+              yield* remote('unsubscribe', [id, record.hostSubscriberId]).pipe(
                 Effect.orElseSucceed(() => undefined)
               )
             }
@@ -363,12 +647,23 @@ export const ptyHostProxyLayer = Layer.effect(
             Effect.orElseSucceed(() => undefined)
           ),
         getTerminals: () => Effect.succeed([]),
-        setRevivedReplayEvent: () => Effect.void,
+        setRevivedReplayEvent: () => Effect.succeed(undefined),
         takeRevivedReplayEvent: () => Effect.succeed<undefined>(undefined),
         lifecycleEvents,
       })
-      return { service, socket }
+      return {
+        dispose: () => {
+          disposed = true
+          cancelHeartbeatTimers()
+          if (heartbeatInterval !== undefined) {
+            clearInterval(heartbeatInterval)
+          }
+          socket?.destroy()
+          rejectPending('PTY host proxy disposed')
+        },
+        service,
+      }
     }),
-    ({ socket }) => Effect.sync(() => socket.destroy())
+    ({ dispose }) => Effect.sync(dispose)
   ).pipe(Effect.map(({ service }) => service))
 )

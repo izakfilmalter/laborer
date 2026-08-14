@@ -222,6 +222,10 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
 
       'terminal.transportMetrics': ({ id }) => tm.transportMetrics(id),
 
+      'terminal.hostStatus': () => tm.hostStatus(),
+
+      'terminal.restartHost': () => tm.restartHost(),
+
       // -------------------------------------------------------------------
       // terminal.resize — resize a terminal's PTY
       // -------------------------------------------------------------------

@@ -27,6 +27,7 @@ import {
   type AgentStatusReport,
   type AgentStatusSnapshot,
   type TerminalAttachEvent,
+  type TerminalHostStatus,
   TerminalRpcError,
 } from '@laborer/shared/rpc'
 import { Context, Effect, Layer, PubSub, Ref, Schedule } from 'effect'
@@ -843,6 +844,18 @@ class TerminalManager extends Context.Service<
     readonly transportMetrics: (
       terminalId: string
     ) => Effect.Effect<TerminalTransportMetrics, TerminalRpcError>
+
+    /** Detached host health. Direct/in-process managers are always healthy. */
+    readonly hostStatus: () => Effect.Effect<
+      TerminalHostStatus,
+      TerminalRpcError
+    >
+
+    /** Explicitly checkpoint and restart the detached host. */
+    readonly restartHost: () => Effect.Effect<
+      TerminalHostStatus,
+      TerminalRpcError
+    >
 
     /** Resize a terminal's PTY dimensions. */
     readonly resize: (
@@ -2788,6 +2801,19 @@ class TerminalManager extends Context.Service<
         attach,
         acknowledge,
         transportMetrics,
+        hostStatus: () =>
+          Effect.succeed({
+            expectedVersion: 'in-process',
+            runningVersion: 'in-process',
+            state: 'healthy',
+          }),
+        restartHost: () =>
+          Effect.fail(
+            new TerminalRpcError({
+              code: 'PTY_HOST_NOT_DETACHED',
+              message: 'The terminal host is running in-process',
+            })
+          ),
         write,
         resize,
         forceRedraw,

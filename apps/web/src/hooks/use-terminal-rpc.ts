@@ -4,6 +4,7 @@ import { Effect, Fiber, Stream } from 'effect'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
+import { isTerminalRevival } from '@/components/terminal-revival-marker'
 
 const ACK_BATCH_CHARS = 5000
 const INPUT_WRITE_BYTES = 64 * 1024
@@ -16,7 +17,7 @@ type ReplayStatus = 'idle' | 'replaying' | 'complete'
 
 interface Options {
   readonly onData: (data: string, cursor: number, commit: () => void) => void
-  readonly onReset: () => void
+  readonly onReset: (reason: 'epoch_changed' | 'cursor_out_of_range') => void
   readonly onSnapshot: (
     data: string,
     cursor: number,
@@ -39,6 +40,7 @@ export function useTerminalRpc({
   const [terminalStatus, setTerminalStatus] =
     useState<TerminalStatus>('running')
   const [replayStatus, setReplayStatus] = useState<ReplayStatus>('idle')
+  const [wasRevived, setWasRevived] = useState(false)
   const cursorRef = useRef<number | undefined>(undefined)
   const epochRef = useRef<string | undefined>(undefined)
   const unackedCharsRef = useRef(0)
@@ -88,7 +90,10 @@ export function useTerminalRpc({
         case 'Reset':
           cursorRef.current = undefined
           epochRef.current = event.epoch
-          callbacksRef.current.onReset()
+          callbacksRef.current.onReset(event.reason)
+          if (isTerminalRevival(event.reason)) {
+            setWasRevived(true)
+          }
           setReplayStatus('replaying')
           return
         case 'Snapshot':
@@ -224,5 +229,5 @@ export function useTerminalRpc({
     [runtimeResult, terminalId]
   )
 
-  return { replayStatus, send, status, terminalStatus }
+  return { replayStatus, send, status, terminalStatus, wasRevived }
 }

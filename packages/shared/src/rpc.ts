@@ -119,6 +119,22 @@ export const TerminalAttachEvent = Schema.Union([
 
 export type TerminalAttachEvent = typeof TerminalAttachEvent.Type
 
+/** Daemon-observed health of the detached terminal host process. */
+export const TerminalHostStatus = Schema.Struct({
+  expectedVersion: Schema.String,
+  runningVersion: Schema.optional(Schema.String),
+  state: Schema.Literals([
+    'healthy',
+    'warning',
+    'unresponsive',
+    'outdated',
+    'restarting',
+    'unavailable',
+  ]),
+})
+
+export type TerminalHostStatus = typeof TerminalHostStatus.Type
+
 // ---------------------------------------------------------------------------
 // Error Types
 // ---------------------------------------------------------------------------
@@ -1349,7 +1365,7 @@ export type TerminalInfo = typeof TerminalInfo.Type
 /**
  * RPC group for the standalone terminal service (`@laborer/terminal`).
  *
- * All 7 endpoints operate on terminal instances managed by the terminal
+ * These endpoints operate on terminal instances and detached-host health
  * service. The `workspaceId` is opaque metadata passed at spawn time —
  * the terminal service stores it but does not interpret it.
  *
@@ -1446,6 +1462,18 @@ export class TerminalRpcs extends RpcGroup.make(
     }),
     error: TerminalRpcError,
     payload: { id: Schema.String },
+  }),
+
+  /** Advisory health for the detached pty host. Heartbeat silence never kills it. */
+  Rpc.make('terminal.hostStatus', {
+    success: TerminalHostStatus,
+    error: TerminalRpcError,
+  }),
+
+  /** Explicit checkpoint → host restart → revival action. */
+  Rpc.make('terminal.restartHost', {
+    success: TerminalHostStatus,
+    error: TerminalRpcError,
   }),
 
   // -----------------------------------------------------------------------

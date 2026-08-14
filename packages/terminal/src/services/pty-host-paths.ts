@@ -3,6 +3,7 @@ import {
   chmodSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readlinkSync,
   symlinkSync,
 } from 'node:fs'
@@ -13,6 +14,10 @@ export const PTY_HOST_PROTOCOL_VERSION = '1'
 export const PTY_HOST_REGISTRATION_FILE = 'pty-host.json'
 export const PTY_HOST_SOCKET_FILE = 'pty-host.sock'
 const MAX_PORTABLE_UNIX_SOCKET_PATH_BYTES = 103
+
+/** Content identity captured at host boot so a later dev rebuild is visible. */
+export const resolvePtyHostVersion = (entryPath: string): string =>
+  `${PTY_HOST_PROTOCOL_VERSION}-${createHash('sha256').update(readFileSync(entryPath)).digest('hex').slice(0, 12)}`
 
 export const resolveLaborerStateRoot = (
   environment: NodeJS.ProcessEnv = process.env

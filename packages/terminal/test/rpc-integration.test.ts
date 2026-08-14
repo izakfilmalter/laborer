@@ -240,6 +240,16 @@ describe(
       await run(client['terminal.kill']({ id: terminal.id }))
     })
 
+    it('reports direct terminal host health without destructive recovery', async () => {
+      const status = await run(client['terminal.hostStatus']())
+
+      assert.deepStrictEqual(status, {
+        expectedVersion: 'in-process',
+        runningVersion: 'in-process',
+        state: 'healthy',
+      })
+    })
+
     it('terminal.attach resets an active stream when the terminal restarts', async () => {
       const terminal = await run(
         client['terminal.spawn']({

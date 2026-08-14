@@ -140,6 +140,25 @@ const stopHost = async (stateHome: string): Promise<void> => {
   }
 }
 
+const waitForHostReplacement = async (
+  stateHome: string,
+  previousPid: number
+): Promise<number> => {
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    try {
+      const pid = await readHostPid(stateHome)
+      if (pid !== previousPid) {
+        return pid
+      }
+    } catch {
+      // Registration is atomically replaced while the bounded ensure runs.
+    }
+    await new Promise((resume) => setTimeout(resume, 25))
+  }
+  throw new Error('Timed out waiting for daemon to re-ensure the pty host')
+}
+
 describe('standalone daemon', () => {
   it.effect('forwards in-process watcher events to server consumers', () => {
     const WatcherManagerLive = WatcherManager.layer.pipe(
@@ -228,15 +247,20 @@ describe('standalone daemon', () => {
       await Effect.runPromise(
         Effect.gen(function* () {
           const client = yield* RpcClient.make(DaemonRpcs)
-          const [health, terminals, watchers] = yield* Effect.all([
+          const [health, hostStatus, terminals, watchers] = yield* Effect.all([
             client['health.check'](),
+            client['terminal.hostStatus'](),
             client['terminal.list'](),
             client['watcher.list'](),
           ])
 
           assert.strictEqual(health.status, 'ok')
+          assert.strictEqual(hostStatus.state, 'healthy')
           assert.deepStrictEqual(terminals, [])
           assert.deepStrictEqual(watchers, [])
+
+          const restarted = yield* client['terminal.restartHost']()
+          assert.strictEqual(restarted.state, 'healthy')
 
           const spawnFailure = yield* Effect.flip(
             client['terminal.spawn']({ workspaceId: 'missing-workspace' })
@@ -274,6 +298,13 @@ describe('standalone daemon', () => {
         originalHostPid,
         'daemon restart should adopt the detached PTY host'
       )
+      process.kill(originalHostPid, 'SIGKILL')
+      const replacementPid = await waitForHostReplacement(
+        stateHome,
+        originalHostPid
+      )
+      assert.notStrictEqual(replacementPid, originalHostPid)
+      await waitForReady(url, child)
     } catch (error) {
       throw new Error(
         `Daemon RPC round-trip failed: ${String(error)}\n${diagnostics}`

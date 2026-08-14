@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { chmodSync, rmSync } from 'node:fs'
 import { connect, createServer, type Socket } from 'node:net'
+import { fileURLToPath } from 'node:url'
 import { writeJsonRegistration } from '@laborer/ensure'
 import { Effect, Fiber, Layer, ManagedRuntime, Stream } from 'effect'
 import { directLayer } from './services/pty-direct.js'
 import {
-  PTY_HOST_PROTOCOL_VERSION,
   preparePtyHostSocketPath,
   resolvePtyHostPaths,
+  resolvePtyHostVersion,
 } from './services/pty-host-paths.js'
 import type {
   PtyHostRequest,
@@ -17,6 +18,7 @@ import { TerminalManager } from './services/terminal-manager.js'
 import { TerminalSessionPersistenceLayer } from './services/terminal-session-persistence-layer.js'
 
 const epoch = randomUUID()
+const version = resolvePtyHostVersion(fileURLToPath(import.meta.url))
 process.env.LABORER_PTY_HOST_EPOCH = epoch
 
 const TerminalCore = Layer.merge(TerminalManager.layer, directLayer).pipe(
@@ -49,7 +51,7 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
   const [first, second, third] = request.args
   switch (request.method) {
     case 'health':
-      return Effect.succeed({ epoch, version: PTY_HOST_PROTOCOL_VERSION })
+      return Effect.succeed({ epoch, version })
     case 'spawn':
       return manager.spawn(first as Parameters<typeof manager.spawn>[0])
     case 'write':
@@ -81,6 +83,10 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
       return manager.remove(first as string)
     case 'restart':
       return manager.restart(first as string)
+    case 'shutdown':
+      // The response is flushed before requestStop disposes the runtime. Its
+      // persistence finalizer checkpoints every terminal for revival.
+      return Effect.void
     case 'listTerminals':
       return manager.listTerminals(first as string | undefined)
     case 'killAllForWorkspace':
@@ -140,6 +146,7 @@ const server = createServer((socket) => {
         return
       }
       requestLane = requestLane
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: serialized protocol dispatch keeps request ordering and shutdown response atomic
         .then(async () => {
           const result = await runtime.runPromise(
             Effect.result(invoke(socket, request))
@@ -158,6 +165,9 @@ const server = createServer((socket) => {
               requestId: request.requestId,
               result: result.success,
             })
+            if (request.method === 'shutdown') {
+              setImmediate(requestStop)
+            }
             return
           }
           send(socket, {
@@ -229,7 +239,7 @@ writeJsonRegistration(paths.registrationPath, {
   pid: process.pid,
   socketPath: paths.socketPath,
   startedAt: new Date().toISOString(),
-  version: PTY_HOST_PROTOCOL_VERSION,
+  version,
 })
 
 let stopPromise: Promise<void> | undefined

@@ -22,7 +22,8 @@
  */
 
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
-import { RotateCcw, X } from 'lucide-react'
+import type { TerminalHostStatus } from '@laborer/shared/rpc'
+import { AlertTriangle, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -31,6 +32,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { type ServiceName, useServiceStatus } from '@/hooks/use-service-status'
+import { useTerminalHostStatus } from '@/hooks/use-terminal-host-status'
 import { localApi } from '@/lib/local-api'
 import {
   getStatusColor,
@@ -365,9 +367,54 @@ function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   )
 }
 
+function TerminalHostStatusPill({
+  onRestart,
+  status,
+}: {
+  readonly onRestart: () => void
+  readonly status: TerminalHostStatus | undefined
+}) {
+  if (status === undefined || status.state === 'healthy') {
+    return null
+  }
+  const copy = {
+    warning: 'Terminal host delayed',
+    unresponsive: 'Terminal host unresponsive',
+    outdated: 'Terminal host outdated',
+    restarting: 'Restarting terminal host…',
+    unavailable: 'Terminal host unavailable',
+  }[status.state]
+  const actionable =
+    status.state === 'unresponsive' ||
+    status.state === 'outdated' ||
+    status.state === 'unavailable'
+
+  return (
+    <span
+      aria-live="polite"
+      className="flex basis-full items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-warning text-xs"
+      data-state={status.state}
+      data-testid="terminal-host-status"
+    >
+      <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1">{copy}</span>
+      {actionable && (
+        <button
+          className="shrink-0 rounded border border-warning/50 bg-background/70 px-1.5 py-0.5 font-medium hover:bg-background"
+          onClick={onRestart}
+          type="button"
+        >
+          Restart terminal host
+        </button>
+      )}
+    </span>
+  )
+}
+
 /** Row of status badges for core services — always visible. */
 function ServiceStatusDots() {
   const statuses = useServiceStatus()
+  const host = useTerminalHostStatus()
   const { persistedErrors, dismissError } = usePersistedErrors(statuses)
 
   const handleRetry = useCallback(
@@ -388,6 +435,14 @@ function ServiceStatusDots() {
       aria-label="Service statuses"
       className="flex flex-wrap items-center gap-1 transition-all duration-300"
     >
+      <TerminalHostStatusPill
+        onRestart={() => {
+          host.restart().catch((error: unknown) => {
+            console.error('Failed to restart terminal host', error)
+          })
+        }}
+        status={host.status}
+      />
       {STATUS_DOT_SERVICES.map((name) => (
         <ServiceStatusBadge
           errorPersisted={persistedErrors.has(name)}
@@ -403,4 +458,9 @@ function ServiceStatusDots() {
   )
 }
 
-export { MIN_DISPLAY_DURATION_MS, ServiceStatusDots, STATUS_DOT_SERVICES }
+export {
+  MIN_DISPLAY_DURATION_MS,
+  ServiceStatusDots,
+  STATUS_DOT_SERVICES,
+  TerminalHostStatusPill,
+}

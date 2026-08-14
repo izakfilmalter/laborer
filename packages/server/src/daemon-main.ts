@@ -46,9 +46,14 @@ const NativeServices = Layer.merge(TerminalServices, FileWatcherServices)
 const Infrastructure = makeInfrastructureLayer({
   fileWatcherClientLayer: FileWatcherClient.inProcessLayer,
   terminalClientLayer: TerminalClient.inProcessLayer,
-}).pipe(Layer.provide(NativeServices))
+})
 
-const ApplicationServices = Layer.merge(Infrastructure, NativeServices)
+// Retain the exact native service instances supplied to the infrastructure.
+// Building and merging a second NativeServices layer would split public RPC
+// state from the in-process clients used by the Laborer handlers.
+const ApplicationServices = Infrastructure.pipe(
+  Layer.provideMerge(NativeServices)
+)
 
 const RpcHandlers = Layer.mergeAll(
   TerminalRpcsLive,

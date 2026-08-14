@@ -177,34 +177,34 @@ class FileWatcherClient extends Context.Service<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          if (Option.isSome(inProcessBackend)) {
-            const manager = inProcessBackend.value.manager
-            return {
-              'watcher.events': () => Stream.fromPubSub(manager.fileEvents),
-              'watcher.list': () => manager.list(),
-              'watcher.subscribe': (input: {
-                readonly ignoreGlobs?: readonly string[] | undefined
-                readonly path: string
-                readonly recursive?: boolean | undefined
-              }) =>
-                manager.subscribe(
-                  input.path,
-                  input.recursive,
-                  input.ignoreGlobs
-                ),
-              'watcher.unsubscribe': ({ id }: { readonly id: string }) =>
-                manager.unsubscribe(id),
-              'watcher.updateIgnore': ({
-                id,
-                ignoreGlobs,
-              }: {
-                readonly id: string
-                readonly ignoreGlobs: readonly string[]
-              }) => manager.updateIgnore(id, ignoreGlobs),
-            }
-          }
-
           const client = yield* (() => {
+            if (Option.isSome(inProcessBackend)) {
+              const manager = inProcessBackend.value.manager
+              return Effect.succeed({
+                'watcher.events': () => Stream.fromPubSub(manager.fileEvents),
+                'watcher.list': () => manager.list(),
+                'watcher.subscribe': (input: {
+                  readonly ignoreGlobs?: readonly string[] | undefined
+                  readonly path: string
+                  readonly recursive?: boolean | undefined
+                }) =>
+                  manager.subscribe(
+                    input.path,
+                    input.recursive,
+                    input.ignoreGlobs
+                  ),
+                'watcher.unsubscribe': ({ id }: { readonly id: string }) =>
+                  manager.unsubscribe(id),
+                'watcher.updateIgnore': ({
+                  id,
+                  ignoreGlobs,
+                }: {
+                  readonly id: string
+                  readonly ignoreGlobs: readonly string[]
+                }) => manager.updateIgnore(id, ignoreGlobs),
+              })
+            }
+
             if (Option.isSome(fileWatcherRpcPort)) {
               return Effect.gen(function* () {
                 const port = yield* fileWatcherRpcPort.value.awaitPort

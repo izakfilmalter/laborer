@@ -5,9 +5,14 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { NodeSocket } from '@effect/platform-node'
 import { assert, describe, it } from '@effect/vitest'
-import { DaemonRpcs } from '@laborer/shared/rpc'
-import { Effect, Layer } from 'effect'
+import { FileWatcher } from '@laborer/file-watcher/services/file-watcher'
+import { WatcherManager } from '@laborer/file-watcher/services/watcher-manager'
+import { DaemonRpcs, type WatchFileEvent } from '@laborer/shared/rpc'
+import { Effect, Layer, PubSub } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
+import { FileWatcherClient } from '../src/services/file-watcher-client.js'
+
+const MAX_DIAGNOSTICS_LENGTH = 64 * 1024
 
 const allocatePort = (): Promise<number> =>
   new Promise((resolvePort, reject) => {
@@ -44,12 +49,12 @@ const waitForReady = async (
     try {
       const response = await fetch(`${url}/health`)
       if (response.ok) {
-        const body = (await response.json()) as {
-          readonly ready?: unknown
-          readonly status?: unknown
+        const body: unknown = await response.json()
+        if (typeof body !== 'object' || body === null) {
+          throw new Error('Daemon health response was not an object')
         }
-        assert.strictEqual(body.ready, true)
-        assert.strictEqual(body.status, 'ok')
+        assert.strictEqual(Reflect.get(body, 'ready'), true)
+        assert.strictEqual(Reflect.get(body, 'status'), 'ok')
         return
       }
     } catch {
@@ -77,6 +82,48 @@ const stopChild = async (child: ChildProcess): Promise<void> => {
 }
 
 describe('standalone daemon', () => {
+  it.effect('forwards in-process watcher events to server consumers', () => {
+    const WatcherManagerLive = WatcherManager.layer.pipe(
+      Layer.provide(FileWatcher.layer)
+    )
+    const TestLayer = FileWatcherClient.inProcessLayer.pipe(
+      Layer.provideMerge(WatcherManagerLive)
+    )
+
+    return Effect.gen(function* () {
+      const client = yield* FileWatcherClient
+      const manager = yield* WatcherManager
+      let receiveEvent: (event: WatchFileEvent) => void = () => undefined
+      const received = new Promise<WatchFileEvent>((resolveEvent) => {
+        receiveEvent = resolveEvent
+      })
+      const subscription = client.onFileEvent((event) => {
+        receiveEvent(event)
+      })
+
+      yield* client.listSubscriptions()
+      for (
+        let attempts = 0;
+        attempts < 100 && manager.fileEvents.subscribers.size === 0;
+        attempts += 1
+      ) {
+        yield* Effect.yieldNow
+      }
+      assert.strictEqual(manager.fileEvents.subscribers.size, 1)
+
+      const event: WatchFileEvent = {
+        subscriptionId: 'subscription-1',
+        type: 'change',
+        fileName: 'src/index.ts',
+        absolutePath: '/tmp/project/src/index.ts',
+      }
+      yield* PubSub.publish(manager.fileEvents, event)
+
+      assert.deepStrictEqual(yield* Effect.promise(() => received), event)
+      subscription.unsubscribe()
+    }).pipe(Effect.provide(TestLayer), Effect.scoped)
+  })
+
   it('serves all three RPC groups over one WebSocket', async () => {
     const port = await allocatePort()
     const stateHome = await mkdtemp(join(tmpdir(), 'laborer-daemon-test-'))
@@ -84,18 +131,28 @@ describe('standalone daemon', () => {
     let diagnostics = ''
     const child = spawn(process.execPath, [daemonPath], {
       env: {
-        ...process.env,
+        HOME: stateHome,
         LABORER_DAEMON_PORT: String(port),
+        LABORER_FILE_WATCHER_BACKEND: 'fs',
         NODE_ENV: 'test',
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        SHELL: '/bin/sh',
+        TMPDIR: tmpdir(),
+        XDG_CONFIG_HOME: join(stateHome, 'config'),
         XDG_STATE_HOME: stateHome,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    const appendDiagnostics = (chunk: unknown) => {
+      diagnostics = `${diagnostics}${String(chunk)}`.slice(
+        -MAX_DIAGNOSTICS_LENGTH
+      )
+    }
     child.stdout?.on('data', (chunk) => {
-      diagnostics += String(chunk)
+      appendDiagnostics(chunk)
     })
     child.stderr?.on('data', (chunk) => {
-      diagnostics += String(chunk)
+      appendDiagnostics(chunk)
     })
 
     const url = `http://127.0.0.1:${String(port)}`

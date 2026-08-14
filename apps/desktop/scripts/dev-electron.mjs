@@ -92,12 +92,17 @@ function startApp() {
     }
   })
 
-  app.once('exit', () => {
+  app.once('exit', (code) => {
     if (currentApp === app) {
       currentApp = null
     }
 
-    if (!(shuttingDown || expectedExits.has(app))) {
+    if (!(shuttingDown || expectedExits.has(app)) && code === 0) {
+      // A clean Electron exit is an explicit app quit, not a crash to hide
+      // behind a restart. End the desktop runner so it can issue the daemon's
+      // shutdown-flavoured stop and take the detached host down too.
+      shutdown(0)
+    } else if (!(shuttingDown || expectedExits.has(app))) {
       scheduleRestart()
     }
   })

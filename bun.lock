@@ -6,6 +6,7 @@
       "name": "laborer",
       "dependencies": {
         "@laborer/env": "workspace:*",
+        "@laborer/ensure": "workspace:*",
         "dotenv": "catalog:",
         "zod": "catalog:",
       },
@@ -224,6 +225,7 @@
       "dependencies": {
         "@effect/platform-node": "catalog:",
         "@laborer/env": "workspace:*",
+        "@laborer/ensure": "workspace:*",
         "@laborer/file-watcher": "workspace:*",
         "@laborer/shared": "workspace:*",
         "@laborer/task-db": "workspace:*",

@@ -16,6 +16,7 @@
     "./rpc/handlers": "./src/rpc/handlers.ts",
     "./services/pty-direct": "./src/services/pty-direct.ts",
     "./services/pty-host-proxy": "./src/services/pty-host-proxy.ts",
+    "./services/pty-host-paths": "./src/services/pty-host-paths.ts",
     "./services/terminal-session-persistence-layer": "./src/services/terminal-session-persistence-layer.ts",
     "./services/terminal-manager": "./src/services/terminal-manager.ts"
   },

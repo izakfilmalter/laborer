@@ -6,8 +6,9 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   ensure,
-  type ProcessRegistration,
-  readJsonRegistration,
+  type PtyHostRegistration,
+  readPtyHostRegistration,
+  stopWithEscalation,
 } from '@laborer/ensure'
 import {
   type ProcessTimeTimeout,
@@ -29,11 +30,6 @@ import {
   type TerminalLifecycleEvent,
   TerminalManager,
 } from './terminal-manager.js'
-
-interface PtyHostRegistration extends ProcessRegistration {
-  readonly epoch: string
-  readonly socketPath: string
-}
 
 interface PendingRequest {
   readonly reject: (error: Error) => void
@@ -59,6 +55,7 @@ export const PTY_HOST_MAX_RESTARTS_DEFAULT = 5
 
 const REQUEST_TIMEOUT_MS = 5000
 const MAX_PROTOCOL_FRAME_BYTES = 1024 * 1024
+let explicitHostShutdown = false
 
 const positiveIntegerFromEnv = (name: string, fallback: number): number => {
   const parsed = Number(process.env[name])
@@ -81,16 +78,6 @@ const maxRestarts = positiveIntegerFromEnv(
   'LABORER_PTY_HOST_MAX_RESTARTS',
   PTY_HOST_MAX_RESTARTS_DEFAULT
 )
-
-const isRegistration = (
-  value: ProcessRegistration | null
-): value is PtyHostRegistration =>
-  value !== null &&
-  Number.isInteger(value.pid) &&
-  value.pid > 0 &&
-  typeof value.epoch === 'string' &&
-  typeof value.socketPath === 'string' &&
-  typeof value.startedAt === 'string'
 
 const processExists = (pid: number): boolean => {
   try {
@@ -165,6 +152,50 @@ const probeHealth = async (
   }
 }
 
+const requestHostShutdown = async (
+  registration: PtyHostRegistration
+): Promise<void> => {
+  const socket = await openSocket(registration.socketPath)
+  await new Promise<void>((resolveShutdown, reject) => {
+    const timeout = setTimeout(() => {
+      socket.destroy()
+      reject(new Error('Timed out waiting for PTY host shutdown response'))
+    }, REQUEST_TIMEOUT_MS)
+    let buffer = ''
+    socket.setEncoding('utf8')
+    socket.once('error', (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+    socket.on('data', (chunk: string) => {
+      buffer += chunk
+      if (buffer.includes('\n')) {
+        clearTimeout(timeout)
+        socket.destroy()
+        resolveShutdown()
+      }
+    })
+    socket.write(
+      `${JSON.stringify({ type: 'request', requestId: 'shutdown', method: 'shutdown', args: [] })}\n`
+    )
+  })
+}
+
+/** Explicit daemon shutdown is the only daemon path allowed to stop the host. */
+export const shutdownPtyHost = async (): Promise<void> => {
+  // Disable the proxy's crash-recovery path before asking the host to exit.
+  // Otherwise the connection close can race daemon teardown and immediately
+  // respawn the host that an explicit app quit just stopped.
+  explicitHostShutdown = true
+  const registration = readPtyHostRegistration(
+    resolvePtyHostPaths().registrationPath
+  )
+  if (registration === null) {
+    return
+  }
+  await stopWithEscalation(registration, { requestStop: requestHostShutdown })
+}
+
 const resolveHostEntry = (): string => {
   const configured = process.env.LABORER_PTY_HOST_ENTRY?.trim()
   if (configured) {
@@ -188,13 +219,14 @@ const resolveHostEntry = (): string => {
   return entry
 }
 
-const spawnPtyHost = (): void => {
+const spawnPtyHost = (): number | undefined => {
   const child = spawn(process.execPath, [resolveHostEntry()], {
     detached: true,
     env: { ...process.env },
     stdio: 'ignore',
   })
   child.unref()
+  return child.pid
 }
 
 /** Adopt a live host even when outdated so the user, not a watcher, decides when it dies. */
@@ -202,11 +234,9 @@ const ensurePtyHost = async (
   expectedVersion: string
 ): Promise<PtyHostRegistration> => {
   const paths = resolvePtyHostPaths()
-  const incumbent = readJsonRegistration<ProcessRegistration>(
-    paths.registrationPath
-  )
+  const incumbent = readPtyHostRegistration(paths.registrationPath)
   if (
-    isRegistration(incumbent) &&
+    incumbent !== null &&
     processExists(incumbent.pid) &&
     (await probeHealth(incumbent))
   ) {
@@ -215,11 +245,8 @@ const ensurePtyHost = async (
   return ensure({
     policy: 'adopt',
     readRegistration: () => {
-      const registration = readJsonRegistration<ProcessRegistration>(
-        paths.registrationPath
-      )
-      return isRegistration(registration) &&
-        registration.version === expectedVersion
+      const registration = readPtyHostRegistration(paths.registrationPath)
+      return registration !== null && registration.version === expectedVersion
         ? registration
         : null
     },
@@ -416,7 +443,7 @@ export const ptyHostProxyLayer = Layer.effect(
           socket = undefined
           cancelHeartbeatTimers()
           rejectPending('PTY host connection closed')
-          if (!(disposed || recoveryPromise)) {
+          if (!(disposed || recoveryPromise || explicitHostShutdown)) {
             recover(false).catch(() => undefined)
           }
         })

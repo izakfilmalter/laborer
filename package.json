@@ -24,7 +24,7 @@
   "scripts": {
     "sandcastle": "bun .sandcastle/main.ts",
     "dev": "bun scripts/dev-runner.ts",
-    "dev:desktop": "turbo dev dev:electron",
+    "dev:desktop": "bun scripts/dev-runner.ts --desktop",
     "dev:bot": "bun run --cwd apps/bot dev:slack",
     "start:bot": "bun run --cwd apps/bot start:slack",
     "build": "turbo build",
@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "@laborer/env": "workspace:*",
+    "@laborer/ensure": "workspace:*",
     "dotenv": "catalog:",
     "zod": "catalog:"
   },

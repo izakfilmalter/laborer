@@ -9,6 +9,7 @@ import {
   findAvailableDevPorts,
   linkedWorktreeStateHome,
   parseDevRunnerArguments,
+  resolveDevDaemonRegistrationPath,
   resolveDevStateHome,
   superviseDevChildren,
   worktreePortOffset,
@@ -63,6 +64,12 @@ describe('dev runner', () => {
     )
   })
 
+  it('places daemon discovery in the selected worktree state tree', () => {
+    expect(resolveDevDaemonRegistrationPath('/worktree-state')).toBe(
+      join('/worktree-state', 'laborer', 'daemon.json')
+    )
+  })
+
   it('isolates a linked worktree in its own state home', () => {
     const worktree = mkdtempSync(join(tmpdir(), 'laborer-dev-runner-'))
     try {
@@ -80,10 +87,20 @@ describe('dev runner', () => {
 
   it('offers an explicit opt-in to ambient real state', () => {
     expect(parseDevRunnerArguments(['--use-real-state'])).toEqual({
+      desktop: false,
       stateHome: undefined,
       useRealState: true,
       dryRun: false,
     })
+  })
+
+  it('routes desktop dev through the same exclusive daemon runner', () => {
+    expect(parseDevRunnerArguments(['--desktop']).desktop).toBe(true)
+    const children = devChildDefinitions('/repo', true)
+    expect(
+      children.find(({ label }) => label === 'web')?.command
+    ).not.toContain('--open')
+    expect(children.find(({ label }) => label === 'desktop')).toBeDefined()
   })
 
   it('runs the built daemon under Bun watch as a direct runner child', () => {
@@ -104,7 +121,7 @@ describe('dev runner', () => {
   })
 
   it('stops sibling watchers when any required child exits', async () => {
-    const signals: string[] = []
+    const events: string[] = []
     let stopSibling: ((exitCode: number) => void) | undefined
     const siblingExited = new Promise<number>((complete) => {
       stopSibling = complete
@@ -115,7 +132,7 @@ describe('dev runner', () => {
           definition: { label: 'web', command: ['vite'], cwd: '/repo' },
           process: {
             exited: Promise.resolve(1),
-            kill: (signal) => signals.push(`web:${String(signal)}`),
+            kill: (signal) => events.push(`web:${String(signal)}`),
           },
         },
         {
@@ -123,19 +140,25 @@ describe('dev runner', () => {
           process: {
             exited: siblingExited,
             kill: (signal) => {
-              signals.push(`daemon:${String(signal)}`)
+              events.push(`daemon:${String(signal)}`)
               stopSibling?.(0)
             },
           },
         },
       ],
-      100
+      100,
+      () => {
+        events.push('shutdown-rpc')
+        return Promise.resolve()
+      }
     )
 
     expect(result.firstExit).toEqual({
       definition: { label: 'web', command: ['vite'], cwd: '/repo' },
       exitCode: 1,
     })
-    expect(signals).toContain('daemon:SIGTERM')
+    expect(events.indexOf('shutdown-rpc')).toBeLessThan(
+      events.indexOf('daemon:SIGTERM')
+    )
   })
 })

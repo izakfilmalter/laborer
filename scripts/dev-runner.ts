@@ -2,7 +2,14 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { createServer } from 'node:net'
+import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
+import {
+  EnsureConflictError,
+  processExists,
+  readDaemonRegistration,
+  stopWithEscalation,
+} from '@laborer/ensure'
 import { config as loadDotEnv } from 'dotenv'
 
 export const BASE_DAEMON_PORT = 2100
@@ -126,6 +133,7 @@ export const resolveDevStateHome = ({
   (ambientStateHome?.trim() || undefined)
 
 interface DevRunnerArguments {
+  readonly desktop: boolean
   readonly dryRun: boolean
   readonly stateHome?: string
   readonly useRealState: boolean
@@ -137,6 +145,7 @@ export const parseDevRunnerArguments = (
   let stateHome: string | undefined
   let useRealState = false
   let dryRun = false
+  let desktop = false
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
     if (argument === '--state-home') {
@@ -150,9 +159,12 @@ export const parseDevRunnerArguments = (
       useRealState = true
     } else if (argument === '--dry-run') {
       dryRun = true
+    } else if (argument === '--desktop') {
+      desktop = true
     } else if (argument === '--help' || argument === '-h') {
-      console.log(`Usage: bun dev [--state-home PATH | --use-real-state] [--dry-run]
+      console.log(`Usage: bun dev [--desktop] [--state-home PATH | --use-real-state] [--dry-run]
 
+  --desktop          Launch the Electron client instead of opening a browser
   --state-home PATH  Use an explicit XDG state home (highest precedence)
   --use-real-state   Opt in to ambient XDG state instead of worktree state
   --dry-run          Print the resolved environment without spawning processes`)
@@ -164,7 +176,7 @@ export const parseDevRunnerArguments = (
   if (stateHome && useRealState) {
     throw new Error('--state-home and --use-real-state cannot be combined')
   }
-  return { stateHome, useRealState, dryRun }
+  return { desktop, stateHome, useRealState, dryRun }
 }
 
 interface ChildDefinition {
@@ -179,6 +191,55 @@ interface RunningDevChild {
     readonly exited: Promise<number>
     kill(signal?: NodeJS.Signals | number): unknown
   }
+}
+
+export const resolveDevDaemonRegistrationPath = (
+  stateHome: string | undefined
+): string =>
+  join(
+    stateHome ?? join(homedir(), '.local', 'state'),
+    'laborer',
+    'daemon.json'
+  )
+
+export const probeDaemonHealth = async (url: string): Promise<boolean> =>
+  fetch(`${url}/health`).then(
+    () => true,
+    () => false
+  )
+
+export const assertNoDevIncumbent = async (
+  registrationPath: string
+): Promise<void> => {
+  const registration = readDaemonRegistration(registrationPath)
+  if (
+    registration !== null &&
+    processExists(registration.pid) &&
+    (await probeDaemonHealth(registration.url))
+  ) {
+    throw new EnsureConflictError(registration)
+  }
+}
+
+export const shutdownDevDaemon = async (
+  registrationPath: string
+): Promise<void> => {
+  const registration = readDaemonRegistration(registrationPath)
+  if (registration === null) {
+    return
+  }
+  await stopWithEscalation(registration, {
+    requestStop: async ({ url }) => {
+      const response = await fetch(`${url}/daemon/stop`, {
+        body: JSON.stringify({ mode: 'shutdown' }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      })
+      if (!response.ok) {
+        throw new Error(`Daemon rejected shutdown (${String(response.status)})`)
+      }
+    },
+  })
 }
 
 const killChildren = (
@@ -201,7 +262,8 @@ const killChildren = (
  */
 export const superviseDevChildren = async (
   children: readonly RunningDevChild[],
-  shutdownGraceMs = 5000
+  shutdownGraceMs = 5000,
+  beforeStop: () => Promise<void> = () => Promise.resolve()
 ): Promise<{
   readonly exits: readonly {
     readonly definition: ChildDefinition
@@ -221,6 +283,7 @@ export const superviseDevChildren = async (
     exitCode: await child.exited,
   }))
   const firstExit = await Promise.race(exits)
+  await beforeStop()
   killChildren(children, 'SIGTERM')
 
   const allExits = Promise.all(exits)
@@ -239,7 +302,8 @@ export const superviseDevChildren = async (
 }
 
 export const devChildDefinitions = (
-  root: string
+  root: string,
+  desktop = false
 ): readonly ChildDefinition[] => [
   {
     label: 'server build',
@@ -276,9 +340,29 @@ export const devChildDefinitions = (
   },
   {
     label: 'web',
-    command: [join(root, 'apps/web/node_modules/.bin/vite'), '--open'],
+    command: [
+      join(root, 'apps/web/node_modules/.bin/vite'),
+      ...(desktop ? [] : ['--open']),
+    ],
     cwd: join(root, 'apps/web'),
   },
+  ...(desktop
+    ? [
+        {
+          label: 'desktop build',
+          command: [
+            join(root, 'apps/desktop/node_modules/.bin/tsdown'),
+            '--watch',
+          ],
+          cwd: join(root, 'apps/desktop'),
+        },
+        {
+          label: 'desktop',
+          command: ['bun', join(root, 'apps/desktop/scripts/dev-electron.mjs')],
+          cwd: join(root, 'apps/desktop'),
+        },
+      ]
+    : []),
 ]
 
 const initialServerBuild = async (
@@ -305,8 +389,6 @@ export const runDev = async (arguments_: readonly string[]) => {
   const root = resolve(import.meta.dirname, '..')
   loadDotEnv({ path: join(root, '.env.local'), quiet: true })
   const options = parseDevRunnerArguments(arguments_)
-  const offset = worktreePortOffset(root)
-  const ports = await findAvailableDevPorts(offset)
   const worktreeStateHome = options.useRealState
     ? undefined
     : linkedWorktreeStateHome(root)
@@ -318,6 +400,10 @@ export const runDev = async (arguments_: readonly string[]) => {
   if (stateHome !== undefined && !isAbsolute(stateHome)) {
     throw new Error(`XDG state home must be absolute: ${stateHome}`)
   }
+  const registrationPath = resolveDevDaemonRegistrationPath(stateHome)
+  await assertNoDevIncumbent(registrationPath)
+  const offset = worktreePortOffset(root)
+  const ports = await findAvailableDevPorts(offset)
 
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
@@ -342,31 +428,38 @@ export const runDev = async (arguments_: readonly string[]) => {
   // cannot race tsdown's first watch build and leave Bun watching a missing file.
   await initialServerBuild(root, environment)
 
-  const children: readonly RunningDevChild[] = devChildDefinitions(root).map(
-    (definition) => ({
-      definition,
-      process: Bun.spawn([...definition.command], {
-        cwd: definition.cwd,
-        env: environment,
-        stdin: 'inherit',
-        stdout: 'inherit',
-        stderr: 'inherit',
-      }),
-    })
-  )
+  const children: readonly RunningDevChild[] = devChildDefinitions(
+    root,
+    options.desktop
+  ).map((definition) => ({
+    definition,
+    process: Bun.spawn([...definition.command], {
+      cwd: definition.cwd,
+      env: environment,
+      stdin: 'inherit',
+      stdout: 'inherit',
+      stderr: 'inherit',
+    }),
+  }))
 
   let stopping = false
+  let shutdownPromise: Promise<void> | undefined
   const stop = () => {
     if (stopping) {
       return
     }
     stopping = true
-    killChildren(children, 'SIGTERM')
+    shutdownPromise ??= shutdownDevDaemon(registrationPath).finally(() => {
+      killChildren(children, 'SIGTERM')
+    })
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
 
-  const { firstExit } = await superviseDevChildren(children)
+  const { firstExit } = await superviseDevChildren(children, 5000, async () => {
+    shutdownPromise ??= shutdownDevDaemon(registrationPath)
+    await shutdownPromise.catch(() => undefined)
+  })
   process.removeListener('SIGINT', stop)
   process.removeListener('SIGTERM', stop)
 

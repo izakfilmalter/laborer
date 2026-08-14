@@ -25,7 +25,10 @@ const task = (id: string, revision = 1): SharedTaskRow => ({
   executionStatus: null,
   id,
   parentTaskId: null,
+  prBaseBranch: null,
+  prCheckStatus: null,
   prIsDraft: false,
+  prMergeStatus: null,
   prNumber: null,
   prState: null,
   prTitle: null,
@@ -53,6 +56,7 @@ const empty: AuthoritativeSharedState = {
 }
 
 const project = (rootPath: string, revision = 1): SharedProjectRow => ({
+  branchName: null,
   canonicalGitCommonDir: `${rootPath}/.git`,
   createdAt: 1,
   id: 'project-one',
@@ -255,6 +259,12 @@ describe('workspaceViewsFromRows', () => {
       })
     )
     expect(views).toHaveLength(2)
+  })
+
+  it('names the root workspace after its checked-out branch', () => {
+    const rootProject = { ...project('/repo'), branchName: 'dev' }
+
+    expect(workspaceViewsFromRows([], [rootProject])[0]?.branchName).toBe('dev')
   })
 })
 

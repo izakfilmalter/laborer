@@ -81,7 +81,13 @@ describe('NativeLaborerDatabase', () => {
     )`)
     const recordMigration = raw.prepare(`INSERT INTO __drizzle_migrations
       (hash, created_at, name) VALUES (?, ?, ?)`)
-    for (const migration of taskDbMigrations.slice(0, -1)) {
+    const completionMigrationIndex = taskDbMigrations.findIndex(
+      ({ name }) => name === '0008_complete_removed_worktrees'
+    )
+    for (const migration of taskDbMigrations.slice(
+      0,
+      completionMigrationIndex
+    )) {
       raw.exec(migration.sql.replaceAll('--> statement-breakpoint', ''))
       recordMigration.run(
         createHash('sha256').update(migration.sql).digest('hex'),
@@ -112,7 +118,7 @@ describe('NativeLaborerDatabase', () => {
 
   it('migrates memory databases and covers all shared rows', () => {
     const database = NativeLaborerDatabase.open(':memory:')
-    expect(database.migrationNames()).toHaveLength(9)
+    expect(database.migrationNames()).toHaveLength(taskDbMigrations.length)
 
     const task = database.insertTask(
       {

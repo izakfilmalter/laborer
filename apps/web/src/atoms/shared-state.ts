@@ -523,7 +523,10 @@ export interface WorkspaceView {
   readonly id: string
   readonly origin: 'laborer' | 'external'
   readonly parentTaskId: string | null
+  readonly prBaseBranch: string | null
+  readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
   readonly prIsDraft: boolean
+  readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
   readonly prState: string | null
@@ -578,13 +581,16 @@ const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
   baseBranch: null,
   baseSha: null,
   behindCount: null,
-  branchName: ROOT_WORKSPACE_BRANCH_LABEL,
+  branchName: project.branchName ?? ROOT_WORKSPACE_BRANCH_LABEL,
   createdAt: String(project.createdAt),
   errorMessage: null,
   id: rootWorkspaceId(project.id),
   origin: 'external',
   parentTaskId: null,
+  prBaseBranch: null,
+  prCheckStatus: null,
   prIsDraft: false,
+  prMergeStatus: null,
   prNumber: null,
   projectId: project.id,
   prState: null,
@@ -628,7 +634,10 @@ export const workspaceViewsFromRows = (
       id: task.id,
       origin: task.source === 'worktree' ? 'external' : 'laborer',
       parentTaskId: task.parentTaskId,
+      prBaseBranch: task.prBaseBranch,
+      prCheckStatus: task.prCheckStatus,
       prIsDraft: task.prIsDraft,
+      prMergeStatus: task.prMergeStatus,
       prNumber: task.prNumber,
       projectId: project.id,
       prState: task.prState?.toUpperCase() ?? null,

@@ -146,6 +146,37 @@ class BranchStateTracker extends Context.Service<
           let checked = 0
           let updated = 0
 
+          // The main checkout is a synthetic workspace rather than a task, so
+          // keep its branch on the project row. This lets every renderer show
+          // the real checked-out branch instead of the implementation label
+          // "root" while preserving the synthetic workspace model.
+          const project = yield* laborerDatabase.read(
+            'find project for root branch refresh',
+            (database) => database.findProject(projectId)
+          )
+          if (project !== null) {
+            const rootBranch = yield* getCurrentBranch(project.rootPath).pipe(
+              Effect.catch(() => Effect.succeed(null))
+            )
+            if (rootBranch !== null && rootBranch !== project.branchName) {
+              yield* laborerDatabase
+                .run('update root workspace branch', (database) =>
+                  database.updateProject(project.id, project.revision, {
+                    branchName: rootBranch,
+                  })
+                )
+                .pipe(
+                  Effect.mapError(
+                    () =>
+                      new RpcError({
+                        code: 'BRANCH_REFRESH_FAILED',
+                        message: `Failed to persist root branch for project ${projectId}`,
+                      })
+                  )
+                )
+            }
+          }
+
           for (const workspace of activeWorkspaces) {
             const currentBranch = yield* getCurrentBranch(
               workspace.worktreePath
@@ -189,4 +220,4 @@ class BranchStateTracker extends Context.Service<
   )
 }
 
-export { BranchStateTracker }
+export { BranchStateTracker, getCurrentBranch }

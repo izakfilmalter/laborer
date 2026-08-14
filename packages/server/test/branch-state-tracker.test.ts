@@ -105,6 +105,10 @@ describe('BranchStateTracker', () => {
         database.findTask(workspaceId)?.branchName,
         'feature/updated'
       )
+      assert.strictEqual(
+        database.findProject(projectId)?.branchName,
+        git('rev-parse --abbrev-ref HEAD', repoPath)
+      )
     }).pipe(Effect.provide(TestLayer))
   )
 

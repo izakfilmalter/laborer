@@ -82,4 +82,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       'utf8'
     ),
   },
+  {
+    name: '0009_git_hosted_status',
+    sql: readFileSync(
+      new URL('./migrations/0009_git_hosted_status.sql', import.meta.url),
+      'utf8'
+    ),
+  },
 ]

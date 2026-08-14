@@ -97,7 +97,10 @@ const testLayer = (
       PrWatcher.of({
         checkPr: () =>
           Effect.succeed({
+            baseBranch: null,
+            checkStatus: null,
             isDraft: false,
+            mergeStatus: null,
             number: null,
             state: null,
             title: null,

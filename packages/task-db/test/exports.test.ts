@@ -40,6 +40,10 @@ const migrationLedger = [
     '0008_complete_removed_worktrees',
     '949b371a78627208de4cd23376e586d3efc5000d42f3c7db631434e57cfc1766',
   ],
+  [
+    '0009_git_hosted_status',
+    '4a8ceac62baca7a4a5b96839be6061a890e99486665c05628490dac710584335',
+  ],
 ]
 
 describe('@laborer/task-db exports', () => {

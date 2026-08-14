@@ -206,6 +206,13 @@ export const SharedTaskRow = Schema.Struct({
   baseSha: Schema.NullOr(Schema.String),
   parentTaskId: Schema.NullOr(Schema.String),
   prIsDraft: Schema.Boolean,
+  prBaseBranch: Schema.NullOr(Schema.String),
+  prCheckStatus: Schema.NullOr(
+    Schema.Literals(['pending', 'success', 'failure'])
+  ),
+  prMergeStatus: Schema.NullOr(
+    Schema.Literals(['clean', 'conflicting', 'unknown'])
+  ),
   prNumber: Schema.NullOr(Schema.Int),
   prState: Schema.NullOr(Schema.Literals(['open', 'closed', 'merged'])),
   prTitle: Schema.NullOr(Schema.String),
@@ -220,6 +227,7 @@ export const SharedTaskRow = Schema.Struct({
 export type SharedTaskRow = typeof SharedTaskRow.Type
 
 export const SharedProjectRow = Schema.Struct({
+  branchName: Schema.NullOr(Schema.String),
   canonicalGitCommonDir: Schema.String,
   createdAt: Schema.Int,
   id: Schema.String,

@@ -31,7 +31,7 @@ describe('card shell active state', () => {
 
     const classes = cardClasses()
 
-    expect(classes).toContain('bg-accent/50')
+    expect(classes).toContain('bg-accent/20')
     // A bright, doubled edge on the card the operator is already looking at
     // is noise: it competes with the one cue worth interrupting for.
     expect(classes).not.toContain('ring-2')
@@ -43,7 +43,7 @@ describe('card shell active state', () => {
 
     const classes = cardClasses()
 
-    expect(classes).not.toContain('bg-accent/50')
+    expect(classes).not.toContain('bg-accent/20')
     expect(classes).toContain('ring-foreground/10')
   })
 
@@ -61,7 +61,7 @@ describe('card shell active state', () => {
 
     const classes = cardClasses()
 
-    expect(classes).toContain('bg-accent/50')
+    expect(classes).toContain('bg-accent/20')
     expect(classes).toContain('ring-2')
     expect(classes).toContain('ring-amber-400/70')
     // The resting hairline and the active edge both lose to the accent, so

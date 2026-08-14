@@ -27,6 +27,8 @@ export type ExecutionStatus =
   | 'needs-attention'
 export type WorktreeStatus = 'provisioning' | 'ready' | 'errored'
 export type PullRequestState = 'open' | 'closed' | 'merged'
+export type PullRequestMergeStatus = 'clean' | 'conflicting' | 'unknown'
+export type PullRequestCheckStatus = 'pending' | 'success' | 'failure'
 
 export interface LaborerTask {
   readonly actionName: string | null
@@ -39,7 +41,10 @@ export interface LaborerTask {
   readonly executionStatus: ExecutionStatus | null
   readonly id: string
   readonly parentTaskId: string | null
+  readonly prBaseBranch: string | null
+  readonly prCheckStatus: PullRequestCheckStatus | null
   readonly prIsDraft: boolean
+  readonly prMergeStatus: PullRequestMergeStatus | null
   readonly prNumber: number | null
   readonly prState: PullRequestState | null
   readonly prTitle: string | null
@@ -69,7 +74,10 @@ export interface NewLaborerTask {
   readonly executionStatus?: ExecutionStatus | null
   readonly id: string
   readonly parentTaskId?: string | null
+  readonly prBaseBranch?: string | null
+  readonly prCheckStatus?: PullRequestCheckStatus | null
   readonly prIsDraft?: boolean
+  readonly prMergeStatus?: PullRequestMergeStatus | null
   readonly prNumber?: number | null
   readonly prState?: PullRequestState | null
   readonly prTitle?: string | null
@@ -97,7 +105,10 @@ export type LaborerTaskPatch = Partial<
     | 'executionId'
     | 'executionStatus'
     | 'parentTaskId'
+    | 'prBaseBranch'
+    | 'prCheckStatus'
     | 'prIsDraft'
+    | 'prMergeStatus'
     | 'prNumber'
     | 'prState'
     | 'prTitle'
@@ -115,6 +126,7 @@ export type LaborerTaskPatch = Partial<
 >
 
 export interface Project {
+  readonly branchName: string | null
   readonly canonicalGitCommonDir: string
   readonly createdAt: number
   readonly id: string
@@ -128,6 +140,7 @@ export interface Project {
 }
 
 export interface NewProject {
+  readonly branchName?: string | null
   readonly canonicalGitCommonDir: string
   readonly createdAt?: number
   readonly id: string
@@ -139,7 +152,12 @@ export interface NewProject {
 export type ProjectPatch = Partial<
   Pick<
     Project,
-    'canonicalGitCommonDir' | 'name' | 'repoId' | 'rootPath' | 'sortOrder'
+    | 'branchName'
+    | 'canonicalGitCommonDir'
+    | 'name'
+    | 'repoId'
+    | 'rootPath'
+    | 'sortOrder'
   >
 >
 
@@ -256,9 +274,10 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
   description, created_at, updated_at, revision, worktree_status,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
-  pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order`
+  pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order,
+  pr_base_branch, pr_merge_status, pr_check_status`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
-  created_at, updated_at, revision, sort_order`
+  created_at, updated_at, revision, sort_order, branch_name`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
 const MAX_LEDGER_READ = 1000
 const MAX_TABLE_ROWS = 10_000
@@ -276,7 +295,10 @@ const TASK_PATCH_FIELDS = [
   'executionId',
   'executionStatus',
   'parentTaskId',
+  'prBaseBranch',
+  'prCheckStatus',
   'prIsDraft',
+  'prMergeStatus',
   'prNumber',
   'prState',
   'prTitle',
@@ -292,6 +314,7 @@ const TASK_PATCH_FIELDS = [
   'worktreeStatus',
 ] as const satisfies readonly (keyof LaborerTaskPatch)[]
 const PROJECT_PATCH_FIELDS = [
+  'branchName',
   'canonicalGitCommonDir',
   'name',
   'repoId',
@@ -308,7 +331,10 @@ const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
   executionId: 'execution_id',
   executionStatus: 'execution_status',
   parentTaskId: 'parent_task_id',
+  prBaseBranch: 'pr_base_branch',
+  prCheckStatus: 'pr_check_status',
   prIsDraft: 'pr_is_draft',
+  prMergeStatus: 'pr_merge_status',
   prNumber: 'pr_number',
   prState: 'pr_state',
   prTitle: 'pr_title',
@@ -324,6 +350,7 @@ const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
   worktreeStatus: 'worktree_status',
 }
 const PROJECT_PATCH_COLUMNS: Record<keyof ProjectPatch, string> = {
+  branchName: 'branch_name',
   canonicalGitCommonDir: 'canonical_git_common_dir',
   name: 'name',
   repoId: 'repo_id',
@@ -433,6 +460,12 @@ const rowToTask = (value: unknown): LaborerTask => {
     ),
     id: string(row.id, 'tasks.id'),
     parentTaskId: nullableString(row.parent_task_id, 'tasks.parent_task_id'),
+    prBaseBranch: nullableString(row.pr_base_branch, 'tasks.pr_base_branch'),
+    prCheckStatus: nullableEnum(
+      row.pr_check_status,
+      ['pending', 'success', 'failure'],
+      'tasks.pr_check_status'
+    ),
     prIsDraft: (() => {
       const value = integer(row.pr_is_draft, 'tasks.pr_is_draft')
       if (value !== 0 && value !== 1) {
@@ -440,6 +473,11 @@ const rowToTask = (value: unknown): LaborerTask => {
       }
       return value === 1
     })(),
+    prMergeStatus: nullableEnum(
+      row.pr_merge_status,
+      ['clean', 'conflicting', 'unknown'],
+      'tasks.pr_merge_status'
+    ),
     prNumber: nullableInteger(row.pr_number, 'tasks.pr_number'),
     prState: nullableEnum(
       row.pr_state,
@@ -484,6 +522,7 @@ const rowToTask = (value: unknown): LaborerTask => {
 const rowToProject = (value: unknown): Project => {
   const row = sqliteRow(value)
   return {
+    branchName: nullableString(row.branch_name, 'projects.branch_name'),
     canonicalGitCommonDir: string(
       row.canonical_git_common_dir,
       'projects.canonical_git_common_dir'
@@ -649,6 +688,9 @@ export class NativeLaborerDatabase {
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
     const createdAt = input.createdAt ?? changedAt
+    const prBaseBranch = input.prBaseBranch ?? null
+    const prMergeStatus = input.prMergeStatus ?? null
+    const prCheckStatus = input.prCheckStatus ?? null
     return this.#writeTransaction(() => {
       const sortOrder = taskSortOrder(this.#database, input)
       this.#database
@@ -658,9 +700,9 @@ export class NativeLaborerDatabase {
           description, created_at, updated_at, revision, worktree_status,
           worktree_error, setup_completed_at, parent_task_id, base_sha,
           base_branch, pr_number, pr_url, pr_title, pr_state, pr_is_draft,
-          sort_order
+          sort_order, pr_base_branch, pr_merge_status, pr_check_status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?)`)
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           input.id,
           input.rootPath,
@@ -687,7 +729,10 @@ export class NativeLaborerDatabase {
           input.prTitle ?? null,
           input.prState ?? null,
           input.prIsDraft ? 1 : 0,
-          sortOrder
+          sortOrder,
+          prBaseBranch,
+          prMergeStatus,
+          prCheckStatus
         )
       const cursor = this.#appendTaskChange(input.id, changedAt, mutationId)
       return { row: this.#requireTask(input.id), cursor }
@@ -891,8 +936,8 @@ export class NativeLaborerDatabase {
       this.#database
         .prepare(`INSERT INTO projects (
           id, name, root_path, repo_id, canonical_git_common_dir,
-          created_at, updated_at, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`)
+          created_at, updated_at, revision, branch_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`)
         .run(
           input.id,
           input.name,
@@ -900,7 +945,8 @@ export class NativeLaborerDatabase {
           input.repoId,
           input.canonicalGitCommonDir,
           createdAt,
-          changedAt
+          changedAt,
+          input.branchName ?? null
         )
       const cursor = this.#appendStateChange(
         'projects',

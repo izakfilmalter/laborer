@@ -9,7 +9,7 @@ import {
   layerWebSocketConstructorGlobal,
 } from 'effect/unstable/socket/Socket'
 
-import { acquireServicePort, localApi } from '@/lib/local-api'
+import { localApi } from '@/lib/local-api'
 import {
   rendererConnectionGenerationAtom,
   rendererConnectionSupervisor,
@@ -46,7 +46,9 @@ const messagePortProtocol = (
   Layer.effect(
     RpcClient.Protocol,
     Effect.gen(function* () {
-      const port = yield* Effect.promise(() => acquireServicePort(service))
+      const port = yield* Effect.promise(() =>
+        localApi.acquireServicePort(service)
+      )
       if (!port) {
         return yield* Effect.die(
           `${service} utility process is not running — could not acquire MessagePort`

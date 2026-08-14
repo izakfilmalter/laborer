@@ -34,6 +34,7 @@ describe('local directory browse', () => {
           assert.isFalse(
             result.directories.some(({ name }) => name === 'notes.txt')
           )
+          assert.isFalse(result.truncated)
         } finally {
           rmSync(root, { force: true, recursive: true })
         }
@@ -50,5 +51,25 @@ describe('local directory browse', () => {
         })
       )
     )
+  )
+
+  it.effect('bounds the number of directory entries inspected', () =>
+    Effect.gen(function* () {
+      const root = mkdtempSync(join(tmpdir(), 'laborer-directory-browse-'))
+      for (let index = 0; index <= 1000; index += 1) {
+        writeFileSync(
+          join(root, `file-${index.toString().padStart(4, '0')}`),
+          ''
+        )
+      }
+
+      try {
+        const result = yield* listLocalDirectories(root)
+        assert.isTrue(result.truncated)
+        assert.deepEqual(result.directories, [])
+      } finally {
+        rmSync(root, { force: true, recursive: true })
+      }
+    })
   )
 })

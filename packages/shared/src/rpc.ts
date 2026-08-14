@@ -674,6 +674,7 @@ export class LaborerRpcs extends RpcGroup.make(
       ),
       parentPath: Schema.NullOr(Schema.String),
       path: Schema.String,
+      truncated: Schema.Boolean,
     }),
     error: RpcError,
     payload: {

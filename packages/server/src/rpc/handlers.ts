@@ -57,11 +57,15 @@ export const listLocalDirectories = (requestedPath?: string) =>
     try: async () => {
       const path = await realpath(resolve(requestedPath ?? homedir()))
       const directories: Array<{ name: string; path: string }> = []
+      let entriesRead = 0
+      let truncated = false
 
       for await (const entry of await opendir(path)) {
-        if (directories.length >= MAX_DIRECTORY_PICKER_ENTRIES) {
+        if (entriesRead >= MAX_DIRECTORY_PICKER_ENTRIES) {
+          truncated = true
           break
         }
+        entriesRead += 1
 
         const entryPath = join(path, entry.name)
         let isDirectory = entry.isDirectory()
@@ -81,6 +85,7 @@ export const listLocalDirectories = (requestedPath?: string) =>
         directories,
         parentPath: parentPath === path ? null : parentPath,
         path,
+        truncated,
       }
     },
     catch: (error) =>

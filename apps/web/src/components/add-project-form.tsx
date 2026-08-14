@@ -43,6 +43,7 @@ interface DirectoryListing {
   }[]
   readonly parentPath: string | null
   readonly path: string
+  readonly truncated: boolean
 }
 
 function BrowserDirectoryPicker({
@@ -59,16 +60,26 @@ function BrowserDirectoryPicker({
   })
   const [listing, setListing] = useState<DirectoryListing | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const browseRequestIdRef = useRef(0)
 
   const browse = useCallback(
     async (path?: string) => {
+      const requestId = browseRequestIdRef.current + 1
+      browseRequestIdRef.current = requestId
       setIsLoading(true)
       try {
-        setListing(await listDirectories({ payload: { path } }))
+        const nextListing = await listDirectories({ payload: { path } })
+        if (browseRequestIdRef.current === requestId) {
+          setListing(nextListing)
+        }
       } catch (error: unknown) {
-        toast.error(extractErrorMessage(error))
+        if (browseRequestIdRef.current === requestId) {
+          toast.error(extractErrorMessage(error))
+        }
       } finally {
-        setIsLoading(false)
+        if (browseRequestIdRef.current === requestId) {
+          setIsLoading(false)
+        }
       }
     },
     [listDirectories]
@@ -78,7 +89,12 @@ function BrowserDirectoryPicker({
     if (open) {
       browse().catch(() => undefined)
     } else {
+      browseRequestIdRef.current += 1
       setListing(null)
+      setIsLoading(false)
+    }
+    return () => {
+      browseRequestIdRef.current += 1
     }
   }, [browse, open])
 
@@ -124,11 +140,9 @@ function BrowserDirectoryPicker({
             {listing?.directories.map((directory) => (
               <button
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                disabled={isLoading}
                 key={directory.path}
                 onClick={() => browse(directory.path).catch(() => undefined)}
-                onDoubleClick={() =>
-                  browse(directory.path).catch(() => undefined)
-                }
                 type="button"
               >
                 <Folder className="size-4 shrink-0" />
@@ -138,6 +152,11 @@ function BrowserDirectoryPicker({
             {!isLoading && listing?.directories.length === 0 && (
               <p className="p-4 text-center text-muted-foreground text-sm">
                 No subfolders
+              </p>
+            )}
+            {!isLoading && listing?.truncated && (
+              <p className="p-2 text-center text-muted-foreground text-xs">
+                Only the first 1,000 entries are shown.
               </p>
             )}
           </div>
@@ -203,6 +222,10 @@ function AddProjectForm() {
 
   const openBrowserPicker = () =>
     new Promise<string | null>((resolve) => {
+      if (browserPickerResolution.current) {
+        resolve(null)
+        return
+      }
       browserPickerResolution.current = resolve
       setBrowserPickerOpen(true)
     })
@@ -212,6 +235,14 @@ function AddProjectForm() {
     browserPickerResolution.current = null
     setBrowserPickerOpen(false)
   }
+
+  useEffect(
+    () => () => {
+      browserPickerResolution.current?.(null)
+      browserPickerResolution.current = null
+    },
+    []
+  )
 
   const handleAddClick = async () => {
     try {
@@ -231,7 +262,7 @@ function AddProjectForm() {
   return (
     <>
       <Button
-        disabled={!isServerReady || isAdding}
+        disabled={!isServerReady || isAdding || browserPickerOpen}
         onClick={handleAddClick}
         size="sm"
         title={isServerReady ? undefined : 'Connecting to server...'}

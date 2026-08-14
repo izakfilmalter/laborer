@@ -15,11 +15,7 @@ import {
   upsertTerminalListItem,
   useTerminalList,
 } from '@/hooks/use-terminal-list'
-import {
-  focusExistingWindowForWorkspace,
-  getCurrentWindowId,
-  localApi,
-} from '@/lib/local-api'
+import { localApi } from '@/lib/local-api'
 
 import type { AutoOpenAgentOptions } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
@@ -492,7 +488,7 @@ const removeTerminalMutation = TerminalServiceClient.mutation('terminal.remove')
 export function usePanelLayout() {
   const initialLayout = useInitialLayout()
   const registry = usePanelGroupRegistry()
-  const nativeWindowId = getCurrentWindowId()
+  const nativeWindowId = localApi.getCurrentWindowId()
   const panelWindowId = nativeWindowId ?? DEFAULT_PANEL_WINDOW_ID
   const [storedPanelLayout, setStoredPanelLayout] = useState(() =>
     readStoredPanelLayout(panelWindowId)
@@ -1244,7 +1240,7 @@ export function usePanelLayout() {
       // Gate: if the workspace is already visible in another window,
       // focus that window instead of duplicating the workspace here.
       const focusedElsewhere =
-        await focusExistingWindowForWorkspace(workspaceId)
+        await localApi.focusExistingWindowForWorkspace(workspaceId)
       if (focusedElsewhere) {
         return
       }
@@ -1774,7 +1770,7 @@ export function usePanelLayout() {
       // Cross-window uniqueness: if the workspace is already open in
       // another Electron window, focus that window instead.
       const focusedElsewhere =
-        await focusExistingWindowForWorkspace(workspaceId)
+        await localApi.focusExistingWindowForWorkspace(workspaceId)
       if (focusedElsewhere) {
         return
       }

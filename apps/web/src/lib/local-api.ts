@@ -2,7 +2,13 @@ import type {
   ContextMenuItem,
   DesktopBridge,
 } from '@laborer/shared/desktop-bridge'
-import { getDesktopBridge } from './desktop'
+import {
+  acquireServicePort,
+  acquireTerminalDataPort,
+  focusExistingWindowForWorkspace,
+  getCurrentWindowId,
+  getDesktopBridge,
+} from './desktop'
 
 export type BrowserFolderPicker = () => Promise<string | null>
 export type BrowserContextMenu<T extends string> = (
@@ -16,12 +22,28 @@ export type BrowserContextMenu<T extends string> = (
  * browser or DOM implementations supplied by the calling surface.
  */
 class LocalApi {
+  acquireServicePort(name: string): Promise<MessagePort | null> {
+    return acquireServicePort(name)
+  }
+
+  acquireTerminalDataPort(terminalId: string): Promise<MessagePort | null> {
+    return acquireTerminalDataPort(terminalId)
+  }
+
   get desktopBridge(): DesktopBridge | undefined {
     return getDesktopBridge()
   }
 
   get isDesktop(): boolean {
     return this.desktopBridge !== undefined
+  }
+
+  getCurrentWindowId(): string | null {
+    return getCurrentWindowId()
+  }
+
+  focusExistingWindowForWorkspace(workspaceId: string): Promise<boolean> {
+    return focusExistingWindowForWorkspace(workspaceId)
   }
 
   get contextMenuKind(): 'native' | 'dom' {
@@ -57,13 +79,3 @@ class LocalApi {
 }
 
 export const localApi = new LocalApi()
-
-// Transport helpers remain implementation details of the current desktop
-// runtime until phase 3 removes MessagePort transport. Re-exporting them here
-// keeps every renderer-side local capability behind one module boundary.
-export {
-  acquireServicePort,
-  acquireTerminalDataPort,
-  focusExistingWindowForWorkspace,
-  getCurrentWindowId,
-} from './desktop'

@@ -108,18 +108,11 @@ const FILE_TREE_MENU_ITEMS = [
   { id: 'copy-relative-path', label: 'Copy Relative Path' },
 ] as const
 
-function useFileTreeContextActions(
-  item: TreeViewSelectionItem | null,
-  workspaceId: string,
-  worktreePath: string
-) {
+function useFileTreeContextActions(workspaceId: string, worktreePath: string) {
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
 
   return useCallback(
-    async (action: FileTreeMenuAction) => {
-      if (!item) {
-        return
-      }
+    async (action: FileTreeMenuAction, item: TreeViewSelectionItem) => {
       if (action === 'open-editor') {
         try {
           await openEditor({
@@ -132,21 +125,25 @@ function useFileTreeContextActions(
       }
       const path =
         action === 'copy-path' ? `${worktreePath}/${item.path}` : item.path
-      await navigator.clipboard.writeText(path)
-      toast.success(
-        action === 'copy-path'
-          ? 'Path copied to clipboard'
-          : 'Relative path copied to clipboard'
-      )
+      try {
+        await navigator.clipboard.writeText(path)
+        toast.success(
+          action === 'copy-path'
+            ? 'Path copied to clipboard'
+            : 'Relative path copied to clipboard'
+        )
+      } catch (error: unknown) {
+        toast.error(`Failed to copy path: ${extractErrorMessage(error)}`)
+      }
     },
-    [item, openEditor, workspaceId, worktreePath]
+    [openEditor, workspaceId, worktreePath]
   )
 }
 
 function FileTreeContextMenuContent({
   execute,
 }: {
-  readonly execute: (action: FileTreeMenuAction) => Promise<void>
+  readonly execute: (action: FileTreeMenuAction) => void
 }) {
   return (
     <ContextMenuContent className="min-w-[200px]">
@@ -381,7 +378,6 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const [selectedItem, setSelectedItem] =
     useState<TreeViewSelectionItem | null>(null)
   const executeContextAction = useFileTreeContextActions(
-    contextMenuItem,
     workspaceId,
     worktreePath
   )
@@ -467,6 +463,7 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
             return
           }
           event.preventDefault()
+          const item = contextMenuItemRef.current
           localApi
             .showContextMenu(
               FILE_TREE_MENU_ITEMS,
@@ -474,7 +471,7 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
               async () => null
             )
             .then((action) =>
-              action ? executeContextAction(action) : undefined
+              action ? executeContextAction(action, item) : undefined
             )
             .catch((error: unknown) => toast.error(extractErrorMessage(error)))
         }}
@@ -482,7 +479,13 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
         {treeView}
       </ContextMenuTrigger>
       {localApi.contextMenuKind === 'dom' && contextMenuItem !== null && (
-        <FileTreeContextMenuContent execute={executeContextAction} />
+        <FileTreeContextMenuContent
+          execute={(action) => {
+            executeContextAction(action, contextMenuItem).catch(
+              (error: unknown) => toast.error(extractErrorMessage(error))
+            )
+          }}
+        />
       )}
     </ContextMenu>
   )

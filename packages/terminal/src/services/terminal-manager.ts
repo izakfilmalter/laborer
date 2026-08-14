@@ -82,12 +82,6 @@ const parseGracePeriodMs = (): number => {
   return parsed
 }
 
-/**
- * Callback type for WebSocket subscribers to terminal output.
- * Receives raw UTF-8 terminal output strings.
- */
-type OutputSubscriber = (data: string) => void
-
 type AttachSubscriber = (event: TerminalAttachEvent) => boolean
 
 interface TerminalTransportMetrics {
@@ -129,24 +123,6 @@ interface ManagedTerminal {
   readonly shellPid: number | undefined
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
-}
-
-/**
- * Per-terminal subscriber state.
- * Subscribers are WebSocket connections receiving live terminal output.
- * State survives terminal exit (retained until explicit removal) so
- * reconnecting clients can receive screen state from the headless terminal.
- */
-interface TerminalSubscriberState {
-  /**
-   * Buffer of raw PTY output captured before any subscriber connected.
-   * Replayed to the first subscriber on connect, then set to null.
-   *
-   * This matches VS Code's `_initialDataEvents` pattern — no data is
-   * lost between PTY spawn and the renderer's data channel connecting.
-   */
-  replayBuffer: string[] | null
-  readonly subscribers: Map<string, OutputSubscriber>
 }
 
 /**
@@ -905,22 +881,7 @@ class TerminalManager extends Context.Service<
       terminalId: string
     ) => SerializedCommandDetectionCapability | undefined
 
-    /**
-     * Subscribe to live terminal output for a WebSocket connection.
-     * Returns a subscriber ID. The callback begins receiving live
-     * output immediately after registration.
-     *
-     * For reconnection, callers should use `getScreenState()` to
-     * obtain a compact screen state snapshot after subscribing
-     * (subscribe-before-serialize pattern for race-free attach).
-     */
-    readonly subscribe: (
-      terminalId: string,
-      callback: (data: string) => void,
-      options?: { readonly replay?: boolean }
-    ) => Effect.Effect<{ readonly subscriberId: string }, TerminalRpcError>
-
-    /** Unsubscribe a WebSocket connection from terminal output. */
+    /** Unsubscribe an attach-stream connection from terminal output. */
     readonly unsubscribe: (
       terminalId: string,
       subscriberId: string
@@ -929,7 +890,7 @@ class TerminalManager extends Context.Service<
     /**
      * Force a full screen redraw by re-issuing the PTY's current
      * dimensions. This triggers SIGWINCH, causing TUI applications
-     * to perform a complete screen repaint. Used after a data channel
+     * to perform a complete screen repaint. Used after an attach stream
      * connects to ensure the renderer gets a full initial render
      * instead of just incremental updates.
      */
@@ -1064,8 +1025,6 @@ class TerminalManager extends Context.Service<
         return engine
       }
 
-      // Per-terminal subscriber state (WebSocket connections).
-      const subscriberStates = new Map<string, TerminalSubscriberState>()
       const attachSubscribers = new Map<string, Map<string, AttachSubscriber>>()
       const journals = new Map<string, TerminalCursorJournal>()
       const transportEpochs = new Map<string, string>()
@@ -1077,6 +1036,7 @@ class TerminalManager extends Context.Service<
       const ackLatencies = new Map<string, number>()
       const revivedReplayEvents = new Map<string, SerializedReplayEvent>()
       const graceTimeouts = new Map<string, ProcessTimeTimeout>()
+      const claimedTerminalIds = new Set<string>()
 
       // -------------------------------------------------------------------
       // OSC-based activity detection state (follows Mux pattern)
@@ -1247,22 +1207,6 @@ class TerminalManager extends Context.Service<
         })
       }
 
-      const getOrCreateSubscriberState = (
-        terminalId: string
-      ): TerminalSubscriberState => {
-        let state = subscriberStates.get(terminalId)
-        if (state === undefined) {
-          state = {
-            subscribers: new Map(),
-            // Start buffering PTY output until the first subscriber connects.
-            // This matches VS Code's _initialDataEvents pattern.
-            replayBuffer: [],
-          }
-          subscriberStates.set(terminalId, state)
-        }
-        return state
-      }
-
       const journalFor = (terminalId: string): TerminalCursorJournal => {
         let journal = journals.get(terminalId)
         if (!journal) {
@@ -1327,27 +1271,13 @@ class TerminalManager extends Context.Service<
         }
       }
 
-      const processOutput = (
-        terminalId: string,
-        data: string,
-        legacyState: TerminalSubscriberState
-      ): void => {
+      const processOutput = (terminalId: string, data: string): void => {
         for (const chunk of splitByUtf8Bytes(data, outputChunkBytes)) {
           const journal = journalFor(terminalId)
           const cursor = journal.append(chunk)
           headlessManager.write(terminalId, chunk, () => {
             parsedCursors.set(terminalId, cursor)
           })
-          if (legacyState.replayBuffer !== null) {
-            legacyState.replayBuffer.push(chunk)
-          }
-          for (const subscriber of legacyState.subscribers.values()) {
-            try {
-              subscriber(chunk)
-            } catch {
-              // A failed compatibility subscriber is cleaned up by its owner.
-            }
-          }
           if ((attachSubscribers.get(terminalId)?.size ?? 0) > 0) {
             oldestUnackedAt.set(
               terminalId,
@@ -1390,9 +1320,7 @@ class TerminalManager extends Context.Service<
               if (terminal === undefined || terminal.status !== 'running') {
                 return
               }
-
-              const state = subscriberStates.get(terminalId)
-              if ((state?.subscribers.size ?? 0) > 0) {
+              if (claimedTerminalIds.has(terminalId)) {
                 return
               }
 
@@ -1525,8 +1453,6 @@ class TerminalManager extends Context.Service<
           return next
         })
 
-        const subState = getOrCreateSubscriberState(id)
-
         // Create headless terminal for screen state serialization.
         // Device query responses (DA1/DSR) are handled exclusively by
         // the renderer xterm.js — the headless terminal uses
@@ -1549,20 +1475,12 @@ class TerminalManager extends Context.Service<
             cols,
             rows,
           },
-          // Data callback: write to headless terminal + notify subscribers.
+          // Data callback: write to the bounded journal/headless terminal and
+          // notify attach-stream subscribers.
           // No escape sequence buffering — xterm.js handles partial
           // sequences internally (matching VS Code's approach).
           //
-          // PTY output flows to two destinations:
-          // 1. replayBuffer — captures all output until the renderer's
-          //    data channel subscribes with replay=true (which drains
-          //    and nulls the buffer). This matches VS Code's
-          //    _initialDataEvents pattern — no output is lost between
-          //    PTY spawn and data channel connection.
-          // 2. Live subscribers — internal consumers like session
-          //    persistence that subscribe with replay=false. These
-          //    receive data immediately without affecting the buffer.
-          (data: string) => processOutput(id, data, subState),
+          (data: string) => processOutput(id, data),
           // Exit callback: mark as stopped (retain in memory)
           (exitCode: number, signal: number) => {
             clearGraceTimeout(id)
@@ -1822,7 +1740,6 @@ class TerminalManager extends Context.Service<
           return next
         })
 
-        subscriberStates.delete(terminalId)
         const activeAttachSubscribers = attachSubscribers.get(terminalId)
         if (activeAttachSubscribers !== undefined) {
           for (
@@ -1834,6 +1751,7 @@ class TerminalManager extends Context.Service<
           }
         }
         attachSubscribers.delete(terminalId)
+        claimedTerminalIds.delete(terminalId)
         journals.delete(terminalId)
         transportEpochs.delete(terminalId)
         parsedCursors.delete(terminalId)
@@ -2028,9 +1946,6 @@ class TerminalManager extends Context.Service<
           return next
         })
 
-        // Get or create subscriber state for the restarted terminal
-        const restartSubState = getOrCreateSubscriberState(terminalId)
-
         // Reset OSC activity tracking for the restarted terminal
         sessionsWithOscActivity.delete(terminalId)
         oscTitleMap.delete(terminalId)
@@ -2103,10 +2018,9 @@ class TerminalManager extends Context.Service<
             cols: restartCols,
             rows: restartRows,
           },
-          // Data callback: write to headless terminal + notify subscribers.
-          // Same buffering pattern as spawn — if somehow no subscribers
-          // exist at restart time, data is captured until one connects.
-          (data: string) => processOutput(terminalId, data, restartSubState),
+          // Detached output remains bounded by the journal and headless
+          // terminal; attached panes additionally receive live deltas.
+          (data: string) => processOutput(terminalId, data),
           (exitCode: number, signal: number) => {
             clearGraceTimeout(terminalId)
             emitAgentCompletionBeforeStop(terminalId)
@@ -2317,84 +2231,14 @@ class TerminalManager extends Context.Service<
         })
       )
 
-      // ---------------------------------------------------------------
-      // Subscribe helpers (extracted to reduce cognitive complexity)
-      // ---------------------------------------------------------------
-
-      /**
-       * Replay buffered PTY output to a subscriber, then null the buffer.
-       * Only called for data channel subscribers (replay=true).
-       */
-      const replayBufferToSubscriber = (
-        state: TerminalSubscriberState,
-        callback: (data: string) => void
-      ): void => {
-        if (state.replayBuffer !== null && state.replayBuffer.length > 0) {
-          for (const data of state.replayBuffer) {
-            try {
-              callback(data)
-            } catch {
-              // Subscriber errors silently ignored
-            }
-          }
-        }
-        // Stop buffering — future data goes directly to subscribers.
-        state.replayBuffer = null
-      }
-
-      // ---------------------------------------------------------------
-      // WebSocket subscriber management
-      // ---------------------------------------------------------------
-
-      const subscribe = Effect.fn('TerminalManager.subscribe')(function* (
-        terminalId: string,
-        callback: (data: string) => void,
-        options?: { readonly replay?: boolean }
-      ) {
-        const shouldReplay = options?.replay !== false
-
-        const map = yield* Ref.get(terminalsRef)
-        const terminal = map.get(terminalId)
-
-        if (terminal === undefined) {
-          return yield* new TerminalRpcError({
-            message: `Terminal not found: ${terminalId}`,
-            code: 'TERMINAL_NOT_FOUND',
-          })
-        }
-
-        const state = getOrCreateSubscriberState(terminalId)
-        const subscriberId = crypto.randomUUID()
-        state.subscribers.set(subscriberId, callback)
-        clearGraceTimeout(terminalId)
-
-        if (shouldReplay) {
-          replayBufferToSubscriber(state, callback)
-        }
-
-        yield* Effect.log(
-          `WebSocket subscribed to terminal ${terminalId} (subscriber=${subscriberId}, replay=${String(shouldReplay)})`
-        ).pipe(Effect.annotateLogs('module', logPrefix))
-
-        return { subscriberId }
-      })
-
       const unsubscribe = Effect.fn('TerminalManager.unsubscribe')(function* (
         terminalId: string,
         subscriberId: string
       ) {
-        const state = subscriberStates.get(terminalId)
-        if (state !== undefined) {
-          state.subscribers.delete(subscriberId)
-          // Deliberately no grace timer when the last subscriber leaves:
-          // detached terminals are first-class (CONTEXT.md) and a
-          // terminal that was claimed once is never reaped (ADR 0003).
-          // Cleanup happens via explicit kill/remove (pane close) only.
-        }
         removeAttachSubscriber(terminalId, subscriberId)
 
         yield* Effect.log(
-          `WebSocket unsubscribed from terminal ${terminalId} (subscriber=${subscriberId})`
+          `Attach stream unsubscribed from terminal ${terminalId} (subscriber=${subscriberId})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
       })
 
@@ -2430,6 +2274,7 @@ class TerminalManager extends Context.Service<
           })
         }
         subscribers.set(subscriberId, subscriber)
+        claimedTerminalIds.add(terminalId)
         clearGraceTimeout(terminalId)
         ptyHostClient.attachFlowControlConsumer(terminalId)
         // Attach resets the PTY's flow-control debt (ADR 0002). Replay bytes
@@ -2602,14 +2447,13 @@ class TerminalManager extends Context.Service<
           // Revival starts a replacement PTY, but its renderer-facing history
           // must begin at the checkpoint rather than at the replacement
           // shell's fresh prompt. Rehydrate the same headless/journal path
-          // used by live output so WebSocket attaches and legacy data channels
-          // observe one tier-iii history.
+          // used by live output so WebSocket attaches observe one tier-iii
+          // history.
           headlessManager.dispose(terminalId)
           headlessManager.create(terminalId, firstFrame.cols, firstFrame.rows)
-          const state = getOrCreateSubscriberState(terminalId)
           for (const frame of replayEvent.events) {
             headlessManager.resize(terminalId, frame.cols, frame.rows)
-            processOutput(terminalId, frame.data, state)
+            processOutput(terminalId, frame.data)
           }
         }
       })
@@ -2902,7 +2746,6 @@ class TerminalManager extends Context.Service<
           headlessManager.getScreenState(terminalId),
         getCommandDetectionState: (terminalId: string) =>
           headlessManager.getCommandDetectionState(terminalId),
-        subscribe,
         unsubscribe,
         terminalExists,
         setAgentStatusFromHook,
@@ -2931,7 +2774,6 @@ export {
 export type {
   ForegroundProcess,
   ManagedTerminal,
-  OutputSubscriber,
   ProcessCategory,
   ProcessDetectionResult,
   SpawnPayload,

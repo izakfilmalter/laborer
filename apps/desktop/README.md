@@ -31,7 +31,7 @@ bun install
 bun run dev
 ```
 
-To run only the Vite interface (without mission-control utility processes):
+To run only the Vite interface (without the mission-control daemon):
 
 ```sh
 bun run --cwd apps/web dev

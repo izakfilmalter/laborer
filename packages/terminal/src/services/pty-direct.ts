@@ -3,8 +3,8 @@
  *
  * Provides the same `PtyHostClient` service interface as `pty-host-client.ts`,
  * but runs node-pty in-process instead of spawning a separate pty-host child
- * process. This "flattened" architecture is used when the terminal runs as
- * an Electron utility process, matching VS Code's pty host pattern.
+ * process. The detached PTY host uses this implementation to own node-pty
+ * independently of the daemon and renderer lifecycles.
  *
  * The existing `TerminalManager` service is unchanged — it depends on the
  * `PtyHostClient` tag regardless of whether the underlying implementation
@@ -12,13 +12,12 @@
  *
  * Key differences from `pty-host-client.ts`:
  * - No child process spawning (no `ELECTRON_RUN_AS_NODE=1`)
- * - node-pty is imported directly via `createRequire` (same as pty-host.ts)
- * - Data coalescing (5ms buffer) matches pty-host.ts behavior
- * - Flow control (high/low watermark) matches pty-host.ts behavior
+ * - node-pty is imported directly via `createRequire`
+ * - Data coalescing uses a 5ms buffer
+ * - Flow control uses high/low watermarks
  * - Spawn-helper permission fix runs on layer construction
  *
- * @see pty-host.ts — Original child process implementation
- * @see pty-host-client.ts — Child process-based PtyHostClient
+ * @see pty-host-client.ts — PtyHostClient contract
  * @see .reference/vscode/src/vs/platform/terminal/node/ptyHostMain.ts
  */
 
@@ -135,7 +134,7 @@ async function fixSpawnHelperPermissions(): Promise<void> {
 /**
  * Layer that provides PtyHostClient using node-pty directly (no child process).
  *
- * Used in the utility process entry point to flatten the terminal architecture.
+ * Used in the detached PTY-host entry point.
  * The layer is scoped: when finalized, all PTYs are killed and buffers flushed.
  */
 const directLayer = Layer.effect(

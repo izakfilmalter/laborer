@@ -645,13 +645,6 @@ export const ptyHostProxyLayer = Layer.effect(
           ),
         getScreenState: () => '',
         getCommandDetectionState: () => undefined,
-        subscribe: (id, callback) =>
-          service.attach(id, {}, (event) => {
-            if (event._tag === 'Delta' || event._tag === 'Snapshot') {
-              callback(event.data)
-            }
-            return true
-          }),
         unsubscribe: (id, localId) =>
           Effect.gen(function* () {
             const record = attachments.get(localId)

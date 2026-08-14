@@ -3,10 +3,7 @@ import { TerminalManager } from './terminal-manager.js'
 import { createTerminalSessionPersistence } from './terminal-session-persistence.js'
 
 /**
- * Checkpoint/revival lifecycle for an in-process terminal manager.
- *
- * The legacy utility entry wires the same persistence manager imperatively.
- * The standalone daemon needs it in the service graph so persistence finishes
+ * Checkpoint/revival lifecycle for the detached PTY host. Persistence finishes
  * before the terminal manager's own shutdown finalizer kills its PTYs.
  */
 export const TerminalSessionPersistenceLayer = Layer.effectDiscard(

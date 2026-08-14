@@ -1,11 +1,11 @@
 /**
  * Terminal Session Persistence
  *
- * Provides terminal session persistence across utility process restarts
- * (both dev hot reload and crash recovery). Implements three components:
+ * Provides terminal session persistence across detached PTY-host restarts.
+ * Implements three components:
  *
  * 1. **Replay buffer** — A circular buffer per terminal that stores recent
- *    output. When the utility process restarts, the renderer receives
+ *    output. When the PTY host restarts, the renderer receives
  *    replay data so terminals appear to continue seamlessly.
  *
  * 2. **Graceful shutdown serialization** — On SIGTERM, serializes active
@@ -14,7 +14,7 @@
  *
  * 3. **Startup restoration** — On startup, reads serialized state,
  *    respawns PTY processes with the same configuration, and provides
- *    replay data to the renderer via the data channel.
+ *    replay data to the renderer via the attach stream.
  *
  * On ungraceful termination (crash, SIGKILL), terminals are marked as
  * stopped in the renderer. The renderer retains its local xterm buffer,
@@ -372,7 +372,7 @@ interface TerminalSessionPersistence {
 
   /**
    * Get the replay buffer contents for a terminal.
-   * Used by the data channel to replay output after a restart.
+   * Used by persistence to replay output after a restart.
    */
   readonly getReplayBuffer: (terminalId: string) => string | undefined
 

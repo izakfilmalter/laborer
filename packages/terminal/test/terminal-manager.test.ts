@@ -112,7 +112,7 @@ afterAll(async () => {
 
 const TEST_WORKSPACE_ID = 'test-workspace-1'
 const TEST_CWD = '/tmp'
-const noopSubscriber = (_data: string): undefined => undefined
+const noopSubscriber = (): boolean => true
 
 /** Small delay to allow async PTY events to propagate through IPC. */
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -859,7 +859,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       const firstSubscriberId = await runLocalEffect(
         Effect.gen(function* () {
           const tm = yield* TerminalManager
-          const result = yield* tm.subscribe(terminal.id, noopSubscriber)
+          const result = yield* tm.attach(
+            terminal.id,
+            { leaseId: 'first-reconnect' },
+            noopSubscriber
+          )
           return result.subscriberId
         })
       )
@@ -876,7 +880,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       const secondSubscriberId = await runLocalEffect(
         Effect.gen(function* () {
           const tm = yield* TerminalManager
-          const result = yield* tm.subscribe(terminal.id, noopSubscriber)
+          const result = yield* tm.attach(
+            terminal.id,
+            { leaseId: 'second-reconnect' },
+            noopSubscriber
+          )
           return result.subscriberId
         })
       )
@@ -923,7 +931,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       const subscriberId = await runLocalEffect(
         Effect.gen(function* () {
           const tm = yield* TerminalManager
-          const result = yield* tm.subscribe(terminal.id, noopSubscriber)
+          const result = yield* tm.attach(
+            terminal.id,
+            { leaseId: 'claimed-terminal' },
+            noopSubscriber
+          )
           return result.subscriberId
         })
       )

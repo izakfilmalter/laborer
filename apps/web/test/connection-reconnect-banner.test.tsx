@@ -39,7 +39,12 @@ import { ConnectionReconnectBanner } from '../src/components/connection-reconnec
 describe('ConnectionReconnectBanner', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    connection.set({ phase: 'connected', session: 1 })
+    connection.set({
+      attempt: 1,
+      phase: 'connected',
+      retryAt: null,
+      session: 1,
+    })
     connection.retryNow.mockClear()
   })
 
@@ -77,5 +82,73 @@ describe('ConnectionReconnectBanner', () => {
     act(() => vi.advanceTimersByTime(2000))
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
     expect(connection.retryNow).toHaveBeenCalledOnce()
+  })
+
+  it('escalates once the retry ladder is exhausted', () => {
+    render(
+      <AtomRegistryProvider>
+        <ConnectionReconnectBanner />
+      </AtomRegistryProvider>
+    )
+
+    act(() => connection.set({ attempt: 1, phase: 'backoff', session: null }))
+    act(() => vi.advanceTimersByTime(2000))
+    expect(screen.getByText('Connection lost')).toBeTruthy()
+
+    act(() => connection.set({ attempt: 5 }))
+    expect(screen.getByText('Can’t reach the daemon')).toBeTruthy()
+  })
+
+  it('counts down to the next automatic attempt', () => {
+    vi.setSystemTime(0)
+    render(
+      <AtomRegistryProvider>
+        <ConnectionReconnectBanner />
+      </AtomRegistryProvider>
+    )
+
+    act(() =>
+      connection.set({
+        attempt: 1,
+        phase: 'backoff',
+        retryAt: 8000,
+        session: null,
+      })
+    )
+    act(() => vi.advanceTimersByTime(2000))
+    expect(screen.getByText('Retrying in 6s')).toBeTruthy()
+
+    act(() => vi.advanceTimersByTime(2000))
+    expect(screen.getByText('Retrying in 4s')).toBeTruthy()
+  })
+
+  it('announces the outage and its recovery to assistive technology', () => {
+    render(
+      <AtomRegistryProvider>
+        <ConnectionReconnectBanner />
+      </AtomRegistryProvider>
+    )
+
+    const liveRegion = screen.getByRole('status')
+    expect(liveRegion.textContent).toBe('')
+
+    act(() =>
+      connection.set({
+        attempt: 1,
+        phase: 'backoff',
+        retryAt: null,
+        session: null,
+      })
+    )
+    act(() => vi.advanceTimersByTime(2000))
+    expect(liveRegion.textContent).toContain('Retrying automatically')
+
+    act(() => connection.set({ phase: 'connected', session: 2 }))
+    expect(screen.getByTestId('reconnect-restored')).toBeTruthy()
+    expect(liveRegion.textContent).toBe('Reconnected to the daemon.')
+
+    act(() => vi.advanceTimersByTime(2400))
+    expect(screen.queryByTestId('reconnect-restored')).toBeNull()
+    expect(liveRegion.textContent).toBe('')
   })
 })

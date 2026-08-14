@@ -22,7 +22,7 @@
 
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import { Loader2 } from 'lucide-react'
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
@@ -46,76 +46,80 @@ const DOT_CLASSES: Record<ReturnType<typeof getStatusColor>, string> = {
 }
 
 // ---------------------------------------------------------------------------
-// Dev mode health polling
+// Browser health polling
 // ---------------------------------------------------------------------------
 
 /** Initial polling interval (ms). */
-const DEV_POLL_INITIAL_MS = 300
+const BROWSER_POLL_INITIAL_MS = 300
 
 /** Maximum polling interval (ms). */
-const DEV_POLL_MAX_MS = 3000
+const BROWSER_POLL_MAX_MS = 3000
 
 /** Backoff multiplier. */
-const DEV_POLL_BACKOFF = 1.5
+const BROWSER_POLL_BACKOFF = 1.5
 
-type DevGateState = 'polling' | 'healthy'
+type BrowserGateState = 'polling' | 'healthy'
 
 /**
  * Hook that polls `/health` (Vite-proxied to the daemon)
  * with exponential backoff until it receives a 2xx response.
  */
-function useDevHealthPoll(): {
-  state: DevGateState
+function useBrowserHealthPoll(): {
+  state: BrowserGateState
 } {
-  const [state, setState] = useState<DevGateState>('polling')
-  const intervalRef = useRef(DEV_POLL_INITIAL_MS)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const mountedRef = useRef(true)
-
-  const poll = useCallback(async () => {
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 2000)
-      const response = await fetch('/health', {
-        signal: controller.signal,
-        redirect: 'error',
-      }).finally(() => clearTimeout(timeoutId))
-
-      if (response.ok) {
-        if (mountedRef.current) {
-          setState('healthy')
-        }
-        return
-      }
-    } catch {
-      // Connection refused, timeout, etc.
-    }
-
-    if (!mountedRef.current) {
-      return
-    }
-
-    // Schedule next poll with backoff.
-    intervalRef.current = Math.min(
-      intervalRef.current * DEV_POLL_BACKOFF,
-      DEV_POLL_MAX_MS
-    )
-    timerRef.current = setTimeout(() => {
-      poll()
-    }, intervalRef.current)
-  }, [])
+  const [state, setState] = useState<BrowserGateState>('polling')
 
   useEffect(() => {
-    mountedRef.current = true
+    let cancelled = false
+    let interval = BROWSER_POLL_INITIAL_MS
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let requestController: AbortController | undefined
+
+    const poll = async () => {
+      const controller = new AbortController()
+      requestController = controller
+      const timeout = setTimeout(() => controller.abort(), 2000)
+      let healthy = false
+
+      try {
+        const response = await fetch('/health', {
+          signal: controller.signal,
+          redirect: 'error',
+        })
+        healthy = response.ok
+      } catch {
+        // Connection refused, timeout, etc.
+      } finally {
+        clearTimeout(timeout)
+        if (requestController === controller) {
+          requestController = undefined
+        }
+      }
+
+      if (cancelled) {
+        return
+      }
+      if (healthy) {
+        setState('healthy')
+        return
+      }
+
+      interval = Math.min(interval * BROWSER_POLL_BACKOFF, BROWSER_POLL_MAX_MS)
+      timer = setTimeout(() => {
+        poll()
+      }, interval)
+    }
+
     poll()
 
     return () => {
-      mountedRef.current = false
-      if (timerRef.current) {
-        clearTimeout(timerRef.current)
+      cancelled = true
+      requestController?.abort()
+      if (timer) {
+        clearTimeout(timer)
       }
     }
-  }, [poll])
+  }, [])
 
   return { state }
 }
@@ -142,7 +146,7 @@ function ServerGate({ children }: { readonly children: ReactNode }) {
   }
 
   // Plain browser: wait for the standalone daemon.
-  return <DevServerGate>{children}</DevServerGate>
+  return <BrowserServerGate>{children}</BrowserServerGate>
 }
 
 /** Check if running in Electron production (not dev). */
@@ -151,11 +155,11 @@ function isElectronProduction(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Dev mode gate
+// Browser gate
 // ---------------------------------------------------------------------------
 
-function DevServerGate({ children }: { readonly children: ReactNode }) {
-  const { state } = useDevHealthPoll()
+function BrowserServerGate({ children }: { readonly children: ReactNode }) {
+  const { state } = useBrowserHealthPoll()
 
   if (state === 'healthy') {
     return <>{children}</>

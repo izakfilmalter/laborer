@@ -12,7 +12,10 @@
     "test:watch": "vitest"
   },
   "exports": {
-    ".": "./src/utility-main.ts"
+    ".": "./src/utility-main.ts",
+    "./rpc/handlers": "./src/rpc/handlers.ts",
+    "./services/pty-direct": "./src/services/pty-direct.ts",
+    "./services/terminal-manager": "./src/services/terminal-manager.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

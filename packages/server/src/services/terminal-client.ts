@@ -35,9 +35,15 @@ import {
   type AgentStatusReport,
   AgentStatusSchema,
   RpcError,
+  type TerminalInfo,
   TerminalRpcs,
 } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import {
+  toLifecycleEventSchema,
+  toTerminalInfo,
+} from '@laborer/terminal/rpc/handlers'
+import { TerminalManager } from '@laborer/terminal/services/terminal-manager'
 import {
   Array as Arr,
   Context,
@@ -102,6 +108,19 @@ class TerminalRpcPort extends Context.Service<
 >()('@laborer/TerminalRpcPort') {}
 
 export { TerminalRpcPort }
+
+/** Selects direct manager calls for the standalone daemon composition. */
+class InProcessTerminalBackend extends Context.Service<
+  InProcessTerminalBackend,
+  { readonly manager: TerminalManager['Service'] }
+>()('@laborer/InProcessTerminalBackend') {
+  static readonly layer = Layer.effect(
+    InProcessTerminalBackend,
+    Effect.map(TerminalManager, (manager) =>
+      InProcessTerminalBackend.of({ manager })
+    )
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Agent hook HTTP server
@@ -463,6 +482,9 @@ class TerminalClient extends Context.Service<
       // main process brokers a direct MessagePort between the server and
       // terminal processes.
       const terminalRpcPort = yield* Effect.serviceOption(TerminalRpcPort)
+      const inProcessBackend = yield* Effect.serviceOption(
+        InProcessTerminalBackend
+      )
 
       /**
        * Get or create the RPC client. On first call, establishes the
@@ -482,15 +504,104 @@ class TerminalClient extends Context.Service<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
-          const client = yield* (() => {
+          const client: {
+            readonly 'terminal.events': () => Stream.Stream<
+              ReturnType<typeof toLifecycleEventSchema>,
+              unknown
+            >
+            readonly 'terminal.kill': (input: {
+              readonly id: string
+            }) => Effect.Effect<void, unknown>
+            readonly 'terminal.list': () => Effect.Effect<
+              readonly TerminalInfo[],
+              unknown
+            >
+            readonly 'terminal.setAgentStatus': (input: {
+              readonly id: string
+              readonly report: AgentStatusReport
+            }) => Effect.Effect<void, unknown>
+            readonly 'terminal.spawn': (input: {
+              readonly args?: readonly string[] | undefined
+              readonly cols: number
+              readonly command: string
+              readonly cwd: string
+              readonly env?: Readonly<Record<string, string>> | undefined
+              readonly id?: string | undefined
+              readonly rows: number
+              readonly workspaceId: string
+            }) => Effect.Effect<TerminalInfo, unknown>
+          } = yield* (() => {
+            if (Option.isSome(inProcessBackend)) {
+              const manager = inProcessBackend.value.manager
+              return Effect.succeed({
+                'terminal.events': () =>
+                  Stream.fromPubSub(manager.lifecycleEvents).pipe(
+                    Stream.map(toLifecycleEventSchema)
+                  ),
+                'terminal.kill': ({ id }: { readonly id: string }) =>
+                  manager.kill(id),
+                'terminal.list': () =>
+                  manager
+                    .listTerminals()
+                    .pipe(
+                      Effect.map((terminals) => terminals.map(toTerminalInfo))
+                    ),
+                'terminal.setAgentStatus': ({
+                  id,
+                  report,
+                }: {
+                  readonly id: string
+                  readonly report: AgentStatusReport
+                }) => manager.setAgentStatusFromHook(id, report),
+                'terminal.spawn': (input: {
+                  readonly args?: readonly string[] | undefined
+                  readonly cols: number
+                  readonly command: string
+                  readonly cwd: string
+                  readonly env?: Readonly<Record<string, string>> | undefined
+                  readonly id?: string | undefined
+                  readonly rows: number
+                  readonly workspaceId: string
+                }) =>
+                  manager
+                    .spawn({
+                      ...input,
+                      args: input.args ?? [],
+                      env:
+                        input.env === undefined ? undefined : { ...input.env },
+                    })
+                    .pipe(Effect.map(toTerminalInfo)),
+              })
+            }
+
             if (Option.isSome(terminalRpcPort)) {
               return Effect.gen(function* () {
                 const port = yield* terminalRpcPort.value.awaitPort
-                return yield* createMessagePortRpcClient(
+                const rpcClient = yield* createMessagePortRpcClient(
                   TerminalRpcs,
                   port,
                   layerScope
                 )
+                return {
+                  'terminal.events': () => rpcClient['terminal.events'](),
+                  'terminal.kill': (input: { readonly id: string }) =>
+                    rpcClient['terminal.kill'](input),
+                  'terminal.list': () => rpcClient['terminal.list'](),
+                  'terminal.setAgentStatus': (input: {
+                    readonly id: string
+                    readonly report: AgentStatusReport
+                  }) => rpcClient['terminal.setAgentStatus'](input),
+                  'terminal.spawn': (input: {
+                    readonly args?: readonly string[] | undefined
+                    readonly cols: number
+                    readonly command: string
+                    readonly cwd: string
+                    readonly env?: Readonly<Record<string, string>> | undefined
+                    readonly id?: string | undefined
+                    readonly rows: number
+                    readonly workspaceId: string
+                  }) => rpcClient['terminal.spawn'](input),
+                }
               })
             }
 
@@ -506,9 +617,29 @@ class TerminalClient extends Context.Service<
                     )
                   )
                 )
-                return yield* RpcClient.make(TerminalRpcs).pipe(
+                const rpcClient = yield* RpcClient.make(TerminalRpcs).pipe(
                   Effect.provide(context)
                 )
+                return {
+                  'terminal.events': () => rpcClient['terminal.events'](),
+                  'terminal.kill': (input: { readonly id: string }) =>
+                    rpcClient['terminal.kill'](input),
+                  'terminal.list': () => rpcClient['terminal.list'](),
+                  'terminal.setAgentStatus': (input: {
+                    readonly id: string
+                    readonly report: AgentStatusReport
+                  }) => rpcClient['terminal.setAgentStatus'](input),
+                  'terminal.spawn': (input: {
+                    readonly args?: readonly string[] | undefined
+                    readonly cols: number
+                    readonly command: string
+                    readonly cwd: string
+                    readonly env?: Readonly<Record<string, string>> | undefined
+                    readonly id?: string | undefined
+                    readonly rows: number
+                    readonly workspaceId: string
+                  }) => rpcClient['terminal.spawn'](input),
+                }
               })
             }
 
@@ -880,6 +1011,10 @@ class TerminalClient extends Context.Service<
         killAllForWorkspace,
       })
     })
+  )
+
+  static readonly inProcessLayer = TerminalClient.layer.pipe(
+    Layer.provide(InProcessTerminalBackend.layer)
   )
 }
 

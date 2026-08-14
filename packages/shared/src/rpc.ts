@@ -1455,3 +1455,12 @@ export class TerminalRpcs extends RpcGroup.make(
     stream: true,
   })
 ) {}
+
+/** All mission-control capabilities carried by the daemon's single socket. */
+export const DaemonRpcs = LaborerRpcs.merge(
+  // Both legacy groups contain `terminal.spawn`. The public daemon keeps the
+  // orchestration-aware Laborer contract; all other terminal manager methods
+  // come from TerminalRpcs.
+  TerminalRpcs.omit('terminal.spawn'),
+  FileWatcherRpcs
+)

@@ -25,6 +25,7 @@
  */
 
 import { NodeSocket } from '@effect/platform-node'
+import { WatcherManager } from '@laborer/file-watcher/services/watcher-manager'
 import {
   FileWatcherRpcError,
   FileWatcherRpcs,
@@ -68,6 +69,19 @@ class FileWatcherRpcPort extends Context.Service<
   FileWatcherRpcPort,
   { readonly awaitPort: Effect.Effect<RpcMessagePort> }
 >()('@laborer/FileWatcherRpcPort') {}
+
+/** Selects direct manager calls for the standalone daemon composition. */
+class InProcessFileWatcherBackend extends Context.Service<
+  InProcessFileWatcherBackend,
+  { readonly manager: WatcherManager['Service'] }
+>()('@laborer/InProcessFileWatcherBackend') {
+  static readonly layer = Layer.effect(
+    InProcessFileWatcherBackend,
+    Effect.map(WatcherManager, (manager) =>
+      InProcessFileWatcherBackend.of({ manager })
+    )
+  )
+}
 
 class FileWatcherClient extends Context.Service<
   FileWatcherClient,
@@ -144,6 +158,9 @@ class FileWatcherClient extends Context.Service<
       // main process brokers a direct MessagePort between the server and
       // file-watcher processes.
       const fileWatcherRpcPort = yield* Effect.serviceOption(FileWatcherRpcPort)
+      const inProcessBackend = yield* Effect.serviceOption(
+        InProcessFileWatcherBackend
+      )
 
       /**
        * Get or create the RPC client. On first call, establishes the
@@ -160,6 +177,33 @@ class FileWatcherClient extends Context.Service<
        */
       const getOrCreateClient = yield* Effect.cached(
         Effect.gen(function* () {
+          if (Option.isSome(inProcessBackend)) {
+            const manager = inProcessBackend.value.manager
+            return {
+              'watcher.events': () => Stream.fromPubSub(manager.fileEvents),
+              'watcher.list': () => manager.list(),
+              'watcher.subscribe': (input: {
+                readonly ignoreGlobs?: readonly string[] | undefined
+                readonly path: string
+                readonly recursive?: boolean | undefined
+              }) =>
+                manager.subscribe(
+                  input.path,
+                  input.recursive,
+                  input.ignoreGlobs
+                ),
+              'watcher.unsubscribe': ({ id }: { readonly id: string }) =>
+                manager.unsubscribe(id),
+              'watcher.updateIgnore': ({
+                id,
+                ignoreGlobs,
+              }: {
+                readonly id: string
+                readonly ignoreGlobs: readonly string[]
+              }) => manager.updateIgnore(id, ignoreGlobs),
+            }
+          }
+
           const client = yield* (() => {
             if (Option.isSome(fileWatcherRpcPort)) {
               return Effect.gen(function* () {
@@ -318,6 +362,10 @@ class FileWatcherClient extends Context.Service<
         listSubscriptions,
       })
     })
+  )
+
+  static readonly inProcessLayer = FileWatcherClient.layer.pipe(
+    Layer.provide(InProcessFileWatcherBackend.layer)
   )
 }
 

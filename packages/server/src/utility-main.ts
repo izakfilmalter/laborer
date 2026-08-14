@@ -40,9 +40,11 @@
  * @see Issue #10: Server utility process: RPC over MessagePort
  */
 
+import type { WatcherManager } from '@laborer/file-watcher/services/watcher-manager'
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { layerProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport'
+import type { TerminalManager } from '@laborer/terminal/services/terminal-manager'
 import {
   Context,
   Effect,
@@ -267,11 +269,6 @@ const provideUtilityPortLayers = <RIn, E, ROut>(
  * Leaf services have no inter-service dependencies, but some perform I/O or
  * establish lazy sidecar clients. Build them off the HTTP startup path.
  */
-const DeferredLeafLayers = Layer.mergeAll(
-  FileWatcherClient.layer,
-  WorktreeDetector.layer
-)
-
 /**
  * Services depending on the shared database + leaf layers.
  */
@@ -305,132 +302,186 @@ const DeferredServiceStack = WorkspaceProvider.layer.pipe(
  * Provides cheap Ref-backed proxies immediately, then swaps each proxy to the
  * real implementation as the background service groups finish building.
  */
-const DeferredServicesProxyLive = Layer.effectContext(
-  Effect.gen(function* () {
-    const fileService = yield* makeRefDelegatingService(FileService, {
-      watcherSubscribe: () =>
-        Stream.fail(serviceInitializingError('@laborer/FileService')),
-    })
-    const prWatcher = yield* makeRefDelegatingService(PrWatcher)
-    const projectRegistry = yield* makeRefDelegatingService(ProjectRegistry)
-    const terminalClient = yield* makeRefDelegatingService(TerminalClient)
-    const workspaceProvider = yield* makeRefDelegatingService(WorkspaceProvider)
-    const workspaceSyncService =
-      yield* makeRefDelegatingService(WorkspaceSyncService)
+const makeDeferredServicesProxyLayer = <
+  FileWatcherInput,
+  TerminalInput,
+>(options: {
+  readonly fileWatcherClientLayer: Layer.Layer<
+    FileWatcherClient,
+    never,
+    FileWatcherInput
+  >
+  readonly terminalClientLayer: Layer.Layer<
+    TerminalClient,
+    never,
+    TerminalInput
+  >
+}) => {
+  const DeferredLeafLayers = Layer.mergeAll(
+    options.fileWatcherClientLayer,
+    WorktreeDetector.layer
+  )
 
-    yield* Effect.gen(function* () {
-      yield* Effect.logInfo(
-        'Starting background initialization of deferred services...'
-      )
+  return Layer.effectContext(
+    Effect.gen(function* () {
+      const fileService = yield* makeRefDelegatingService(FileService, {
+        watcherSubscribe: () =>
+          Stream.fail(serviceInitializingError('@laborer/FileService')),
+      })
+      const prWatcher = yield* makeRefDelegatingService(PrWatcher)
+      const projectRegistry = yield* makeRefDelegatingService(ProjectRegistry)
+      const terminalClient = yield* makeRefDelegatingService(TerminalClient)
+      const workspaceProvider =
+        yield* makeRefDelegatingService(WorkspaceProvider)
+      const workspaceSyncService =
+        yield* makeRefDelegatingService(WorkspaceSyncService)
 
-      const laborerDatabase = yield* LaborerDatabase
-      const config = yield* ConfigService
-      const repoId = yield* RepositoryIdentity
-      const ready = yield* DeferredServicesReady
-
-      const CoreDeps = Layer.mergeAll(
-        Layer.succeed(LaborerDatabase, laborerDatabase),
-        Layer.succeed(ConfigService, config),
-        Layer.succeed(RepositoryIdentity, repoId),
-        Layer.succeed(DeferredServicesReady, ready)
-      )
-
-      yield* Effect.logInfo('[deferred-init] Building leaf layers...')
-      const leafCtx = yield* Layer.build(
-        provideUtilityPortLayers(DeferredLeafLayers).pipe(
-          Layer.provide(CoreDeps)
+      yield* Effect.gen(function* () {
+        yield* Effect.logInfo(
+          'Starting background initialization of deferred services...'
         )
-      )
-      yield* Effect.logInfo('[deferred-init] Leaf layers built OK')
 
-      const stackFiber = yield* Effect.gen(function* () {
-        yield* Effect.logInfo('[deferred-init] Building service stack...')
-        const stackCtx = yield* Layer.build(
-          DeferredServiceStack.pipe(
-            Layer.provide(Layer.succeedContext(leafCtx)),
-            Layer.provide(CoreDeps),
-            Layer.provide(Layer.succeed(TerminalClient, terminalClient.proxy))
+        const laborerDatabase = yield* LaborerDatabase
+        const config = yield* ConfigService
+        const repoId = yield* RepositoryIdentity
+        const ready = yield* DeferredServicesReady
+
+        const CoreDeps = Layer.mergeAll(
+          Layer.succeed(LaborerDatabase, laborerDatabase),
+          Layer.succeed(ConfigService, config),
+          Layer.succeed(RepositoryIdentity, repoId),
+          Layer.succeed(DeferredServicesReady, ready)
+        )
+
+        yield* Effect.logInfo('[deferred-init] Building leaf layers...')
+        const leafCtx = yield* Layer.build(
+          provideUtilityPortLayers(DeferredLeafLayers).pipe(
+            Layer.provide(CoreDeps)
           )
         )
-        yield* Effect.logInfo(
-          '[deferred-init] Service stack built OK — swapping Refs'
-        )
-        yield* Ref.set(fileService.ref, Context.get(stackCtx, FileService))
-        yield* Ref.set(prWatcher.ref, Context.get(stackCtx, PrWatcher))
-        yield* Ref.set(
-          projectRegistry.ref,
-          Context.get(stackCtx, ProjectRegistry)
-        )
-        yield* Ref.set(
-          workspaceProvider.ref,
-          Context.get(stackCtx, WorkspaceProvider)
-        )
-        yield* Ref.set(
-          workspaceSyncService.ref,
-          Context.get(stackCtx, WorkspaceSyncService)
-        )
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError('[deferred-init] Service stack init failed', cause)
-        ),
-        Effect.forkScoped
-      )
+        yield* Effect.logInfo('[deferred-init] Leaf layers built OK')
 
-      const terminalFiber = yield* Effect.gen(function* () {
-        yield* Effect.logInfo('[deferred-init] Building TerminalClient...')
-        const termCtx = yield* Layer.build(
-          provideUtilityPortLayers(TerminalClient.layer).pipe(
-            Layer.provide(CoreDeps),
-            Layer.provide(
-              Layer.succeed(WorkspaceProvider, workspaceProvider.proxy)
+        const stackFiber = yield* Effect.gen(function* () {
+          yield* Effect.logInfo('[deferred-init] Building service stack...')
+          const stackCtx = yield* Layer.build(
+            DeferredServiceStack.pipe(
+              Layer.provide(Layer.succeedContext(leafCtx)),
+              Layer.provide(CoreDeps),
+              Layer.provide(Layer.succeed(TerminalClient, terminalClient.proxy))
             )
           )
+          yield* Effect.logInfo(
+            '[deferred-init] Service stack built OK — swapping Refs'
+          )
+          yield* Ref.set(fileService.ref, Context.get(stackCtx, FileService))
+          yield* Ref.set(prWatcher.ref, Context.get(stackCtx, PrWatcher))
+          yield* Ref.set(
+            projectRegistry.ref,
+            Context.get(stackCtx, ProjectRegistry)
+          )
+          yield* Ref.set(
+            workspaceProvider.ref,
+            Context.get(stackCtx, WorkspaceProvider)
+          )
+          yield* Ref.set(
+            workspaceSyncService.ref,
+            Context.get(stackCtx, WorkspaceSyncService)
+          )
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError('[deferred-init] Service stack init failed', cause)
+          ),
+          Effect.forkScoped
         )
+
+        const terminalFiber = yield* Effect.gen(function* () {
+          yield* Effect.logInfo('[deferred-init] Building TerminalClient...')
+          const termCtx = yield* Layer.build(
+            provideUtilityPortLayers(options.terminalClientLayer).pipe(
+              Layer.provide(CoreDeps),
+              Layer.provide(
+                Layer.succeed(WorkspaceProvider, workspaceProvider.proxy)
+              )
+            )
+          )
+          yield* Effect.logInfo(
+            '[deferred-init] TerminalClient built OK — swapping Ref'
+          )
+          yield* Ref.set(
+            terminalClient.ref,
+            Context.get(termCtx, TerminalClient)
+          )
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError('[deferred-init] TerminalClient init failed', cause)
+          ),
+          Effect.forkScoped
+        )
+
+        yield* Fiber.join(stackFiber)
+        yield* Fiber.join(terminalFiber)
+        yield* SubscriptionRef.set(ready.ref, true)
         yield* Effect.logInfo(
-          '[deferred-init] TerminalClient built OK — swapping Ref'
+          '[deferred-init] All groups complete — DeferredServicesReady set to true'
         )
-        yield* Ref.set(terminalClient.ref, Context.get(termCtx, TerminalClient))
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logError('[deferred-init] TerminalClient init failed', cause)
+          Effect.gen(function* () {
+            yield* Effect.logError('Deferred services failed to initialize')
+            yield* Effect.logError(cause)
+          })
         ),
-        Effect.forkScoped
+        Effect.forkScoped,
+        Effect.withSpan('deferred.init.all')
       )
 
-      yield* Fiber.join(stackFiber)
-      yield* Fiber.join(terminalFiber)
-      yield* SubscriptionRef.set(ready.ref, true)
-      yield* Effect.logInfo(
-        '[deferred-init] All groups complete — DeferredServicesReady set to true'
+      return pipe(
+        Context.empty(),
+        Context.add(FileService, fileService.proxy),
+        Context.add(PrWatcher, prWatcher.proxy),
+        Context.add(ProjectRegistry, projectRegistry.proxy),
+        Context.add(TerminalClient, terminalClient.proxy),
+        Context.add(WorkspaceProvider, workspaceProvider.proxy),
+        Context.add(WorkspaceSyncService, workspaceSyncService.proxy)
       )
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          yield* Effect.logError('Deferred services failed to initialize')
-          yield* Effect.logError(cause)
-        })
-      ),
-      Effect.forkScoped,
-      Effect.withSpan('deferred.init.all')
-    )
+    })
+  )
+}
 
-    return pipe(
-      Context.empty(),
-      Context.add(FileService, fileService.proxy),
-      Context.add(PrWatcher, prWatcher.proxy),
-      Context.add(ProjectRegistry, projectRegistry.proxy),
-      Context.add(TerminalClient, terminalClient.proxy),
-      Context.add(WorkspaceProvider, workspaceProvider.proxy),
-      Context.add(WorkspaceSyncService, workspaceSyncService.proxy)
-    )
+const provideInfrastructureCore = <ROut, RIn>(
+  layer: Layer.Layer<ROut, never, RIn>
+) =>
+  layer.pipe(
+    Layer.provideMerge(DeferredServicesReadyLayer),
+    Layer.provideMerge(ConfigService.layer),
+    Layer.provideMerge(RepositoryIdentity.layer),
+    Layer.provideMerge(LaborerDatabaseLive.pipe(Layer.orDie))
+  )
+
+export const makeInfrastructureLayer = (options: {
+  readonly fileWatcherClientLayer: Layer.Layer<
+    FileWatcherClient,
+    never,
+    WatcherManager
+  >
+  readonly terminalClientLayer: Layer.Layer<
+    TerminalClient,
+    never,
+    TerminalManager | WorkspaceProvider
+  >
+}) =>
+  provideInfrastructureCore(
+    makeDeferredServicesProxyLayer({
+      fileWatcherClientLayer: options.fileWatcherClientLayer,
+      terminalClientLayer: options.terminalClientLayer,
+    })
+  )
+
+export const InfrastructureLayer = provideInfrastructureCore(
+  makeDeferredServicesProxyLayer({
+    fileWatcherClientLayer: FileWatcherClient.layer,
+    terminalClientLayer: TerminalClient.layer,
   })
-)
-
-export const InfrastructureLayer = DeferredServicesProxyLive.pipe(
-  Layer.provideMerge(DeferredServicesReadyLayer),
-  Layer.provideMerge(ConfigService.layer),
-  Layer.provideMerge(RepositoryIdentity.layer),
-  Layer.provideMerge(LaborerDatabaseLive.pipe(Layer.orDie))
 )
 
 // ---------------------------------------------------------------------------

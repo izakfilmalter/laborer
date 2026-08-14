@@ -42,7 +42,7 @@ import {
  * The internal events carry full TerminalRecord objects for Spawned and
  * Restarted events. The schema events carry only the essential fields.
  */
-const toLifecycleEventSchema = (
+export const toLifecycleEventSchema = (
   event: TerminalLifecycleEvent
 ): TerminalLifecycleEventSchema => {
   switch (event._tag) {
@@ -99,7 +99,7 @@ const toLifecycleEventSchema = (
  * diverge in the future, this function will catch the mismatch at
  * compile time.
  */
-const toTerminalInfo = (record: {
+export const toTerminalInfo = (record: {
   readonly agentStatus: AgentStatusSnapshot | null
   readonly args: readonly string[]
   readonly command: string

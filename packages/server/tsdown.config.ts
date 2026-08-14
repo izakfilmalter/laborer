@@ -26,8 +26,10 @@ export default defineConfig([
   {
     ...shared,
     clean: true,
-    entry: ['src/utility-main.ts'],
+    entry: ['src/utility-main.ts', 'src/daemon-main.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
+    // Native addons are loaded from the installed package at runtime.
+    external: ['@parcel/watcher', 'node-pty'],
   },
   {
     ...shared,

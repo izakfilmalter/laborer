@@ -63,7 +63,7 @@ import type { FileDiffEntry, FileWatcherEvent } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
 import type { FileDiffMetadata } from '@pierre/diffs'
 import { FileDiff, Virtualizer } from '@pierre/diffs/react'
-import { Cause, Effect, Option, Schedule } from 'effect'
+import { Cause, Effect, Option } from 'effect'
 import { Atom, AsyncResult as Result } from 'effect/unstable/reactivity'
 import {
   ExternalLink,
@@ -80,6 +80,7 @@ import {
   useState,
   useTransition,
 } from 'react'
+import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { DiffWorkerPoolProvider } from '@/components/diff-worker-pool-provider'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -109,16 +110,6 @@ const editorOpenMutation = LaborerClient.mutation('editor.open')
 const DIFF_FETCH_TIMEOUT = '30 seconds'
 
 /**
- * Bounded retry policy: 2 retries with exponential backoff. Combined
- * with the per-attempt timeout, a fetch always terminates — either with
- * data or with an error the UI can render (with a manual retry button).
- */
-const diffRetrySchedule = Schedule.max([
-  Schedule.exponential('1 second'),
-  Schedule.recurs(2),
-])
-
-/**
  * Per-workspace query atom for the batched workspace diff.
  *
  * Keyed by workspaceId so concurrent panes never share (and interrupt)
@@ -139,29 +130,10 @@ const fileDiffQuery = Atom.family((workspaceId: string) =>
               code: 'TIMEOUT',
             })
           ),
-      }),
-      Effect.retry(diffRetrySchedule)
+      })
     )
   )
 )
-
-// ---------------------------------------------------------------------------
-// Watcher subscription atom cache
-// ---------------------------------------------------------------------------
-
-const watcherAtomCache = new Map<
-  string,
-  ReturnType<typeof LaborerClient.query>
->()
-
-const getWatcherAtom = (workspaceId: string) => {
-  let atom = watcherAtomCache.get(workspaceId)
-  if (!atom) {
-    atom = LaborerClient.query('file.watcher.subscribe', { workspaceId })
-    watcherAtomCache.set(workspaceId, atom)
-  }
-  return atom
-}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -459,7 +431,7 @@ function useDiffStore(workspaceId: string): DiffStoreResult {
       : null
 
   // --- Watcher subscription for invalidation (debounced refresh) ---
-  const watcherAtom = useMemo(() => getWatcherAtom(workspaceId), [workspaceId])
+  const watcherAtom = fileWatcherEventsAtom(workspaceId)
   useAtomMount(watcherAtom)
   const watcherResult = useAtomValue(watcherAtom)
 

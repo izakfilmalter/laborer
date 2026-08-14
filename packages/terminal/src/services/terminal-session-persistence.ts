@@ -1,11 +1,11 @@
 /**
  * Terminal Session Persistence
  *
- * Provides terminal session persistence across utility process restarts
- * (both dev hot reload and crash recovery). Implements three components:
+ * Provides terminal session persistence across detached PTY-host restarts.
+ * Implements three components:
  *
  * 1. **Replay buffer** — A circular buffer per terminal that stores recent
- *    output. When the utility process restarts, the renderer receives
+ *    output. When the PTY host restarts, the renderer receives
  *    replay data so terminals appear to continue seamlessly.
  *
  * 2. **Graceful shutdown serialization** — On SIGTERM, serializes active
@@ -14,7 +14,7 @@
  *
  * 3. **Startup restoration** — On startup, reads serialized state,
  *    respawns PTY processes with the same configuration, and provides
- *    replay data to the renderer via the data channel.
+ *    replay data to the renderer via the attach stream.
  *
  * On ungraceful termination (crash, SIGKILL), terminals are marked as
  * stopped in the renderer. The renderer retains its local xterm buffer,
@@ -32,8 +32,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolvePtyHostPaths } from './pty-host-paths.js'
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -51,10 +51,10 @@ const DEFAULT_REPLAY_BUFFER_SIZE = 200 * 1024
 const REPLAY_BUFFER_SIZE_ENV = 'LABORER_TERMINAL_REPLAY_BUFFER_SIZE'
 
 /**
- * Directory for persisted terminal state files.
- * Uses a subdirectory of the OS temp directory.
+ * Directory for graceful-shutdown revival checkpoints. This sits beside the
+ * host registration/socket in the worktree-scoped state root.
  */
-const PERSISTENCE_DIR = join(tmpdir(), 'laborer-terminal-persistence')
+const PERSISTENCE_DIR = join(resolvePtyHostPaths().stateDir, 'checkpoints')
 
 /**
  * File name for the serialized terminal state.
@@ -372,7 +372,7 @@ interface TerminalSessionPersistence {
 
   /**
    * Get the replay buffer contents for a terminal.
-   * Used by the data channel to replay output after a restart.
+   * Used by persistence to replay output after a restart.
    */
   readonly getReplayBuffer: (terminalId: string) => string | undefined
 

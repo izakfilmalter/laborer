@@ -3,7 +3,7 @@
  * when it unmounts mid-drag, so the sensor's document-level mousemove/mouseup
  * listeners keep dispatching drag callbacks into the unmounted tree. In prod
  * this fired `onMove` → `OptimisticTaskMoveQueue.move` → an atom write against
- * a registry the sidecar-recovery remount had already disposed:
+ * a registry a connection-recovery remount had already disposed:
  *
  *   Uncaught (in promise) Error: Cannot access Atom …: registry is disposed
  *
@@ -11,7 +11,7 @@
  *
  * @see apps/web/src/components/reui/kanban.tsx
  * @see apps/web/src/components/kanban/task-board.tsx (persistMove)
- * @see apps/web/src/components/sidecar-runtime-boundary.tsx (generation bump)
+ * @see apps/web/src/atoms/renderer-connection.ts (generation bump)
  */
 
 import { cleanup, fireEvent, render } from '@testing-library/react'

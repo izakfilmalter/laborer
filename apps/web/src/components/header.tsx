@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import { isElectron } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 
 import { LifecyclePhase, useLifecyclePhase } from './lifecycle-phase-context'
 
@@ -27,7 +27,7 @@ function PhaseIndicator() {
 }
 
 export default function Header() {
-  const electron = isElectron()
+  const electron = localApi.isDesktop
 
   return (
     <div className={electron ? 'drag-region' : undefined}>

@@ -16,11 +16,9 @@
  * `rpc-integration.test.ts`), but swaps `PtyHostClient.layer` for
  * `PtyDirectLayer` to verify the direct node-pty implementation.
  *
- * The MessagePort transport itself is already tested in the shared package
- * (issues #3 and #4). This test validates the service layer composition.
+ * The public WebSocket transport is covered by the browser end-to-end suite.
  *
  * @see packages/terminal/src/services/pty-direct.ts
- * @see Issue #6: Terminal utility process: basic PTY spawn via MessagePort RPC
  * @see Issue #7: Terminal utility process: full RPC surface
  */
 
@@ -41,7 +39,7 @@ import { TerminalManager } from '../src/services/terminal-manager.js'
 /**
  * Test layer: TerminalRpcs handler + TerminalManager + PtyDirectLayer.
  *
- * This mirrors the utility-main.ts composition but substitutes PtyDirectLayer
+ * This mirrors the daemon's terminal composition but substitutes PtyDirectLayer
  * for PtyHostClient.layer, proving the direct node-pty implementation works
  * as a drop-in replacement.
  */

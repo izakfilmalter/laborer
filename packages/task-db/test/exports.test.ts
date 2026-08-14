@@ -83,4 +83,34 @@ describe('@laborer/task-db exports', () => {
       expect(result.status, `${runtime} exited unsuccessfully`).toBe(0)
     }
   })
+
+  it('normalizes a missing task when the database runs under Bun', () => {
+    const script = `
+      import { mkdtempSync, rmSync } from 'node:fs'
+      import { tmpdir } from 'node:os'
+      import { join } from 'node:path'
+      import { NativeTaskDatabase } from '@laborer/task-db'
+      const root = mkdtempSync(join(tmpdir(), 'laborer-task-db-bun-'))
+      try {
+        const database = NativeTaskDatabase.open(join(root, 'tasks.sqlite'))
+        try {
+          if (database.find('missing') !== null) {
+            throw new Error('Expected a missing task to return null')
+          }
+        } finally {
+          database.close()
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    `
+    const result = spawnSync('bun', ['--eval', script], {
+      cwd: new URL('..', import.meta.url),
+      encoding: 'utf8',
+    })
+
+    expect(result.error, 'bun failed to start').toBeUndefined()
+    expect(result.stderr, 'bun wrote to stderr').toBe('')
+    expect(result.status, 'bun exited unsuccessfully').toBe(0)
+  })
 })

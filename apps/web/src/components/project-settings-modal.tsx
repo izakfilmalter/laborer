@@ -226,7 +226,7 @@ function ProjectSettingsForm({
               onValueChange={(value) => setAgent(value as AgentProvider)}
               value={agent}
             >
-              <SelectTrigger>
+              <SelectTrigger data-testid="project-agent-select">
                 <SelectValue>
                   {(() => {
                     const option = AGENT_OPTIONS.find((o) => o.value === agent)
@@ -244,7 +244,11 @@ function ProjectSettingsForm({
                 {AGENT_OPTIONS.map((option) => {
                   const Icon = AGENT_ICONS[option.value]
                   return (
-                    <SelectItem key={option.value} value={option.value}>
+                    <SelectItem
+                      data-testid={`project-agent-option-${option.value}`}
+                      key={option.value}
+                      value={option.value}
+                    >
                       <Icon className="size-3.5" />
                       {option.label}
                     </SelectItem>
@@ -262,6 +266,7 @@ function ProjectSettingsForm({
               Worktree directory
             </FieldLabel>
             <Input
+              data-testid="project-worktree-dir"
               id={`worktree-dir-${projectId}`}
               onChange={(event) => setWorktreeDir(event.target.value)}
               placeholder={`~/.config/laborer/${projectName}`}
@@ -285,6 +290,7 @@ function ProjectSettingsForm({
                   <Input
                     aria-label="Setup script"
                     className="truncate"
+                    data-testid="project-setup-script"
                     id={`setup-script-${projectId}-${script.id}`}
                     onChange={(event) => {
                       setSetupScripts((prev) => {
@@ -332,6 +338,7 @@ function ProjectSettingsForm({
               </FieldDescription>
               <Button
                 aria-label="Add setup script"
+                data-testid="add-project-setup-script"
                 onClick={() => {
                   setSetupScripts((prev) => [
                     ...prev,
@@ -353,7 +360,11 @@ function ProjectSettingsForm({
         <DialogClose render={<Button variant="outline" />}>
           Cancel <Kbd>Esc</Kbd>
         </DialogClose>
-        <Button disabled={!isServerReady || isSaving} type="submit">
+        <Button
+          data-testid="save-project-settings"
+          disabled={!isServerReady || isSaving}
+          type="submit"
+        >
           {isSaving && <Spinner className="size-3.5" />}
           {isSaving ? 'Saving...' : 'Save'}
           <Kbd>⌘</Kbd>
@@ -382,6 +393,7 @@ function ProjectSettingsModal({
                 <Button
                   aria-label={`Open settings for ${projectName}`}
                   className="h-7 w-7"
+                  data-testid="open-project-settings"
                   size="icon-sm"
                   variant="ghost"
                 />
@@ -393,7 +405,7 @@ function ProjectSettingsModal({
         </TooltipTrigger>
         <TooltipContent>Project settings</TooltipContent>
       </Tooltip>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl" data-testid="project-settings">
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>

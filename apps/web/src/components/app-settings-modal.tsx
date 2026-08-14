@@ -8,8 +8,8 @@ import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
-import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
 import { parseGithubOAuthCallback } from '@/lib/github-oauth-callback'
+import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { Button } from './ui/button'
@@ -166,7 +166,7 @@ export function AppSettingsModal() {
 
   // Listen for the protocol handler callback (Electron only)
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge?.onGithubOAuthCallback) {
       return
     }
@@ -185,7 +185,7 @@ export function AppSettingsModal() {
     csrfStateRef.current = state
     setError(null)
 
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (bridge?.startGithubOAuth) {
       // Electron: use the protocol handler to open the browser and
       // automatically capture the callback.
@@ -199,7 +199,7 @@ export function AppSettingsModal() {
         `?client_id=${GITHUB_OAUTH_CLIENT_ID}` +
         `&scope=${scope}` +
         `&state=${state}`
-      await openExternalUrl(url)
+      await localApi.openExternal(url)
     }
   }, [])
 
@@ -255,7 +255,7 @@ export function AppSettingsModal() {
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg" data-testid="app-settings">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -286,7 +286,7 @@ export function AppSettingsModal() {
                       }
                       value={agent}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger data-testid="default-agent-select">
                         <SelectValue>
                           <AgentIcon className="size-3.5" />
                           {AGENT_OPTIONS.find((o) => o.value === agent)
@@ -297,7 +297,11 @@ export function AppSettingsModal() {
                         {AGENT_OPTIONS.map((option) => {
                           const Icon = AGENT_ICONS[option.value]
                           return (
-                            <SelectItem key={option.value} value={option.value}>
+                            <SelectItem
+                              data-testid={`default-agent-option-${option.value}`}
+                              key={option.value}
+                              value={option.value}
+                            >
                               <Icon className="size-3.5" />
                               {option.label}
                             </SelectItem>
@@ -307,6 +311,7 @@ export function AppSettingsModal() {
                     </Select>
                   </div>
                   <Button
+                    data-testid="save-default-agent"
                     disabled={isSavingAgent}
                     onClick={handleSaveAgent}
                     size="sm"
@@ -335,6 +340,7 @@ export function AppSettingsModal() {
                     ? 'bg-green-500/10 text-green-500'
                     : 'bg-muted text-muted-foreground'
                 }`}
+                data-testid="github-connection-status"
               >
                 {hasToken && <Check className="h-3 w-3" />}
                 {statusLabel}
@@ -385,14 +391,19 @@ export function AppSettingsModal() {
 
                 {/* Step 2: Paste callback URL (fallback) */}
                 <Field>
-                  <FieldLabel>Callback URL (if needed)</FieldLabel>
+                  <FieldLabel htmlFor="github-callback-url">
+                    Callback URL (if needed)
+                  </FieldLabel>
                   <div className="flex gap-2">
                     <Input
+                      data-testid="github-callback-url"
+                      id="github-callback-url"
                       onChange={(e) => setCallbackUrl(e.target.value)}
                       placeholder="x-github-desktop-dev-auth://oauth?code=..."
                       value={callbackUrl}
                     />
                     <Button
+                      data-testid="submit-github-callback"
                       disabled={!callbackUrl.trim() || isExchanging}
                       onClick={handleSubmitUrl}
                       variant="default"
@@ -410,7 +421,15 @@ export function AppSettingsModal() {
                 </Field>
               </div>
             )}
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            {error && (
+              <p
+                className="text-destructive text-sm"
+                data-testid="github-connection-error"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
           </div>
         </div>
 

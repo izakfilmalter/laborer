@@ -1,5 +1,10 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import {
+  isRendererConnected,
+  RECONNECT_MUTATION_MESSAGE,
+} from '@/atoms/renderer-connection'
+import { localApi } from './local-api'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -34,6 +39,15 @@ function unwrapCause(error: unknown): unknown {
  */
 export function extractErrorMessage(error: unknown): string {
   const unwrapped = unwrapCause(error)
+  if (
+    !(localApi.isDesktop || isRendererConnected()) &&
+    typeof unwrapped === 'object' &&
+    unwrapped !== null &&
+    '_tag' in unwrapped &&
+    (unwrapped as Record<string, unknown>)._tag === 'RpcClientError'
+  ) {
+    return RECONNECT_MUTATION_MESSAGE
+  }
   if (unwrapped instanceof Error) {
     return unwrapped.message
   }

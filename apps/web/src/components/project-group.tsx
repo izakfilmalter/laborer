@@ -189,6 +189,8 @@ function ProjectGroup({
         'group/project relative transition-opacity',
         isDragging && 'opacity-40'
       )}
+      data-project-id={project.id}
+      data-testid="project-group"
       ref={groupRef}
     >
       <ProjectDropIndicator edge={closestEdge} />
@@ -210,7 +212,16 @@ function ProjectGroup({
               )}
             />
             <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 truncate">{project.name}</span>
+            <span className="grid min-w-0 flex-1">
+              <span className="truncate">{project.name}</span>
+              <span
+                className="truncate font-mono font-normal text-[10px] text-muted-foreground"
+                data-testid="project-repo-path"
+                title={project.repoPath}
+              >
+                {project.repoPath}
+              </span>
+            </span>
           </CollapsibleTrigger>
           <div className="flex shrink-0 items-center gap-0.5">
             <CreateWorkspaceButton
@@ -252,6 +263,7 @@ function ProjectGroup({
                 <TooltipContent>Remove project</TooltipContent>
               </Tooltip>
               <AlertDialogContent
+                data-testid="remove-project-dialog"
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                   if (isExactEnter(event.nativeEvent)) {
                     event.preventDefault()
@@ -278,6 +290,7 @@ function ProjectGroup({
                     Cancel <Kbd>Esc</Kbd>
                   </AlertDialogCancel>
                   <AlertDialogAction
+                    data-testid="confirm-remove-project"
                     onClick={handleRemove}
                     variant="destructive"
                   >

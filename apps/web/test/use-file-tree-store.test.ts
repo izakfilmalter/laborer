@@ -61,5 +61,16 @@ describe('useFileTreeStore', () => {
         'package.json',
       ])
     })
+
+    list.mockClear()
+    act(() => result.current.refreshLoadedDirs())
+    expect(result.current.files).toEqual([
+      'src/',
+      'src/index.ts',
+      'package.json',
+    ])
+    await waitFor(() => {
+      expect(list.mock.calls.map(([dir]) => dir).sort()).toEqual(['', 'src'])
+    })
   })
 })

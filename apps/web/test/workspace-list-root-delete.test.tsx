@@ -24,9 +24,13 @@ const { destroyFn, isElectronMock, mutationMap, workspaceRows } = vi.hoisted(
   })
 )
 
-vi.mock('@/lib/desktop', () => ({
-  isElectron: isElectronMock,
-  openExternalUrl: vi.fn(async () => true),
+vi.mock('@/lib/local-api', () => ({
+  localApi: {
+    get isDesktop() {
+      return isElectronMock()
+    },
+    openExternal: vi.fn(async () => true),
+  },
   terminalRpcUrl: () => 'http://localhost:2101',
 }))
 

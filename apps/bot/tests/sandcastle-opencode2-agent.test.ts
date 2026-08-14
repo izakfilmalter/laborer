@@ -256,7 +256,7 @@ describe('Sandcastle opencode2 agent', () => {
         '--session session-failed'
       )
       assert.include(stdout, '"text":"recovered"')
-      assert.include(stdout, 'retrying preserved worktree')
+      assert.include(stdout, 'retrying preserved session and worktree')
       assert.notInclude(invocation.command, '>&2')
     } finally {
       rmSync(directory, { force: true, recursive: true })
@@ -280,7 +280,7 @@ describe('Sandcastle opencode2 agent', () => {
         'fi',
         'if [ "$1" = "api" ] && [ "$2" = "get" ]; then',
         '  if [ "$3" = "/api/session/active" ]; then printf \'%s\\n\' \'{"data":{}}\'; exit 0; fi',
-        '  printf \'%s\\n\' \'{"data":[{"type":"assistant","time":{"completed":1},"content":[{"type":"text","text":"<promise>COMPLETE</promise>"}]}]}\'',
+        '  printf \'%s\\n\' \'{"data":[{"type":"assistant","time":{"completed":1},"finish":"stop","content":[{"type":"text","text":"<promise>COMPLETE</promise>"}]}]}\'',
         '  exit 0',
         'fi',
         'exit 2',

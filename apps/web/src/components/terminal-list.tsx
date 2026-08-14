@@ -116,6 +116,7 @@ function TerminalSpawnButtons({
             <Button
               aria-label={`Start ${agentProvider} agent`}
               className={SPAWN_BUTTON_CLASS}
+              data-testid="start-agent"
               disabled={!(isServerReady && isServiceAvailable)}
               onClick={onSpawnAgent}
               size="xs"

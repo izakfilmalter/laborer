@@ -60,7 +60,11 @@ for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
   const result = await runStreaming(currentArgs, currentPrompt);
   let recovered: RecoveredSession | undefined;
 
-  if (result.sessionId !== undefined) {
+  // A clean `opencode2 run` exit is authoritative. Durable recovery is only
+  // needed when the shared event stream or provider caused a failed process;
+  // querying after success can mistake an already-finished session for an
+  // ambiguous one and wait until the recovery deadline.
+  if (result.exitCode !== 0 && result.sessionId !== undefined) {
     recovered = await recoverSession(result.sessionId);
     if (recovered?.status === "failed") {
       lastError = recovered.error;

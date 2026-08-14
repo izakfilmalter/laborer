@@ -1,13 +1,13 @@
 import type { DesktopUpdateState } from '@laborer/shared/desktop-bridge'
 import { Cause, Effect, Exit, Option, pipe } from 'effect'
 import { useEffect, useRef } from 'react'
-import { isElectron } from '@/lib/desktop'
 import {
   type DesktopUpdateError,
   downloadDesktopUpdate,
   installDesktopUpdate,
   useDesktopUpdateState,
 } from '@/lib/desktop-update'
+import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 
 function showDesktopUpdateError(error: DesktopUpdateError): void {
@@ -75,7 +75,7 @@ export function DesktopUpdateToastListener(): null {
   const promptedDownloadedVersionRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!(isElectron() && state?.enabled)) {
+    if (!(localApi.isDesktop && state?.enabled)) {
       return
     }
 

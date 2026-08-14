@@ -4,7 +4,7 @@ import type {
 } from '@laborer/shared/desktop-bridge'
 import { Effect, Schema } from 'effect'
 import { useEffect, useState } from 'react'
-import { getDesktopBridge } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 
 class DesktopUpdateBridgeUnavailableError extends Schema.TaggedErrorClass<DesktopUpdateBridgeUnavailableError>()(
   'DesktopUpdateBridgeUnavailableError',
@@ -145,7 +145,7 @@ export function shouldToastDesktopUpdateActionResult(
 }
 
 function desktopBridge() {
-  const bridge = getDesktopBridge()
+  const bridge = localApi.desktopBridge
   if (!bridge) {
     return new DesktopUpdateBridgeUnavailableError({
       message: 'Desktop update bridge is unavailable.',
@@ -218,7 +218,7 @@ export function useDesktopUpdateState(): DesktopUpdateState | null {
   const [state, setState] = useState<DesktopUpdateState | null>(null)
 
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }

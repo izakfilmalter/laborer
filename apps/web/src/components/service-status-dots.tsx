@@ -21,17 +21,19 @@
  * @see Issue #10: Header error state persistence and animations
  */
 
-import type { SidecarName } from '@laborer/shared/desktop-bridge'
-import { RotateCcw, X } from 'lucide-react'
+import type { TerminalHostStatus } from '@laborer/shared/rpc'
+import { AlertTriangle, CircleArrowUp, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { type ServiceName, useServiceStatus } from '@/hooks/use-service-status'
-import { getDesktopBridge } from '@/lib/desktop'
+import { useTerminalHostStatus } from '@/hooks/use-terminal-host-status'
 import {
   getStatusColor,
   getStatusLabel,
@@ -334,17 +336,6 @@ function ServiceStatusBadge({
   )
 }
 
-/**
- * Map ServiceName to SidecarName for restart calls.
- * Only sidecar services can be restarted (not sync).
- */
-function toSidecarName(name: ServiceName): SidecarName | undefined {
-  if (name === 'sync') {
-    return undefined
-  }
-  return name
-}
-
 /** Server connection badge — always visible in the former sync-status slot. */
 function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   const color = getStatusColor(syncState)
@@ -365,18 +356,210 @@ function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
   )
 }
 
+/**
+ * Severity tone for the terminal host pill.
+ *
+ * The host is a supervised process, not the terminals themselves, so its
+ * states carry different weight: a late heartbeat is advisory, an outdated
+ * host is an expected consequence of a rebuild, and only a lost host is
+ * critical. Tone drives color so the hierarchy is visible before the copy
+ * is read.
+ */
+type HostTone = 'advisory' | 'critical' | 'busy' | 'update'
+
+const HOST_TONE_CLASSES: Record<HostTone, string> = {
+  advisory: 'border-warning/40 bg-warning/10 text-warning',
+  critical: 'border-destructive/40 bg-destructive/10 text-destructive',
+  busy: 'border-border bg-muted/60 text-muted-foreground',
+  update: 'border-primary/40 bg-primary/10 text-primary',
+}
+
+interface HostPresentation {
+  readonly actionable: boolean
+  readonly detail: string
+  readonly label: string
+  readonly tone: HostTone
+}
+
+/**
+ * Copy is deliberately reassuring about what did *not* happen: nothing is
+ * killed automatically (ADR 0003), so every restart is the operator's call.
+ */
+const HOST_PRESENTATION: Record<
+  Exclude<TerminalHostStatus['state'], 'healthy'>,
+  HostPresentation
+> = {
+  warning: {
+    actionable: false,
+    detail: 'The terminal host is slow to answer. Terminals keep running.',
+    label: 'Terminal host delayed',
+    tone: 'advisory',
+  },
+  unresponsive: {
+    actionable: true,
+    detail:
+      'The terminal host stopped answering. Nothing was killed — restart it when you are ready and history is restored.',
+    label: 'Terminal host unresponsive',
+    tone: 'critical',
+  },
+  outdated: {
+    actionable: true,
+    detail:
+      'The running terminal host is older than this build. Restarting checkpoints your terminals, restarts the host, and restores their history.',
+    label: 'Terminal host outdated',
+    tone: 'update',
+  },
+  restarting: {
+    actionable: false,
+    detail: 'Checkpointing terminals, restarting the host, restoring history.',
+    label: 'Restarting terminal host…',
+    tone: 'busy',
+  },
+  unavailable: {
+    actionable: true,
+    detail:
+      'No terminal host is running. Restart it to bring your terminals back.',
+    label: 'Terminal host unavailable',
+    tone: 'critical',
+  },
+}
+
+/** Progress labels keep their ellipsis on screen but not when spoken. */
+const TRAILING_ELLIPSIS = /…$/
+
+/** Version context belongs in the detail, never in the one-line summary. */
+function describeHostVersions(status: TerminalHostStatus): string | undefined {
+  if (status.runningVersion === undefined) {
+    return undefined
+  }
+  if (status.runningVersion === status.expectedVersion) {
+    return undefined
+  }
+  return `Running ${status.runningVersion}, expected ${status.expectedVersion}.`
+}
+
+/** Full explanation behind the one-line label, versions first when they differ. */
+function hostDetail(status: TerminalHostStatus): string {
+  if (status.state === 'healthy') {
+    return ''
+  }
+  const presentation = HOST_PRESENTATION[status.state]
+  const versions = describeHostVersions(status)
+  return versions === undefined
+    ? presentation.detail
+    : `${versions} ${presentation.detail}`
+}
+
+/**
+ * Spoken form of the pill, rendered from an always-mounted live region so a
+ * status change is announced rather than swallowed by the region itself
+ * appearing — the same rule the connection banner follows.
+ */
+function describeHostStatus(status: TerminalHostStatus | undefined): string {
+  if (status === undefined || status.state === 'healthy') {
+    return ''
+  }
+  const label = HOST_PRESENTATION[status.state].label.replace(
+    TRAILING_ELLIPSIS,
+    ''
+  )
+  return `${label}. ${hostDetail(status)}`
+}
+
+/**
+ * The leading glyph carries the same hierarchy as the tone: an outdated host
+ * is a pending upgrade rather than a fault, so it never wears an alert
+ * triangle, and an in-flight restart shows progress instead of a warning.
+ */
+function HostStateIcon({
+  state,
+}: {
+  readonly state: Exclude<TerminalHostStatus['state'], 'healthy'>
+}) {
+  if (state === 'restarting') {
+    return <Spinner aria-hidden="true" className="size-3.5 shrink-0" />
+  }
+  if (state === 'outdated') {
+    return <CircleArrowUp aria-hidden="true" className="size-3.5 shrink-0" />
+  }
+  return <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
+}
+
+/**
+ * Terminal host health, shown above the service badges because it can make
+ * every terminal unusable while the rest of the app stays healthy. Healthy
+ * hosts render nothing: this row exists only when there is something to know
+ * or something to do.
+ */
+function TerminalHostStatusPill({
+  onRestart,
+  status,
+}: {
+  readonly onRestart: () => void
+  readonly status: TerminalHostStatus | undefined
+}) {
+  if (status === undefined || status.state === 'healthy') {
+    return null
+  }
+
+  const presentation = HOST_PRESENTATION[status.state]
+  const detail = hostDetail(status)
+  const restarting = status.state === 'restarting'
+
+  return (
+    <span
+      className={cn(
+        'flex basis-full items-center gap-2 rounded-lg border px-2 py-1 text-xs transition-colors duration-300',
+        HOST_TONE_CLASSES[presentation.tone]
+      )}
+      data-state={status.state}
+      data-testid="terminal-host-status"
+      data-tone={presentation.tone}
+    >
+      <Tooltip>
+        {/* A real button, so the explanation is reachable by keyboard and not
+            only on hover; the same text is carried in the announcement
+            region for assistive technology. */}
+        <TooltipTrigger
+          render={
+            <button
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              type="button"
+            />
+          }
+        >
+          <HostStateIcon state={status.state} />
+          <span className="min-w-0 truncate font-medium">
+            {presentation.label}
+          </span>
+          <span className="sr-only">{detail}</span>
+        </TooltipTrigger>
+        <TooltipContent>{detail}</TooltipContent>
+      </Tooltip>
+      {(presentation.actionable || restarting) && (
+        <Button
+          className="shrink-0"
+          disabled={restarting}
+          onClick={onRestart}
+          size="xs"
+          variant="outline"
+        >
+          <RotateCcw aria-hidden="true" />
+          Restart terminal host
+        </Button>
+      )}
+    </span>
+  )
+}
+
 /** Row of status badges for core services — always visible. */
 function ServiceStatusDots() {
   const statuses = useServiceStatus()
+  const host = useTerminalHostStatus()
   const { persistedErrors, dismissError } = usePersistedErrors(statuses)
 
   const handleRetry = useCallback(
     (name: ServiceName) => {
-      const bridge = getDesktopBridge()
-      const sidecarName = toSidecarName(name)
-      if (bridge && sidecarName) {
-        bridge.restartSidecar(sidecarName)
-      }
       // Clear the persisted error on retry
       dismissError(name)
     },
@@ -388,6 +571,19 @@ function ServiceStatusDots() {
       aria-label="Service statuses"
       className="flex flex-wrap items-center gap-1 transition-all duration-300"
     >
+      {/* This row is already a polite live region, so the spoken host summary
+          lives here rather than on the pill: a live region that mounts with
+          its own content is routinely swallowed, and nesting a second one
+          would announce the same change twice. */}
+      <span className="sr-only">{describeHostStatus(host.status)}</span>
+      <TerminalHostStatusPill
+        onRestart={() => {
+          host.restart().catch((error: unknown) => {
+            console.error('Failed to restart terminal host', error)
+          })
+        }}
+        status={host.status}
+      />
       {STATUS_DOT_SERVICES.map((name) => (
         <ServiceStatusBadge
           errorPersisted={persistedErrors.has(name)}
@@ -403,4 +599,10 @@ function ServiceStatusDots() {
   )
 }
 
-export { MIN_DISPLAY_DURATION_MS, ServiceStatusDots, STATUS_DOT_SERVICES }
+export {
+  describeHostStatus,
+  MIN_DISPLAY_DURATION_MS,
+  ServiceStatusDots,
+  STATUS_DOT_SERVICES,
+  TerminalHostStatusPill,
+}

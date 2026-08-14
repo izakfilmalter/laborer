@@ -13,8 +13,8 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
-import { isElectron } from '@/lib/desktop'
 import { isExactEnter, isMetaEnter, isMetaShiftEnter } from '@/lib/dialog-keys'
+import { localApi } from '@/lib/local-api'
 import {
   useFullscreenPaneId,
   useFullscreenPortal,
@@ -417,7 +417,7 @@ export function CloseAppDialog({
   readonly onOpenChange: (open: boolean) => void
 }) {
   const handleCloseToTray = useCallback(() => {
-    if (isElectron()) {
+    if (localApi.isDesktop) {
       // In Electron, closing the window is intercepted by the main process
       // which hides it to tray instead of quitting. See Issue 13.
       window.close()

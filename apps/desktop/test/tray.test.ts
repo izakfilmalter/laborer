@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('electron', () => ({
+  app: { quit: vi.fn() },
+  globalShortcut: { register: vi.fn(), unregister: vi.fn() },
+  Menu: { buildFromTemplate: vi.fn() },
+  nativeImage: { createFromPath: vi.fn() },
+  Tray: class {},
+}))
 
 import { formatTrayTooltip } from '../src/tray.js'
 

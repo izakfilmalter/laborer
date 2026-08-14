@@ -138,6 +138,7 @@ function CreateWorkspaceComposer({
           aria-label={control['aria-label']}
           className={cn(inputClassName, inputGroupControlClassName, 'text-xs')}
           data-slot="input-group-control"
+          data-testid="create-workspace-input"
           inputRef={control.ref}
           mask={ALLOWED_INPUT_PATTERN}
           onAccept={control.onValueChange}

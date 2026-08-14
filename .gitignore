@@ -24,6 +24,7 @@ slack-config-access-token*
 
 # Local Laborer runtime state
 .laborer-runtime/
+.laborer-state/
 
 # Sandcastle configuration and local runtime state
 /.sandcastle/base/

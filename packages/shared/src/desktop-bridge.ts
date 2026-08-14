@@ -153,6 +153,9 @@ export interface DesktopBridge {
   /** Triggers download of an available update. */
   downloadUpdate: () => Promise<DesktopUpdateActionResult>
 
+  /** Ensures the production daemon is healthy after a connection loss. */
+  ensureDaemon: () => Promise<void>
+
   /**
    * Checks if a workspace is already visible in another window.
    * If so, focuses that window, tells the target renderer to activate
@@ -164,13 +167,6 @@ export interface DesktopBridge {
    */
   focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
 
-  /**
-   * Returns the current status of all sidecar services.
-   * Used on mount to catch up on statuses that were broadcast before the
-   * window was created or ready to receive IPC events.
-   */
-  getSidecarStatuses: () => Promise<SidecarStatusEvent[]>
-
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>
 
@@ -179,34 +175,6 @@ export interface DesktopBridge {
 
   /** Triggers quit-and-install of a downloaded update. */
   installUpdate: () => Promise<DesktopUpdateActionResult>
-  /**
-   * Low-level MessagePort relay following VS Code's pattern.
-   *
-   * `acquire(responseChannel, nonce)` installs a one-shot `ipcRenderer`
-   * listener on `responseChannel`. When the main process responds with a
-   * MessagePort in the IPC event's `ports` array, the preload relays it
-   * to the renderer world via `window.postMessage(nonce, '*', e.ports)`.
-   *
-   * The renderer must listen on `window` for a `message` event with
-   * `event.data === nonce` to receive the actual `MessagePort` in
-   * `event.ports[0]`.
-   *
-   * This is necessary because `contextBridge` uses structured clone which
-   * cannot transfer `MessagePort` objects. The `window.postMessage` transfer
-   * mechanism bypasses the context isolation boundary.
-   *
-   * @see VS Code's `ipcMessagePort.acquire()` in
-   *   `.reference/vscode/src/vs/base/parts/sandbox/electron-browser/preload.ts`
-   */
-  ipcMessagePort: {
-    acquire: (responseChannel: string, nonce: string) => void
-  }
-
-  /**
-   * Send an IPC message to the main process (fire-and-forget).
-   * Wraps `ipcRenderer.send(channel, ...args)`.
-   */
-  ipcSend: (channel: string, ...args: unknown[]) => void
 
   /**
    * Subscribes to workspace activation events from the main process.
@@ -251,14 +219,6 @@ export interface DesktopBridge {
   onMenuAction: (listener: (action: string) => void) => () => void
 
   /**
-   * Subscribes to sidecar status change events.
-   * Returns an unsubscribe function.
-   */
-  onSidecarStatus: (
-    listener: (status: SidecarStatusEvent) => void
-  ) => () => void
-
-  /**
    * Subscribes to auto-update state changes.
    * Returns an unsubscribe function.
    */
@@ -269,15 +229,12 @@ export interface DesktopBridge {
 
   /** Opens a native macOS folder picker dialog. Returns the selected path, or null if cancelled. */
   pickFolder: () => Promise<string | null>
+  /** Continues an already-confirmed application quit. */
+  quitApp: () => void
 
-  /**
-   * Reports the workspace IDs currently visible in this window's panel layout.
-   * The main process uses this to route notification clicks and other
-   * workspace-targeting actions to the correct window.
-   */
-  reportVisibleWorkspaces: (
+  /** Reports native-window routing context; semantic presence uses daemon RPC. */
+  reportWindowWorkspaces: (
     workspaceIds: readonly string[],
-    focused?: boolean,
     contexts?: readonly WorkspaceNotificationContext[]
   ) => Promise<void>
 
@@ -288,9 +245,6 @@ export interface DesktopBridge {
    * @param veto  — `true` to block the quit, `false` to allow it to proceed.
    */
   respondToQuit: (id: string, veto: boolean) => void
-
-  /** Manually restarts a sidecar service by name. */
-  restartSidecar: (name: SidecarName) => Promise<void>
 
   /**
    * Shows a native context menu at the cursor or specified position.

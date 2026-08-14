@@ -1,12 +1,12 @@
 /**
- * Phase transition driver — connects sidecar status events to lifecycle
+ * Phase transition driver — connects daemon capability health to lifecycle
  * phase transitions.
  *
- * Subscribes to sidecar statuses (via Electron IPC) and advances the
+ * Subscribes to daemon capability statuses and advances the
  * lifecycle phase when conditions are met:
  *
- * - **Starting -> Ready:** Server sidecar reports `healthy`
- * - **Ready -> Restored:** Terminal + file-watcher sidecars both report `healthy`
+ * - **Starting -> Ready:** Server capability reports `healthy`
+ * - **Ready -> Restored:** Terminal + file-watcher capabilities report `healthy`
  * - **Restored -> Eventually:** Server's `lifecycle.initStatus` streaming RPC
  *   pushes `{ ready: true }` when all deferred services are initialized
  *
@@ -14,7 +14,7 @@
  * `LifecyclePhaseProvider`.
  *
  * @see Issue #7: Wire sidecar status events to lifecycle phase transitions
- * @see Issue #12: Renderer server UI wired to MessagePort
+ * @see apps/web/src/atoms/renderer-connection.ts
  * @see Issue #15: Server "fully initialized" event
  * @see apps/web/src/components/lifecycle-phase-context.tsx — phase system
  * @see apps/web/src/hooks/use-sidecar-statuses.ts — sidecar status source
@@ -46,7 +46,7 @@ function usePhaseTransitionDriver(): void {
   const { phase, advanceTo } = useLifecyclePhase()
   const statuses = useSidecarStatuses()
 
-  // Starting -> Ready / Ready -> Restored: driven by sidecar health events
+  // Starting -> Ready / Ready -> Restored: driven by daemon capability health
   useEffect(() => {
     const serverHealthy = statuses.server.state === 'healthy'
     const terminalHealthy = statuses.terminal.state === 'healthy'

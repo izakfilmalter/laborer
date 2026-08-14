@@ -3,7 +3,7 @@
  *
  * Runs once before all E2E tests:
  * 1. Creates a temp git repository with an initial commit (for project tests)
- * 2. Verifies that Electron and utility process builds exist
+ * 2. Verifies that the daemon build exists
  *
  * The Electron app is launched per-test via the `electronApp` fixture
  * in test-fixtures.ts, not as a shared global process.
@@ -14,13 +14,85 @@
  */
 
 import { execSync } from 'node:child_process'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { FullConfig } from '@playwright/test'
 
-/** Path to the state file shared between setup and teardown. */
-const STATE_FILE = join(tmpdir(), 'laborer-e2e-state.json')
+export const E2E_STATE_FILE_ENV = 'LABORER_E2E_STATE_FILE'
+
+interface SetupState {
+  readonly daemonPort: number
+  readonly tempRepoDir: string
+}
+
+/** Path to this Playwright invocation's setup state. */
+export const getStateFile = (): string => {
+  const stateFile = process.env[E2E_STATE_FILE_ENV]
+  if (stateFile === undefined || stateFile === '') {
+    throw new Error(`E2E setup: ${E2E_STATE_FILE_ENV} is not configured`)
+  }
+  return stateFile
+}
+
+export const readSetupState = (): SetupState => {
+  const decoded: unknown = JSON.parse(readFileSync(getStateFile(), 'utf8'))
+  if (
+    typeof decoded !== 'object' ||
+    decoded === null ||
+    !('daemonPort' in decoded) ||
+    typeof decoded.daemonPort !== 'number' ||
+    !Number.isInteger(decoded.daemonPort) ||
+    decoded.daemonPort < 1 ||
+    decoded.daemonPort > 65_535 ||
+    !('tempRepoDir' in decoded) ||
+    typeof decoded.tempRepoDir !== 'string'
+  ) {
+    throw new Error('E2E setup: invalid setup state')
+  }
+  return {
+    daemonPort: decoded.daemonPort,
+    tempRepoDir: decoded.tempRepoDir,
+  }
+}
+
+export const readDaemonPort = (): number => {
+  const decoded: unknown = JSON.parse(readFileSync(getStateFile(), 'utf8'))
+  if (
+    typeof decoded !== 'object' ||
+    decoded === null ||
+    !('daemonPort' in decoded) ||
+    typeof decoded.daemonPort !== 'number' ||
+    !Number.isInteger(decoded.daemonPort) ||
+    decoded.daemonPort < 1 ||
+    decoded.daemonPort > 65_535
+  ) {
+    throw new Error('E2E setup: invalid daemon port state')
+  }
+  return decoded.daemonPort
+}
+
+export const allocatePort = (): Promise<number> =>
+  new Promise((resolvePort, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (typeof address !== 'object' || address === null) {
+        server.close()
+        reject(new Error('E2E setup: could not allocate daemon port'))
+        return
+      }
+      server.close((error) => {
+        if (error) {
+          reject(error)
+        } else {
+          resolvePort(address.port)
+        }
+      })
+    })
+  })
 
 export default function globalSetup(_config: FullConfig): void {
   // 1. Create a temp git repository with an initial commit
@@ -42,13 +114,10 @@ export default function globalSetup(_config: FullConfig): void {
     stdio: 'pipe',
   })
 
-  // 2. Verify that Electron and utility process builds exist
+  // 2. Verify the daemon entry used by the browser fixture.
   const monorepoRoot = resolve(import.meta.dirname, '../../..')
   const requiredBuilds = [
-    join(monorepoRoot, 'apps/desktop/dist-electron/main.cjs'),
-    join(monorepoRoot, 'apps/desktop/dist-electron/preload.cjs'),
-    join(monorepoRoot, 'packages/server/dist/utility-main.mjs'),
-    join(monorepoRoot, 'packages/terminal/dist/utility-main.mjs'),
+    join(monorepoRoot, 'packages/server/dist/daemon-main.mjs'),
   ]
 
   const missingBuilds = requiredBuilds.filter((path) => !existsSync(path))
@@ -59,11 +128,17 @@ export default function globalSetup(_config: FullConfig): void {
     )
   }
 
-  // 3. Save state for teardown and test access
+  // 3. Playwright starts webServer before global setup. Configuration has
+  // already allocated and recorded the daemon port so both Vite and fixtures
+  // consume one value; validate that handoff before completing setup state.
+  const daemonPort = readDaemonPort()
+
+  // 4. Save state for teardown and test access
   const state = {
+    daemonPort,
     tempRepoDir,
   }
-  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2))
+  writeFileSync(getStateFile(), JSON.stringify(state, null, 2))
 
   // Set env vars so tests can access the temp repo path
   process.env.E2E_TEMP_REPO_DIR = tempRepoDir

@@ -17,7 +17,7 @@ import {
  */
 export function WelcomeEmptyState() {
   return (
-    <Empty className="h-full">
+    <Empty className="h-full" data-testid="welcome-empty-state">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <FolderGit2 />

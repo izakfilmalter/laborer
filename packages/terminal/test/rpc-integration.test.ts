@@ -187,6 +187,131 @@ describe(
       assert.isTrue(Result.isFailure(result))
     })
 
+    it('terminal.attach replays by cursor and resets an out-of-range cursor', async () => {
+      const terminal = await run(
+        client['terminal.spawn']({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+      await delay(200)
+
+      const initial = await run(
+        client['terminal.attach']({
+          id: terminal.id,
+          leaseId: 'initial-replay',
+        }).pipe(Stream.take(3), Stream.runCollect)
+      )
+      const snapshot = initial.find((event) => event._tag === 'Snapshot')
+      assert.isDefined(snapshot)
+
+      await run(
+        client['terminal.write']({ id: terminal.id, data: 'cursor-test\n' })
+      )
+      await delay(200)
+
+      const replay = await run(
+        client['terminal.attach']({
+          id: terminal.id,
+          leaseId: 'cursor-replay',
+          cursor: snapshot?.cursor ?? 0,
+        }).pipe(Stream.take(3), Stream.runCollect)
+      )
+      assert.isTrue(
+        replay.some(
+          (event) =>
+            event._tag === 'Delta' && event.data.includes('cursor-test')
+        )
+      )
+
+      const reset = await run(
+        client['terminal.attach']({
+          id: terminal.id,
+          leaseId: 'reset-replay',
+          cursor: Number.MAX_SAFE_INTEGER,
+        }).pipe(Stream.take(2), Stream.runCollect)
+      )
+      assert.strictEqual(reset[0]?._tag, 'Reset')
+      assert.strictEqual(reset[1]?._tag, 'Snapshot')
+
+      await run(client['terminal.kill']({ id: terminal.id }))
+    })
+
+    it('reports direct terminal host health without destructive recovery', async () => {
+      const status = await run(client['terminal.hostStatus']())
+
+      assert.deepStrictEqual(status, {
+        expectedVersion: 'in-process',
+        runningVersion: 'in-process',
+        state: 'healthy',
+      })
+    })
+
+    it('terminal.attach resets an active stream when the terminal restarts', async () => {
+      const terminal = await run(
+        client['terminal.spawn']({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+      )
+      const events: Array<{ readonly _tag: string; readonly epoch?: string }> =
+        []
+      let completeInitialReplay: () => void = () => undefined
+      let completeRestartReplay: () => void = () => undefined
+      const initialReplay = new Promise<void>((resolve) => {
+        completeInitialReplay = resolve
+      })
+      const restartReplay = new Promise<void>((resolve) => {
+        completeRestartReplay = resolve
+      })
+      let replayCount = 0
+      const streamFiber = Effect.runFork(
+        client['terminal.attach']({
+          id: terminal.id,
+          leaseId: 'restart-stream',
+        }).pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event)
+              if (event._tag !== 'ReplayComplete') {
+                return
+              }
+              replayCount += 1
+              if (replayCount === 1) {
+                completeInitialReplay()
+              } else if (replayCount === 2) {
+                completeRestartReplay()
+              }
+            })
+          )
+        )
+      )
+
+      await initialReplay
+      const initialEpoch = events.find((event) => event._tag === 'Meta')?.epoch
+      assert.isDefined(initialEpoch)
+
+      await run(client['terminal.restart']({ id: terminal.id }))
+      await restartReplay
+
+      const resetIndex = events.findIndex((event) => event._tag === 'Reset')
+      assert.isTrue(resetIndex >= 0)
+      assert.deepStrictEqual(
+        events.slice(resetIndex, resetIndex + 4).map((event) => event._tag),
+        ['Reset', 'Snapshot', 'Meta', 'ReplayComplete']
+      )
+      assert.notStrictEqual(events[resetIndex]?.epoch, initialEpoch)
+
+      await Effect.runPromise(Fiber.interrupt(streamFiber))
+      await run(client['terminal.kill']({ id: terminal.id }))
+    })
+
     // -----------------------------------------------------------------------
     // terminal.resize
     // -----------------------------------------------------------------------

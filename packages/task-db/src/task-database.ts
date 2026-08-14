@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
-import type { DatabaseSync } from 'node:sqlite'
 import { Context, Effect, Layer, Schema } from 'effect'
+import { DatabaseSync } from './database-sync.ts'
 import { taskDbMigrations } from './migrations.ts'
 import { taskDatabasePath as resolveTaskDatabasePath } from './path.ts'
 
@@ -16,12 +15,8 @@ export const ActionTitle = Schema.String.check(
   description: 'A short, nonblank title for the Action Execution.',
 })
 
-const require = createRequire(import.meta.url)
-
 const openDatabase = (path: string): DatabaseSync => {
-  const { DatabaseSync: NativeDatabase } =
-    require('node:sqlite') as typeof import('node:sqlite')
-  return new NativeDatabase(path, { timeout: 5000 })
+  return new DatabaseSync(path, { timeout: 5000 })
 }
 
 export type TaskStatus =
@@ -347,7 +342,8 @@ export class NativeTaskDatabase {
     const row = this.#database
       .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
       .get(id)
-    return row === undefined ? null : rowToTask(sqliteRow(row))
+    // node:sqlite reports a miss as undefined; bun:sqlite reports null.
+    return row === undefined || row === null ? null : rowToTask(sqliteRow(row))
   }
 
   findByExecutionId(executionId: string): Task | null {
@@ -524,7 +520,7 @@ export class NativeTaskDatabase {
     const row = this.#database
       .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE execution_id = ?`)
       .get(executionId)
-    return row === undefined ? null : rowToTask(sqliteRow(row))
+    return row === undefined || row === null ? null : rowToTask(sqliteRow(row))
   }
 
   #changeBounds(): ChangeBounds {

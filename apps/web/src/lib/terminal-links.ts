@@ -1,9 +1,9 @@
 import type { ILinkHandler } from '@xterm/xterm'
-import { openExternalUrl } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 
 /** Open a terminal URL in the user's default browser without blocking the UI. */
 export const openTerminalLink = (url: string): void => {
-  openExternalUrl(url).catch(() => {
+  localApi.openExternal(url).catch(() => {
     // Link open failures are non-critical.
   })
 }

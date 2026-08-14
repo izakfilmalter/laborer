@@ -5,6 +5,7 @@
     "": {
       "name": "laborer",
       "dependencies": {
+        "@laborer/ensure": "workspace:*",
         "@laborer/env": "workspace:*",
         "dotenv": "catalog:",
         "zod": "catalog:",
@@ -77,7 +78,9 @@
       "name": "@laborer/desktop",
       "version": "0.0.0",
       "dependencies": {
+        "@laborer/ensure": "workspace:*",
         "@laborer/shared": "workspace:*",
+        "effect": "catalog:",
         "electron": "40.6.0",
         "electron-updater": "^6.6.2",
       },
@@ -172,6 +175,17 @@
       "name": "@laborer/config",
       "version": "0.0.0",
     },
+    "packages/ensure": {
+      "name": "@laborer/ensure",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@laborer/config": "workspace:*",
+        "@types/node": "^25.3.3",
+        "tsdown": "^0.20.3",
+        "typescript": "catalog:",
+        "vitest": "^4.0.18",
+      },
+    },
     "packages/env": {
       "name": "@laborer/env",
       "version": "0.0.0",
@@ -212,9 +226,12 @@
       "version": "0.0.0",
       "dependencies": {
         "@effect/platform-node": "catalog:",
+        "@laborer/ensure": "workspace:*",
         "@laborer/env": "workspace:*",
+        "@laborer/file-watcher": "workspace:*",
         "@laborer/shared": "workspace:*",
         "@laborer/task-db": "workspace:*",
+        "@laborer/terminal": "workspace:*",
         "@laborer/worktree-owner": "workspace:*",
         "@opentelemetry/api": "^1.9",
         "@opentelemetry/resources": "^2.0.0",
@@ -232,7 +249,6 @@
       "devDependencies": {
         "@effect/vitest": "catalog:",
         "@laborer/config": "workspace:*",
-        "@laborer/file-watcher": "workspace:*",
         "@types/diff": "7.0.0",
         "@types/node": "^25.3.3",
         "@vitest/coverage-v8": "^4.0.18",
@@ -276,6 +292,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@effect/platform-node": "catalog:",
+        "@laborer/ensure": "workspace:*",
         "@laborer/env": "workspace:*",
         "@laborer/shared": "workspace:*",
         "@xterm/addon-serialize": "^0.14.0",
@@ -609,6 +626,8 @@
     "@laborer/config": ["@laborer/config@workspace:packages/config"],
 
     "@laborer/desktop": ["@laborer/desktop@workspace:apps/desktop"],
+
+    "@laborer/ensure": ["@laborer/ensure@workspace:packages/ensure"],
 
     "@laborer/env": ["@laborer/env@workspace:packages/env"],
 
@@ -2640,6 +2659,8 @@
 
     "@laborer/desktop/electron": ["electron@40.6.0", "", { "dependencies": { "@electron/get": "^2.0.0", "@types/node": "^24.9.0", "extract-zip": "^2.0.1" }, "bin": { "electron": "cli.js" } }, "sha512-ett8W+yOFGDuM0vhJMamYSkrbV3LoaffzJd9GfjI96zRAxyrNqUSKqBpf/WGbQCweDxX2pkUCUfrv4wwKpsFZA=="],
 
+    "@laborer/ensure/@types/node": ["@types/node@25.9.5", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-OScDchr2fwuUmWdf4kZ9h7PcJiYDVInhJizG/biAq3cAvqwYktuy/TYGGdZNMtNTFUP7rnb0NU4TUdm82kt4Rg=="],
+
     "@laborer/env/@types/node": ["@types/node@25.9.5", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-OScDchr2fwuUmWdf4kZ9h7PcJiYDVInhJizG/biAq3cAvqwYktuy/TYGGdZNMtNTFUP7rnb0NU4TUdm82kt4Rg=="],
 
     "@laborer/file-watcher/@types/node": ["@types/node@25.9.5", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-OScDchr2fwuUmWdf4kZ9h7PcJiYDVInhJizG/biAq3cAvqwYktuy/TYGGdZNMtNTFUP7rnb0NU4TUdm82kt4Rg=="],
@@ -2915,6 +2936,8 @@
     "@laborer/desktop/electron/@electron/get": ["@electron/get@2.0.3", "", { "dependencies": { "debug": "^4.1.1", "env-paths": "^2.2.0", "fs-extra": "^8.1.0", "got": "^11.8.5", "progress": "^2.0.3", "semver": "^6.2.0", "sumchecker": "^3.0.1" }, "optionalDependencies": { "global-agent": "^3.0.0" } }, "sha512-Qkzpg2s9GnVV2I2BjRksUi43U5e6+zaQMcjoJy0C+C5oxaKl+fmckGDQFtRpZpZV0NQekuZZ+tGz7EA9TVnQtQ=="],
 
     "@laborer/desktop/electron/@types/node": ["@types/node@24.13.3", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q=="],
+
+    "@laborer/ensure/@types/node/undici-types": ["undici-types@7.24.6", "", {}, "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg=="],
 
     "@laborer/env/@types/node/undici-types": ["undici-types@7.24.6", "", {}, "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg=="],
 

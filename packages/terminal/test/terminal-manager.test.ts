@@ -112,7 +112,7 @@ afterAll(async () => {
 
 const TEST_WORKSPACE_ID = 'test-workspace-1'
 const TEST_CWD = '/tmp'
-const noopSubscriber = (_data: string): undefined => undefined
+const noopSubscriber = (): boolean => true
 
 /** Small delay to allow async PTY events to propagate through IPC. */
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -122,6 +122,56 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 // ---------------------------------------------------------------------------
 
 describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
+  it('holds flow-control commits at the slowest attached lease', async () => {
+    const result = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        const terminal = yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
+        })
+        let firstCursor = 0
+        let secondCursor = 0
+        yield* tm.attach(terminal.id, { leaseId: 'first-lease' }, (event) => {
+          if (event._tag === 'Delta') {
+            firstCursor = event.cursor
+          }
+          return true
+        })
+        yield* tm.attach(terminal.id, { leaseId: 'second-lease' }, (event) => {
+          if (event._tag === 'Delta') {
+            secondCursor = event.cursor
+          }
+          return true
+        })
+        yield* tm.write(terminal.id, 'lease-test\n')
+        for (
+          let attempt = 0;
+          attempt < 200 && (firstCursor === 0 || secondCursor === 0);
+          attempt += 1
+        ) {
+          yield* Effect.sleep('10 millis')
+        }
+        if (firstCursor === 0 || secondCursor === 0) {
+          throw new Error('Timed out waiting for terminal lease output')
+        }
+
+        yield* tm.acknowledge(terminal.id, 'first-lease', firstCursor)
+        const held = yield* tm.transportMetrics(terminal.id)
+        yield* tm.acknowledge(terminal.id, 'second-lease', secondCursor)
+        const committed = yield* tm.transportMetrics(terminal.id)
+        yield* tm.kill(terminal.id)
+        return { committed, held }
+      })
+    )
+
+    expect(result.held.backlogBytes).toBeGreaterThan(0)
+    expect(result.committed.backlogBytes).toBe(0)
+  })
+
   it('spawn() accepts full payload and returns terminal info', async () => {
     const result = await runEffect(
       Effect.gen(function* () {
@@ -809,7 +859,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       const firstSubscriberId = await runLocalEffect(
         Effect.gen(function* () {
           const tm = yield* TerminalManager
-          const result = yield* tm.subscribe(terminal.id, noopSubscriber)
+          const result = yield* tm.attach(
+            terminal.id,
+            { leaseId: 'first-reconnect' },
+            noopSubscriber
+          )
           return result.subscriberId
         })
       )
@@ -826,7 +880,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       const secondSubscriberId = await runLocalEffect(
         Effect.gen(function* () {
           const tm = yield* TerminalManager
-          const result = yield* tm.subscribe(terminal.id, noopSubscriber)
+          const result = yield* tm.attach(
+            terminal.id,
+            { leaseId: 'second-reconnect' },
+            noopSubscriber
+          )
           return result.subscriberId
         })
       )
@@ -873,7 +931,11 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
       const subscriberId = await runLocalEffect(
         Effect.gen(function* () {
           const tm = yield* TerminalManager
-          const result = yield* tm.subscribe(terminal.id, noopSubscriber)
+          const result = yield* tm.attach(
+            terminal.id,
+            { leaseId: 'claimed-terminal' },
+            noopSubscriber
+          )
           return result.subscriberId
         })
       )
@@ -2405,9 +2467,7 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
 
   it('setAgentStatusFromHook emits ProcessChanged immediately', async () => {
     // When a hook sets the agent status, a ProcessChanged event should
-    // be emitted immediately (not waiting for the next 200ms tick).
-    const collectedEvents: TerminalLifecycleEvent[] = []
-
+    // be published before the hook update completes.
     await runEffect(
       Effect.scoped(
         Effect.gen(function* () {
@@ -2425,37 +2485,15 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
           // Subscribe to lifecycle events
           const dequeue = yield* PubSub.subscribe(tm.lifecycleEvents)
 
-          const collectFiber = yield* Effect.forkChild(
-            Effect.gen(function* () {
-              while (true) {
-                const event = yield* PubSub.take(dequeue)
-                collectedEvents.push(event)
-              }
-            })
-          )
-
-          // Wait a moment for the subscriber to be fully wired
-          yield* Effect.sleep(100)
-
-          // Clear any previously collected events
-          collectedEvents.length = 0
-
           // Set agent status via hook — should emit ProcessChanged immediately
           yield* tm.setAgentStatusFromHook(terminal.id, {
             status: 'working',
             sequence: 1,
           })
 
-          // Only wait 50ms — way less than a detection tick (200ms).
-          // If ProcessChanged arrives, it came from the hook, not the fiber.
-          yield* Effect.sleep(50)
-
-          yield* Fiber.interrupt(collectFiber)
-
-          // A detection event can already be queued when the array is reset,
-          // so identify the hook result by its payload rather than assuming
-          // the first event observed in this window came from the hook.
-          const hookEvents = collectedEvents.filter(
+          // The hook update does not return until its event is published, so
+          // draining the subscription is deterministic even under suite load.
+          const hookEvents = (yield* PubSub.takeAll(dequeue)).filter(
             (event) =>
               event._tag === 'ProcessChanged' &&
               event.terminal.id === terminal.id &&

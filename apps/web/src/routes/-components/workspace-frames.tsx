@@ -351,6 +351,8 @@ function WorkspacePickerItem({
   return (
     <Button
       className="h-auto justify-start gap-2 px-2 py-1.5 text-xs"
+      data-testid="workspace-picker-item"
+      data-workspace-id={workspace.id}
       onClick={handleClick}
       variant="ghost"
     >

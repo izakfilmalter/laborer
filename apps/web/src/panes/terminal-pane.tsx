@@ -5,21 +5,20 @@
  * Data flow:
  * 1. Terminal service PTY emits output via node-pty `onData`
  * 2. TerminalManager writes to headless terminal + notifies subscribers
- * 3. Data channel forwards output to the renderer
+ * 3. The attach RPC stream forwards output to the renderer
  * 4. This component receives data via the terminal connection hook
  * 5. Output is written directly to xterm.js Terminal instance
  *
- * Transport: MessagePort data channel via `desktopBridge.acquireTerminalDataPort()`
- * (zero-copy ArrayBuffer transfer, no HTTP/WebSocket overhead)
+ * Transport: `terminal.attach` over the daemon's shared WebSocket RPC.
  *
  * Input flow:
  * - Keystrokes captured by xterm.js `onData` callback
- * - Sent as data channel messages (NOT via terminal.write RPC)
+ * - Sent via ordered `terminal.write` RPC calls
  * - Terminal service forwards to PTY via PtyHostClient.write()
  *
  * Terminal status:
  * Terminal status is derived from control messages sent by the terminal
- * service over the MessagePort data channel:
+ * service over the attach stream:
  * - `{"type":"status","status":"running"}` — on initial connection
  * - `{"type":"status","status":"stopped","exitCode":N}` — PTY process exited
  * - `{"type":"status","status":"restarted"}` — terminal was restarted
@@ -31,11 +30,9 @@
  *   returned as `false` so they bubble to TanStack Hotkeys on document.
  * - Ctrl+B enters prefix mode for tmux-style sequences.
  *
- * @see packages/terminal/src/services/terminal-data-channel.ts — MessagePort endpoint
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
- * @see apps/web/src/hooks/use-terminal-messageport.ts — MessagePort hook
+ * @see apps/web/src/hooks/use-terminal-rpc.ts — daemon WebSocket hook
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
- * @see Issue #9: Renderer terminal UI wired to MessagePort
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
@@ -58,6 +55,10 @@ import {
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
+  TERMINAL_REVIVAL_ANNOUNCEMENT,
+  TerminalRevivalMarker,
+} from '@/components/terminal-revival-marker'
+import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
@@ -66,12 +67,7 @@ import {
 } from '@/components/ui/input-group'
 import { Kbd } from '@/components/ui/kbd'
 import { Spinner } from '@/components/ui/spinner'
-import type {
-  ReplayControlMessage,
-  ReplayStatus,
-  TerminalStatus,
-} from '@/hooks/use-terminal-messageport'
-import { useTerminalMessagePort } from '@/hooks/use-terminal-messageport'
+import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import {
   isPrefixKey,
@@ -83,6 +79,8 @@ import {
 import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
 
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
+type ReplayStatus = 'idle' | 'replaying' | 'complete'
+type TerminalStatus = 'running' | 'stopped' | 'restarted'
 
 /**
  * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
@@ -312,12 +310,14 @@ const createResizeDebouncer = (
   return { handleResize, dispose }
 }
 
-/** Connection result shape for the MessagePort data channel hook. */
+/** Connection result shape for the terminal attach RPC hook. */
 interface TerminalConnection {
+  readonly dismissRevival?: (() => void) | undefined
   readonly replayStatus: ReplayStatus
   readonly send: (data: string) => void
   readonly status: 'connecting' | 'connected' | 'disconnected'
   readonly terminalStatus: TerminalStatus
+  readonly wasRevived?: boolean
 }
 
 interface TerminalPaneProps {
@@ -382,102 +382,75 @@ function TerminalConnectingPlaceholder() {
 }
 
 /**
- * Inner terminal pane component — connects via MessagePort data channel
+ * Inner terminal pane component — connects via the terminal attach RPC stream
  * and renders the terminal.
  */
 function TerminalPaneContent(props: TerminalPaneProps) {
-  return <TerminalPaneMessagePort {...props} />
+  return <TerminalPaneRpc {...props} />
 }
 
-/** Connects via MessagePort and renders the terminal. */
-function TerminalPaneMessagePort({
+/** Browser terminal transport over terminal.attach on the daemon's single WS. */
+function TerminalPaneRpc({
   terminalId,
   onTerminalExit,
   onTitleChange,
 }: TerminalPaneProps) {
   const terminalRef = useRef<Terminal | null>(null)
-  const pendingDataRef = useRef<string[]>([])
+  const pendingRef = useRef<Array<{ data: string; commit: () => void }>>([])
   const [replayEpoch, setReplayEpoch] = useState(0)
 
-  const handleTerminalData = useCallback((data: string) => {
-    const terminal = terminalRef.current
-    if (!terminal) {
-      pendingDataRef.current.push(data)
-      return
-    }
-
-    terminal.write(data)
-  }, [])
-
-  const flushPendingTerminalData = useCallback(() => {
-    const terminal = terminalRef.current
-    if (!terminal || pendingDataRef.current.length === 0) {
-      return
-    }
-
-    const pendingData = pendingDataRef.current
-    pendingDataRef.current = []
-    for (const data of pendingData) {
-      terminal.write(data)
-    }
-  }, [])
-
-  const handleReplayStart = useCallback((replayEvent: ReplayControlMessage) => {
-    const terminal = terminalRef.current
-    if (!terminal) {
-      return
-    }
-
-    terminal.reset()
-    setReplayEpoch((current) => current + 1)
-
-    queueMicrotask(() => {
-      const activeTerminal = terminalRef.current
-      if (!activeTerminal) {
+  const write = useCallback(
+    (data: string, _cursor: number, commit: () => void) => {
+      const terminal = terminalRef.current
+      if (!terminal) {
+        pendingRef.current.push({ data, commit })
         return
       }
-
-      for (const frame of replayEvent.events) {
-        const dimensions = normalizeTerminalDimensions(frame)
-        if (!hasTerminalDimensions(dimensions)) {
-          continue
-        }
-        if (
-          activeTerminal.cols !== dimensions.cols ||
-          activeTerminal.rows !== dimensions.rows
-        ) {
-          activeTerminal.resize(dimensions.cols, dimensions.rows)
-        }
-        if (frame.data.length > 0) {
-          activeTerminal.write(frame.data)
-        }
+      if (data.length === 0) {
+        commit()
+      } else {
+        terminal.write(data, commit)
       }
-    })
-  }, [])
-
-  const handleTerminalStatus = useCallback(
-    (status: TerminalStatus, _exitCode: number | undefined) => {
-      if (status === 'restarted') {
-        terminalRef.current?.clear()
-      }
+    },
+    []
+  )
+  const snapshot = useCallback(
+    (data: string, cursor: number, commit: () => void) => {
+      terminalRef.current?.reset()
+      setReplayEpoch((value) => value + 1)
+      write(data, cursor, commit)
+    },
+    [write]
+  )
+  const connection = useTerminalRpc({
+    terminalId,
+    onData: write,
+    onSnapshot: snapshot,
+    onReset: () => terminalRef.current?.reset(),
+    onStatus: (status) => {
       if (status === 'stopped') {
         onTerminalExit?.()
       }
     },
-    [onTerminalExit]
-  )
-
-  const connection = useTerminalMessagePort({
-    terminalId,
-    onData: handleTerminalData,
-    onReplayStart: handleReplayStart,
-    onStatus: handleTerminalStatus,
   })
-
+  const ready = useCallback(() => {
+    const terminal = terminalRef.current
+    if (!terminal) {
+      return
+    }
+    const pending = pendingRef.current.splice(0)
+    for (const item of pending) {
+      if (item.data.length === 0) {
+        item.commit()
+      } else {
+        terminal.write(item.data, item.commit)
+      }
+    }
+  }, [])
   return (
     <TerminalPaneRenderer
       connection={connection}
-      onTerminalReady={flushPendingTerminalData}
+      onTerminalReady={ready}
       onTitleChange={onTitleChange}
       replayEpoch={replayEpoch}
       terminalId={terminalId}
@@ -517,13 +490,16 @@ function TerminalPaneRenderer({
   terminalRef,
 }: TerminalPaneRendererProps) {
   const {
+    dismissRevival,
     send: connectionSend,
     status: connectionStatus,
     replayStatus,
     terminalStatus,
+    wasRevived = false,
   } = connection
   const resizeTerminal = useAtomSet(resizeMutation)
   const containerRef = useRef<HTMLDivElement>(null)
+  const terminalElementRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
@@ -583,6 +559,8 @@ function TerminalPaneRenderer({
   }, [replayEpoch])
 
   const isRunning = terminalStatus !== 'stopped'
+  /** Revival is only truthful once the restored history is fully on screen. */
+  const showRevivalMarker = wasRevived && replayStatus === 'complete'
 
   /** Ref for isRunning so the xterm.js onData callback can check it. */
   const isRunningRef = useRef(isRunning)
@@ -894,6 +872,9 @@ function TerminalPaneRenderer({
     })
 
     terminalRef.current = terminal
+    if (import.meta.env.DEV && terminalElementRef.current) {
+      Reflect.set(terminalElementRef.current, 'xterm', terminal)
+    }
 
     // Attach fit addon for responsive sizing
     const fitAddon = new FitAddon()
@@ -963,7 +944,7 @@ function TerminalPaneRenderer({
 
     // Load Web Links addon for clickable URL detection.
     // Agent TUIs frequently output URLs — file paths, PR URLs, docs links.
-    // Custom handler routes link clicks through openExternalUrl() which
+    // Custom handler routes link clicks through localApi.openExternal() which
     // delegates to shell.openExternal via the Electron IPC bridge.
     try {
       const webLinksAddon = new WebLinksAddon((_event, url) => {
@@ -1105,6 +1086,9 @@ function TerminalPaneRenderer({
       onDataDisposable.dispose()
       onTitleChangeDisposable.dispose()
       terminal.dispose()
+      if (terminalElementRef.current) {
+        Reflect.deleteProperty(terminalElementRef.current, 'xterm')
+      }
       searchAddonRef.current = null
       terminalRef.current = null
       fitAddonRef.current = null
@@ -1161,6 +1145,7 @@ function TerminalPaneRenderer({
     <div
       className="relative h-full w-full overflow-hidden"
       data-terminal-id={terminalId}
+      ref={terminalElementRef}
     >
       {/* xterm.js container */}
       <div className="h-full w-full" ref={containerRef} />
@@ -1223,6 +1208,21 @@ function TerminalPaneRenderer({
 
       {/* Connecting indicator */}
       {connectionStatus === 'connecting' && isRunning && <ReconnectingBanner />}
+
+      {/* Tier-iii revival marker — the shell is new, so the restored output
+          is labelled rather than passed off as a surviving process. It waits
+          for replay to finish and stays until acknowledged. The spoken form
+          sits in an always-mounted region so it is not swallowed by the
+          region appearing with its own content. */}
+      <output aria-live="polite" className="sr-only">
+        {showRevivalMarker ? TERMINAL_REVIVAL_ANNOUNCEMENT : ''}
+      </output>
+      {showRevivalMarker && (
+        <TerminalRevivalMarker
+          belowBanner={isRunning && connectionStatus !== 'connected'}
+          onDismiss={dismissRevival}
+        />
+      )}
 
       {/* Status banner — shown when terminal process has exited */}
       {!isRunning && (
@@ -1366,7 +1366,10 @@ function TerminalLoadingOverlay({ message }: { readonly message: string }) {
 /** Banner shown when the data channel is disconnected but the terminal is still running. */
 function DisconnectedBanner() {
   return (
-    <div className="absolute inset-x-0 top-0 border-destructive/50 border-b bg-destructive/10 px-3 py-1 text-center text-destructive text-xs backdrop-blur-sm">
+    <div
+      className="absolute inset-x-0 top-0 border-destructive/50 border-b bg-destructive/10 px-3 py-1 text-center text-destructive text-xs backdrop-blur-sm"
+      data-testid="terminal-connection-status"
+    >
       Disconnected — reconnecting...
     </div>
   )
@@ -1375,7 +1378,10 @@ function DisconnectedBanner() {
 /** Banner shown while the data channel is connecting. */
 function ReconnectingBanner() {
   return (
-    <div className="absolute inset-x-0 top-0 border-warning/50 border-b bg-warning/10 px-3 py-1 text-center text-warning text-xs backdrop-blur-sm">
+    <div
+      className="absolute inset-x-0 top-0 border-warning/50 border-b bg-warning/10 px-3 py-1 text-center text-warning text-xs backdrop-blur-sm"
+      data-testid="terminal-connection-status"
+    >
       Connecting...
     </div>
   )

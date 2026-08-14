@@ -3,8 +3,8 @@
  *
  * Provides the same `PtyHostClient` service interface as `pty-host-client.ts`,
  * but runs node-pty in-process instead of spawning a separate pty-host child
- * process. This "flattened" architecture is used when the terminal runs as
- * an Electron utility process, matching VS Code's pty host pattern.
+ * process. The detached PTY host uses this implementation to own node-pty
+ * independently of the daemon and renderer lifecycles.
  *
  * The existing `TerminalManager` service is unchanged — it depends on the
  * `PtyHostClient` tag regardless of whether the underlying implementation
@@ -12,13 +12,12 @@
  *
  * Key differences from `pty-host-client.ts`:
  * - No child process spawning (no `ELECTRON_RUN_AS_NODE=1`)
- * - node-pty is imported directly via `createRequire` (same as pty-host.ts)
- * - Data coalescing (5ms buffer) matches pty-host.ts behavior
- * - Flow control (high/low watermark) matches pty-host.ts behavior
+ * - node-pty is imported directly via `createRequire`
+ * - Data coalescing uses a 5ms buffer
+ * - Flow control uses high/low watermarks
  * - Spawn-helper permission fix runs on layer construction
  *
- * @see pty-host.ts — Original child process implementation
- * @see pty-host-client.ts — Child process-based PtyHostClient
+ * @see pty-host-client.ts — PtyHostClient contract
  * @see .reference/vscode/src/vs/platform/terminal/node/ptyHostMain.ts
  */
 
@@ -33,6 +32,12 @@ import type {
   SpawnParams,
 } from './pty-host-client.js'
 import { PtyHostClient } from './pty-host-client.js'
+import {
+  positiveIntegerFromEnv,
+  splitByUtf8Bytes,
+  TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT,
+  utf8Bytes,
+} from './terminal-transport.js'
 
 // createRequire is needed because this runs as ESM where bare require()
 // is unavailable. node-pty is a native addon loaded via CJS.
@@ -46,6 +51,7 @@ const require_ = createRequire(import.meta.url)
 const COALESCE_INTERVAL_MS = 5
 
 interface CoalesceBuffer {
+  bytes: number
   readonly chunks: string[]
   readonly timer: ReturnType<typeof setTimeout>
 }
@@ -64,8 +70,8 @@ interface CoalesceBuffer {
 // See docs/adr/0002-flow-control-only-while-attached.md
 // ---------------------------------------------------------------------------
 
-const HIGH_WATERMARK_CHARS = 100_000
-const LOW_WATERMARK_CHARS = 5000
+export const TERMINAL_FLOW_PAUSE_CHARS_DEFAULT = 100_000
+export const TERMINAL_FLOW_RESUME_CHARS_DEFAULT = 5000
 
 interface FlowControlState {
   readonly paused: boolean
@@ -128,7 +134,7 @@ async function fixSpawnHelperPermissions(): Promise<void> {
 /**
  * Layer that provides PtyHostClient using node-pty directly (no child process).
  *
- * Used in the utility process entry point to flatten the terminal architecture.
+ * Used in the detached PTY-host entry point.
  * The layer is scoped: when finalized, all PTYs are killed and buffers flushed.
  */
 const directLayer = Layer.effect(
@@ -143,6 +149,23 @@ const directLayer = Layer.effect(
     const coalesceBuffers = new Map<string, CoalesceBuffer>()
     const flowControlStates = new Map<string, FlowControlState>()
     const ptyGenerations = new Map<string, number>()
+    const highWatermarkChars = positiveIntegerFromEnv(
+      'TERMINAL_FLOW_PAUSE_CHARS',
+      TERMINAL_FLOW_PAUSE_CHARS_DEFAULT
+    )
+    const lowWatermarkChars = positiveIntegerFromEnv(
+      'TERMINAL_FLOW_RESUME_CHARS',
+      TERMINAL_FLOW_RESUME_CHARS_DEFAULT
+    )
+    const coalesceBytes = positiveIntegerFromEnv(
+      'TERMINAL_OUTPUT_CHUNK_BYTES',
+      TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT
+    )
+    if (lowWatermarkChars >= highWatermarkChars) {
+      return yield* Effect.die(
+        'TERMINAL_FLOW_RESUME_CHARS must be below TERMINAL_FLOW_PAUSE_CHARS'
+      )
+    }
 
     /**
      * Number of attached data-channel consumers per terminal.
@@ -197,7 +220,7 @@ const directLayer = Layer.effect(
 
       if (
         !fcState.paused &&
-        fcState.unacknowledgedCharCount > HIGH_WATERMARK_CHARS
+        fcState.unacknowledgedCharCount > highWatermarkChars
       ) {
         const pty = ptys.get(id)
         if (pty !== undefined) {
@@ -227,18 +250,24 @@ const directLayer = Layer.effect(
     }
 
     function bufferData(id: string, data: string): void {
-      const existing = coalesceBuffers.get(id)
-      if (existing !== undefined) {
-        existing.chunks.push(data)
-        return
+      for (const chunk of splitByUtf8Bytes(data, coalesceBytes)) {
+        let existing = coalesceBuffers.get(id)
+        const bytes = utf8Bytes(chunk)
+        if (existing !== undefined && existing.bytes + bytes > coalesceBytes) {
+          flushCoalesceBuffer(id)
+          existing = undefined
+        }
+        if (existing !== undefined) {
+          existing.chunks.push(chunk)
+          existing.bytes += bytes
+          continue
+        }
+
+        const timer = setTimeout(() => {
+          flushCoalesceBuffer(id)
+        }, COALESCE_INTERVAL_MS)
+        coalesceBuffers.set(id, { bytes, chunks: [chunk], timer })
       }
-
-      const chunks = [data]
-      const timer = setTimeout(() => {
-        flushCoalesceBuffer(id)
-      }, COALESCE_INTERVAL_MS)
-
-      coalesceBuffers.set(id, { chunks, timer })
     }
 
     // -------------------------------------------------------------------
@@ -438,7 +467,7 @@ const directLayer = Layer.effect(
 
         if (
           fcState.paused &&
-          fcState.unacknowledgedCharCount < LOW_WATERMARK_CHARS
+          fcState.unacknowledgedCharCount < lowWatermarkChars
         ) {
           const pty = ptys.get(id)
           if (pty !== undefined) {

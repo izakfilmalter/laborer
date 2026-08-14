@@ -3,7 +3,7 @@
 Laborer's mission-control pair lets an operator manage local git-worktree Workspaces and observe parallel coding agents:
 
 - [`apps/web/`](../web/) is the React 19 interface.
-- [`apps/desktop/`](./) is its Electron shell, including windows, tray integration, updates, secure renderer bridging, and utility-process supervision.
+- [`apps/desktop/`](./) is its thin Electron shell, including windows, tray integration, updates, and secure renderer bridging.
 
 For the complete monorepo layout and workspace-wide commands, start with the [root README](../../README.md).
 
@@ -11,16 +11,16 @@ For the complete monorepo layout and workspace-wide commands, start with the [ro
 
 - Git-worktree Workspace creation, setup, reconciliation, and pull-request tracking.
 - Persistent tmux-style layouts containing terminal panes, diffs, and file trees.
-- Long-lived PTY terminals with independent ownership, MessagePort transport, scrollback, restoration, and agent-status notifications.
+- Long-lived PTY terminals with independent ownership, WebSocket RPC transport, scrollback, restoration, and agent-status notifications.
 - A shared task board and SQLite state used by both local mission control and registered coding workflows.
 
 The Diff Viewer is read-only. Terminal panes are views: closing or moving one does not stop the terminal it displays.
 
 ## Architecture
 
-During development, Turborepo watches the web, desktop, server, terminal, and file-watcher workspaces. Electron supervises the three backend services as utility processes in both development and packaged builds. Service RPC and terminal data travel over MessagePorts rather than fixed HTTP or WebSocket ports; only the Vite development interface uses a default port (`2101`).
+During development, Turborepo watches the web, desktop, server, terminal, and file-watcher workspaces. The standalone daemon owns backend capability, and both the browser and Electron renderer use its same-origin WebSocket RPC endpoint. The detached pty host preserves terminals across daemon restarts.
 
-Shared domain types and Effect RPC contracts live in [`packages/shared/`](../../packages/shared/). The sandboxed Electron renderer receives a narrow preload bridge; renderer-to-service communication uses typed RPC and MessagePorts.
+Shared domain types and Effect RPC contracts live in [`packages/shared/`](../../packages/shared/). The sandboxed Electron renderer receives a narrow preload bridge for native chrome; renderer-to-service communication uses typed daemon RPC.
 
 ## Development
 
@@ -31,7 +31,7 @@ bun install
 bun run dev
 ```
 
-To run only the Vite interface (without mission-control utility processes):
+To run only the Vite interface (without the mission-control daemon):
 
 ```sh
 bun run --cwd apps/web dev

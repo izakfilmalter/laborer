@@ -13,13 +13,16 @@
     "test:watch": "vitest"
   },
   "exports": {
-    ".": "./src/utility-main.ts"
+    ".": "./src/infrastructure.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@laborer/env": "workspace:*",
+    "@laborer/ensure": "workspace:*",
+    "@laborer/file-watcher": "workspace:*",
     "@laborer/shared": "workspace:*",
     "@laborer/task-db": "workspace:*",
+    "@laborer/terminal": "workspace:*",
     "@laborer/worktree-owner": "workspace:*",
     "@opentelemetry/api": "^1.9",
     "@opentelemetry/resources": "^2.0.0",
@@ -37,7 +40,6 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@laborer/config": "workspace:*",
-    "@laborer/file-watcher": "workspace:*",
     "@types/diff": "7.0.0",
     "@types/node": "^25.3.3",
     "@vitest/coverage-v8": "^4.0.18",

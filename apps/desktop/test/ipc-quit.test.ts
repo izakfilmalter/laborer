@@ -50,10 +50,6 @@ vi.mock('electron', () => ({
   Menu: {
     buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })),
   },
-  MessageChannelMain: class {
-    port1 = { close: vi.fn(), postMessage: vi.fn(), start: vi.fn() }
-    port2 = { close: vi.fn(), postMessage: vi.fn(), start: vi.fn() }
-  },
   Notification: class {
     on(): void {
       // no-op

@@ -1,6 +1,27 @@
+import { randomUUID } from 'node:crypto'
+import { existsSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { defineConfig } from '@playwright/test'
+import {
+  allocatePort,
+  E2E_STATE_FILE_ENV,
+  getStateFile,
+} from './e2e/global-setup.js'
 
 const vitePort = Number(process.env.VITE_PORT ?? 2101)
+const reuseDevStack = process.env.LABORER_E2E_REUSE_DEV_STACK === '1'
+process.env[E2E_STATE_FILE_ENV] ??= join(
+  tmpdir(),
+  `laborer-e2e-state-${String(process.pid)}-${randomUUID()}.json`
+)
+const stateFile = getStateFile()
+if (!existsSync(stateFile)) {
+  const daemonPort = reuseDevStack
+    ? Number(process.env.LABORER_DAEMON_PORT ?? 2100)
+    : await allocatePort()
+  writeFileSync(stateFile, JSON.stringify({ daemonPort }))
+}
 
 export default defineConfig({
   testDir: './e2e',
@@ -25,25 +46,30 @@ export default defineConfig({
   /* Reporter to use */
   reporter: 'list',
 
-  /* Shared settings — no baseURL since Electron provides the page */
+  /* Chromium uses the browser-first daemon/Vite stack. */
   use: {
+    baseURL: `http://127.0.0.1:${String(vitePort)}`,
     /* Capture screenshot on failure for debugging */
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
 
-  /* Single project — Electron provides the browser context */
+  /* The browser project is the canonical mission-control suite. */
   projects: [
     {
-      name: 'electron',
+      name: 'browser',
+      testMatch: /browser\/.*\.spec\.ts/,
+      use: {
+        browserName: 'chromium',
+      },
     },
   ],
 
   /* Start Vite dev server before tests, kill it after */
   webServer: {
-    command: `bun run dev --port ${vitePort}`,
+    command: 'bun e2e/start-vite.ts',
     port: vitePort,
-    reuseExistingServer: true,
+    reuseExistingServer: reuseDevStack,
     timeout: 30_000,
   },
 

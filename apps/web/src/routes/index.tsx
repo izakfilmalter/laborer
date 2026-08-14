@@ -1155,7 +1155,7 @@ function HomeComponent() {
           onOpenChange={handleDestroyOnCloseDialogOpenChange}
           open={destroyOnCloseDialogOpen && !isDestroyOnCloseWorkspaceVisible}
         />
-        <div className="flex h-screen min-w-0">
+        <div className="flex h-screen min-w-0" data-testid="mission-control">
           {/* Sidebar — search, project groups, workspace list, health check */}
           <aside
             className="min-h-0 shrink-0 overflow-hidden border-r"

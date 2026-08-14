@@ -47,7 +47,7 @@ import type { LeafNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useCallback, useEffect, useRef } from 'react'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
-import { getDesktopBridge } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 import type { NavigationDirection } from '@/panels/panel-tree-utils'
 import {
@@ -203,7 +203,7 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
   // The Electron menu dispatches this instead of using role:close, so
   // Cmd+W always routes through the panel system for instant close.
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }
@@ -237,7 +237,7 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
   }, [activeWorkspaceId, pullWorkspace])
 
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }

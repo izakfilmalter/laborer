@@ -114,7 +114,7 @@ import {
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
-import { openExternalUrl } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
@@ -307,7 +307,7 @@ function TaskBoardCard({
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
     if (task.slackPermalink) {
-      openExternalUrl(task.slackPermalink)
+      localApi.openExternal(task.slackPermalink)
     }
   }
 
@@ -715,6 +715,8 @@ function ProjectLane({
         'group/project relative flex flex-col gap-1.5 transition-opacity',
         isDragging && 'opacity-40'
       )}
+      data-project-id={project.id}
+      data-testid="task-board-lane"
       ref={laneRef}
     >
       <ProjectDropIndicator edge={closestEdge} />
@@ -868,6 +870,8 @@ function LaneBoard({
           return (
             <KanbanColumn
               className="min-h-0 min-w-0"
+              data-status={column.id}
+              data-testid="task-board-column"
               key={column.id}
               value={column.id}
             >
@@ -919,7 +923,12 @@ function LaneBoard({
                         value={column.id}
                       >
                         {cards.map((task) => (
-                          <KanbanItem key={task.id} value={task.id}>
+                          <KanbanItem
+                            data-task-id={task.id}
+                            data-testid="task-board-card"
+                            key={task.id}
+                            value={task.id}
+                          >
                             <KanbanItemHandle>
                               <TaskBoardCard
                                 attachBlocked={
@@ -1317,7 +1326,10 @@ function TaskBoard({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      data-testid="task-board"
+    >
       <div className="flex h-10 shrink-0 items-center border-b px-3">
         <BoardSearch
           onChange={setSearchQuery}

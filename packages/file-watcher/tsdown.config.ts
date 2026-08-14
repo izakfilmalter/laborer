@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: ['src/utility-main.ts'],
+  entry: ['src/rpc/handlers.ts'],
   format: 'esm',
   outDir: 'dist',
   sourcemap: true,

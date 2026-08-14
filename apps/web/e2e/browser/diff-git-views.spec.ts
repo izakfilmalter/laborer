@@ -23,34 +23,70 @@ const seedDiffJourney = async (
   const tempRoots: string[] = []
   const repoPath = initRepo(`diff-${label}`, tempRoots)
   const branchName = `${label}-${crypto.randomUUID()}`
-  const seeded = await daemon.rpc.run((client) =>
-    Effect.gen(function* () {
-      const project = yield* client['project.add']({ repoPath })
-      const workspace = yield* client['workspace.create']({
+  let projectId: string | undefined
+  let workspaceId: string | undefined
+
+  try {
+    const project = await daemon.rpc.run((client) =>
+      client['project.add']({ repoPath })
+    )
+    projectId = project.id
+    const workspace = await daemon.rpc.run((client) =>
+      client['workspace.create']({
         branchName,
         projectId: project.id,
       })
-      return { project, workspace }
-    })
-  )
+    )
+    workspaceId = workspace.id
 
-  await expect
-    .poll(async () => {
+    await expect
+      .poll(async () => {
+        try {
+          await access(workspace.worktreePath)
+          return true
+        } catch {
+          return false
+        }
+      })
+      .toBe(true)
+
+    return {
+      branchName,
+      projectId: project.id,
+      tempRoots,
+      workspaceId: workspace.id,
+      worktreePath: workspace.worktreePath,
+    }
+  } catch (error) {
+    const failedWorkspaceId = workspaceId
+    if (failedWorkspaceId !== undefined) {
       try {
-        await access(seeded.workspace.worktreePath)
-        return true
+        await daemon.rpc.run((client) =>
+          client['workspace.destroy']({
+            force: true,
+            workspaceId: failedWorkspaceId,
+          }).pipe(Effect.asVoid)
+        )
       } catch {
-        return false
+        // Preserve the setup failure; worker teardown removes daemon state.
       }
-    })
-    .toBe(true)
-
-  return {
-    branchName,
-    projectId: seeded.project.id,
-    tempRoots,
-    workspaceId: seeded.workspace.id,
-    worktreePath: seeded.workspace.worktreePath,
+    }
+    const failedProjectId = projectId
+    if (failedProjectId !== undefined) {
+      try {
+        await daemon.rpc.run((client) =>
+          client['project.remove']({ projectId: failedProjectId }).pipe(
+            Effect.asVoid
+          )
+        )
+      } catch {
+        // Preserve the setup failure; worker teardown removes daemon state.
+      }
+    }
+    for (const root of tempRoots) {
+      await rm(root, { force: true, recursive: true })
+    }
+    throw error
   }
 }
 
@@ -112,13 +148,13 @@ const openDiff = async (page: Page, journey: DiffJourney): Promise<Locator> => {
     .filter({ hasText: 'Diff' })
     .click()
 
-  const diff = frame.getByTestId('diff-pane')
+  const diff = frame.locator('[data-pane-text-selectable]')
   await expect(diff).toBeVisible()
   return diff
 }
 
 const diffFile = (diff: Locator, path: string): Locator =>
-  diff.locator(`[data-testid="diff-file"][data-file-path="${path}"]`)
+  diff.locator(`[data-diff-file-path="${path}"]`)
 
 test.describe('diff and git view journeys', () => {
   test('shows seeded diffs and git status decorations', async ({
@@ -153,15 +189,15 @@ test.describe('diff and git view journeys', () => {
       const tree = frame.getByTestId('tree-pane')
       await expect(tree).toBeVisible()
       await expect(
-        tree.locator(
-          '[data-testid="file-tree-item"][data-file-path="README.md"]'
-        )
-      ).toHaveAttribute('data-git-status', 'modified')
+        tree
+          .getByRole('treeitem', { name: 'README.md' })
+          .getByText('M', { exact: true })
+      ).toBeVisible()
       await expect(
-        tree.locator(
-          '[data-testid="file-tree-item"][data-file-path="added.ts"]'
-        )
-      ).toHaveAttribute('data-git-status', 'added')
+        tree
+          .getByRole('treeitem', { name: 'added.ts' })
+          .getByText('A', { exact: true })
+      ).toBeVisible()
     } finally {
       await cleanDiffJourney(daemon, journey)
     }

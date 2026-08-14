@@ -14,6 +14,8 @@
 
 import { LaborerRpcs } from '@laborer/shared/rpc'
 import { AtomRpc } from 'effect/unstable/reactivity'
+import { isElectron } from '@/lib/desktop'
+import { BrowserDaemonClient } from './browser-daemon-client'
 import { rendererRpcProtocol } from './renderer-rpc-protocol'
 
 const serverProtocol = rendererRpcProtocol('server')
@@ -26,10 +28,14 @@ const serverProtocol = rendererRpcProtocol('server')
  */
 export const ConfigReactivityKeys = ['config'] as const
 
-export class LaborerClient extends AtomRpc.Service<LaborerClient>()(
-  'LaborerClient',
+class LegacyLaborerClient extends AtomRpc.Service<LegacyLaborerClient>()(
+  'LegacyLaborerClient',
   {
     group: LaborerRpcs,
     protocol: serverProtocol,
   }
 ) {}
+
+export const LaborerClient: typeof LegacyLaborerClient = isElectron()
+  ? LegacyLaborerClient
+  : (BrowserDaemonClient as unknown as typeof LegacyLaborerClient)

@@ -1,7 +1,8 @@
 import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import type { RpcMessagePort } from '@laborer/shared/rpc-transport-messageport'
 import { makeClientProtocolMessagePort } from '@laborer/shared/rpc-transport-messageport-client'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Schedule } from 'effect'
+import type { Atom } from 'effect/unstable/reactivity'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import {
   layerWebSocket,
@@ -9,6 +10,10 @@ import {
 } from 'effect/unstable/socket/Socket'
 
 import { acquireServicePort, isElectron } from '@/lib/desktop'
+import {
+  rendererConnectionGenerationAtom,
+  rendererConnectionSupervisor,
+} from './renderer-connection'
 
 type RpcSidecarName = Extract<SidecarName, 'server' | 'terminal'>
 
@@ -26,9 +31,13 @@ const browserProtocol = (): Layer.Layer<RpcClient.Protocol> => {
     Layer.provide(layerWebSocketConstructorGlobal)
   )
 
-  return RpcClient.layerProtocolSocket({ retryTransientErrors: false }).pipe(
-    Layer.provide(Layer.merge(socket, RpcSerialization.layerJson))
-  )
+  return Layer.effect(
+    RpcClient.Protocol,
+    RpcClient.makeProtocolSocket({
+      retryTransientErrors: false,
+      retryPolicy: Schedule.recurs(0),
+    })
+  ).pipe(Layer.provide(Layer.merge(socket, RpcSerialization.layerJson)))
 }
 
 const messagePortProtocol = (
@@ -55,7 +64,13 @@ const messagePortProtocol = (
  * Plain browsers always use the daemon's same-origin `/ws`. Electron retains
  * its legacy MessagePort path until the desktop switch-and-delete phase.
  */
-export const rendererRpcProtocol = (
-  legacyService: RpcSidecarName
-): Layer.Layer<RpcClient.Protocol> =>
-  isElectron() ? messagePortProtocol(legacyService) : browserProtocol()
+export const rendererRpcProtocol = (legacyService: RpcSidecarName) => {
+  if (isElectron()) {
+    return messagePortProtocol(legacyService)
+  }
+  rendererConnectionSupervisor.start()
+  return (get: Atom.AtomContext) => {
+    get(rendererConnectionGenerationAtom)
+    return browserProtocol()
+  }
+}

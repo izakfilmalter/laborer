@@ -14,8 +14,8 @@
  * so the event stream connection is never torn down and re-established
  * as components mount/unmount.
  *
- * When the stream disconnects, Effect's `Stream.retry` re-establishes
- * the connection with exponential backoff (1 s → 2 s → … → 30 s cap).
+ * When the daemon reconnects, the renderer connection generation rebuilds the
+ * runtime: `terminal.list` is fetched again before a fresh event subscription.
  *
  * @see packages/terminal/src/services/terminal-manager.ts — detection fiber
  * @see packages/terminal/src/rpc/handlers.ts — terminal.events handler
@@ -26,7 +26,7 @@ import type {
   TerminalInfo as SharedTerminalInfo,
   TerminalLifecycleEventSchema,
 } from '@laborer/shared/rpc'
-import { Effect, Ref, Schedule, Stream } from 'effect'
+import { Effect, Ref, Stream } from 'effect'
 import { Atom, AsyncResult as Result } from 'effect/unstable/reactivity'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -237,14 +237,6 @@ const upsertInList = (
 // ---------------------------------------------------------------------------
 
 /**
- * Retry schedule for the event stream: exponential backoff 1s → 30s cap.
- */
-const eventStreamRetrySchedule = Schedule.min([
-  Schedule.exponential('1 second'),
-  Schedule.spaced('30 seconds'),
-])
-
-/**
  * Atom that holds the current terminal list, updated in real time via the
  * `terminal.events` streaming RPC. Uses `Atom.keepAlive` so the stream
  * stays connected across component mount/unmount cycles.
@@ -252,7 +244,7 @@ const eventStreamRetrySchedule = Schedule.min([
  * The atom's value is `Result<readonly TerminalInfo[], E>`:
  * - `Waiting` while the initial fetch is in progress
  * - `Success(terminals)` once hydrated and on each subsequent event
- * - `Failure(error)` if the initial fetch and all retries fail
+ * - `Failure(error)` if the current session's initial fetch fails
  */
 const terminalListAtom = Atom.keepAlive(
   TerminalServiceClient.runtime.atom(
@@ -296,7 +288,6 @@ const terminalListAtom = Atom.keepAlive(
           })
         ),
         Stream.runDrain,
-        Effect.retry(eventStreamRetrySchedule),
         Effect.catch((error) =>
           Effect.logWarning(`Terminal event stream ended: ${String(error)}`)
         ),

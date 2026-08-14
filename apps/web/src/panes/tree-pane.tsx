@@ -40,7 +40,9 @@ import type { FileNode, FileWatcherEvent } from '@laborer/shared/rpc'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { rendererConnectionGenerationAtom } from '@/atoms/renderer-connection'
 import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
@@ -217,24 +219,6 @@ const fetchGitStatus = async (
 // Watcher subscription hook
 // ---------------------------------------------------------------------------
 
-/**
- * Get or create the `file.watcher.subscribe` pull atom for a workspace.
- * Cached by workspaceId so multiple mounts share one stream subscription.
- */
-const watcherAtomCache = new Map<
-  string,
-  ReturnType<typeof LaborerClient.query>
->()
-
-const getWatcherAtom = (workspaceId: string) => {
-  let atom = watcherAtomCache.get(workspaceId)
-  if (!atom) {
-    atom = LaborerClient.query('file.watcher.subscribe', { workspaceId })
-    watcherAtomCache.set(workspaceId, atom)
-  }
-  return atom
-}
-
 // ---------------------------------------------------------------------------
 // Tree pane content — lazy per-directory fetching
 // ---------------------------------------------------------------------------
@@ -262,6 +246,7 @@ const getWatcherAtom = (workspaceId: string) => {
  * item before allowing the menu to open.
  */
 function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
+  const connectionGeneration = useAtomValue(rendererConnectionGenerationAtom)
   const workspaceRows = useAtomValue(workspaceViewsAtom)
   const listFiles = useAtomSet(fileListMutation, { mode: 'promise' })
 
@@ -294,7 +279,7 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   }, [treeStore.listDir])
 
   // --- Watcher subscription for invalidation ---
-  const watcherAtom = useMemo(() => getWatcherAtom(workspaceId), [workspaceId])
+  const watcherAtom = fileWatcherEventsAtom(workspaceId)
   useAtomMount(watcherAtom)
   const watcherResult = useAtomValue(watcherAtom)
 
@@ -313,8 +298,12 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
 
   // Fetch git status on mount.
   useEffect(() => {
+    if (connectionGeneration === 0) {
+      return
+    }
     refreshGitStatus()
-  }, [refreshGitStatus])
+    treeStore.refreshLoadedDirs()
+  }, [connectionGeneration, refreshGitStatus, treeStore.refreshLoadedDirs])
 
   // Process watcher events for tree invalidation and status refresh.
   const lastProcessedIndexRef = useRef(0)

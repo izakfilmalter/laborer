@@ -1,6 +1,6 @@
 import { useAtomMount, useAtomValue } from '@effect/atom-react/Hooks'
 import type { TerminalAttachEvent } from '@laborer/shared/rpc'
-import { Effect, Fiber, Schedule, Stream } from 'effect'
+import { Effect, Fiber, Stream } from 'effect'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
@@ -143,15 +143,7 @@ export function useTerminalRpc({
           Effect.sync(() => handle(event))
         )
       })
-    ).pipe(
-      Effect.tapError(() => Effect.sync(() => setStatus('disconnected'))),
-      Effect.retry(
-        Schedule.min([
-          Schedule.exponential('250 millis'),
-          Schedule.spaced('5 seconds'),
-        ])
-      )
-    )
+    ).pipe(Effect.tapError(() => Effect.sync(() => setStatus('disconnected'))))
 
     const fiber = Effect.runForkWith(runtime)(attach)
     return () => {

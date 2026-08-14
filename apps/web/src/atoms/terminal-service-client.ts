@@ -15,6 +15,8 @@
 
 import { TerminalRpcs } from '@laborer/shared/rpc'
 import { AtomRpc } from 'effect/unstable/reactivity'
+import { isElectron } from '@/lib/desktop'
+import { BrowserDaemonClient } from './browser-daemon-client'
 import { rendererRpcProtocol } from './renderer-rpc-protocol'
 
 const terminalProtocol = rendererRpcProtocol('terminal')
@@ -26,10 +28,16 @@ const terminalProtocol = rendererRpcProtocol('terminal')
  * - terminal.spawn, terminal.write, terminal.resize, terminal.kill
  * - terminal.remove, terminal.restart, terminal.list
  */
-export class TerminalServiceClient extends AtomRpc.Service<TerminalServiceClient>()(
-  'TerminalServiceClient',
+class LegacyTerminalServiceClient extends AtomRpc.Service<LegacyTerminalServiceClient>()(
+  'LegacyTerminalServiceClient',
   {
     group: TerminalRpcs,
     protocol: terminalProtocol,
   }
 ) {}
+
+/** Browser terminal calls share the exact daemon client/runtime with all other RPCs. */
+export const TerminalServiceClient: typeof LegacyTerminalServiceClient =
+  isElectron()
+    ? LegacyTerminalServiceClient
+    : (BrowserDaemonClient as unknown as typeof LegacyTerminalServiceClient)

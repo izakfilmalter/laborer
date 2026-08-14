@@ -8,6 +8,7 @@ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { AtomRegistryProvider } from '@/atoms/provider'
 import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
+import { ConnectionReconnectBanner } from '@/components/connection-reconnect-banner'
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { ServerGate } from '@/components/server-gate'
@@ -92,6 +93,7 @@ function RootComponent() {
                   {(generation) => (
                     <AtomRegistryProvider key={`atom-registry-${generation}`}>
                       <SharedStateBridge />
+                      <ConnectionReconnectBanner />
                       <AppSettingsProvider>
                         <div className="h-svh">
                           <AppSettingsModal />

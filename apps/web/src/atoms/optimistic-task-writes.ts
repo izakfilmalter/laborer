@@ -57,6 +57,7 @@ export const pendingTaskRow = (input: {
     parentTaskId: null,
     prBaseBranch: null,
     prCheckStatus: null,
+    prChecks: null,
     prIsDraft: false,
     prMergeStatus: null,
     prNumber: null,

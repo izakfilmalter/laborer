@@ -8,6 +8,7 @@
  * @see Issue: Reorganize workspace actions
  */
 
+import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -192,6 +193,7 @@ const makeWorkspace = (
     prNumber: number | null
     prBaseBranch: string | null
     prCheckStatus: 'pending' | 'success' | 'failure' | null
+    prChecks: readonly PullRequestCheckRun[] | null
     prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
     prUrl: string | null
     prTitle: string | null
@@ -210,6 +212,7 @@ const makeWorkspace = (
   prNumber: null,
   prBaseBranch: null,
   prCheckStatus: null,
+  prChecks: null,
   prMergeStatus: null,
   prUrl: null,
   prTitle: null,
@@ -383,18 +386,64 @@ describe('Workspace card layout — status row', () => {
     ).toBe(true)
   })
 
-  it('shows merge conflicts and the GitHub Actions result compactly', () => {
+  it('marks a merge conflict without spending words on it', () => {
     mockStore([
       makeWorkspace({
         prBaseBranch: 'dev',
-        prCheckStatus: 'failure',
+        prCheckStatus: null,
         prMergeStatus: 'conflicting',
+      }),
+    ])
+
+    const { container } = render(
+      <WorkspaceList projectId="project-1" repoPath="/repo" />
+    )
+
+    const mark = screen.getByRole('img', { name: 'Conflicts with dev' })
+    expect(mark).toBeTruthy()
+    // Last on the rail: an obstacle to landing work, not a stage of it.
+    const statusRow = container.querySelector('[data-slot="card-status-row"]')
+    const badges = statusRow?.firstElementChild
+    expect(badges?.lastElementChild?.contains(mark)).toBe(true)
+  })
+
+  it('hangs the check rollup off the pull request pill', () => {
+    mockStore([
+      makeWorkspace({
+        prCheckStatus: 'failure',
+        prChecks: [
+          {
+            bucket: 'failure',
+            durationMs: 179_000,
+            group: 'Merge Checks',
+            name: 'Unit Tests',
+            url: null,
+          },
+          {
+            bucket: 'success',
+            durationMs: 40_000,
+            group: 'Merge Checks',
+            name: 'Build',
+            url: null,
+          },
+        ],
+        prNumber: 42,
+        prState: 'OPEN',
+        prUrl: 'https://github.com/org/repo/pull/42',
       }),
     ])
 
     render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
 
-    expect(screen.getByText('conflicts with dev')).toBeTruthy()
-    expect(screen.getByText('failed')).toBeTruthy()
+    const pill = screen
+      .getByText('#42')
+      .closest('[data-slot="pr-status-badge"]')
+    const checks = screen.getByRole('link', {
+      name: 'Some checks were not successful: 1 failed · 1 passed',
+    })
+    expect(pill?.contains(checks)).toBe(true)
+    expect(checks.getAttribute('href')).toBe(
+      'https://github.com/org/repo/pull/42/checks'
+    )
   })
 })

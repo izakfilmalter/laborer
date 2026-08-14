@@ -25,6 +25,10 @@ import { spawn } from '../lib/spawn.js'
 import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
 import { LaborerDatabase } from './laborer-database.js'
 import {
+  MAX_PULL_REQUEST_CHECK_RUNS,
+  type PullRequestCheckRun,
+} from './native-laborer-database.js'
+import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
   PR_VISIBLE_POLL_INTERVAL_MS,
 } from './polling-intervals.js'
@@ -46,6 +50,7 @@ import {
 interface PrData {
   readonly baseBranch: string | null
   readonly checkStatus: 'pending' | 'success' | 'failure' | null
+  readonly checks: readonly PullRequestCheckRun[] | null
   readonly isDraft: boolean
   readonly mergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly number: number | null
@@ -55,9 +60,16 @@ interface PrData {
 }
 
 const GhCheck = Schema.Struct({
+  completedAt: Schema.optional(Schema.NullOr(Schema.String)),
   conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+  context: Schema.optional(Schema.NullOr(Schema.String)),
+  detailsUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  startedAt: Schema.optional(Schema.NullOr(Schema.String)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
+  targetUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  workflowName: Schema.optional(Schema.NullOr(Schema.String)),
 })
 
 const GhPrData = Schema.Struct({
@@ -84,6 +96,7 @@ const serializePrData = (data: PrData): string =>
     data.baseBranch,
     data.mergeStatus,
     data.checkStatus,
+    data.checks?.map((check) => [check.name, check.bucket]) ?? null,
   ])
 
 const FAILURE_CONCLUSIONS = new Set([
@@ -137,6 +150,61 @@ const checkStatus = (
   return pending ? 'pending' : 'success'
 }
 
+/**
+ * The bucket a single check falls in for display. The rollup folds skipped
+ * and neutral checks into success because they do not block a merge; the list
+ * keeps them apart because "skipped" and "passed" answer different questions.
+ */
+const checkRunBucket = (
+  check: typeof GhCheck.Type
+): PullRequestCheckRun['bucket'] => {
+  const conclusion = check.conclusion?.toUpperCase() ?? null
+  if (conclusion === 'SKIPPED') {
+    return 'skipped'
+  }
+  if (conclusion === 'CANCELLED') {
+    return 'cancelled'
+  }
+  return singleCheckStatus(check)
+}
+
+const checkRunDurationMs = (check: typeof GhCheck.Type): number | null => {
+  if (check.startedAt == null || check.completedAt == null) {
+    return null
+  }
+  const started = Date.parse(check.startedAt)
+  const completed = Date.parse(check.completedAt)
+  if (Number.isNaN(started) || Number.isNaN(completed)) {
+    return null
+  }
+  const elapsed = completed - started
+  return elapsed >= 0 ? elapsed : null
+}
+
+const checkRuns = (
+  checks: readonly (typeof GhCheck.Type)[] | null | undefined
+): readonly PullRequestCheckRun[] | null => {
+  if (checks == null || checks.length === 0) {
+    return null
+  }
+  const runs = checks.flatMap((check) => {
+    const name = check.name ?? check.context ?? null
+    if (name === null || name.length === 0) {
+      return []
+    }
+    return [
+      {
+        bucket: checkRunBucket(check),
+        durationMs: checkRunDurationMs(check),
+        group: check.workflowName ?? null,
+        name,
+        url: check.detailsUrl ?? check.targetUrl ?? null,
+      } satisfies PullRequestCheckRun,
+    ]
+  })
+  return runs.length === 0 ? null : runs.slice(0, MAX_PULL_REQUEST_CHECK_RUNS)
+}
+
 const mergeStatus = (
   mergeable: string | null | undefined,
   state: string | null | undefined
@@ -157,6 +225,7 @@ const mergeStatus = (
 const EMPTY_PR: PrData = {
   baseBranch: null,
   checkStatus: null,
+  checks: null,
   isDraft: false,
   mergeStatus: null,
   number: null,
@@ -384,6 +453,7 @@ class PrWatcher extends Context.Service<
           baseBranch:
             parseResult.baseRefName ?? localMergeData.baseBranch ?? null,
           checkStatus: checkStatus(parseResult.statusCheckRollup),
+          checks: checkRuns(parseResult.statusCheckRollup),
           isDraft: parseResult.isDraft ?? false,
           mergeStatus:
             localMergeStatus === null || localMergeStatus === 'unknown'
@@ -424,6 +494,7 @@ class PrWatcher extends Context.Service<
         const persistedSerialized = serializePrData({
           baseBranch: workspace.prBaseBranch,
           checkStatus: workspace.prCheckStatus,
+          checks: workspace.prChecks,
           number: workspace.prNumber,
           isDraft: false,
           mergeStatus: workspace.prMergeStatus,
@@ -479,6 +550,7 @@ class PrWatcher extends Context.Service<
           yield* updateServerTaskFacts(laborerDatabase, task.id, {
             prBaseBranch: prData.baseBranch,
             prCheckStatus: prData.checkStatus,
+            prChecks: prData.checks,
             prIsDraft: prData.isDraft,
             prMergeStatus: prData.mergeStatus,
             prNumber: prData.number,

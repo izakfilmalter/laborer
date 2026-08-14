@@ -44,6 +44,10 @@ const migrationLedger = [
     '0009_git_hosted_status',
     '4a8ceac62baca7a4a5b96839be6061a890e99486665c05628490dac710584335',
   ],
+  [
+    '0010_pr_check_runs',
+    'e7938c241a71411f6357c961d0e93d45c1a5d8a9211c9f29f498047df7c86a21',
+  ],
 ]
 
 describe('@laborer/task-db exports', () => {

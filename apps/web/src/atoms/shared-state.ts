@@ -3,6 +3,7 @@ import {
   rootWorkspaceId,
 } from '@laborer/shared/root-workspace'
 import type {
+  PullRequestCheckRun,
   SharedProjectRow,
   SharedSettingRow,
   SharedStateUpdate,
@@ -525,6 +526,7 @@ export interface WorkspaceView {
   readonly parentTaskId: string | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
+  readonly prChecks: readonly PullRequestCheckRun[] | null
   readonly prIsDraft: boolean
   readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
@@ -589,6 +591,7 @@ const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
   parentTaskId: null,
   prBaseBranch: null,
   prCheckStatus: null,
+  prChecks: null,
   prIsDraft: false,
   prMergeStatus: null,
   prNumber: null,
@@ -636,6 +639,7 @@ export const workspaceViewsFromRows = (
       parentTaskId: task.parentTaskId,
       prBaseBranch: task.prBaseBranch,
       prCheckStatus: task.prCheckStatus,
+      prChecks: task.prChecks,
       prIsDraft: task.prIsDraft,
       prMergeStatus: task.prMergeStatus,
       prNumber: task.prNumber,

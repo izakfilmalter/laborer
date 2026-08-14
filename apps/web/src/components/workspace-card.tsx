@@ -13,6 +13,7 @@
  */
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import { GitBranch, GitBranchPlus, Pencil, Trash2 } from 'lucide-react'
 import {
@@ -35,7 +36,7 @@ import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
-import { GitHubHostedStatus } from '@/components/github-hosted-status'
+import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { boardTaskFromSharedRow } from '@/components/kanban/board-data'
 import { useTaskEditor } from '@/components/kanban/task-editor'
@@ -455,6 +456,7 @@ interface WorkspaceCardWorkspace {
   readonly origin: WorkspaceOrigin | string
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
+  readonly prChecks: readonly PullRequestCheckRun[] | null
   readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
@@ -852,15 +854,12 @@ function WorkspaceCard({
               because it is the furthest along the work has got, and it sits
               opposite the controls that start more of it. */}
           <GitHubPrStatusBadge
+            checkStatus={workspace.prCheckStatus}
+            checks={workspace.prChecks}
             prNumber={workspace.prNumber}
             prState={workspace.prState}
             prTitle={workspace.prTitle}
             prUrl={workspace.prUrl}
-          />
-          <GitHubHostedStatus
-            baseBranch={workspace.prBaseBranch}
-            checkStatus={workspace.prCheckStatus}
-            mergeStatus={workspace.prMergeStatus}
           />
           {showsStatus ? (
             <WorkspaceStatusBadge
@@ -875,6 +874,12 @@ function WorkspaceCard({
             />
           ) : null}
           {badges}
+          {/* Last, and only a mark: an obstacle to landing the work rather
+              than a stage of it. */}
+          <GitHubMergeConflictMark
+            baseBranch={workspace.prBaseBranch}
+            mergeStatus={workspace.prMergeStatus}
+          />
         </>
       }
       // Steady edges rather than a pulsing card: the whole card animating

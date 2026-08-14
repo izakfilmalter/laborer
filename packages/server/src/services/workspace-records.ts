@@ -7,6 +7,7 @@ import type {
   LaborerTask,
   NativeLaborerDatabase,
   Project,
+  PullRequestCheckRun,
 } from './native-laborer-database.js'
 
 /**
@@ -25,6 +26,7 @@ export interface WorkspaceRecord {
   readonly origin: 'laborer' | 'external'
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
+  readonly prChecks: readonly PullRequestCheckRun[] | null
   readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
@@ -94,6 +96,7 @@ const toWorkspaceRecord = (
     origin: task.source === 'worktree' ? 'external' : 'laborer',
     prBaseBranch: task.prBaseBranch,
     prCheckStatus: task.prCheckStatus,
+    prChecks: task.prChecks,
     prMergeStatus: task.prMergeStatus,
     prNumber: task.prNumber,
     prState: workspacePrState(task.prState),
@@ -141,6 +144,7 @@ const rootWorkspaceRecord = (project: Project): WorkspaceRecord => ({
   origin: 'external',
   prBaseBranch: null,
   prCheckStatus: null,
+  prChecks: null,
   prMergeStatus: null,
   prNumber: null,
   prState: null,

@@ -29,6 +29,38 @@ export type WorktreeStatus = 'provisioning' | 'ready' | 'errored'
 export type PullRequestState = 'open' | 'closed' | 'merged'
 export type PullRequestMergeStatus = 'clean' | 'conflicting' | 'unknown'
 export type PullRequestCheckStatus = 'pending' | 'success' | 'failure'
+export type PullRequestCheckRunBucket =
+  | 'success'
+  | 'failure'
+  | 'pending'
+  | 'skipped'
+  | 'cancelled'
+
+export const PULL_REQUEST_CHECK_RUN_BUCKETS = [
+  'success',
+  'failure',
+  'pending',
+  'skipped',
+  'cancelled',
+] as const satisfies readonly PullRequestCheckRunBucket[]
+
+/**
+ * One check behind a pull request's rolled-up check status, as GitHub reports
+ * it. Kept denormalized on the task row so the UI can explain a red rollup
+ * without a second round trip to `gh`.
+ */
+export interface PullRequestCheckRun {
+  readonly bucket: PullRequestCheckRunBucket
+  /** Wall-clock run time, when GitHub reported both ends of it. */
+  readonly durationMs: number | null
+  /** Workflow or app the check belongs to, used to group the list. */
+  readonly group: string | null
+  readonly name: string
+  readonly url: string | null
+}
+
+/** Row-size bound. A PR with more checks than this shows the first ones. */
+export const MAX_PULL_REQUEST_CHECK_RUNS = 60
 
 export interface LaborerTask {
   readonly actionName: string | null
@@ -43,6 +75,7 @@ export interface LaborerTask {
   readonly parentTaskId: string | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: PullRequestCheckStatus | null
+  readonly prChecks: readonly PullRequestCheckRun[] | null
   readonly prIsDraft: boolean
   readonly prMergeStatus: PullRequestMergeStatus | null
   readonly prNumber: number | null
@@ -76,6 +109,7 @@ export interface NewLaborerTask {
   readonly parentTaskId?: string | null
   readonly prBaseBranch?: string | null
   readonly prCheckStatus?: PullRequestCheckStatus | null
+  readonly prChecks?: readonly PullRequestCheckRun[] | null
   readonly prIsDraft?: boolean
   readonly prMergeStatus?: PullRequestMergeStatus | null
   readonly prNumber?: number | null
@@ -107,6 +141,7 @@ export type LaborerTaskPatch = Partial<
     | 'parentTaskId'
     | 'prBaseBranch'
     | 'prCheckStatus'
+    | 'prChecks'
     | 'prIsDraft'
     | 'prMergeStatus'
     | 'prNumber'
@@ -275,7 +310,7 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   description, created_at, updated_at, revision, worktree_status,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
   pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order,
-  pr_base_branch, pr_merge_status, pr_check_status`
+  pr_base_branch, pr_merge_status, pr_check_status, pr_checks`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
   created_at, updated_at, revision, sort_order, branch_name`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
@@ -297,6 +332,7 @@ const TASK_PATCH_FIELDS = [
   'parentTaskId',
   'prBaseBranch',
   'prCheckStatus',
+  'prChecks',
   'prIsDraft',
   'prMergeStatus',
   'prNumber',
@@ -333,6 +369,7 @@ const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
   parentTaskId: 'parent_task_id',
   prBaseBranch: 'pr_base_branch',
   prCheckStatus: 'pr_check_status',
+  prChecks: 'pr_checks',
   prIsDraft: 'pr_is_draft',
   prMergeStatus: 'pr_merge_status',
   prNumber: 'pr_number',
@@ -417,6 +454,76 @@ const enumValue = <A extends string>(
   typeof value === 'string' && values.includes(value as A)
     ? (value as A)
     : invalidColumn(column)
+/**
+ * Check runs are a cache of what GitHub said, not a fact the app depends on,
+ * so a row written by a newer build — or corrupted by hand — reads as "no
+ * detail" rather than failing the whole snapshot the task row travels in.
+ */
+const checkRuns = (value: unknown): readonly PullRequestCheckRun[] | null => {
+  if (typeof value !== 'string') {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) {
+    return null
+  }
+  const runs: PullRequestCheckRun[] = []
+  for (const entry of parsed.slice(0, MAX_PULL_REQUEST_CHECK_RUNS)) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue
+    }
+    const run = entry as Record<string, unknown>
+    const bucket = PULL_REQUEST_CHECK_RUNS_BY_BUCKET.get(String(run.bucket))
+    if (bucket === undefined || typeof run.name !== 'string') {
+      continue
+    }
+    runs.push({
+      bucket,
+      durationMs:
+        typeof run.durationMs === 'number' && Number.isFinite(run.durationMs)
+          ? run.durationMs
+          : null,
+      group: typeof run.group === 'string' ? run.group : null,
+      name: run.name,
+      url: typeof run.url === 'string' ? run.url : null,
+    })
+  }
+  return runs.length === 0 ? null : runs
+}
+const PULL_REQUEST_CHECK_RUNS_BY_BUCKET = new Map<
+  string,
+  PullRequestCheckRunBucket
+>(PULL_REQUEST_CHECK_RUN_BUCKETS.map((bucket) => [bucket, bucket]))
+
+const serializeCheckRuns = (
+  runs: readonly PullRequestCheckRun[] | null | undefined
+): string | null =>
+  runs == null || runs.length === 0
+    ? null
+    : JSON.stringify(runs.slice(0, MAX_PULL_REQUEST_CHECK_RUNS))
+
+/** SQLite only stores scalars, so structured patch fields serialize here. */
+const taskPatchValue = (
+  field: keyof LaborerTaskPatch,
+  value: LaborerTaskPatch[keyof LaborerTaskPatch]
+): string | number | null => {
+  if (field === 'prIsDraft') {
+    return value ? 1 : 0
+  }
+  if (field === 'prChecks') {
+    return serializeCheckRuns(value as readonly PullRequestCheckRun[] | null)
+  }
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0
+  }
+  return typeof value === 'object' ? null : (value ?? null)
+}
+
 const nullableEnum = <A extends string>(
   value: unknown,
   values: readonly A[],
@@ -466,6 +573,7 @@ const rowToTask = (value: unknown): LaborerTask => {
       ['pending', 'success', 'failure'],
       'tasks.pr_check_status'
     ),
+    prChecks: checkRuns(row.pr_checks),
     prIsDraft: (() => {
       const value = integer(row.pr_is_draft, 'tasks.pr_is_draft')
       if (value !== 0 && value !== 1) {
@@ -700,9 +808,10 @@ export class NativeLaborerDatabase {
           description, created_at, updated_at, revision, worktree_status,
           worktree_error, setup_completed_at, parent_task_id, base_sha,
           base_branch, pr_number, pr_url, pr_title, pr_state, pr_is_draft,
-          sort_order, pr_base_branch, pr_merge_status, pr_check_status
+          sort_order, pr_base_branch, pr_merge_status, pr_check_status,
+          pr_checks
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           input.id,
           input.rootPath,
@@ -732,7 +841,8 @@ export class NativeLaborerDatabase {
           sortOrder,
           prBaseBranch,
           prMergeStatus,
-          prCheckStatus
+          prCheckStatus,
+          serializeCheckRuns(input.prChecks)
         )
       const cursor = this.#appendTaskChange(input.id, changedAt, mutationId)
       return { row: this.#requireTask(input.id), cursor }
@@ -829,15 +939,7 @@ export class NativeLaborerDatabase {
           .join(', ')}, updated_at = ?, revision = revision + 1
           WHERE id = ? AND revision = ?`)
         .run(
-          ...entries.map(([field, value]) => {
-            if (field === 'prIsDraft') {
-              return value ? 1 : 0
-            }
-            if (typeof value === 'boolean') {
-              return value ? 1 : 0
-            }
-            return value ?? null
-          }),
+          ...entries.map(([field, value]) => taskPatchValue(field, value)),
           changedAt,
           id,
           expectedRevision

@@ -99,6 +99,7 @@ const testLayer = (
           Effect.succeed({
             baseBranch: null,
             checkStatus: null,
+            checks: null,
             isDraft: false,
             mergeStatus: null,
             number: null,

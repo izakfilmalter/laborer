@@ -199,6 +199,25 @@ export const TaskBoardEvent = Schema.Union([
 
 export type TaskBoardEvent = typeof TaskBoardEvent.Type
 
+/**
+ * One check behind a pull request's rolled-up check status. The rollup says
+ * whether to worry; these say what to look at.
+ */
+export const PullRequestCheckRun = Schema.Struct({
+  bucket: Schema.Literals([
+    'success',
+    'failure',
+    'pending',
+    'skipped',
+    'cancelled',
+  ]),
+  durationMs: Schema.NullOr(Schema.Finite),
+  group: Schema.NullOr(Schema.String),
+  name: Schema.String,
+  url: Schema.NullOr(Schema.String),
+})
+export type PullRequestCheckRun = typeof PullRequestCheckRun.Type
+
 /** Authoritative shared-database task row plus server-only worktree facts. */
 export const SharedTaskRow = Schema.Struct({
   ...BoardTask.fields,
@@ -210,6 +229,7 @@ export const SharedTaskRow = Schema.Struct({
   prCheckStatus: Schema.NullOr(
     Schema.Literals(['pending', 'success', 'failure'])
   ),
+  prChecks: Schema.NullOr(Schema.Array(PullRequestCheckRun)),
   prMergeStatus: Schema.NullOr(
     Schema.Literals(['clean', 'conflicting', 'unknown'])
   ),

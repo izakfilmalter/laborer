@@ -1,4 +1,15 @@
+/**
+ * The pull request as one pill, in two segments.
+ *
+ * Identity on the left — number and state — and CI health on the right, hung
+ * off the same border. They are one fact read at two depths: the PR is where
+ * the work went, the checks are whether it survived the trip. Splitting them
+ * into two loose chips made the status rail read as a pile of colors.
+ */
+
+import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import { GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react'
+import { GitHubCheckRunsSegment } from '@/components/github-check-runs'
 import {
   Tooltip,
   TooltipContent,
@@ -8,6 +19,8 @@ import { isElectron, openExternalUrl } from '@/lib/desktop'
 import { cn } from '@/lib/utils'
 
 interface GitHubPrStatusBadgeProps {
+  readonly checkStatus?: 'pending' | 'success' | 'failure' | null | undefined
+  readonly checks?: readonly PullRequestCheckRun[] | null | undefined
   readonly className?: string | undefined
   readonly prNumber: number | null
   readonly prState: string | null
@@ -55,6 +68,8 @@ function getPrStateClasses(prState: string | null): string {
 
 function GitHubPrStatusBadge({
   className,
+  checkStatus,
+  checks,
   prNumber,
   prState,
   prTitle,
@@ -73,7 +88,7 @@ function GitHubPrStatusBadge({
     await openExternalUrl(prUrl ?? '')
   }
 
-  const content = (
+  const identityContent = (
     <>
       <PrStateIcon className="size-3" prState={prState} />
       {prNumber != null && <span>#{prNumber}</span>}
@@ -81,31 +96,44 @@ function GitHubPrStatusBadge({
     </>
   )
 
-  const badgeClassName = cn(
-    'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent',
-    getPrStateClasses(prState),
-    className
-  )
+  const identityClassName =
+    'inline-flex items-center gap-1 px-1.5 py-0.5 transition-colors hover:bg-accent'
 
   return (
-    <Tooltip>
-      <TooltipTrigger>
-        {prUrl ? (
-          <a
-            className={badgeClassName}
-            href={prUrl}
-            onClick={handleClick}
-            rel="noopener"
-            target="_blank"
-          >
-            {content}
-          </a>
-        ) : (
-          <span className={badgeClassName}>{content}</span>
-        )}
-      </TooltipTrigger>
-      <TooltipContent>{prTitle ?? 'GitHub pull request'}</TooltipContent>
-    </Tooltip>
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-stretch overflow-hidden rounded-md border font-mono text-xs',
+        getPrStateClasses(prState),
+        className
+      )}
+      data-slot="pr-status-badge"
+    >
+      <Tooltip>
+        <TooltipTrigger>
+          {prUrl ? (
+            <a
+              className={identityClassName}
+              href={prUrl}
+              onClick={handleClick}
+              rel="noopener"
+              target="_blank"
+            >
+              {identityContent}
+            </a>
+          ) : (
+            <span className={identityClassName}>{identityContent}</span>
+          )}
+        </TooltipTrigger>
+        <TooltipContent>{prTitle ?? 'GitHub pull request'}</TooltipContent>
+      </Tooltip>
+      {checkStatus == null ? null : (
+        <GitHubCheckRunsSegment
+          checkStatus={checkStatus}
+          checks={checks ?? null}
+          checksUrl={prUrl === null ? null : `${prUrl}/checks`}
+        />
+      )}
+    </span>
   )
 }
 

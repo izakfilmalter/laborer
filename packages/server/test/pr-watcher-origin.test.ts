@@ -322,4 +322,97 @@ describe('PrWatcher fork origin PR lookup', () => {
         )
       })
   )
+
+  it.effect('keeps the individual checks behind a red rollup', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            stdout: JSON.stringify({
+              baseRefName: 'dev',
+              number: 9,
+              state: 'OPEN',
+              statusCheckRollup: [
+                {
+                  completedAt: '2026-08-14T10:03:00Z',
+                  conclusion: 'SUCCESS',
+                  detailsUrl: 'https://github.com/acme/repo/runs/1',
+                  name: 'Build',
+                  startedAt: '2026-08-14T10:02:20Z',
+                  status: 'COMPLETED',
+                  workflowName: 'Merge Checks',
+                },
+                {
+                  conclusion: 'SKIPPED',
+                  name: '[code]smith',
+                  status: 'COMPLETED',
+                },
+                {
+                  conclusion: 'CANCELLED',
+                  name: 'E2E Tests',
+                  status: 'COMPLETED',
+                },
+                { context: 'Vercel', state: 'SUCCESS' },
+              ],
+              title: 'Checked PR',
+              url: 'https://github.com/acme/repo/pull/9',
+            }),
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath)
+      const prWatcherContext = yield* Layer.build(
+        PrWatcher.layer.pipe(
+          Layer.provide(PrTaskTransitions.noopLayer),
+          Layer.provide(Layer.succeedContext(databaseContext))
+        )
+      )
+      const prWatcher = Context.get(prWatcherContext, PrWatcher)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      // A cancelled check fails the rollup but reads as its own bucket in the
+      // list, and a skipped one is neither pass nor fail.
+      assert.strictEqual(prData.checkStatus, 'failure')
+      assert.deepEqual(prData.checks, [
+        {
+          bucket: 'success',
+          durationMs: 40_000,
+          group: 'Merge Checks',
+          name: 'Build',
+          url: 'https://github.com/acme/repo/runs/1',
+        },
+        {
+          bucket: 'skipped',
+          durationMs: null,
+          group: null,
+          name: '[code]smith',
+          url: null,
+        },
+        {
+          bucket: 'cancelled',
+          durationMs: null,
+          group: null,
+          name: 'E2E Tests',
+          url: null,
+        },
+        {
+          bucket: 'success',
+          durationMs: null,
+          group: null,
+          name: 'Vercel',
+          url: null,
+        },
+      ])
+      // The list survives the round trip through the task row.
+      assert.deepEqual(
+        database.findTask('workspace-1')?.prChecks?.map((check) => check.name),
+        ['Build', '[code]smith', 'E2E Tests', 'Vercel']
+      )
+    })
+  )
 })

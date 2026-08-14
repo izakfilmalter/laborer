@@ -18,6 +18,8 @@ export const tasks = sqliteTable(
     prBaseBranch: text('pr_base_branch'),
     prMergeStatus: text('pr_merge_status'),
     prCheckStatus: text('pr_check_status'),
+    /** JSON array of individual check runs behind `pr_check_status`. */
+    prChecks: text('pr_checks'),
     description: text('description'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),

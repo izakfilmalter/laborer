@@ -229,7 +229,9 @@ const runDaemon = Layer.launch(
         incumbent !== null &&
         processExists(incumbent.pid)
       ) {
-        const healthy = await fetch(`${incumbent.url}/health`).then(
+        const healthy = await fetch(`${incumbent.url}/health`, {
+          signal: AbortSignal.timeout(5000),
+        }).then(
           () => true,
           () => false
         )

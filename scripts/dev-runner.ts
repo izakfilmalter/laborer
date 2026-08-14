@@ -203,7 +203,7 @@ export const resolveDevDaemonRegistrationPath = (
   )
 
 export const probeDaemonHealth = async (url: string): Promise<boolean> =>
-  fetch(`${url}/health`).then(
+  fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) }).then(
     () => true,
     () => false
   )
@@ -234,6 +234,7 @@ export const shutdownDevDaemon = async (
         body: JSON.stringify({ mode: 'shutdown' }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
+        signal: AbortSignal.timeout(5000),
       })
       if (!response.ok) {
         throw new Error(`Daemon rejected shutdown (${String(response.status)})`)
@@ -283,7 +284,7 @@ export const superviseDevChildren = async (
     exitCode: await child.exited,
   }))
   const firstExit = await Promise.race(exits)
-  await beforeStop()
+  await beforeStop().catch(() => undefined)
   killChildren(children, 'SIGTERM')
 
   const allExits = Promise.all(exits)
@@ -364,6 +365,15 @@ export const devChildDefinitions = (
       ]
     : []),
 ]
+
+export const isCleanDesktopQuit = (
+  desktop: boolean,
+  exit: {
+    readonly definition: ChildDefinition
+    readonly exitCode: number
+  }
+): boolean =>
+  desktop && exit.definition.label === 'desktop' && exit.exitCode === 0
 
 const initialServerBuild = async (
   root: string,
@@ -449,9 +459,10 @@ export const runDev = async (arguments_: readonly string[]) => {
       return
     }
     stopping = true
-    shutdownPromise ??= shutdownDevDaemon(registrationPath).finally(() => {
-      killChildren(children, 'SIGTERM')
-    })
+    shutdownPromise ??= shutdownDevDaemon(registrationPath).catch(
+      () => undefined
+    )
+    shutdownPromise.finally(() => killChildren(children, 'SIGTERM'))
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
@@ -463,7 +474,7 @@ export const runDev = async (arguments_: readonly string[]) => {
   process.removeListener('SIGINT', stop)
   process.removeListener('SIGTERM', stop)
 
-  if (!stopping) {
+  if (!(stopping || isCleanDesktopQuit(options.desktop, firstExit))) {
     throw new Error(
       `${firstExit.definition.label} exited with code ${String(firstExit.exitCode)}`
     )

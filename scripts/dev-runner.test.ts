@@ -7,6 +7,7 @@ import {
   BASE_WEB_PORT,
   devChildDefinitions,
   findAvailableDevPorts,
+  isCleanDesktopQuit,
   linkedWorktreeStateHome,
   parseDevRunnerArguments,
   resolveDevDaemonRegistrationPath,
@@ -101,6 +102,18 @@ describe('dev runner', () => {
       children.find(({ label }) => label === 'web')?.command
     ).not.toContain('--open')
     expect(children.find(({ label }) => label === 'desktop')).toBeDefined()
+    expect(
+      isCleanDesktopQuit(true, {
+        definition: { label: 'desktop', command: ['electron'], cwd: '/repo' },
+        exitCode: 0,
+      })
+    ).toBe(true)
+    expect(
+      isCleanDesktopQuit(false, {
+        definition: { label: 'desktop', command: ['electron'], cwd: '/repo' },
+        exitCode: 0,
+      })
+    ).toBe(false)
   })
 
   it('runs the built daemon under Bun watch as a direct runner child', () => {
@@ -160,5 +173,35 @@ describe('dev runner', () => {
     expect(events.indexOf('shutdown-rpc')).toBeLessThan(
       events.indexOf('daemon:SIGTERM')
     )
+  })
+
+  it('still stops sibling watchers when daemon shutdown fails', async () => {
+    const signals: string[] = []
+    let stopSibling: ((exitCode: number) => void) | undefined
+    const siblingExited = new Promise<number>((complete) => {
+      stopSibling = complete
+    })
+    await superviseDevChildren(
+      [
+        {
+          definition: { label: 'web', command: ['vite'], cwd: '/repo' },
+          process: { exited: Promise.resolve(1), kill: () => undefined },
+        },
+        {
+          definition: { label: 'daemon', command: ['bun'], cwd: '/repo' },
+          process: {
+            exited: siblingExited,
+            kill: (signal) => {
+              signals.push(signal)
+              stopSibling?.(0)
+            },
+          },
+        },
+      ],
+      100,
+      () => Promise.reject(new Error('shutdown unavailable'))
+    )
+
+    expect(signals).toContain('SIGTERM')
   })
 })

@@ -80,6 +80,15 @@ describe('ensure', () => {
         version: '1',
       })
     ).toBe(false)
+    expect(
+      isDaemonRegistration({
+        id: 'daemon-1',
+        pid: 42,
+        startedAt: new Date(0).toISOString(),
+        url: 'http://credential@127.0.0.1:2100',
+        version: '1',
+      })
+    ).toBe(false)
   })
 
   it('detects deterministic self-eviction without waiting for the interval', () => {
@@ -114,6 +123,18 @@ describe('ensure', () => {
     })
 
     expect(events).toEqual(['rpc', 'SIGTERM', 'SIGKILL'])
+  })
+
+  it('bounds an unresponsive stop RPC before escalating', async () => {
+    const events: string[] = []
+    await stopWithEscalation(registration, {
+      requestStop: () => new Promise(() => undefined),
+      requestTimeoutMs: 1,
+      kill: (_pid, signal) => events.push(signal),
+      waitUntilGone: () => Promise.resolve(false),
+    })
+
+    expect(events).toEqual(['SIGTERM', 'SIGKILL'])
   })
 
   it('recognizes the incumbent after a contender spawn race', async () => {

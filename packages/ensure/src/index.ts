@@ -144,7 +144,13 @@ const isLoopbackHttpUrl = (value: unknown): value is string => {
     const url = new URL(value)
     return (
       url.protocol === 'http:' &&
-      (url.hostname === '127.0.0.1' || url.hostname === '[::1]')
+      (url.hostname === '127.0.0.1' || url.hostname === '[::1]') &&
+      url.username === '' &&
+      url.password === '' &&
+      url.port !== '' &&
+      url.pathname === '/' &&
+      url.search === '' &&
+      url.hash === ''
     )
   } catch {
     return false
@@ -277,6 +283,7 @@ export const stopWithEscalation = async <T extends ProcessRegistration>(
   options: {
     readonly kill?: (pid: number, signal: NodeJS.Signals) => void
     readonly requestStop: (registration: T) => Promise<void>
+    readonly requestTimeoutMs?: number
     readonly rpcGraceMs?: number
     readonly signalGraceMs?: number
     readonly waitUntilGone?: (
@@ -287,7 +294,21 @@ export const stopWithEscalation = async <T extends ProcessRegistration>(
 ): Promise<void> => {
   const kill = options.kill ?? ((pid, signal) => process.kill(pid, signal))
   const wait = options.waitUntilGone ?? waitUntilGone
-  await options.requestStop(registration).catch(() => undefined)
+  await new Promise<void>((resolveRequest) => {
+    const timeout = setTimeout(resolveRequest, options.requestTimeoutMs ?? 5000)
+    Promise.resolve()
+      .then(() => options.requestStop(registration))
+      .then(
+        () => {
+          clearTimeout(timeout)
+          resolveRequest()
+        },
+        () => {
+          clearTimeout(timeout)
+          resolveRequest()
+        }
+      )
+  })
   if (await wait(registration.pid, options.rpcGraceMs ?? 5000)) {
     return
   }

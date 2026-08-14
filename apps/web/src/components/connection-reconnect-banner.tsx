@@ -27,22 +27,27 @@ const COUNTDOWN_TICK_MS = 1000
  */
 const UNREACHABLE_ATTEMPT = RENDERER_RECONNECT_DELAYS_MS.length
 
-type ReconnectStatus = 'reconnecting' | 'waiting' | 'unreachable'
+/**
+ * Severity is owned by the attempt count, not the phase. An outage cycles
+ * through `connecting` and `backoff` every few seconds, so a phase-driven
+ * status would rewrite the headline on a timer — motion that reads as
+ * instability rather than status. The phase drives only the detail line and
+ * the activity affordances beneath it.
+ */
+type ReconnectStatus = 'lost' | 'unreachable'
 
-const statusOf = (connection: RendererConnectionState): ReconnectStatus => {
-  if (connection.phase === 'connecting') {
-    return 'reconnecting'
-  }
-  return connection.attempt > UNREACHABLE_ATTEMPT ? 'unreachable' : 'waiting'
-}
+const statusOf = (connection: RendererConnectionState): ReconnectStatus =>
+  connection.attempt > UNREACHABLE_ATTEMPT ? 'unreachable' : 'lost'
 
-/** Stable per-status copy — the countdown is deliberately excluded so the
- * live region announces once per status change instead of every second. */
+/**
+ * Stable per-status copy; the countdown is deliberately excluded. Only
+ * escalation and recovery — the two changes an operator can act on — produce a
+ * new announcement, so one outage is not narrated as a stream of retries.
+ */
 const ANNOUNCEMENTS: Record<ReconnectStatus, string> = {
-  reconnecting: 'Connection lost. Reconnecting to the daemon.',
-  waiting: 'Connection lost. Retrying automatically. Data shown may be stale.',
+  lost: 'Connection lost. Retrying automatically. Data shown may be stale.',
   unreachable:
-    'Cannot reach the daemon. Still retrying. Data shown may be stale.',
+    'Cannot reach the daemon. Start the daemon to resume. Still retrying automatically; data shown may be stale.',
 }
 
 const RESTORED_ANNOUNCEMENT = 'Reconnected to the daemon.'
@@ -59,23 +64,31 @@ const announcementFor = (
 }
 
 const TITLES: Record<ReconnectStatus, string> = {
-  reconnecting: 'Reconnecting…',
-  waiting: 'Connection lost',
+  lost: 'Connection lost',
   unreachable: 'Can’t reach the daemon',
 }
 
 const detailOf = (
   status: ReconnectStatus,
-  secondsRemaining: number | null
+  secondsRemaining: number | null,
+  inFlight: boolean
 ): string => {
-  if (status === 'reconnecting') {
-    return 'Contacting the daemon'
-  }
-  const retry =
-    secondsRemaining === null
+  if (status === 'lost') {
+    if (inFlight) {
+      return 'Reconnecting…'
+    }
+    return secondsRemaining === null
       ? 'Retrying shortly'
       : `Retrying in ${secondsRemaining}s`
-  return status === 'unreachable' ? `${retry} · start it to resume` : retry
+  }
+  // Once the ladder is exhausted the operator's next step outranks the timer,
+  // so it leads the line instead of trailing a countdown they cannot act on.
+  if (inFlight) {
+    return 'Start the daemon · retrying now'
+  }
+  return secondsRemaining === null
+    ? 'Start the daemon · retrying shortly'
+    : `Start the daemon · retrying in ${secondsRemaining}s`
 }
 
 /** Shared shell so every connection state reads as one component. */
@@ -129,9 +142,11 @@ function StatusDot({
 
 /** The disconnect banner itself: status, retry countdown, manual reconnect. */
 function DisconnectPill({
+  inFlight,
   secondsRemaining,
   status,
 }: {
+  readonly inFlight: boolean
   readonly secondsRemaining: number | null
   readonly status: ReconnectStatus
 }) {
@@ -144,7 +159,7 @@ function DisconnectPill({
     >
       <StatusDot
         className={severe ? 'bg-destructive' : 'bg-warning'}
-        pulse={status === 'reconnecting'}
+        pulse={inFlight}
       />
       <span className="grid min-w-0 gap-0.5">
         <span
@@ -156,9 +171,12 @@ function DisconnectPill({
           aria-hidden="true"
           className="truncate text-[11px] text-muted-foreground tabular-nums"
         >
-          {detailOf(status, secondsRemaining)}
+          {detailOf(status, secondsRemaining, inFlight)}
         </span>
       </span>
+      {/* Stays enabled while an attempt is in flight: disabling it would drop
+          focus out of the banner mid-outage, and the spinning icon already
+          reports that pressing again is redundant rather than broken. */}
       <Button
         className="shrink-0"
         onClick={() => rendererConnectionSupervisor.retryNow()}
@@ -166,7 +184,10 @@ function DisconnectPill({
         type="button"
         variant="outline"
       >
-        <RotateCw aria-hidden="true" className="size-3" />
+        <RotateCw
+          aria-hidden="true"
+          className={cn('size-3', inFlight && 'motion-safe:animate-spin')}
+        />
         Reconnect
       </Button>
     </StatusPill>
@@ -280,6 +301,7 @@ export function ConnectionReconnectBanner() {
         <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
           {showBanner ? (
             <DisconnectPill
+              inFlight={connection.phase === 'connecting'}
               secondsRemaining={secondsRemaining}
               status={status}
             />

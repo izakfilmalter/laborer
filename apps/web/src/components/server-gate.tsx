@@ -58,7 +58,15 @@ const BROWSER_POLL_MAX_MS = 3000
 /** Backoff multiplier. */
 const BROWSER_POLL_BACKOFF = 1.5
 
-type BrowserGateState = 'polling' | 'healthy'
+/**
+ * Consecutive failures (~12s at this backoff) after which a boot is treated as
+ * a stopped daemon rather than a slow one. Polling continues either way; only
+ * the copy escalates, so an operator is never left watching a spinner that
+ * cannot explain itself.
+ */
+const BROWSER_POLL_ESCALATE_AFTER = 10
+
+type BrowserGateState = 'polling' | 'healthy' | 'unreachable'
 
 /**
  * Hook that polls `/health` (Vite-proxied to the daemon)
@@ -72,6 +80,7 @@ function useBrowserHealthPoll(): {
   useEffect(() => {
     let cancelled = false
     let interval = BROWSER_POLL_INITIAL_MS
+    let failures = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     let requestController: AbortController | undefined
 
@@ -104,6 +113,10 @@ function useBrowserHealthPoll(): {
         return
       }
 
+      failures += 1
+      if (failures >= BROWSER_POLL_ESCALATE_AFTER) {
+        setState('unreachable')
+      }
       interval = Math.min(interval * BROWSER_POLL_BACKOFF, BROWSER_POLL_MAX_MS)
       timer = setTimeout(() => {
         poll()
@@ -165,15 +178,29 @@ function BrowserServerGate({ children }: { readonly children: ReactNode }) {
     return <>{children}</>
   }
 
+  const unreachable = state === 'unreachable'
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
-      <div className="flex flex-col items-center gap-3">
-        <Loader2 className="size-8 animate-spin text-muted-foreground" />
-        <h2 className="font-medium text-lg">Starting daemon</h2>
-        <p className="max-w-sm text-center text-muted-foreground text-sm">
-          Connecting to backend services...
+      {/* Polling never stops, so the escalation only changes what the operator
+          is told — it is announced rather than swapped in silently. */}
+      <output
+        aria-live="polite"
+        className="flex flex-col items-center gap-3 text-center"
+      >
+        <Loader2
+          aria-hidden="true"
+          className="size-8 animate-spin text-muted-foreground motion-reduce:animate-none"
+        />
+        <h2 className="font-medium text-lg">
+          {unreachable ? 'Can’t reach the daemon' : 'Starting daemon'}
+        </h2>
+        <p className="max-w-sm text-muted-foreground text-sm">
+          {unreachable
+            ? 'The daemon isn’t responding. Start it with “bun run dev”; mission control loads on its own once it answers.'
+            : 'Connecting to backend services…'}
         </p>
-      </div>
+      </output>
     </div>
   )
 }

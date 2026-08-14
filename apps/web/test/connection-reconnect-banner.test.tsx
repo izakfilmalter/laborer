@@ -99,6 +99,48 @@ describe('ConnectionReconnectBanner', () => {
     expect(screen.getByText('Can’t reach the daemon')).toBeTruthy()
   })
 
+  it('holds the escalated status while an attempt is in flight', () => {
+    render(
+      <AtomRegistryProvider>
+        <ConnectionReconnectBanner />
+      </AtomRegistryProvider>
+    )
+
+    act(() => connection.set({ attempt: 5, phase: 'backoff', session: null }))
+    act(() => vi.advanceTimersByTime(2000))
+    expect(screen.getByText('Can’t reach the daemon')).toBeTruthy()
+
+    act(() => connection.set({ phase: 'connecting' }))
+    expect(screen.getByText('Can’t reach the daemon')).toBeTruthy()
+    expect(screen.getByText('Start the daemon · retrying now')).toBeTruthy()
+  })
+
+  it('does not re-announce each automatic retry attempt', () => {
+    render(
+      <AtomRegistryProvider>
+        <ConnectionReconnectBanner />
+      </AtomRegistryProvider>
+    )
+
+    act(() => connection.set({ attempt: 1, phase: 'backoff', session: null }))
+    act(() => vi.advanceTimersByTime(2000))
+    const outage = screen.getByRole('status').textContent
+
+    act(() => connection.set({ attempt: 2, phase: 'connecting' }))
+    expect(screen.getByRole('status').textContent).toBe(outage)
+    // The headline stays put while the detail line carries the attempt.
+    expect(screen.getByText('Connection lost')).toBeTruthy()
+    expect(screen.getByText('Reconnecting…')).toBeTruthy()
+
+    act(() => connection.set({ attempt: 2, phase: 'backoff', retryAt: null }))
+    expect(screen.getByRole('status').textContent).toBe(outage)
+
+    act(() => connection.set({ attempt: 5 }))
+    expect(screen.getByRole('status').textContent).toContain(
+      'Start the daemon to resume'
+    )
+  })
+
   it('counts down to the next automatic attempt', () => {
     vi.setSystemTime(0)
     render(

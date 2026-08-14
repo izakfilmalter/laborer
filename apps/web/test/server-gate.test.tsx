@@ -2,6 +2,8 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ServerGate } from '../src/components/server-gate'
 
+const START_COMMAND = /bun run dev/
+
 describe('ServerGate', () => {
   afterEach(() => {
     cleanup()
@@ -23,6 +25,26 @@ describe('ServerGate', () => {
       '/health',
       expect.objectContaining({ redirect: 'error' })
     )
+  })
+
+  it('escalates to actionable copy when the daemon never answers', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('not up yet'))
+
+    render(
+      <ServerGate>
+        <div>Mission control</div>
+      </ServerGate>
+    )
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(screen.getByText('Starting daemon')).toBeTruthy()
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(screen.getByText('Can’t reach the daemon')).toBeTruthy()
+    expect(screen.getByText(START_COMMAND)).toBeTruthy()
+    expect(screen.queryByText('Mission control')).toBeNull()
+    vi.useRealTimers()
   })
 
   it('boots the app after the daemon reports healthy', async () => {

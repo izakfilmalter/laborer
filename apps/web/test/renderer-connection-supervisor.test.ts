@@ -51,7 +51,7 @@ describe('RendererConnectionSupervisor', () => {
     supervisor.stop()
   })
 
-  it('publishes sessions and advances generation on every reconnect', async () => {
+  it('keeps the initial runtime and advances generation on reconnect', async () => {
     const first = deferredLease()
     const second = deferredLease()
     const connect = vi
@@ -64,7 +64,7 @@ describe('RendererConnectionSupervisor', () => {
     supervisor.start()
     await flush()
     expect(supervisor.getSnapshot()).toMatchObject({
-      generation: 1,
+      generation: 0,
       phase: 'connected',
       session: 1,
     })
@@ -78,7 +78,7 @@ describe('RendererConnectionSupervisor', () => {
     await vi.advanceTimersByTimeAsync(3000)
     await flush()
     expect(supervisor.getSnapshot()).toMatchObject({
-      generation: 2,
+      generation: 1,
       phase: 'connected',
       session: 2,
     })
@@ -103,7 +103,7 @@ describe('RendererConnectionSupervisor', () => {
     expect(connect).toHaveBeenCalledTimes(2)
     expect(supervisor.getSnapshot()).toMatchObject({
       attempt: 1,
-      generation: 1,
+      generation: 0,
       phase: 'connected',
     })
     supervisor.stop()

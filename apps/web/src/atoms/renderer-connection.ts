@@ -45,8 +45,10 @@ const retryDelay = (failureCount: number): number =>
 
 /**
  * The sole owner of browser reconnect timing. RPC transports get one attempt;
- * a successful lease advances generation so mounted atoms acquire fresh
- * transports while retaining their last successful values.
+ * a successful reconnection advances generation so mounted atoms acquire
+ * fresh transports while retaining their last successful values. The initial
+ * lease keeps generation zero because the RPC runtime is already being built;
+ * invalidating it during startup can interrupt its first requests.
  */
 export class RendererConnectionSupervisor {
   private readonly connect: RendererConnector
@@ -144,10 +146,14 @@ export class RendererConnectionSupervisor {
           break
         }
         const connectedAt = this.now()
+        const generation =
+          sessionSequence === 0
+            ? this.state.generation
+            : this.state.generation + 1
         sessionSequence += 1
         this.publish({
           attempt,
-          generation: this.state.generation + 1,
+          generation,
           phase: 'connected',
           retryAt: null,
           session: sessionSequence,

@@ -70,7 +70,7 @@ vi.mock('@/panes/terminal-pane', () => ({ TerminalPane: () => null }))
 
 // Stub tooltip — the real trigger merges its children into `render`, so the
 // stub has to as well or every control loses its label.
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: React.ReactNode }) => (
     <span>{children}</span>

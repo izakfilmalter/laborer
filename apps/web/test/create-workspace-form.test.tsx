@@ -92,7 +92,7 @@ vi.mock('@/panels/panel-context', () => ({
   usePanelActions: () => getCreateWorkspaceFormTestMocks().panelActionsMock,
 }))
 
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="tooltip-wrapper">{children}</div>
   ),
@@ -104,7 +104,7 @@ vi.mock('@/components/ui/tooltip', () => ({
 
 // Mock Dialog to render inline (no portal) so content is accessible in jsdom.
 // The trigger is hidden so it doesn't collide with the submit button's accessible name.
-vi.mock('@/components/ui/dialog', () => ({
+vi.mock('@laborer/ui/components/dialog', () => ({
   Dialog: ({
     children,
     onOpenChange,
@@ -143,11 +143,11 @@ vi.mock('@/components/ui/dialog', () => ({
 }))
 
 // Mock progress/spinner — not relevant for input mask tests
-vi.mock('@/components/ui/progress', () => ({
+vi.mock('@laborer/ui/components/progress', () => ({
   Progress: () => null,
 }))
 
-vi.mock('@/components/ui/spinner', () => ({
+vi.mock('@laborer/ui/components/spinner', () => ({
   Spinner: () => null,
 }))
 

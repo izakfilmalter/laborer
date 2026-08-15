@@ -50,13 +50,7 @@ import type {
   PaneType,
   SplitNode,
 } from '@laborer/shared/types'
-import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import type { GroupImperativeHandle } from 'react-resizable-panels'
-import { workspaceViewsAtom } from '@/atoms/shared-state'
-import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   Empty,
   EmptyContent,
@@ -64,25 +58,31 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
-import { PanelTypePicker } from '@/components/ui/panel-type-picker'
+} from '@laborer/ui/components/empty'
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-} from '@/components/ui/resizable'
+} from '@laborer/ui/components/resizable'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Spinner } from '@/components/ui/spinner'
+} from '@laborer/ui/components/select'
+import { Spinner } from '@laborer/ui/components/spinner'
+import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { GroupImperativeHandle } from 'react-resizable-panels'
+import { workspaceViewsAtom } from '@/atoms/shared-state'
+import { PanelTypePicker } from '@/components/panel-type-picker'
+import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
+import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
 import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
 import {
   useActivePaneId,

@@ -18,9 +18,8 @@
  *   toast.success('Done!')  // triggers success haptic + shows toast
  */
 
+import { haptics } from '@laborer/ui/lib/haptics'
 import { type ExternalToast, toast as sonnerToast } from 'sonner'
-
-import { haptics } from '@/lib/haptics'
 
 type ToastFn = typeof sonnerToast
 type ToastMessage = Parameters<typeof sonnerToast.success>[0]

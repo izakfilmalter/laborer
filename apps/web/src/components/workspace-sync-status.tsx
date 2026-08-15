@@ -1,15 +1,15 @@
-import { ArrowDownToLine, ArrowUpToLine } from 'lucide-react'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { Button } from '@/components/ui/button'
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import { Button } from '@laborer/ui/components/button'
+import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { ArrowDownToLine, ArrowUpToLine } from 'lucide-react'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
-import { cn } from '@/lib/utils'
 
 interface WorkspaceSyncStatusProps {
   readonly aheadCount: number | null

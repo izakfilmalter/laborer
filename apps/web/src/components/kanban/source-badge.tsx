@@ -5,15 +5,15 @@
  * from the sidebar as well — so the chip cannot live inside the board.
  */
 
-import { Bot, GitBranch, MessageSquare, SquarePen } from 'lucide-react'
-import type { BoardTask } from '@/components/kanban/board-data'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@laborer/ui/components/badge'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { Bot, GitBranch, MessageSquare, SquarePen } from 'lucide-react'
+import type { BoardTask } from '@/components/kanban/board-data'
 
 /**
  * How each card source presents itself. Agent-staged cards are the only

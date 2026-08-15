@@ -1,12 +1,12 @@
-import { Cause, Effect, Exit, Option, pipe } from 'effect'
-import { DownloadIcon, RotateCwIcon, XIcon } from 'lucide-react'
-import { useCallback, useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { Cause, Effect, Exit, Option, pipe } from 'effect'
+import { DownloadIcon, RotateCwIcon, XIcon } from 'lucide-react'
+import { useCallback, useState } from 'react'
 import {
   type DesktopUpdateError,
   downloadDesktopUpdate,

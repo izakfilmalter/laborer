@@ -9,7 +9,7 @@ import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { InlineComposer } from '@/components/inline-composer'
 
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: () => null,
   TooltipTrigger: ({ render }: { render: React.ReactElement }) => render,

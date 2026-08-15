@@ -11,17 +11,17 @@
  * never whether the terminal can be opened.
  */
 
-import { FolderGit2, FolderX, Terminal } from 'lucide-react'
-import type { WorktreeState } from '@/components/kanban/board-data'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
+import { Badge } from '@laborer/ui/components/badge'
+import { Button } from '@laborer/ui/components/button'
+import { Spinner } from '@laborer/ui/components/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { FolderGit2, FolderX, Terminal } from 'lucide-react'
+import type { WorktreeState } from '@/components/kanban/board-data'
 
 /** The card fields these affordances read. */
 export interface WorktreeCard {

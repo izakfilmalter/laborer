@@ -7,7 +7,7 @@
  * - `prefers-reduced-motion` media query respect
  * - No layout shift during transitions
  *
- * @see apps/web/src/components/ui/tab-bar.tsx
+ * @see packages/ui/src/components/tab-bar.tsx
  * @see docs/tabbed-window-layout/issues.md — Issue #24
  */
 
@@ -36,12 +36,12 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/combine', () => ({
 }))
 
 // Stub haptics to avoid web-haptics dependency in jsdom
-vi.mock('@/lib/haptics', () => ({
+vi.mock('@laborer/ui/lib/haptics', () => ({
   haptics: { buttonTap: vi.fn(), heavyImpact: vi.fn() },
 }))
 
 // Stub tooltip
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),
@@ -61,7 +61,7 @@ vi.mock('@/components/ui/tooltip', () => ({
 // Import component under test AFTER mocks
 // ---------------------------------------------------------------------------
 
-import { TabBar, type TabBarItem } from '../src/components/ui/tab-bar'
+import { TabBar, type TabBarItem } from '@laborer/ui/components/tab-bar'
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -78,7 +78,7 @@ vi.mock('@/panels/panel-context', () => {
   }
 })
 
-vi.mock('@/components/ui/resizable', () => ({
+vi.mock('@laborer/ui/components/resizable', () => ({
   ResizableHandle: () => <div data-testid="resize-handle" />,
   ResizablePanel: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="resizable-panel">{children}</div>

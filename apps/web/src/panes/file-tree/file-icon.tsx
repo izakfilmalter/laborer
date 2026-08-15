@@ -1,7 +1,7 @@
+import { cn } from '@laborer/ui/lib/utils'
 import type { SVGProps } from 'react'
 import { useId, useMemo } from 'react'
 import sprite from '@/assets/file-icons/sprite.svg'
-import { cn } from '@/lib/utils'
 
 interface FileIconProps extends SVGProps<SVGSVGElement> {
   readonly expanded?: boolean

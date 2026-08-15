@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/components/ui/button', () => ({
+vi.mock('@laborer/ui/components/button', () => ({
   Button: ({
     children,
     ...props
@@ -13,7 +13,7 @@ vi.mock('@/components/ui/button', () => ({
   ),
 }))
 
-vi.mock('@/components/ui/kbd', () => ({
+vi.mock('@laborer/ui/components/kbd', () => ({
   Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
 }))
 

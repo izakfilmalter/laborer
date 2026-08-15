@@ -1,5 +1,37 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { AgentProvider } from '@laborer/shared/rpc'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@laborer/ui/components/dialog'
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+  FieldSet,
+} from '@laborer/ui/components/field'
+import { Input } from '@laborer/ui/components/input'
+import { Kbd } from '@laborer/ui/components/kbd'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@laborer/ui/components/select'
+import { Spinner } from '@laborer/ui/components/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@laborer/ui/components/tooltip'
 import { Plus, Settings, Trash2 } from 'lucide-react'
 import {
   type FormEvent,
@@ -12,42 +44,10 @@ import {
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
-import {
-  Field,
-  FieldDescription,
-  FieldLabel,
-  FieldSet,
-} from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
-import { Kbd } from '@/components/ui/kbd'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Spinner } from '@/components/ui/spinner'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isMetaEnter } from '@/lib/dialog-keys'
+import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
 import {
   buildConfigUpdates,
   getSettingsLoadErrorMessage,

@@ -11,6 +11,8 @@
  * @see Issue #169: Per-project "+" button
  */
 
+import { inputClassName } from '@laborer/ui/components/input'
+import { cn } from '@laborer/ui/lib/utils'
 import { GitBranch, Slack } from 'lucide-react'
 import { IMaskInput } from 'react-imask'
 import {
@@ -18,7 +20,6 @@ import {
   ComposerToggleButton,
   InlineComposer,
 } from '@/components/inline-composer'
-import { inputClassName } from '@/components/ui/input'
 import {
   ALLOWED_INPUT_PATTERN,
   createWorkspaceIntent,
@@ -28,7 +29,6 @@ import {
   useCreateWorkspace,
 } from '@/hooks/use-create-workspace'
 import { toast } from '@/lib/toast'
-import { cn } from '@/lib/utils'
 
 /** Strips the border/ring so the masked input blends into its InputGroup. */
 const inputGroupControlClassName =

@@ -1,3 +1,5 @@
+import { Toaster } from '@laborer/ui/components/sonner'
+import { TooltipProvider } from '@laborer/ui/components/tooltip'
 import { HotkeysProvider } from '@tanstack/react-hotkeys'
 import {
   createRootRouteWithContext,
@@ -14,8 +16,6 @@ import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { ServerGate } from '@/components/server-gate'
 import { SharedStateBridge } from '@/components/shared-state-bridge'
 import { ThemeProvider } from '@/components/theme-provider'
-import { Toaster } from '@/components/ui/sonner'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { useBeforeQuit } from '@/hooks/use-before-quit'
 import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'

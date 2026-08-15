@@ -103,7 +103,7 @@ export const ExecutionControlHandlerKey = Schema.Literals([
 ])
 export type ExecutionControlHandlerKey = typeof ExecutionControlHandlerKey.Type
 
-export class ExecutionControlCatalogValidationError extends Schema.TaggedErrorClass<ExecutionControlCatalogValidationError>()(
+export class ExecutionControlCatalogValidationError extends Schema.TaggedError<ExecutionControlCatalogValidationError>()(
   'ExecutionControlCatalogValidationError',
   { boundary: Schema.Literals(['catalog', 'input', 'result']) }
 ) {}

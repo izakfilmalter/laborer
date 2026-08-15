@@ -14,6 +14,30 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@laborer/ui/components/alert-dialog'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@laborer/ui/components/collapsible'
+import { Kbd } from '@laborer/ui/components/kbd'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
 import { ChevronRight, FolderGit2, Trash2 } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
@@ -34,29 +58,6 @@ import {
   useProjectDragItem,
 } from '@/components/project-reorder'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { Kbd } from '@/components/ui/kbd'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { WorkspaceList } from '@/components/workspace-list'
 import type {
   PendingWorkspaceCreation,
@@ -65,8 +66,8 @@ import type {
 import { useProjectShortName } from '@/hooks/use-project-short-name'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
+import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
-import { cn, extractErrorMessage } from '@/lib/utils'
 
 const removeProjectMutation = LaborerClient.mutation('project.remove')
 

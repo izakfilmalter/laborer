@@ -1,7 +1,7 @@
 import type { FileNode } from '@laborer/shared/rpc'
+import { cn } from '@laborer/ui/lib/utils'
 import { ChevronRight } from 'lucide-react'
 import { Fragment, useMemo } from 'react'
-import { cn } from '@/lib/utils'
 import { FileIcon } from '@/panes/file-tree/file-icon'
 import type { FileTreeStore } from '@/panes/file-tree/use-file-tree-store'
 

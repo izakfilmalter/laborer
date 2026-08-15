@@ -110,7 +110,7 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   ),
 }))
 
-vi.mock('@/components/ui/resizable', () => ({
+vi.mock('@laborer/ui/components/resizable', () => ({
   ResizableHandle: ({ withHandle }: { withHandle?: boolean }) => (
     <div data-testid="resizable-handle" data-with-handle={withHandle} />
   ),

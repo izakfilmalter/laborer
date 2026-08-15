@@ -1,5 +1,5 @@
 import { formatTaskIdentifier } from '@laborer/task-db/task-identifier'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@laborer/ui/components/badge'
 
 export function TaskIdentifier({
   projectId,

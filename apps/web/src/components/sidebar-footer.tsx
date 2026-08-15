@@ -1,13 +1,13 @@
-import { RotateCcw, Settings } from 'lucide-react'
-import { useCallback } from 'react'
-import { useAppSettings } from '@/components/app-settings-context'
-import { DesktopUpdatePill } from '@/components/desktop-update-pill'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { RotateCcw, Settings } from 'lucide-react'
+import { useCallback } from 'react'
+import { useAppSettings } from '@/components/app-settings-context'
+import { DesktopUpdatePill } from '@/components/desktop-update-pill'
 
 import { ModeToggle } from './mode-toggle'
 import { ServiceStatusDots } from './service-status-dots'

@@ -22,6 +22,19 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { LeafNode } from '@laborer/shared/types'
 import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from '@laborer/ui/components/alert'
+import { Badge } from '@laborer/ui/components/badge'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import {
   AlertTriangle,
   AppWindow,
   FileCode,
@@ -38,14 +51,6 @@ import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { AgentStatusBadge } from '@/components/agent-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import type {
   AgentStatusSnapshot,
   ForegroundProcess,
@@ -62,8 +67,8 @@ import {
   getAgentStatusPresentation,
   getAgentStatusSurface,
 } from '@/lib/agent-status-presentation'
+import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
-import { cn, extractErrorMessage } from '@/lib/utils'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
 import {
   useActivePaneId,

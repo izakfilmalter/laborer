@@ -34,12 +34,12 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/combine', () => ({
 }))
 
 // Stub haptics to avoid web-haptics dependency in jsdom
-vi.mock('@/lib/haptics', () => ({
+vi.mock('@laborer/ui/lib/haptics', () => ({
   haptics: { buttonTap: vi.fn(), heavyImpact: vi.fn() },
 }))
 
 // Stub tooltip — render trigger and content inline for testing
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),
@@ -73,10 +73,10 @@ vi.mock('@/components/ui/tooltip', () => ({
 // Import components under test AFTER mocks
 // ---------------------------------------------------------------------------
 
-import { Kbd } from '../src/components/ui/kbd'
-import { PanelTypePicker } from '../src/components/ui/panel-type-picker'
-import type { TabBarItem } from '../src/components/ui/tab-bar'
-import { TabBar } from '../src/components/ui/tab-bar'
+import { Kbd } from '@laborer/ui/components/kbd'
+import type { TabBarItem } from '@laborer/ui/components/tab-bar'
+import { TabBar } from '@laborer/ui/components/tab-bar'
+import { PanelTypePicker } from '@/components/panel-type-picker'
 
 // ---------------------------------------------------------------------------
 // Helpers

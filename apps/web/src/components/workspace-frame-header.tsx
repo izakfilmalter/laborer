@@ -14,24 +14,24 @@
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
-import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
-import { useCallback } from 'react'
-import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
-import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
-import { Button } from '@/components/ui/button'
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import { Button } from '@laborer/ui/components/button'
+import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
+import { useCallback } from 'react'
+import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
+import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
 import {
   getAgentStatusSurface,
   showsWorkspaceAgentStatus,
 } from '@/lib/agent-status-presentation'
-import { cn } from '@/lib/utils'
 import type { PanelActions } from '@/panels/panel-context'
 
 interface WorkspaceFrameHeaderProps {

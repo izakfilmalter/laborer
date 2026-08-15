@@ -112,7 +112,7 @@ export interface ProductionActionDefinition<Name extends string = string> {
   readonly resultSchema: Schema.Top
 }
 
-export class ActionCatalogValidationError extends Schema.TaggedErrorClass<ActionCatalogValidationError>()(
+export class ActionCatalogValidationError extends Schema.TaggedError<ActionCatalogValidationError>()(
   'ActionCatalogValidationError',
   { boundary: Schema.Literals(['catalog', 'input', 'result']) }
 ) {}

@@ -2,7 +2,7 @@ import { useAtomSet } from '@effect/atom-react/Hooks'
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { extractErrorMessage } from '@/lib/utils'
+import { extractErrorMessage } from '@/lib/errors'
 
 const pushWorkspaceMutation = LaborerClient.mutation('workspace.push')
 const pullWorkspaceMutation = LaborerClient.mutation('workspace.pull')

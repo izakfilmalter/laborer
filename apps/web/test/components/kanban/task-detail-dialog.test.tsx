@@ -23,7 +23,7 @@ vi.mock('sonner', () => ({
 
 // Stub tooltip — the real trigger merges its children into `render`, so the
 // stub has to as well or every chip loses its label.
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({
     children,

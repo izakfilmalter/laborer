@@ -1,8 +1,9 @@
 import { useAtomSet } from '@effect/atom-react/Hooks'
+import { Button } from '@laborer/ui/components/button'
+import { cn } from '@laborer/ui/lib/utils'
 import { RotateCw } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-
 import {
   RENDERER_DISCONNECT_GRACE_MS,
   RENDERER_RECONNECT_DELAYS_MS,
@@ -10,9 +11,7 @@ import {
   rendererConnectionGenerationAtom,
   rendererConnectionSupervisor,
 } from '@/atoms/renderer-connection'
-import { Button } from '@/components/ui/button'
 import { localApi } from '@/lib/local-api'
-import { cn } from '@/lib/utils'
 
 /** How long the "Reconnected" confirmation stays up after a session returns. */
 const RECONNECT_RESTORED_MS = 2400

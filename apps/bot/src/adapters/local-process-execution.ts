@@ -22,7 +22,7 @@ export type ValidatedExecutable = string & {
   readonly [ValidatedExecutableTypeId]: true
 }
 
-export class ProcessExecutableValidationError extends Schema.TaggedErrorClass<ProcessExecutableValidationError>()(
+export class ProcessExecutableValidationError extends Schema.TaggedError<ProcessExecutableValidationError>()(
   'ProcessExecutableValidationError',
   { reason: Schema.String }
 ) {}

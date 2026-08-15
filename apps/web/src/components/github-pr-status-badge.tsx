@@ -8,15 +8,15 @@
  */
 
 import type { PullRequestCheckRun } from '@laborer/shared/rpc'
-import { GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react'
-import { GitHubCheckRunsSegment } from '@/components/github-check-runs'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react'
+import { GitHubCheckRunsSegment } from '@/components/github-check-runs'
 import { localApi } from '@/lib/local-api'
-import { cn } from '@/lib/utils'
 
 interface GitHubPrStatusBadgeProps {
   readonly checkStatus?: 'pending' | 'success' | 'failure' | null | undefined

@@ -28,7 +28,7 @@ vi.mock('@/lib/local-api', () => ({
 
 // Stub tooltip — the @base-ui/react tooltip uses a portal that isn't
 // available in jsdom. We just need the trigger to render its content.
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="tooltip-wrapper">{children}</div>
   ),

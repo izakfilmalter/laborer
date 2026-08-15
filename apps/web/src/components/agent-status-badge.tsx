@@ -17,8 +17,9 @@
  * @see Issue #323: Semantic agent status end-to-end via process inspection
  */
 
+import { Badge } from '@laborer/ui/components/badge'
+import { cn } from '@laborer/ui/lib/utils'
 import { Check } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import type { AgentStatusSnapshot } from '@/hooks/use-terminal-list'
 import {
   type AgentDisplayStatus,
@@ -33,7 +34,6 @@ import {
   getAgentStatusBadgeClassName,
   getAgentStatusPresentation,
 } from '@/lib/agent-status-presentation'
-import { cn } from '@/lib/utils'
 
 /**
  * The status dot. `needs input` pings outward to pull the eye, `working`

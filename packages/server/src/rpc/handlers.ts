@@ -113,7 +113,9 @@ export const projectContainsRoot = (
   repoPath === rootPath ||
   rootPath.startsWith(repoPath.endsWith('/') ? repoPath : `${repoPath}/`)
 
-const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
+export const ensureTaskProjects = (
+  tasks: readonly Pick<BoardTask, 'rootPath'>[]
+) =>
   Effect.gen(function* () {
     const registry = yield* ProjectRegistry
     const roots = [...new Set(tasks.map(({ rootPath }) => rootPath))]
@@ -133,9 +135,11 @@ const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
             .addProject(rootPath, false)
             .pipe(
               Effect.catch((error) =>
-                Effect.logWarning(
-                  `[task-board] Could not auto-register ${rootPath}: ${error.message}`
-                ).pipe(Effect.as(undefined))
+                error.code === 'INVALID_PATH'
+                  ? Effect.void
+                  : Effect.logWarning(
+                      `[task-board] Could not auto-register ${rootPath}: ${error.message}`
+                    ).pipe(Effect.as(undefined))
               )
             )
           if (project) {

@@ -142,7 +142,7 @@ export type TerminalHostStatus = typeof TerminalHostStatus.Type
 // Error Types
 // ---------------------------------------------------------------------------
 
-export class RpcError extends Schema.TaggedErrorClass<RpcError>()('RpcError', {
+export class RpcError extends Schema.TaggedError<RpcError>()('RpcError', {
   message: Schema.String,
   code: Schema.optional(Schema.String),
 }) {}
@@ -160,7 +160,7 @@ export class RpcError extends Schema.TaggedErrorClass<RpcError>()('RpcError', {
  *
  * @see Issue #137: Terminal RPC contract
  */
-export class TerminalRpcError extends Schema.TaggedErrorClass<TerminalRpcError>()(
+export class TerminalRpcError extends Schema.TaggedError<TerminalRpcError>()(
   'TerminalRpcError',
   {
     message: Schema.String,
@@ -1136,7 +1136,7 @@ export class LaborerRpcs extends RpcGroup.make(
  * - `NOT_FOUND` — no subscription with the given ID
  * - `INTERNAL_ERROR` — unexpected internal failure
  */
-export class FileWatcherRpcError extends Schema.TaggedErrorClass<FileWatcherRpcError>()(
+export class FileWatcherRpcError extends Schema.TaggedError<FileWatcherRpcError>()(
   'FileWatcherRpcError',
   {
     message: Schema.String,

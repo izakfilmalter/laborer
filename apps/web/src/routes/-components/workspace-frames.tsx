@@ -12,14 +12,7 @@ import type {
   WorkspaceTileNode,
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
-import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  GroupImperativeHandle,
-  PanelImperativeHandle,
-} from 'react-resizable-panels'
-import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   Empty,
   EmptyContent,
@@ -27,20 +20,27 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
-import { Kbd } from '@/components/ui/kbd'
-import { PanelTypePicker } from '@/components/ui/panel-type-picker'
+} from '@laborer/ui/components/empty'
+import { Kbd } from '@laborer/ui/components/kbd'
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-} from '@/components/ui/resizable'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
-import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
+} from '@laborer/ui/components/resizable'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
+import { TabBar, type TabBarItem } from '@laborer/ui/components/tab-bar'
+import { TabErrorBoundary } from '@laborer/ui/components/tab-error-boundary'
+import { cn } from '@laborer/ui/lib/utils'
+import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  GroupImperativeHandle,
+  PanelImperativeHandle,
+} from 'react-resizable-panels'
+import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
+import { PanelTypePicker } from '@/components/panel-type-picker'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
-import { cn } from '@/lib/utils'
 import {
   usePanelActions,
   usePendingClosePanelTab,
@@ -589,6 +589,40 @@ function WorkspaceFrameAttentionOutline({
  * panel layout is shown. Otherwise, falls back to rendering the flat
  * `subLayout` directly.
  */
+/**
+ * The region a dropped workspace frame will occupy, painted as a
+ * translucent overlay over half the target frame (VS Code's editor-group
+ * split preview). Side edges preview a new column beside the target;
+ * top/bottom edges preview stacking within the target's column.
+ */
+const WORKSPACE_DROP_INDICATOR_CLASS: Record<WorkspaceDropEdge, string> = {
+  top: 'inset-x-0 top-0 h-1/2 border-b',
+  bottom: 'inset-x-0 bottom-0 h-1/2 border-t',
+  left: 'inset-y-0 left-0 w-1/2 border-r',
+  right: 'inset-y-0 right-0 w-1/2 border-l',
+}
+
+function WorkspaceFrameDropIndicator({
+  edge,
+}: {
+  readonly edge: WorkspaceDropEdge | null
+}) {
+  if (!edge) {
+    return null
+  }
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        'pointer-events-none absolute z-10 border-primary bg-primary/20',
+        WORKSPACE_DROP_INDICATOR_CLASS[edge]
+      )}
+      data-drop-edge={edge}
+      data-testid="workspace-frame-drop-indicator"
+    />
+  )
+}
+
 function WorkspaceFrame({
   workspaceId,
   subLayout,
@@ -868,12 +902,6 @@ function WorkspaceFrame({
       ref={frameRef}
     >
       <WorkspaceFrameAttentionOutline workspaceId={workspaceId} />
-      {closestEdge === 'top' && (
-        <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
-      )}
-      {closestEdge === 'left' && (
-        <div className="absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />
-      )}
       <WorkspaceFrameHeaderContainer
         diffIsOpen={showDiff}
         dragHandleRef={dragHandleRef}
@@ -902,12 +930,7 @@ function WorkspaceFrame({
       )}
       <WorkspaceFrameCloseDialog workspaceId={workspaceId} />
       <WorkspaceFrameDestroyOnCloseDialog workspaceId={workspaceId} />
-      {closestEdge === 'bottom' && (
-        <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />
-      )}
-      {closestEdge === 'right' && (
-        <div className="absolute inset-y-0 right-0 z-10 w-0.5 bg-primary" />
-      )}
+      <WorkspaceFrameDropIndicator edge={closestEdge} />
     </div>
   )
 }

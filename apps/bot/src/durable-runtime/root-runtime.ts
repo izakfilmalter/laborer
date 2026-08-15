@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto'
 import {
   Cause,
   Context,
@@ -210,7 +211,7 @@ export const ConversationClientCompatibility = Schema.Struct({
 export type ConversationClientCompatibility =
   typeof ConversationClientCompatibility.Type
 
-export class DurableRuntimeError extends Schema.TaggedErrorClass<DurableRuntimeError>()(
+export class DurableRuntimeError extends Schema.TaggedError<DurableRuntimeError>()(
   'DurableRuntimeError',
   {
     reason: Schema.Literals([
@@ -3220,7 +3221,8 @@ const clusterLayer = ClusterWorkflowEngine.layer.pipe(
         sendRetryInterval: 10,
       },
     })
-  )
+  ),
+  Layer.provide(nodeCryptoLayer)
 )
 
 export const makeRootDurableRuntimeLayer = (

@@ -51,7 +51,7 @@ describe('RendererConnectionSupervisor', () => {
     supervisor.stop()
   })
 
-  it('publishes sessions and advances generation on every reconnect', async () => {
+  it('keeps the initial runtime and advances generation on reconnect', async () => {
     const first = deferredLease()
     const second = deferredLease()
     const connect = vi
@@ -64,7 +64,7 @@ describe('RendererConnectionSupervisor', () => {
     supervisor.start()
     await flush()
     expect(supervisor.getSnapshot()).toMatchObject({
-      generation: 1,
+      generation: 0,
       phase: 'connected',
       session: 1,
     })
@@ -78,6 +78,42 @@ describe('RendererConnectionSupervisor', () => {
     await vi.advanceTimersByTimeAsync(3000)
     await flush()
     expect(supervisor.getSnapshot()).toMatchObject({
+      generation: 1,
+      phase: 'connected',
+      session: 2,
+    })
+    supervisor.stop()
+  })
+
+  it('advances generation when the initial connection succeeds after automatic retry', async () => {
+    const first = deferredLease()
+    const second = deferredLease()
+    const connect = vi
+      .fn<() => Promise<RendererConnectionLease>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second)
+    const supervisor = new RendererConnectionSupervisor(connect, () =>
+      Date.now()
+    )
+    supervisor.start()
+    await flush()
+
+    expect(supervisor.getSnapshot().phase).toBe('backoff')
+    await vi.advanceTimersByTimeAsync(3000)
+    await flush()
+
+    expect(supervisor.getSnapshot()).toMatchObject({
+      generation: 1,
+      phase: 'connected',
+      session: 1,
+    })
+
+    first.close()
+    await flush()
+    await vi.advanceTimersByTimeAsync(4000)
+    await flush()
+    expect(supervisor.getSnapshot()).toMatchObject({
       generation: 2,
       phase: 'connected',
       session: 2,
@@ -85,7 +121,7 @@ describe('RendererConnectionSupervisor', () => {
     supervisor.stop()
   })
 
-  it('manual reconnect interrupts backoff and resets the ladder', async () => {
+  it('advances generation when manual retry recovers the initial connection', async () => {
     const lease = deferredLease()
     const connect = vi
       .fn<() => Promise<RendererConnectionLease>>()
@@ -105,6 +141,7 @@ describe('RendererConnectionSupervisor', () => {
       attempt: 1,
       generation: 1,
       phase: 'connected',
+      session: 1,
     })
     supervisor.stop()
   })

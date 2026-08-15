@@ -32,6 +32,7 @@
  *
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
  * @see apps/web/src/hooks/use-terminal-rpc.ts — daemon WebSocket hook
+ * @see apps/web/src/lib/terminal-screen.ts — canvas identity and lifetime
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
  */
 
@@ -77,6 +78,15 @@ import {
   shouldBypassTerminal,
 } from '@/lib/keybinds'
 import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
+import {
+  createTerminalScreen,
+  type TerminalScreen,
+  type TerminalScreenCanvas,
+} from '@/lib/terminal-screen'
+import {
+  showTerminalRevivalMarker,
+  terminalLoadingMessage,
+} from './terminal-loading-state'
 
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
 type ReplayStatus = 'idle' | 'replaying' | 'complete'
@@ -396,63 +406,29 @@ function TerminalPaneRpc({
   onTitleChange,
 }: TerminalPaneProps) {
   const terminalRef = useRef<Terminal | null>(null)
-  const pendingRef = useRef<Array<{ data: string; commit: () => void }>>([])
-  const [replayEpoch, setReplayEpoch] = useState(0)
+  /**
+   * The screen outlives each attach and each attach outlives nothing: the
+   * daemon can reconnect under a mounted canvas, and React can rebuild the
+   * canvas under a live attach. Owning it here, above both, is what lets the
+   * two lifetimes be told apart.
+   */
+  const [screen] = useState(createTerminalScreen)
 
-  const write = useCallback(
-    (data: string, _cursor: number, commit: () => void) => {
-      const terminal = terminalRef.current
-      if (!terminal) {
-        pendingRef.current.push({ data, commit })
-        return
-      }
-      if (data.length === 0) {
-        commit()
-      } else {
-        terminal.write(data, commit)
-      }
-    },
-    []
-  )
-  const snapshot = useCallback(
-    (data: string, cursor: number, commit: () => void) => {
-      terminalRef.current?.reset()
-      setReplayEpoch((value) => value + 1)
-      write(data, cursor, commit)
-    },
-    [write]
-  )
   const connection = useTerminalRpc({
-    terminalId,
-    onData: write,
-    onSnapshot: snapshot,
-    onReset: () => terminalRef.current?.reset(),
     onStatus: (status) => {
       if (status === 'stopped') {
         onTerminalExit?.()
       }
     },
+    screen,
+    terminalId,
   })
-  const ready = useCallback(() => {
-    const terminal = terminalRef.current
-    if (!terminal) {
-      return
-    }
-    const pending = pendingRef.current.splice(0)
-    for (const item of pending) {
-      if (item.data.length === 0) {
-        item.commit()
-      } else {
-        terminal.write(item.data, item.commit)
-      }
-    }
-  }, [])
+
   return (
     <TerminalPaneRenderer
       connection={connection}
-      onTerminalReady={ready}
       onTitleChange={onTitleChange}
-      replayEpoch={replayEpoch}
+      screen={screen}
       terminalId={terminalId}
       terminalRef={terminalRef}
     />
@@ -462,9 +438,8 @@ function TerminalPaneRpc({
 /** Props for the shared terminal renderer component. */
 interface TerminalPaneRendererProps {
   readonly connection: TerminalConnection
-  readonly onTerminalReady: () => void
   readonly onTitleChange?: ((title: string) => void) | undefined
-  readonly replayEpoch: number
+  readonly screen: TerminalScreen
   readonly terminalId: string
   readonly terminalRef: React.RefObject<Terminal | null>
 }
@@ -484,9 +459,8 @@ interface TerminalPaneRendererProps {
 function TerminalPaneRenderer({
   terminalId,
   onTitleChange,
-  onTerminalReady,
   connection,
-  replayEpoch,
+  screen,
   terminalRef,
 }: TerminalPaneRendererProps) {
   const {
@@ -542,25 +516,29 @@ function TerminalPaneRenderer({
    *
    * When the terminal pane first mounts, no output has arrived yet.
    * `hasReceivedData` starts as `false` and flips to `true` on the
-   * first data frame. A loading overlay is shown while false.
+   * first parsed data frame. A loading overlay is shown while false.
    * Uses a ref for the hot-path check (every data frame) and state
    * for React rendering.
+   *
+   * The flag belongs to the canvas, not the pane. A daemon reconnect leaves
+   * the canvas drawn, so it stays true and `replayStatus` — which waits for
+   * xterm to parse the replayed chunks — owns the restore overlay. A rebuilt
+   * canvas is blank, so it starts over with the pane's startup message.
    */
   const [hasReceivedData, setHasReceivedData] = useState(false)
   const hasReceivedDataRef = useRef(false)
 
-  useEffect(() => {
-    if (replayEpoch === 0) {
-      return
-    }
-
-    hasReceivedDataRef.current = false
-    setHasReceivedData(false)
-  }, [replayEpoch])
-
   const isRunning = terminalStatus !== 'stopped'
+  const loadingMessage = terminalLoadingMessage({
+    hasReceivedData,
+    isRunning,
+    replayStatus,
+  })
   /** Revival is only truthful once the restored history is fully on screen. */
-  const showRevivalMarker = wasRevived && replayStatus === 'complete'
+  const showRevivalMarker = showTerminalRevivalMarker({
+    replayStatus,
+    wasRevived,
+  })
 
   /** Ref for isRunning so the xterm.js onData callback can check it. */
   const isRunningRef = useRef(isRunning)
@@ -907,7 +885,24 @@ function TerminalPaneRenderer({
       }
     })
 
-    onTerminalReady()
+    // This canvas is blank whatever the one it replaces had drawn, so the pane
+    // is starting again rather than continuing. Carrying the flag forward
+    // would lift the overlay off an empty screen.
+    hasReceivedDataRef.current = false
+    setHasReceivedData(false)
+
+    // Publishing the canvas is what gives it an identity: the attach reads its
+    // generation to decide whether it may resume a cursor or must ask for a
+    // snapshot it can draw from scratch.
+    const canvas: TerminalScreenCanvas = {
+      reset: () => {
+        terminal.reset()
+      },
+      write: (data, commit) => {
+        terminal.write(data, commit)
+      },
+    }
+    screen.mount(canvas)
 
     // Attempt WebGL rendering for better performance (GPU-accelerated).
     // Critical for scroll performance with 100k+ lines — WebGL renders
@@ -1081,6 +1076,9 @@ function TerminalPaneRenderer({
 
     // Cleanup on unmount
     return () => {
+      // Retire the canvas before disposing it so no further output is handed
+      // to a terminal that is being torn down.
+      screen.unmount(canvas)
       onDidChangeSearchResultsDisposable.dispose()
       onWriteParsedDisposable.dispose()
       onDataDisposable.dispose()
@@ -1099,7 +1097,7 @@ function TerminalPaneRenderer({
       }
       prefixModeRef.current = false
     }
-  }, [terminalId, terminalRef, onTerminalReady])
+  }, [screen, terminalId, terminalRef])
 
   /**
    * Observe the container element for size changes using ResizeObserver.
@@ -1145,6 +1143,7 @@ function TerminalPaneRenderer({
     <div
       className="relative h-full w-full overflow-hidden"
       data-terminal-id={terminalId}
+      data-testid="terminal-emulator"
       ref={terminalElementRef}
     >
       {/* xterm.js container */}
@@ -1171,19 +1170,14 @@ function TerminalPaneRenderer({
         />
       )}
 
-      {/* Loading overlay — shown while the PTY is spawning
-          and no output has arrived yet. Covers the blank terminal canvas
-          with a spinner and message. Disappears on first data frame.
-          Only shown for running terminals (stopped terminals get immediate
-          screen state on reconnection). */}
-      {(!hasReceivedData || replayStatus === 'replaying') && isRunning && (
-        <TerminalLoadingOverlay
-          message={
-            replayStatus === 'replaying'
-              ? 'Restoring terminal...'
-              : 'Starting terminal...'
-          }
-        />
+      {/* Loading overlay — shown while the PTY is spawning and no output has
+          arrived yet, and again while a reconnect replays history. Covers the
+          terminal canvas with a spinner and message, lifting once the first
+          output parses or the replayed buffer is on screen. A stopped terminal
+          skips startup but still replays, so it is covered while its final
+          screen is restored. */}
+      {loadingMessage !== undefined && (
+        <TerminalLoadingOverlay message={loadingMessage} />
       )}
 
       {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed

@@ -21,7 +21,7 @@ export class TerminalHelper {
    * xterm.js renders into elements with `data-terminal-id` attribute.
    */
   get terminalPanes(): Locator {
-    return this.page.locator('[data-terminal-id]')
+    return this.page.getByTestId('terminal-emulator')
   }
 
   /**
@@ -29,7 +29,7 @@ export class TerminalHelper {
    * xterm.js uses a hidden textarea for input capture.
    */
   get terminalInputs(): Locator {
-    return this.page.locator('[data-terminal-id] textarea')
+    return this.page.getByTestId('terminal-emulator').locator('textarea')
   }
 
   /** Focus a terminal pane before typing. */

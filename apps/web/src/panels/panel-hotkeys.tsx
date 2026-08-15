@@ -16,7 +16,8 @@
  * Tmux-style prefix key sequences (Ctrl+b then action key):
  * - Ctrl+b then h → split horizontal (side-by-side)
  * - Ctrl+b then v → split vertical (stacked)
- * - Ctrl+b then x → close active pane
+ * - Ctrl+b then x → progressive close (browser-safe equivalent of Cmd+W)
+ * - Ctrl+b then Shift+x → close active window tab (browser-safe Cmd+Shift+W)
  * - Ctrl+b then o → cycle focus to next pane
  * - Ctrl+b then p → cycle focus to previous pane
  * - Ctrl+b then d → create diff panel in right-side split
@@ -365,6 +366,11 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
   })
 
   // Ctrl+b then x → progressive close (same chain as Cmd+W)
+  //
+  // This is the only progressive-close shortcut that survives in a browser
+  // tab: browsers reserve Cmd+W (and Ctrl+W) for closing their own tab and
+  // never deliver the event to the page, so the Meta+W binding below only
+  // ever fires inside the Electron shell.
   useHotkeySequence(
     ['Control+B', 'X'],
     (event) => {
@@ -374,7 +380,19 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
     { timeout: SEQUENCE_TIMEOUT }
   )
 
+  // Ctrl+b then Shift+X → close the active window tab (browser-safe
+  // equivalent of Cmd+Shift+W, which browsers reserve for closing the window)
+  useHotkeySequence(
+    ['Control+B', 'Shift+X'],
+    (event) => {
+      event.preventDefault()
+      actions?.closeWindowTab?.()
+    },
+    { timeout: SEQUENCE_TIMEOUT }
+  )
+
   // Cmd+w (Meta+W) → progressive close: escalates from pane → tab → workspace → window tab → app
+  // Desktop-only in practice; see the Ctrl+b x note above.
   useHotkeySequence(['Meta+W'], (event) => {
     event.preventDefault()
     executeProgressiveClose()

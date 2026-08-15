@@ -17,6 +17,7 @@ import { ServerGate } from '@/components/server-gate'
 import { SharedStateBridge } from '@/components/shared-state-bridge'
 import { ThemeProvider } from '@/components/theme-provider'
 import { useBeforeQuit } from '@/hooks/use-before-quit'
+import { useConfirmBeforeUnload } from '@/hooks/use-confirm-before-unload'
 import { PhaseTransitionDriver } from '@/hooks/use-phase-transition-driver'
 import { useSidecarCrashListener } from '@/hooks/use-sidecar-crash-listener'
 import { QuitAppDialog } from '@/routes/-components/close-dialogs'
@@ -53,6 +54,10 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 function BeforeQuitHandler() {
   const { isQuitDialogOpen, runningTerminalCount, confirmQuit, cancelQuit } =
     useBeforeQuit()
+
+  // Browser hosts never deliver ⌘W/⌘Q to the page, so the only warning left
+  // before the tab (and every running terminal) disappears is `beforeunload`.
+  useConfirmBeforeUnload()
 
   return (
     <QuitAppDialog

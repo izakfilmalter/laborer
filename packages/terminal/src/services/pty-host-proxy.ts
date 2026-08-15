@@ -98,17 +98,33 @@ const openSocket = (socketPath: string): Promise<Socket> =>
     socket.once('error', reject)
   })
 
-const probeHealth = async (
+interface PtyHostHealth {
+  readonly epoch: string
+  readonly execPath?: string
+  readonly version: string
+}
+
+export const shouldReplaceDevHostRuntime = ({
+  devWatch,
+  expectedExecPath,
+  hostExecPath,
+}: {
+  readonly devWatch: boolean
+  readonly expectedExecPath: string
+  readonly hostExecPath?: string | undefined
+}): boolean => devWatch && hostExecPath !== expectedExecPath
+
+const readHostHealth = async (
   registration: PtyHostRegistration
-): Promise<boolean> => {
+): Promise<PtyHostHealth | undefined> => {
   let socket: Socket | undefined
   try {
     socket = await openSocket(registration.socketPath)
     const activeSocket = socket
-    return await new Promise<boolean>((resolveHealth) => {
+    return await new Promise<PtyHostHealth | undefined>((resolveHealth) => {
       const timeout = setTimeout(() => {
         activeSocket.destroy()
-        resolveHealth(false)
+        resolveHealth(undefined)
       }, REQUEST_TIMEOUT_MS)
       let buffer = ''
       activeSocket.setEncoding('utf8')
@@ -117,7 +133,7 @@ const probeHealth = async (
         if (Buffer.byteLength(buffer, 'utf8') > MAX_PROTOCOL_FRAME_BYTES) {
           clearTimeout(timeout)
           activeSocket.destroy()
-          resolveHealth(false)
+          resolveHealth(undefined)
           return
         }
         const newline = buffer.indexOf('\n')
@@ -127,17 +143,17 @@ const probeHealth = async (
         clearTimeout(timeout)
         try {
           const response = JSON.parse(buffer.slice(0, newline)) as {
-            readonly result?: {
-              readonly epoch?: string
-              readonly version?: string
-            }
+            readonly result?: PtyHostHealth
           }
+          const result = response.result
           resolveHealth(
-            response.result?.epoch === registration.epoch &&
-              response.result.version === registration.version
+            result?.epoch === registration.epoch &&
+              result.version === registration.version
+              ? result
+              : undefined
           )
         } catch {
-          resolveHealth(false)
+          resolveHealth(undefined)
         } finally {
           activeSocket.destroy()
         }
@@ -148,9 +164,13 @@ const probeHealth = async (
     })
   } catch {
     socket?.destroy()
-    return false
+    return undefined
   }
 }
+
+const probeHealth = async (
+  registration: PtyHostRegistration
+): Promise<boolean> => (await readHostHealth(registration)) !== undefined
 
 const requestHostShutdown = async (
   registration: PtyHostRegistration
@@ -181,7 +201,71 @@ const requestHostShutdown = async (
   })
 }
 
-/** Explicit daemon shutdown is the only daemon path allowed to stop the host. */
+const requestHostShutdownIfEmpty = async (
+  registration: PtyHostRegistration
+): Promise<boolean> => {
+  const socket = await openSocket(registration.socketPath)
+  return await new Promise<boolean>((resolveShutdown, reject) => {
+    const finish = (result: boolean | Error): void => {
+      clearTimeout(timeout)
+      socket.destroy()
+      if (result instanceof Error) {
+        reject(result)
+      } else {
+        resolveShutdown(result)
+      }
+    }
+    const timeout = setTimeout(
+      () =>
+        finish(new Error('Timed out waiting for PTY host shutdown response')),
+      REQUEST_TIMEOUT_MS
+    )
+    let buffer = ''
+    socket.setEncoding('utf8')
+    socket.once('error', finish)
+    socket.on('data', (chunk: string) => {
+      buffer += chunk
+      if (Buffer.byteLength(buffer, 'utf8') > MAX_PROTOCOL_FRAME_BYTES) {
+        finish(new Error('PTY host protocol frame exceeded limit'))
+        return
+      }
+      const newline = buffer.indexOf('\n')
+      if (newline < 0) {
+        return
+      }
+      try {
+        const response = JSON.parse(buffer.slice(0, newline)) as {
+          readonly error?: { readonly message?: string }
+          readonly requestId?: string
+          readonly result?: unknown
+          readonly type?: string
+        }
+        if (
+          response.type !== 'response' ||
+          response.requestId !== 'shutdown-if-empty' ||
+          response.error !== undefined ||
+          typeof response.result !== 'boolean'
+        ) {
+          finish(
+            new Error(
+              response.error?.message ??
+                'PTY host does not support conditional shutdown'
+            )
+          )
+          return
+        }
+        finish(response.result)
+      } catch {
+        finish(new Error('PTY host sent an invalid shutdown response'))
+      }
+    })
+    socket.write(
+      `${JSON.stringify({ type: 'request', requestId: 'shutdown-if-empty', method: 'shutdownIfEmpty', args: [] })}\n`
+    )
+  })
+}
+
+/** Explicit daemon shutdown remains available and unconditional. */
 export const shutdownPtyHost = async (): Promise<void> => {
   // Disable the proxy's crash-recovery path before asking the host to exit.
   // Otherwise the connection close can race daemon teardown and immediately
@@ -235,12 +319,30 @@ const ensurePtyHost = async (
 ): Promise<PtyHostRegistration> => {
   const paths = resolvePtyHostPaths()
   const incumbent = readPtyHostRegistration(paths.registrationPath)
-  if (
-    incumbent !== null &&
-    processExists(incumbent.pid) &&
-    (await probeHealth(incumbent))
-  ) {
-    return incumbent
+  if (incumbent !== null && processExists(incumbent.pid)) {
+    const health = await readHostHealth(incumbent)
+    if (health !== undefined) {
+      const staleDevRuntime = shouldReplaceDevHostRuntime({
+        devWatch: process.env.LABORER_DEV_WATCH === '1',
+        expectedExecPath: process.execPath,
+        hostExecPath: health.execPath,
+      })
+      if (!staleDevRuntime) {
+        return incumbent
+      }
+      const shutdownAccepted = await requestHostShutdownIfEmpty(
+        incumbent
+      ).catch(() => false)
+      if (!shutdownAccepted) {
+        return incumbent
+      }
+      console.info(
+        `[pty-host] Replacing development host runtime ${health.execPath ?? 'unknown'} with ${process.execPath}`
+      )
+      await stopWithEscalation(incumbent, {
+        requestStop: async () => undefined,
+      })
+    }
   }
   return ensure({
     policy: 'adopt',
@@ -673,8 +775,8 @@ export const ptyHostProxyLayer = Layer.effect(
             [...workspaceIds],
           ]).pipe(Effect.orElseSucceed(() => undefined)),
         getTerminals: () => Effect.succeed([]),
-        setRevivedReplayEvent: () => Effect.succeed(undefined),
-        takeRevivedReplayEvent: () => Effect.succeed<undefined>(undefined),
+        setRevivedReplayEvent: () => Effect.void,
+        takeRevivedReplayEvent: () => Effect.sync(() => undefined),
         lifecycleEvents,
       })
       return {

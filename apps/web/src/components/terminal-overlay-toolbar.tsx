@@ -22,6 +22,7 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { Columns2, Maximize, Minimize, Rows2, X } from 'lucide-react'
+import { CloseShortcutHint } from '@/components/close-shortcut-hint'
 import type { PanelActions } from '@/panels/panel-context'
 
 interface TerminalOverlayToolbarProps {
@@ -124,10 +125,7 @@ function TerminalOverlayToolbar({
         </TooltipTrigger>
         <TooltipContent side="bottom">
           Close pane
-          <KbdGroup>
-            <Kbd>⌘</Kbd>
-            <Kbd>W</Kbd>
-          </KbdGroup>
+          <CloseShortcutHint />
         </TooltipContent>
       </Tooltip>
     </div>

@@ -49,7 +49,7 @@ import {
 import { preflightEffectiveOpenCodeMcpNames } from './opencode-config-preflight.ts'
 import type { SlackParticipantLookupShape } from './slack-participant-lookup.ts'
 
-export class AcpWorkspaceStartupError extends Schema.TaggedErrorClass<AcpWorkspaceStartupError>()(
+export class AcpWorkspaceStartupError extends Schema.TaggedError<AcpWorkspaceStartupError>()(
   'AcpWorkspaceStartupError',
   {
     reason: Schema.Literals([

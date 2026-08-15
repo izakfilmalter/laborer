@@ -6,14 +6,14 @@ import { Effect, Schema } from 'effect'
 import { useEffect, useState } from 'react'
 import { localApi } from '@/lib/local-api'
 
-class DesktopUpdateBridgeUnavailableError extends Schema.TaggedErrorClass<DesktopUpdateBridgeUnavailableError>()(
+class DesktopUpdateBridgeUnavailableError extends Schema.TaggedError<DesktopUpdateBridgeUnavailableError>()(
   'DesktopUpdateBridgeUnavailableError',
   {
     message: Schema.String,
   }
 ) {}
 
-class DesktopUpdateDownloadError extends Schema.TaggedErrorClass<DesktopUpdateDownloadError>()(
+class DesktopUpdateDownloadError extends Schema.TaggedError<DesktopUpdateDownloadError>()(
   'DesktopUpdateDownloadError',
   {
     cause: Schema.Defect(),
@@ -21,7 +21,7 @@ class DesktopUpdateDownloadError extends Schema.TaggedErrorClass<DesktopUpdateDo
   }
 ) {}
 
-class DesktopUpdateInstallError extends Schema.TaggedErrorClass<DesktopUpdateInstallError>()(
+class DesktopUpdateInstallError extends Schema.TaggedError<DesktopUpdateInstallError>()(
   'DesktopUpdateInstallError',
   {
     cause: Schema.Defect(),
@@ -29,7 +29,7 @@ class DesktopUpdateInstallError extends Schema.TaggedErrorClass<DesktopUpdateIns
   }
 ) {}
 
-class DesktopUpdateActionRejectedError extends Schema.TaggedErrorClass<DesktopUpdateActionRejectedError>()(
+class DesktopUpdateActionRejectedError extends Schema.TaggedError<DesktopUpdateActionRejectedError>()(
   'DesktopUpdateActionRejectedError',
   {
     action: Schema.Literals(['download', 'install']),
@@ -37,7 +37,7 @@ class DesktopUpdateActionRejectedError extends Schema.TaggedErrorClass<DesktopUp
   }
 ) {}
 
-class DesktopUpdateInstallCancelledError extends Schema.TaggedErrorClass<DesktopUpdateInstallCancelledError>()(
+class DesktopUpdateInstallCancelledError extends Schema.TaggedError<DesktopUpdateInstallCancelledError>()(
   'DesktopUpdateInstallCancelledError',
   {
     message: Schema.String,

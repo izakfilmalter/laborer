@@ -79,7 +79,7 @@ export type ApplicationPublicOutput =
  * proved. This is a domain outcome, not a HandlerFailure: the application must keep
  * the owner and every later input durable until an operator decides what to do.
  */
-export class ConversationBlocked extends Schema.TaggedErrorClass<ConversationBlocked>()(
+export class ConversationBlocked extends Schema.TaggedError<ConversationBlocked>()(
   'ConversationBlocked',
   {
     attemptId: NonBlankString,
@@ -131,7 +131,7 @@ export interface ConversationRecoveryDecisionResult {
   readonly workspaceId: string
 }
 
-export class ConversationRecoveryDecisionRejected extends Schema.TaggedErrorClass<ConversationRecoveryDecisionRejected>()(
+export class ConversationRecoveryDecisionRejected extends Schema.TaggedError<ConversationRecoveryDecisionRejected>()(
   'ConversationRecoveryDecisionRejected',
   {
     reason: Schema.Literals([

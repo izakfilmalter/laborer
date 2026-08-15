@@ -42,6 +42,7 @@ import {
   confirmTaskOptimisticMoveAtom,
   installTaskCreateOverlayAtom,
   installTaskOptimisticOverlayAtom,
+  labelsByIdAtom,
   projectViewsAtom,
   type TaskOptimisticOverlay,
   taskMutationReceiptAtom,
@@ -84,6 +85,8 @@ import {
   TerminalAttachButton,
   WorktreeChip,
 } from '@/components/kanban/worktree-affordance'
+import { TaskLabelsBadge } from '@/components/labels/label-chips'
+import { useTaskLabels } from '@/components/labels/task-labels-control'
 import {
   ProjectDragHandle,
   ProjectDropIndicator,
@@ -167,12 +170,19 @@ function buildColumnTasks(
   return byColumn
 }
 
-/** Case-insensitive substring match against title, branch, or PR. */
-function matchesQuery(task: BoardTask, query: string): boolean {
+/** Case-insensitive substring match against title, branch, label, or PR. */
+function matchesQuery(
+  task: BoardTask,
+  query: string,
+  labelsById: ReadonlyMap<string, { readonly name: string }>
+): boolean {
   // "#212" and "212" both match PR #212.
   const prNumberQuery = query.startsWith('#') ? query.slice(1) : query
   return (
     task.title.toLowerCase().includes(query) ||
+    task.labelIds.some((labelId) =>
+      labelsById.get(labelId)?.name.toLowerCase().includes(query)
+    ) ||
     (task.branch?.toLowerCase().includes(query) ?? false) ||
     (task.pr !== null &&
       ((prNumberQuery.length > 0 &&
@@ -312,6 +322,7 @@ function TaskBoardCard({
   }
 
   const analysis = slackAnalysisState(task)
+  const labels = useTaskLabels(task.labelIds)
   const title = boardTaskTitle(task)
   const activate = isOverlay || !onActivate ? undefined : () => onActivate(task)
 
@@ -385,6 +396,7 @@ function TaskBoardCard({
   const boardBadges = (
     <>
       <SourceBadge source={task.source} />
+      <TaskLabelsBadge labels={labels} />
       {parentTitle && (
         <Badge className="max-w-full shrink truncate" variant="secondary">
           Parent: {parentTitle}
@@ -1041,6 +1053,7 @@ function TaskBoard({
   const authoritativeTasks = useAtomValue(authoritativeTasksAtom).rows
   const taskMutationReceipt = useAtomValue(taskMutationReceiptAtom)
   const workspaceList = useAtomValue(workspaceViewsAtom)
+  const labelsById = useAtomValue(labelsByIdAtom)
   const panelActions = usePanelActions()
   // Commits lane drags; the sidebar owns its own monitor.
   useProjectReorderMonitor('board')
@@ -1248,7 +1261,7 @@ function TaskBoard({
             task.status === 'done' &&
             task.updatedAt < Date.now() - DONE_RETENTION_MS
           ) &&
-          (!searching || matchesQuery(task, query))
+          (!searching || matchesQuery(task, query, labelsById))
       )
       return { project, visibleTasks }
     })

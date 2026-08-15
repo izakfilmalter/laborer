@@ -41,6 +41,11 @@ const taskUpdate = (
 const snapshotUpdate = (
   snapshot: LaborerDatabaseSnapshot
 ): SharedStateUpdate => ({
+  labels: {
+    cursor: snapshot.stateCursor,
+    rows: snapshot.labels,
+    type: 'snapshot',
+  },
   projects: {
     cursor: snapshot.stateCursor,
     rows: snapshot.projects,

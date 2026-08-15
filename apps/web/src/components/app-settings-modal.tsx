@@ -6,6 +6,7 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import { settingRowsAtom } from '@/atoms/shared-state'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
+import { LabelSettingsSection } from '@/components/labels/label-settings-section'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { getDesktopBridge, openExternalUrl } from '@/lib/desktop'
@@ -255,7 +256,7 @@ export function AppSettingsModal() {
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[85svh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -323,6 +324,9 @@ export function AppSettingsModal() {
               </FieldDescription>
             </Field>
           </FieldSet>
+
+          {/* Labels Section — app-wide, shared by every project */}
+          <LabelSettingsSection />
 
           {/* GitHub Connection Section */}
           <div className="space-y-4">

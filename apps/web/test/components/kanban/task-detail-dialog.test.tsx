@@ -44,6 +44,13 @@ vi.mock('@/components/github-pr-status-badge', () => ({
   GitHubPrStatusBadge: () => null,
 }))
 
+// Labels are their own write, covered by their own tests; here they would only
+// pull shared state into a suite about the editing cycle.
+vi.mock('@/components/labels/task-labels-control', () => ({
+  TaskLabelsControl: () => null,
+  useTaskLabels: () => [],
+}))
+
 vi.mock('@/components/kanban/worktree-affordance', () => ({
   TerminalAttachButton: () => null,
   WorktreeChip: () => null,
@@ -68,6 +75,7 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
   executionMirror: null,
   executionStatus: null,
   id: 'task-1',
+  labelIds: [],
   pr: null,
   revision: 4,
   rootPath: '/repo',

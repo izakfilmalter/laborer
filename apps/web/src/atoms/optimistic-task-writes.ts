@@ -31,6 +31,19 @@ export interface TaskEditOverlay {
 export type TaskEditOverlays = ReadonlyMap<string, TaskEditOverlay>
 
 /**
+ * An in-flight label-set write. Labels are their own overlay rather than part
+ * of the edit patch because they are written by their own RPC: a picker
+ * selection must not resurrect a title the detail dialog is still drafting.
+ */
+export interface TaskLabelOverlay {
+  /** The revision the selection was based on; any other revision settles it. */
+  readonly expectedRevision: number
+  readonly labelIds: readonly string[]
+}
+
+export type TaskLabelOverlays = ReadonlyMap<string, TaskLabelOverlay>
+
+/**
  * The row the server will store for this composer commit, synthesized
  * client-side. Mirrors `createTaskCard`: a Slack permalink becomes the
  * placeholder title and queues analysis; anything else is a manual card.
@@ -54,6 +67,7 @@ export const pendingTaskRow = (input: {
     executionId: null,
     executionStatus: slackUrl === null ? null : 'queued',
     id: input.id,
+    labelIds: [],
     parentTaskId: null,
     prBaseBranch: null,
     prCheckStatus: null,
@@ -144,6 +158,42 @@ export const settleTaskEditOverlays = (
   }
   const revisions = new Map(rows.map((row) => [row.id, row.revision]))
   const next = new Map<string, TaskEditOverlay>()
+  for (const [taskId, overlay] of overlays) {
+    if (revisions.get(taskId) === overlay.expectedRevision) {
+      next.set(taskId, overlay)
+    }
+  }
+  return next.size === overlays.size ? overlays : next
+}
+
+/** Rows with any in-flight label selection applied on top. */
+export const applyTaskLabelOverlays = (
+  rows: readonly SharedTaskRow[],
+  overlays: TaskLabelOverlays
+): readonly SharedTaskRow[] =>
+  overlays.size === 0
+    ? rows
+    : rows.map((row) => {
+        const overlay = overlays.get(row.id)
+        return overlay === undefined
+          ? row
+          : { ...row, labelIds: overlay.labelIds }
+      })
+
+/**
+ * Label overlays settle on the same rule as edits: they live exactly as long
+ * as the authoritative row still sits at the revision the selection was based
+ * on, so a rejected CAS stops hiding the winning label set.
+ */
+export const settleTaskLabelOverlays = (
+  overlays: TaskLabelOverlays,
+  rows: readonly SharedTaskRow[]
+): TaskLabelOverlays => {
+  if (overlays.size === 0) {
+    return overlays
+  }
+  const revisions = new Map(rows.map((row) => [row.id, row.revision]))
+  const next = new Map<string, TaskLabelOverlay>()
   for (const [taskId, overlay] of overlays) {
     if (revisions.get(taskId) === overlay.expectedRevision) {
       next.set(taskId, overlay)

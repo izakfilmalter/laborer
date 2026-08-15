@@ -20,6 +20,7 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
   executionId: null,
   executionStatus: null,
   id: 'task-1',
+  labelIds: [],
   description: null,
   revision: 1,
   rootPath: '/repo',

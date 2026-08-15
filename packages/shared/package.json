@@ -12,6 +12,7 @@
     ".": "./src/index.ts",
     "./types": "./src/types.ts",
     "./rpc": "./src/rpc.ts",
+    "./labels": "./src/labels.ts",
     "./workspace-tree": "./src/workspace-tree.ts",
     "./root-workspace": "./src/root-workspace.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",

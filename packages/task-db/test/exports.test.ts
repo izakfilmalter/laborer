@@ -48,6 +48,10 @@ const migrationLedger = [
     '0010_pr_check_runs',
     'e7938c241a71411f6357c961d0e93d45c1a5d8a9211c9f29f498047df7c86a21',
   ],
+  [
+    '0011_task_labels',
+    'e0889187314cb52bfde30a4127664ea60b0e926bb4cd8a36a68894ab627ec9e5',
+  ],
 ]
 
 describe('@laborer/task-db exports', () => {

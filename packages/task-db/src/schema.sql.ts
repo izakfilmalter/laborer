@@ -1,5 +1,11 @@
 import { sql } from 'drizzle-orm'
-import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import {
+  check,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core'
 
 export const tasks = sqliteTable(
   'tasks',
@@ -21,6 +27,8 @@ export const tasks = sqliteTable(
     /** JSON array of individual check runs behind `pr_check_status`. */
     prChecks: text('pr_checks'),
     description: text('description'),
+    /** JSON array of label ids applied to this task, in application order. */
+    labelIds: text('label_ids').notNull().default('[]'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
     revision: integer().notNull().default(1),
@@ -39,6 +47,27 @@ export const tasks = sqliteTable(
       sql`${table.executionStatus} IN ('queued', 'running', 'cancelling', 'completed', 'failed', 'cancelled', 'needs-attention')`
     ),
     check('tasks_revision_check', sql`${table.revision} >= 1`),
+  ]
+)
+
+/** Labels are app-wide and referenced by id from tasks in any project. */
+export const labels = sqliteTable(
+  'labels',
+  {
+    id: text().primaryKey(),
+    name: text().notNull(),
+    color: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    revision: integer().notNull().default(1),
+  },
+  (table) => [
+    check(
+      'labels_color_check',
+      sql`${table.color} IN ('red', 'orange', 'amber', 'emerald', 'teal', 'blue', 'violet', 'pink')`
+    ),
+    check('labels_revision_check', sql`${table.revision} >= 1`),
+    uniqueIndex('labels_name_unique').on(sql`lower(${table.name})`),
   ]
 )
 

@@ -7,6 +7,9 @@ const APP_SETTING_KEY_MAX_LENGTH = 128
 const APP_SETTING_VALUE_MAX_LENGTH = 16_384
 const MUTATION_ID_MAX_LENGTH = 128
 
+/** Longest label name accepted at the RPC, MCP, and persistence boundaries. */
+export const LABEL_NAME_MAX_LENGTH = 60
+
 /** An integer greater than or equal to zero at RPC and persistence boundaries. */
 export const NonNegativeInt = Schema.Number.check(
   Schema.isInt(),
@@ -165,6 +168,8 @@ export const BoardTask = Schema.Struct({
   ),
   id: Schema.String,
   description: Schema.NullOr(Schema.String),
+  /** Ids of the labels applied to this task, in application order. */
+  labelIds: Schema.Array(Schema.String),
   revision: Schema.Int,
   rootPath: Schema.String,
   slackPermalink: Schema.NullOr(Schema.String),
@@ -270,6 +275,33 @@ export const SharedSettingRow = Schema.Struct({
 })
 export type SharedSettingRow = typeof SharedSettingRow.Type
 
+/**
+ * Label palette token. Tailwind needs literal class strings, so the token ->
+ * class mapping lives in the renderer; this is the durable vocabulary.
+ */
+export const LabelColor = Schema.Literals([
+  'red',
+  'orange',
+  'amber',
+  'emerald',
+  'teal',
+  'blue',
+  'violet',
+  'pink',
+])
+export type LabelColor = typeof LabelColor.Type
+
+/** A label, shared app-wide across every project. */
+export const SharedLabelRow = Schema.Struct({
+  color: LabelColor,
+  createdAt: Schema.Int,
+  id: Schema.String,
+  name: Schema.String,
+  revision: Schema.Int,
+  updatedAt: Schema.Int,
+})
+export type SharedLabelRow = typeof SharedLabelRow.Type
+
 const tableUpdate = <Row extends Schema.Top>(row: Row) =>
   Schema.Union([
     Schema.Struct({
@@ -292,9 +324,12 @@ export const ProjectTableUpdate = tableUpdate(SharedProjectRow)
 export type ProjectTableUpdate = typeof ProjectTableUpdate.Type
 export const SettingTableUpdate = tableUpdate(SharedSettingRow)
 export type SettingTableUpdate = typeof SettingTableUpdate.Type
+export const LabelTableUpdate = tableUpdate(SharedLabelRow)
+export type LabelTableUpdate = typeof LabelTableUpdate.Type
 
 /** One stream, with task_changes and state_changes advancing independently. */
 export const SharedStateUpdate = Schema.Struct({
+  labels: Schema.optional(LabelTableUpdate),
   projects: Schema.optional(ProjectTableUpdate),
   settings: Schema.optional(SettingTableUpdate),
   tasks: Schema.optional(TaskTableUpdate),
@@ -756,6 +791,84 @@ export class LaborerRpcs extends RpcGroup.make(
       expectedRevision: Schema.Int,
       taskId: Schema.String,
       title: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Label RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * Creates an app-wide label. The renderer mints the id so an inline
+   * "create label" row can select it optimistically; resending the same id is
+   * an idempotent retry. Omitting `color` derives one from the name.
+   */
+  Rpc.make('label.create', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      row: SharedLabelRow,
+    }),
+    error: RpcError,
+    payload: {
+      color: Schema.optional(LabelColor),
+      id: Schema.optional(Schema.String),
+      name: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(LABEL_NAME_MAX_LENGTH)
+      ),
+    },
+  }),
+
+  /** Revision-CAS rename/recolor from the label settings surface. */
+  Rpc.make('label.update', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      row: SharedLabelRow,
+    }),
+    error: RpcError,
+    payload: {
+      color: Schema.optional(LabelColor),
+      expectedRevision: PositiveInt,
+      labelId: Schema.String,
+      name: Schema.optional(
+        Schema.String.check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(LABEL_NAME_MAX_LENGTH)
+        )
+      ),
+    },
+  }),
+
+  /**
+   * Hard-deletes a label and strips its id from every task that carries it,
+   * so a task's stored ids never outlive the labels they name.
+   */
+  Rpc.make('label.delete', {
+    success: Schema.Struct({ cursor: NonNegativeInt }),
+    error: RpcError,
+    payload: {
+      expectedRevision: PositiveInt,
+      labelId: Schema.String,
+    },
+  }),
+
+  /** Revision-CAS replacement of a task's whole label set. */
+  Rpc.make('task.labels.set', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      revision: Schema.Int,
+      row: SharedTaskRow,
+      updatedAt: Schema.Int,
+    }),
+    error: RpcError,
+    payload: {
+      expectedRevision: PositiveInt,
+      labelIds: Schema.Array(Schema.String),
+      mutationId: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
+      ),
+      taskId: Schema.String,
     },
   }),
 

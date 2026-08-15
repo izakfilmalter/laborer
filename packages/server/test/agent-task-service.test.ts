@@ -157,4 +157,122 @@ describe('AgentTaskService', () => {
       }).pipe(Effect.provide(layer))
     )
   })
+
+  it('creates, lists, renames, and deletes app-wide labels', async () => {
+    const { layer } = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const created = yield* service.createLabel({ name: '  Bug  ' })
+        expect(created).toMatchObject({ name: 'Bug', revision: 1 })
+        expect(created).not.toHaveProperty('rootPath')
+        // Migration 0011 seeds FE, BE, and Full Stack into every database.
+        const listed = yield* service.listLabels()
+        expect(listed).toContainEqual(created)
+        expect(listed.map(({ name }) => name).sort()).toEqual([
+          'BE',
+          'Bug',
+          'FE',
+          'Full Stack',
+        ])
+
+        const conflict = yield* Effect.flip(
+          service.createLabel({ name: 'bug' })
+        )
+        expect(conflict.code).toBe('NAME_CONFLICT')
+
+        const blank = yield* Effect.flip(service.createLabel({ name: '   ' }))
+        expect(blank.code).toBe('INVALID_INPUT')
+
+        const renamed = yield* service.updateLabel({
+          color: 'teal',
+          expectedRevision: created.revision,
+          id: created.id,
+          name: 'Defect',
+        })
+        expect(renamed).toMatchObject({
+          color: 'teal',
+          name: 'Defect',
+          revision: 2,
+        })
+
+        const stale = yield* Effect.flip(
+          service.updateLabel({
+            expectedRevision: created.revision,
+            id: created.id,
+            name: 'Late',
+          })
+        )
+        expect(stale.code).toBe('CAS_CONFLICT')
+
+        const missing = yield* Effect.flip(
+          service.deleteLabel('label-that-does-not-exist', 1)
+        )
+        expect(missing.code).toBe('NOT_FOUND')
+
+        expect(
+          yield* service.deleteLabel(renamed.id, renamed.revision)
+        ).toMatchObject({ id: created.id })
+        expect((yield* service.listLabels()).map(({ name }) => name)).toEqual([
+          'BE',
+          'FE',
+          'Full Stack',
+        ])
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
+  it('replaces a task label set and rejects unknown label ids', async () => {
+    const { layer, root } = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const label = yield* service.createLabel({ name: 'Bug' })
+        const task = yield* service.createTask({ path: root, title: 'Labeled' })
+
+        const labeled = yield* service.setTaskLabels({
+          expectedRevision: task.revision,
+          id: task.id,
+          labelIds: [label.id],
+        })
+        expect(labeled.labelIds).toEqual([label.id])
+        expect(labeled.revision).toBe(2)
+
+        const unknownLabel = yield* Effect.flip(
+          service.setTaskLabels({
+            expectedRevision: labeled.revision,
+            id: task.id,
+            labelIds: ['label-that-does-not-exist'],
+          })
+        )
+        expect(unknownLabel.code).toBe('NOT_FOUND')
+
+        const unknownTask = yield* Effect.flip(
+          service.setTaskLabels({
+            expectedRevision: 1,
+            id: 'task-that-does-not-exist',
+            labelIds: [],
+          })
+        )
+        expect(unknownTask.code).toBe('NOT_FOUND')
+
+        const staleTask = yield* Effect.flip(
+          service.setTaskLabels({
+            expectedRevision: task.revision,
+            id: task.id,
+            labelIds: [],
+          })
+        )
+        expect(staleTask.code).toBe('CAS_CONFLICT')
+
+        expect(
+          (yield* service.setTaskLabels({
+            expectedRevision: labeled.revision,
+            id: task.id,
+            labelIds: [],
+          })).labelIds
+        ).toEqual([])
+      }).pipe(Effect.provide(layer))
+    )
+  })
 })

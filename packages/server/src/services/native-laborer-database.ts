@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { LABEL_COLORS, labelColorForName } from '@laborer/shared/labels'
+import type { LabelColor } from '@laborer/shared/rpc'
+import { parseLabelIds, serializeLabelIds } from '@laborer/task-db'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
+import { createTaskUlid } from '@laborer/task-db/ulid'
 import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 export type TaskStatus =
@@ -72,6 +76,8 @@ export interface LaborerTask {
   readonly executionId: string | null
   readonly executionStatus: ExecutionStatus | null
   readonly id: string
+  /** Ids of the labels applied to this task, in application order. */
+  readonly labelIds: readonly string[]
   readonly parentTaskId: string | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: PullRequestCheckStatus | null
@@ -204,6 +210,29 @@ export interface AppSetting {
   readonly value: string
 }
 
+/** A label, shared app-wide across every project. */
+export interface Label {
+  readonly color: LabelColor
+  readonly createdAt: number
+  readonly id: string
+  readonly name: string
+  readonly revision: number
+  readonly updatedAt: number
+}
+
+export interface NewLabel {
+  readonly color?: LabelColor
+  readonly createdAt?: number
+  /** Client-minted id. Re-sending a stored id is an idempotent no-op. */
+  readonly id?: string
+  readonly name: string
+}
+
+export interface LabelPatch {
+  readonly color?: LabelColor
+  readonly name?: string
+}
+
 export interface MutationResult<Row> {
   readonly cursor: number
   readonly row: Row
@@ -221,10 +250,19 @@ export interface StateChange {
   readonly mutationId: string | null
   readonly rowId: string
   readonly sequence: number
-  readonly tableName: 'projects' | 'app_settings'
+  readonly tableName: StateChangeTable
 }
 
+export type StateChangeTable = 'projects' | 'app_settings' | 'labels'
+
+const STATE_CHANGE_TABLES = [
+  'projects',
+  'app_settings',
+  'labels',
+] as const satisfies readonly StateChangeTable[]
+
 export interface LaborerDatabaseSnapshot {
+  readonly labels: readonly Label[]
   readonly projects: readonly Project[]
   readonly settings: readonly AppSetting[]
   readonly stateCursor: number
@@ -241,6 +279,7 @@ export interface NativeTableUpdate<Row> {
 }
 
 export interface NativeStateUpdates {
+  readonly labels: NativeTableUpdate<Label>
   readonly projects: NativeTableUpdate<Project>
   readonly settings: NativeTableUpdate<AppSetting>
 }
@@ -276,14 +315,44 @@ export class LaborerDatabaseBusyError extends Error {
   }
 }
 
+export type LaborerDatabaseTable =
+  | 'tasks'
+  | 'projects'
+  | 'app_settings'
+  | 'labels'
+
+/** A label name already taken, case-insensitively, app-wide. */
+export class LaborerDatabaseLabelNameConflictError extends Error {
+  readonly _tag = 'LaborerDatabaseLabelNameConflictError'
+  readonly existing: Label | null
+  readonly labelName: string
+  constructor(labelName: string, existing: Label | null) {
+    super(`A label named ${labelName} already exists`)
+    this.labelName = labelName
+    this.existing = existing
+  }
+}
+
+/** A task tried to carry label ids that do not exist. */
+export class LaborerDatabaseUnknownLabelError extends Error {
+  readonly _tag = 'LaborerDatabaseUnknownLabelError'
+  readonly labelIds: readonly string[]
+  readonly taskId: string
+  constructor(taskId: string, labelIds: readonly string[]) {
+    super(`Unknown labels for task ${taskId}: ${labelIds.join(', ')}`)
+    this.taskId = taskId
+    this.labelIds = labelIds
+  }
+}
+
 export class LaborerDatabaseStaleRevisionError<Row> extends Error {
   readonly _tag = 'LaborerDatabaseStaleRevisionError'
   readonly current: Row | null
   readonly expectedRevision: number
   readonly rowId: string
-  readonly table: 'tasks' | 'projects' | 'app_settings'
+  readonly table: LaborerDatabaseTable
   constructor(
-    table: 'tasks' | 'projects' | 'app_settings',
+    table: LaborerDatabaseTable,
     rowId: string,
     expectedRevision: number,
     current: Row | null
@@ -310,10 +379,15 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   description, created_at, updated_at, revision, worktree_status,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
   pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order,
-  pr_base_branch, pr_merge_status, pr_check_status, pr_checks`
+  pr_base_branch, pr_merge_status, pr_check_status, pr_checks, label_ids`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
   created_at, updated_at, revision, sort_order, branch_name`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
+const LABEL_COLUMNS = `id, name, color, created_at, updated_at,
+  revision`
+/** Row-size bound. A task carrying more labels than this is a client defect. */
+export const MAX_TASK_LABELS = 32
+export const MAX_LABEL_NAME_LENGTH = 60
 const MAX_LEDGER_READ = 1000
 const MAX_TABLE_ROWS = 10_000
 const pathContains = (parent: string, child: string): boolean =>
@@ -532,7 +606,7 @@ const nullableEnum = <A extends string>(
 
 const boundedRows = (
   rows: readonly unknown[],
-  table: 'tasks' | 'projects' | 'app_settings'
+  table: LaborerDatabaseTable
 ): readonly unknown[] => {
   if (rows.length > MAX_TABLE_ROWS) {
     throw new Error(
@@ -566,6 +640,7 @@ const rowToTask = (value: unknown): LaborerTask => {
       'tasks.execution_status'
     ),
     id: string(row.id, 'tasks.id'),
+    labelIds: parseLabelIds(row.label_ids),
     parentTaskId: nullableString(row.parent_task_id, 'tasks.parent_task_id'),
     prBaseBranch: nullableString(row.pr_base_branch, 'tasks.pr_base_branch'),
     prCheckStatus: nullableEnum(
@@ -644,6 +719,31 @@ const rowToProject = (value: unknown): Project => {
     sortOrder: nullableNumber(row.sort_order, 'projects.sort_order'),
     updatedAt: integer(row.updated_at, 'projects.updated_at'),
   }
+}
+
+const rowToLabel = (value: unknown): Label => {
+  const row = sqliteRow(value)
+  return {
+    color: enumValue(row.color, LABEL_COLORS, 'labels.color'),
+    createdAt: integer(row.created_at, 'labels.created_at'),
+    id: string(row.id, 'labels.id'),
+    name: string(row.name, 'labels.name'),
+    revision: revision(row.revision, 'labels.revision'),
+    updatedAt: integer(row.updated_at, 'labels.updated_at'),
+  }
+}
+
+const labelName = (value: string): string => {
+  const trimmed = value.trim()
+  if (trimmed.length === 0) {
+    throw new Error('A label name must not be blank')
+  }
+  if (trimmed.length > MAX_LABEL_NAME_LENGTH) {
+    throw new Error(
+      `A label name must be ${MAX_LABEL_NAME_LENGTH} characters or fewer`
+    )
+  }
+  return trimmed
 }
 
 const rowToSetting = (value: unknown): AppSetting => {
@@ -1169,9 +1269,213 @@ export class NativeLaborerDatabase {
     return boundedRows(rows, 'app_settings').map(rowToSetting)
   }
 
+  findLabel(id: string): Label | null {
+    const row = this.#database
+      .prepare(`SELECT ${LABEL_COLUMNS} FROM labels WHERE id = ?`)
+      .get(id)
+    return row === undefined ? null : rowToLabel(row)
+  }
+
+  /** Names collide case-insensitively across the whole app. */
+  findLabelByName(name: string): Label | null {
+    const row = this.#database
+      .prepare(
+        `SELECT ${LABEL_COLUMNS} FROM labels WHERE lower(name) = lower(?)`
+      )
+      .get(name)
+    return row === undefined ? null : rowToLabel(row)
+  }
+
+  listLabels(): readonly Label[] {
+    const rows = this.#database
+      .prepare(`SELECT ${LABEL_COLUMNS} FROM labels ORDER BY name LIMIT ?`)
+      .all(MAX_TABLE_ROWS + 1)
+    return boundedRows(rows, 'labels').map(rowToLabel)
+  }
+
+  /**
+   * Creates a label. A stored id is an idempotent retry that returns the row
+   * as it stands, so a renderer that mints ids can replay a dropped response.
+   * An omitted color is derived from the name, deterministically and shared
+   * with the renderer.
+   */
+  createLabel(
+    input: NewLabel,
+    mutationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<Label> {
+    const id = input.id ?? createTaskUlid()
+    const name = labelName(input.name)
+    const color = input.color ?? labelColorForName(name)
+    const createdAt = input.createdAt ?? changedAt
+    return this.#writeTransaction(() => {
+      const existing = this.findLabel(id)
+      if (existing !== null) {
+        return { cursor: this.#stateCursor(), row: existing }
+      }
+      const conflict = this.findLabelByName(name)
+      if (conflict !== null) {
+        throw new LaborerDatabaseLabelNameConflictError(name, conflict)
+      }
+      this.#database
+        .prepare(`INSERT INTO labels (
+          id, name, color, created_at, updated_at, revision
+        ) VALUES (?, ?, ?, ?, ?, 1)`)
+        .run(id, name, color, createdAt, changedAt)
+      const cursor = this.#appendStateChange(
+        'labels',
+        id,
+        changedAt,
+        mutationId
+      )
+      return { cursor, row: this.#requireLabel(id) }
+    })
+  }
+
+  updateLabel(
+    id: string,
+    expectedRevision: number,
+    patch: LabelPatch,
+    mutationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<Label> {
+    if (patch.name === undefined && patch.color === undefined) {
+      throw new Error('A label update requires a name and/or a color')
+    }
+    const name = patch.name === undefined ? undefined : labelName(patch.name)
+    return this.#writeTransaction(() => {
+      const current = this.findLabel(id)
+      if (current === null || current.revision !== expectedRevision) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'labels',
+          id,
+          expectedRevision,
+          current
+        )
+      }
+      if (name !== undefined) {
+        const conflict = this.findLabelByName(name)
+        if (conflict !== null && conflict.id !== id) {
+          throw new LaborerDatabaseLabelNameConflictError(name, conflict)
+        }
+      }
+      const result = this.#database
+        .prepare(`UPDATE labels
+          SET name = ?, color = ?, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND revision = ?`)
+        .run(
+          name ?? current.name,
+          patch.color ?? current.color,
+          changedAt,
+          id,
+          expectedRevision
+        )
+      if (result.changes === 0) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'labels',
+          id,
+          expectedRevision,
+          this.findLabel(id)
+        )
+      }
+      const cursor = this.#appendStateChange(
+        'labels',
+        id,
+        changedAt,
+        mutationId
+      )
+      return { cursor, row: this.#requireLabel(id) }
+    })
+  }
+
+  /**
+   * Hard-deletes a label and strips its id from every task carrying it in the
+   * same transaction, so a task's stored ids never name a label that is gone.
+   * Touched tasks land on the task ledger, so subscribers re-render them.
+   */
+  deleteLabel(
+    id: string,
+    expectedRevision: number,
+    mutationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<Label> {
+    return this.#writeTransaction(() => {
+      const row = this.findLabel(id)
+      const result = this.#database
+        .prepare('DELETE FROM labels WHERE id = ? AND revision = ?')
+        .run(id, expectedRevision)
+      if (result.changes === 0 || row === null) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'labels',
+          id,
+          expectedRevision,
+          this.findLabel(id)
+        )
+      }
+      this.#stripLabelFromTasks(id, changedAt)
+      const cursor = this.#appendStateChange(
+        'labels',
+        id,
+        changedAt,
+        mutationId
+      )
+      return { cursor, row }
+    })
+  }
+
+  /**
+   * Replaces a task's whole label set under revision CAS. Ids are deduped in
+   * the order given and must name labels that exist, so the stored array is
+   * always a valid, ordered reference list. Labels are app-wide, so any label
+   * applies to a task in any project.
+   */
+  setTaskLabels(
+    taskId: string,
+    expectedRevision: number,
+    labelIds: readonly string[],
+    mutationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<LaborerTask> {
+    const requested = [...new Set(labelIds)]
+    if (requested.length > MAX_TASK_LABELS) {
+      throw new Error(`A task carries at most ${MAX_TASK_LABELS} labels`)
+    }
+    return this.#writeTransaction(() => {
+      const current = this.findTask(taskId)
+      if (current === null) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'tasks',
+          taskId,
+          expectedRevision,
+          null
+        )
+      }
+      const unknown = this.#unknownLabelIds(requested)
+      if (unknown.length > 0) {
+        throw new LaborerDatabaseUnknownLabelError(taskId, unknown)
+      }
+      const result = this.#database
+        .prepare(`UPDATE tasks
+          SET label_ids = ?, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND revision = ?`)
+        .run(serializeLabelIds(requested), changedAt, taskId, expectedRevision)
+      if (result.changes === 0) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'tasks',
+          taskId,
+          expectedRevision,
+          this.findTask(taskId)
+        )
+      }
+      const cursor = this.#appendTaskChange(taskId, changedAt, mutationId)
+      return { cursor, row: this.#requireTask(taskId) }
+    })
+  }
+
   /** Rows and both durable ledger cursors captured in one read transaction. */
   snapshot(): LaborerDatabaseSnapshot {
     return this.#readTransaction(() => ({
+      labels: this.listLabels(),
       projects: this.listProjects(),
       settings: this.listSettings(),
       stateCursor: this.#ledgerBounds('state_changes').maximum ?? 0,
@@ -1228,8 +1532,8 @@ export class NativeLaborerDatabase {
         changes.map(({ sequence }) => sequence)
       )
       const cursor = changes.at(-1)?.sequence ?? sequence
-      const update = <Row extends Project | AppSetting>(
-        tableName: 'projects' | 'app_settings',
+      const update = <Row extends Project | AppSetting | Label>(
+        tableName: StateChangeTable,
         find: (id: string) => Row | null
       ): NativeTableUpdate<Row> => {
         const tableChanges = changes.filter(
@@ -1251,6 +1555,7 @@ export class NativeLaborerDatabase {
         }
       }
       return {
+        labels: update('labels', (id) => this.findLabel(id)),
         projects: update('projects', (id) => this.findProject(id)),
         settings: update('app_settings', (key) => this.findSetting(key)),
       }
@@ -1396,7 +1701,7 @@ export class NativeLaborerDatabase {
           sequence: integer(row.sequence, 'state_changes.sequence'),
           tableName: enumValue(
             row.table_name,
-            ['projects', 'app_settings'],
+            STATE_CHANGE_TABLES,
             'state_changes.table_name'
           ),
         }
@@ -1417,6 +1722,58 @@ export class NativeLaborerDatabase {
       throw new Error(`Project ${id} could not be read after mutation`)
     }
     return row
+  }
+
+  #requireLabel(id: string): Label {
+    const row = this.findLabel(id)
+    if (row === null) {
+      throw new Error(`Label ${id} could not be read after mutation`)
+    }
+    return row
+  }
+
+  #stateCursor(): number {
+    return this.#ledgerBounds('state_changes').maximum ?? 0
+  }
+
+  /** Label ids requested for a task that do not exist at all. */
+  #unknownLabelIds(labelIds: readonly string[]): readonly string[] {
+    if (labelIds.length === 0) {
+      return []
+    }
+    const known = new Set(
+      this.#database
+        .prepare(
+          `SELECT id FROM labels
+           WHERE id IN (${labelIds.map(() => '?').join(', ')})`
+        )
+        .all(...labelIds)
+        .map((row) => string(sqliteRow(row).id, 'labels.id'))
+    )
+    return labelIds.filter((id) => !known.has(id))
+  }
+
+  #stripLabelFromTasks(labelId: string, changedAt: number): void {
+    const rows = this.#database
+      .prepare('SELECT id, label_ids FROM tasks WHERE label_ids LIKE ? LIMIT ?')
+      .all(`%${JSON.stringify(labelId)}%`, MAX_TABLE_ROWS + 1)
+    const strip = this.#database.prepare(`UPDATE tasks
+      SET label_ids = ?, updated_at = ?, revision = revision + 1
+      WHERE id = ?`)
+    for (const value of boundedRows(rows, 'tasks')) {
+      const row = sqliteRow(value)
+      const taskId = string(row.id, 'tasks.id')
+      const labelIds = parseLabelIds(row.label_ids)
+      if (!labelIds.includes(labelId)) {
+        continue
+      }
+      strip.run(
+        serializeLabelIds(labelIds.filter((id) => id !== labelId)),
+        changedAt,
+        taskId
+      )
+      this.#appendTaskChange(taskId, changedAt, null)
+    }
   }
 
   #requireSetting(key: string): AppSetting {
@@ -1440,7 +1797,7 @@ export class NativeLaborerDatabase {
   }
 
   #appendStateChange(
-    tableName: 'projects' | 'app_settings',
+    tableName: StateChangeTable,
     rowId: string,
     changedAt: number,
     mutationId: string | null

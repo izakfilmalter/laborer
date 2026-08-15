@@ -2,11 +2,14 @@ import type { SharedTaskRow } from '@laborer/shared/rpc'
 import { describe, expect, it } from 'vitest'
 import {
   applyTaskEditOverlays,
+  applyTaskLabelOverlays,
   mergePendingTaskRows,
   pendingTaskRow,
   settleTaskCreateOverlays,
   settleTaskEditOverlays,
+  settleTaskLabelOverlays,
   type TaskEditOverlay,
+  type TaskLabelOverlay,
 } from '../../src/atoms/optimistic-task-writes'
 
 const task = (id: string, revision = 1): SharedTaskRow => ({
@@ -19,6 +22,7 @@ const task = (id: string, revision = 1): SharedTaskRow => ({
   executionId: null,
   executionStatus: null,
   id,
+  labelIds: [],
   parentTaskId: null,
   prIsDraft: false,
   prNumber: null,
@@ -200,5 +204,41 @@ describe('settleTaskEditOverlays', () => {
     ])
 
     expect(settleTaskEditOverlays(overlays, []).size).toBe(0)
+  })
+})
+
+describe('task label overlays', () => {
+  const overlay = (
+    expectedRevision: number,
+    labelIds: readonly string[]
+  ): TaskLabelOverlay => ({ expectedRevision, labelIds })
+
+  it('shows the selection the picker just made', () => {
+    const rows = applyTaskLabelOverlays(
+      [task('one')],
+      new Map([['one', overlay(1, ['label-a'])]])
+    )
+
+    expect(rows[0]?.labelIds).toEqual(['label-a'])
+  })
+
+  it('leaves rows alone when nothing is in flight', () => {
+    const rows = [task('one')]
+
+    expect(applyTaskLabelOverlays(rows, new Map())).toBe(rows)
+  })
+
+  it('settles once the authoritative row leaves the revision it was based on', () => {
+    const overlays = new Map([['one', overlay(1, ['label-a'])]])
+
+    expect(settleTaskLabelOverlays(overlays, [task('one', 1)])).toBe(overlays)
+    expect(settleTaskLabelOverlays(overlays, [task('one', 2)]).size).toBe(0)
+  })
+
+  it('settles a rejected write, so a lost CAS stops hiding the stored labels', () => {
+    // The row never moved, but its task is gone from the table entirely.
+    expect(
+      settleTaskLabelOverlays(new Map([['one', overlay(1, ['a'])]]), []).size
+    ).toBe(0)
   })
 })

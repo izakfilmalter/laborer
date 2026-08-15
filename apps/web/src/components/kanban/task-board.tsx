@@ -857,9 +857,16 @@ function LaneBoard({
           const composerOpen = composerColumn === column.id
           const cards = columnTasks[column.id] ?? []
           const isDone = column.id === 'done'
-          // Clipped Done is laid out over its own footprint, so its cards
-          // cannot stretch the lane; every other column still can.
-          const clipped = isDone && !doneExpanded
+          // Done is always laid out over its own footprint, so neither the
+          // archive nor an expanded archive can stretch the lane past the
+          // board and push its own toggle off screen; every other column can.
+          const clipped = isDone
+          // Collapsed Done shows only the most recent cards; expanded shows
+          // them all, scrolling inside the same footprint.
+          const visibleCards =
+            isDone && !doneExpanded
+              ? cards.slice(0, DONE_COLLAPSED_CARD_LIMIT)
+              : cards
           const closeComposer = (reason: ComposerCloseReason) => {
             setComposerColumn(null)
             if (reason === 'cancel') {
@@ -922,7 +929,7 @@ function LaneBoard({
                         className="flex min-h-24 flex-col gap-2 px-2 pt-1.5 pb-2"
                         value={column.id}
                       >
-                        {cards.map((task) => (
+                        {visibleCards.map((task) => (
                           <KanbanItem
                             data-task-id={task.id}
                             data-testid="task-board-card"
@@ -972,7 +979,7 @@ function LaneBoard({
                   </div>
                 </div>
                 {isDone && (
-                  <div className="flex min-w-0 items-center gap-2 px-3 pb-2">
+                  <div className="flex min-w-0 shrink-0 items-center gap-2 px-3 pb-2">
                     <p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70">
                       Done cards auto-hide after 7 days
                     </p>

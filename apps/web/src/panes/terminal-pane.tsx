@@ -76,6 +76,7 @@ import {
   isTerminalFindShortcut,
   shouldBypassTerminal,
 } from '@/lib/keybinds'
+import { rendererDebug } from '@/lib/renderer-debug'
 import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
 
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
@@ -829,8 +830,15 @@ function TerminalPaneRenderer({
   useEffect(() => {
     const container = containerRef.current
     if (!container) {
+      rendererDebug('xterm', 'missing-container', { terminalId })
       return
     }
+
+    rendererDebug('xterm', 'creating', {
+      height: container.clientHeight,
+      terminalId,
+      width: container.clientWidth,
+    })
 
     // Create xterm.js Terminal instance
     const terminal = new Terminal({
@@ -889,6 +897,11 @@ function TerminalPaneRenderer({
 
     // Open terminal in the container
     terminal.open(container)
+    rendererDebug('xterm', 'opened', {
+      cols: terminal.cols,
+      rows: terminal.rows,
+      terminalId,
+    })
 
     const onDidChangeSearchResultsDisposable = searchAddon.onDidChangeResults(
       (event) => {
@@ -902,6 +915,7 @@ function TerminalPaneRenderer({
     // Terminal exists and never re-run (terminalRef identity is stable).
     const onWriteParsedDisposable = terminal.onWriteParsed(() => {
       if (!hasReceivedDataRef.current) {
+        rendererDebug('xterm', 'first-write-parsed', { terminalId })
         hasReceivedDataRef.current = true
         setHasReceivedData(true)
       }
@@ -1081,6 +1095,7 @@ function TerminalPaneRenderer({
 
     // Cleanup on unmount
     return () => {
+      rendererDebug('xterm', 'disposed', { terminalId })
       onDidChangeSearchResultsDisposable.dispose()
       onWriteParsedDisposable.dispose()
       onDataDisposable.dispose()

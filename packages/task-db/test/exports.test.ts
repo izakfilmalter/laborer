@@ -68,32 +68,41 @@ describe('@laborer/task-db exports', () => {
     ).toEqual(migrationLedger)
   })
 
-  it('resolves every public subpath under Bun and Node', () => {
-    const imports = [
-      '@laborer/task-db',
-      '@laborer/task-db/path',
-      '@laborer/task-db/migrations',
-      '@laborer/task-db/schema',
-      '@laborer/task-db/ulid',
-    ]
-    const script = `await Promise.all(${JSON.stringify(imports)}.map((specifier) => import(specifier)))`
+  // Spawning two runtimes costs seconds on a loaded CI runner, well past
+  // vitest's 5s default.
+  it(
+    'resolves every public subpath under Bun and Node',
+    { timeout: 60_000 },
+    () => {
+      const imports = [
+        '@laborer/task-db',
+        '@laborer/task-db/path',
+        '@laborer/task-db/migrations',
+        '@laborer/task-db/schema',
+        '@laborer/task-db/ulid',
+      ]
+      const script = `await Promise.all(${JSON.stringify(imports)}.map((specifier) => import(specifier)))`
 
-    for (const [runtime, arguments_] of [
-      ['node', ['--input-type=module', '--eval', script]],
-      ['bun', ['--eval', script]],
-    ] as const) {
-      const result = spawnSync(runtime, arguments_, {
-        cwd: new URL('..', import.meta.url),
-        encoding: 'utf8',
-      })
-      expect(result.error, `${runtime} failed to start`).toBeUndefined()
-      expect(result.stderr, `${runtime} wrote to stderr`).toBe('')
-      expect(result.status, `${runtime} exited unsuccessfully`).toBe(0)
+      for (const [runtime, arguments_] of [
+        ['node', ['--input-type=module', '--eval', script]],
+        ['bun', ['--eval', script]],
+      ] as const) {
+        const result = spawnSync(runtime, arguments_, {
+          cwd: new URL('..', import.meta.url),
+          encoding: 'utf8',
+        })
+        expect(result.error, `${runtime} failed to start`).toBeUndefined()
+        expect(result.stderr, `${runtime} wrote to stderr`).toBe('')
+        expect(result.status, `${runtime} exited unsuccessfully`).toBe(0)
+      }
     }
-  })
+  )
 
-  it('normalizes a missing task when the database runs under Bun', () => {
-    const script = `
+  it(
+    'normalizes a missing task when the database runs under Bun',
+    { timeout: 60_000 },
+    () => {
+      const script = `
       import { mkdtempSync, rmSync } from 'node:fs'
       import { tmpdir } from 'node:os'
       import { join } from 'node:path'
@@ -112,13 +121,14 @@ describe('@laborer/task-db exports', () => {
         rmSync(root, { recursive: true, force: true })
       }
     `
-    const result = spawnSync('bun', ['--eval', script], {
-      cwd: new URL('..', import.meta.url),
-      encoding: 'utf8',
-    })
+      const result = spawnSync('bun', ['--eval', script], {
+        cwd: new URL('..', import.meta.url),
+        encoding: 'utf8',
+      })
 
-    expect(result.error, 'bun failed to start').toBeUndefined()
-    expect(result.stderr, 'bun wrote to stderr').toBe('')
-    expect(result.status, 'bun exited unsuccessfully').toBe(0)
-  })
+      expect(result.error, 'bun failed to start').toBeUndefined()
+      expect(result.stderr, 'bun wrote to stderr').toBe('')
+      expect(result.status, 'bun exited unsuccessfully').toBe(0)
+    }
+  )
 })

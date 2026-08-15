@@ -7,7 +7,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Logger } from 'effect'
 import { afterAll } from 'vitest'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
 import type {
@@ -94,7 +94,7 @@ describe('WorktreeReconciler', () => {
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-1', repoPath)
 
-      assert.strictEqual(result.added, 2)
+      assert.strictEqual(result.added, 1)
 
       const rows = listSharedTasksForRoot(database, repoPath)
 
@@ -104,6 +104,38 @@ describe('WorktreeReconciler', () => {
         assert.strictEqual(row.status, 'in_progress')
       }
     }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.effect(
+    'does not report a registered project main checkout as added on repeated reconciliation',
+    () => {
+      const logs: string[] = []
+      const logger = Logger.make(({ message }) => {
+        logs.push(String(message))
+      })
+
+      return Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-synthetic-root', tempRoots)
+        const { database } = yield* LaborerDatabase
+        insertProject(database, 'project-synthetic-root', repoPath)
+
+        const reconciler = yield* WorktreeReconciler
+        const first = yield* reconciler.reconcile(
+          'project-synthetic-root',
+          repoPath
+        )
+        const second = yield* reconciler.reconcile(
+          'project-synthetic-root',
+          repoPath
+        )
+
+        assert.strictEqual(first.added, 0)
+        assert.strictEqual(second.added, 0)
+        assert.isFalse(
+          logs.some((message) => message.includes('ADDING external workspace'))
+        )
+      }).pipe(Effect.provide(Layer.merge(TestLayer, Logger.layer([logger]))))
+    }
   )
 
   it.effect('leaves matching existing workspace records untouched', () =>
@@ -273,7 +305,7 @@ describe('WorktreeReconciler', () => {
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-base-sha', repoPath)
 
-      assert.strictEqual(result.added, 2)
+      assert.strictEqual(result.added, 1)
 
       const defaultBranch = getDefaultBranchForTest(repoPath)
       const expectedBaseSha = git(
@@ -335,7 +367,7 @@ describe('WorktreeReconciler canonical path support', () => {
       const reconciler = yield* WorktreeReconciler
       const result = yield* reconciler.reconcile('project-canonical', repoPath)
 
-      assert.strictEqual(result.added, 2)
+      assert.strictEqual(result.added, 1)
 
       const rows = listSharedTasksForRoot(database, repoPath)
 
@@ -373,8 +405,8 @@ describe('WorktreeReconciler canonical path support', () => {
           repoPath
         )
 
-        // Reconciliation sees both, while only the linked worktree becomes a task.
-        assert.strictEqual(result.added, 2)
+        // Only the linked worktree is reported as added and becomes a task.
+        assert.strictEqual(result.added, 1)
 
         const rows = listSharedTasksForRoot(database, repoPath)
 
@@ -416,7 +448,7 @@ describe('WorktreeReconciler canonical path support', () => {
           'project-sym-dedup',
           repoPath
         )
-        assert.strictEqual(result1.added, 2)
+        assert.strictEqual(result1.added, 1)
 
         const tasksAfterFirstReconcile = listSharedTasksForRoot(
           database,
@@ -430,7 +462,7 @@ describe('WorktreeReconciler canonical path support', () => {
           'project-sym-dedup',
           symlinkPath
         )
-        assert.strictEqual(result2.added, 2)
+        assert.strictEqual(result2.added, 1)
         assert.strictEqual(result2.removed, 0)
         assert.strictEqual(listSharedTasksForRoot(database, repoPath).length, 1)
       }).pipe(Effect.provide(TestLayer))
@@ -490,8 +522,8 @@ describe('WorktreeReconciler canonical path support', () => {
           repoPath
         )
 
-        // Reconciliation detects all three, but the main checkout is not a task.
-        assert.strictEqual(result.added, 3)
+        // Only the two linked worktrees are reported as added and become tasks.
+        assert.strictEqual(result.added, 2)
 
         const rows = listSharedTasksForRoot(database, repoPath)
 

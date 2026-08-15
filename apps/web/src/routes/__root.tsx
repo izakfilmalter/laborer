@@ -8,10 +8,11 @@ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { AtomRegistryProvider } from '@/atoms/provider'
 import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
+import { ConnectionReconnectBanner } from '@/components/connection-reconnect-banner'
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { ServerGate } from '@/components/server-gate'
 import { SharedStateBridge } from '@/components/shared-state-bridge'
-import { SidecarRuntimeBoundary } from '@/components/sidecar-runtime-boundary'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -86,24 +87,23 @@ function RootComponent() {
         >
           <HotkeysProvider>
             <TooltipProvider>
-              <SidecarRuntimeBoundary>
-                {(generation) => (
-                  <AtomRegistryProvider key={`atom-registry-${generation}`}>
-                    <SharedStateBridge />
-                    <AppSettingsProvider>
-                      <div className="h-svh">
-                        <AppSettingsModal />
-                        <Outlet />
-                      </div>
-                    </AppSettingsProvider>
-                    <Toaster richColors />
-                    <PhaseTransitionDriver />
-                    <BeforeQuitHandler />
-                    <SidecarCrashListener />
-                    <DesktopUpdateToastListener />
-                  </AtomRegistryProvider>
-                )}
-              </SidecarRuntimeBoundary>
+              <ServerGate>
+                <AtomRegistryProvider>
+                  <SharedStateBridge />
+                  <ConnectionReconnectBanner />
+                  <AppSettingsProvider>
+                    <div className="h-svh">
+                      <AppSettingsModal />
+                      <Outlet />
+                    </div>
+                  </AppSettingsProvider>
+                  <Toaster richColors />
+                  <PhaseTransitionDriver />
+                  <BeforeQuitHandler />
+                  <SidecarCrashListener />
+                  <DesktopUpdateToastListener />
+                </AtomRegistryProvider>
+              </ServerGate>
             </TooltipProvider>
           </HotkeysProvider>
         </ThemeProvider>

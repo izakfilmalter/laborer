@@ -33,7 +33,7 @@ export interface AgentTaskListFilters {
   readonly status?: TaskStatus
 }
 
-export class AgentTaskError extends Schema.TaggedErrorClass<AgentTaskError>()(
+export class AgentTaskError extends Schema.TaggedError<AgentTaskError>()(
   'AgentTaskError',
   {
     code: Schema.String,

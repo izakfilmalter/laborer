@@ -303,11 +303,19 @@ function hasValidSmokeMarker(markerPath: string): boolean {
 
   try {
     const marker: unknown = JSON.parse(readFileSync(markerPath, 'utf8'))
+    if (
+      typeof marker !== 'object' ||
+      marker === null ||
+      !('url' in marker) ||
+      typeof marker.url !== 'string'
+    ) {
+      return false
+    }
+    const url = new URL(marker.url)
     return (
-      typeof marker === 'object' &&
-      marker !== null &&
-      'url' in marker &&
-      marker.url === 'laborer://app/'
+      url.protocol === 'http:' &&
+      url.hostname === '127.0.0.1' &&
+      url.pathname === '/'
     )
   } catch {
     return false
@@ -774,17 +782,17 @@ interface StagePackageJson {
  *     node_modules/             <- installed via `bun install --production --omit optional`
  *     apps/
  *       desktop/
- *         dist-electron/        <- main.cjs, preload.cjs, utility-process-bootstrap.cjs
+ *         dist-electron/        <- main.cjs, preload.cjs
  *         resources/            <- icons
  *       web/
  *         dist/                 <- bundled frontend
  *     packages/
  *       server/
- *         dist/                 <- utility-main.mjs (MessagePort RPC server)
+ *         dist/                 <- daemon-main.mjs (HTTP/WebSocket server)
  *       terminal/
- *         dist/                 <- utility-main.mjs (node-pty direct, MessagePort RPC)
+ *         dist/                 <- pty-host-main.mjs
  *       file-watcher/
- *         dist/                 <- utility-main.mjs (@parcel/watcher, MessagePort RPC)
+ *         dist/                 <- bundled file-watcher module
  *     dist/                     <- electron-builder output
  */
 function stage(stageRoot: string): void {

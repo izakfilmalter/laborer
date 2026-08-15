@@ -269,6 +269,12 @@ class WorktreeReconciler extends Context.Service<
             continue
           }
 
+          // Root workspaces are synthesized from projects rather than added as
+          // external task-backed workspaces.
+          if (detected.isMain) {
+            continue
+          }
+
           const baseSha = yield* deriveBaseSha(
             canonicalRepoPath,
             defaultBranchRef,

@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { getRunningTerminalCount } from '@/hooks/use-terminal-list'
-import { getDesktopBridge } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 
 interface PendingQuit {
   readonly id: string
@@ -54,7 +54,7 @@ function useBeforeQuit(): UseBeforeQuitResult {
   const [runningTerminalCount, setRunningTerminalCount] = useState(0)
 
   useEffect(() => {
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (!bridge) {
       return
     }
@@ -101,12 +101,9 @@ function useBeforeQuit(): UseBeforeQuitResult {
     // without re-checking for running terminals.
     forceAllowNextQuit = true
 
-    // Trigger quit via the bridge. We need to add a quitApp method to
-    // the bridge for this. For now, use ipcSend to tell the main process
-    // to re-trigger app.quit().
-    const bridge = getDesktopBridge()
+    const bridge = localApi.desktopBridge
     if (bridge) {
-      bridge.ipcSend('desktop:quit-confirmed')
+      bridge.quitApp()
     }
   }, [])
 

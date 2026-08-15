@@ -10,6 +10,7 @@
   },
   "exports": {
     ".": "./src/task-database.ts",
+    "./database-sync": "./src/database-sync.ts",
     "./migrations": "./src/migrations.ts",
     "./path": "./src/path.ts",
     "./schema": "./src/schema.sql.ts",

@@ -10,7 +10,7 @@ import type {
   SharedStateUpdate,
   SharedTaskRow,
 } from '@laborer/shared/rpc'
-import { Duration, Effect, Schedule, Stream } from 'effect'
+import { Effect, Stream } from 'effect'
 import { Atom } from 'effect/unstable/reactivity'
 
 import { LaborerClient } from './laborer-client'
@@ -756,50 +756,6 @@ export const settingsByKeyAtom = Atom.make(
     new Map(get(settingRowsAtom).map((setting) => [setting.key, setting]))
 )
 
-export const SHARED_STATE_RESUBSCRIBE_INITIAL_DELAY_MS = 500
-export const SHARED_STATE_RESUBSCRIBE_MAX_DELAY_MS = 10_000
-export const SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS = 60_000
-
-/**
- * The app owns ONE shared-state subscription for its whole lifetime. When the
- * MessagePort closes — for example, when the utility process restarts — the in-flight
- * `state.subscribe` stream fails, and without a retry the renderer would keep
- * presenting its last projection forever while mutations kept landing in the
- * shared database (the "created tasks never appear on the board" failure).
- *
- * This schedule must
- * never terminate. Each retry opens a fresh subscription whose snapshot is
- * authoritative, so no delta lost during the outage is ever needed. The
- * custom Effect 4 schedule caps its exponential delay and periodically
- * rewinds the backoff.
- */
-export const sharedStateResubscribeSchedule = Schedule.fromStepWithMetadata(
-  Effect.sync(() => {
-    let sequenceStartedAt: number | undefined
-    let attempt = 0
-
-    return (metadata: Schedule.InputMetadata<unknown>) => {
-      if (
-        sequenceStartedAt === undefined ||
-        metadata.now - sequenceStartedAt >=
-          SHARED_STATE_RESUBSCRIBE_RESET_AFTER_MS
-      ) {
-        sequenceStartedAt = metadata.now
-        attempt = 0
-      }
-      const delay = Math.min(
-        SHARED_STATE_RESUBSCRIBE_INITIAL_DELAY_MS * 2 ** attempt,
-        SHARED_STATE_RESUBSCRIBE_MAX_DELAY_MS
-      )
-      attempt += 1
-      return Effect.succeed([delay, Duration.millis(delay)] as [
-        number,
-        Duration.Duration,
-      ])
-    }
-  })
-)
-
 export const makeSharedStateEventsAtom = () =>
   LaborerClient.runtime.pull(
     LaborerClient.pipe(
@@ -809,14 +765,11 @@ export const makeSharedStateEventsAtom = () =>
       ),
       Stream.unwrap,
       Stream.tapError((error) =>
-        Effect.sync(() => {
-          console.warn(
-            '[shared-state] subscription failed — resubscribing for a fresh snapshot',
-            error
-          )
-        })
-      ),
-      Stream.retry(sharedStateResubscribeSchedule)
+        Effect.logDebug(
+          'Shared-state transport closed; awaiting next generation',
+          error
+        )
+      )
     ),
     { disableAccumulation: true }
   )

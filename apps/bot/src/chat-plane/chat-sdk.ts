@@ -104,7 +104,7 @@ export interface ChatPermissionSettlement extends ChatPermissionPresentation {
   readonly state: 'allowed' | 'cancelled' | 'expired' | 'rejected'
 }
 
-export class ChatPlaneStartupError extends Schema.TaggedErrorClass<ChatPlaneStartupError>()(
+export class ChatPlaneStartupError extends Schema.TaggedError<ChatPlaneStartupError>()(
   'ChatPlaneStartupError',
   {
     operation: Schema.String,
@@ -112,7 +112,7 @@ export class ChatPlaneStartupError extends Schema.TaggedErrorClass<ChatPlaneStar
   }
 ) {}
 
-export class ChatPlaneOperationError extends Schema.TaggedErrorClass<ChatPlaneOperationError>()(
+export class ChatPlaneOperationError extends Schema.TaggedError<ChatPlaneOperationError>()(
   'ChatPlaneOperationError',
   {
     operation: Schema.String,

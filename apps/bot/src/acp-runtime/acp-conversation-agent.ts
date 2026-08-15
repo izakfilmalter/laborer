@@ -108,24 +108,24 @@ const MAX_PROCESS_SUPERVISOR_REPORT_BYTES = 1024
 const SILENT_CONVERSATION_REPLY_TOKEN = 'NO_REPLY'
 const textEncoder = new TextEncoder()
 
-class AcpConversationFailure extends Schema.TaggedErrorClass<AcpConversationFailure>()(
+class AcpConversationFailure extends Schema.TaggedError<AcpConversationFailure>()(
   'AcpConversationFailure',
   {
     operation: Schema.Literals(['initialize', 'prompt', 'session', 'spawn']),
   }
 ) {}
 
-class AcpDurableSessionUnavailable extends Schema.TaggedErrorClass<AcpDurableSessionUnavailable>()(
+class AcpDurableSessionUnavailable extends Schema.TaggedError<AcpDurableSessionUnavailable>()(
   'AcpDurableSessionUnavailable',
   {}
 ) {}
 
-class AcpPromptProtocolRejected extends Schema.TaggedErrorClass<AcpPromptProtocolRejected>()(
+class AcpPromptProtocolRejected extends Schema.TaggedError<AcpPromptProtocolRejected>()(
   'AcpPromptProtocolRejected',
   {}
 ) {}
 
-class AcpUnknownPromptStop extends Schema.TaggedErrorClass<AcpUnknownPromptStop>()(
+class AcpUnknownPromptStop extends Schema.TaggedError<AcpUnknownPromptStop>()(
   'AcpUnknownPromptStop',
   {}
 ) {}

@@ -1,147 +1,116 @@
 /**
  * ServerGate — blocks the main app UI until backend services are reachable.
  *
- * Two runtime strategies:
- *
- * 1. **Electron production** — subscribes to sidecar status events via
- *    the DesktopBridge. Shows per-service status and offers restart
- *    buttons when services crash.
- *
- * 2. **Dev mode (browser or Electron dev)** — polls the server health
- *    endpoint (`/server-health`, proxied by Vite) with exponential
- *    backoff until a 2xx response is received.
+ * Browser and Electron both poll the daemon's same-origin `/health` endpoint
+ * with exponential backoff until a 2xx response is received.
  *
  * In both cases the gate prevents route content from
  * rendering until the backend is confirmed ready, avoiding the
  * first-boot race condition where server requests would time out
  * against a not-yet-running server.
  *
- * @see apps/desktop/src/health.ts — HealthMonitor event emission
- * @see apps/web/src/lib/sidecar-statuses.ts — pure derivation logic
- * @see apps/web/vite.config.ts — /server-health proxy
+ * @see apps/web/vite.config.ts — /health proxy
  */
 
-import type { SidecarName } from '@laborer/shared/desktop-bridge'
 import { Loader2 } from 'lucide-react'
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-
-import { Button } from '@/components/ui/button'
-import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
-import { getDesktopBridge, isElectron } from '@/lib/desktop'
 import {
-  areCoreServicesHealthy,
-  CORE_SIDECAR_NAMES,
-  getDisplayName,
-  getStatusColor,
-  getStatusLabel,
-  hasAnyCoreServiceCrashed,
-} from '@/lib/sidecar-statuses'
-import { cn } from '@/lib/utils'
-
-/** Dot color classes matching the service-status-pills component. */
-const DOT_CLASSES: Record<ReturnType<typeof getStatusColor>, string> = {
-  green: 'bg-success',
-  yellow: 'bg-warning',
-  red: 'bg-destructive',
-  gray: 'bg-muted-foreground',
-}
+  type ReactNode,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import { rendererConnectionSupervisor } from '@/atoms/renderer-connection'
 
 // ---------------------------------------------------------------------------
-// Dev mode health polling
+// Browser health polling
 // ---------------------------------------------------------------------------
 
 /** Initial polling interval (ms). */
-const DEV_POLL_INITIAL_MS = 300
+const BROWSER_POLL_INITIAL_MS = 300
 
 /** Maximum polling interval (ms). */
-const DEV_POLL_MAX_MS = 3000
+const BROWSER_POLL_MAX_MS = 3000
 
 /** Backoff multiplier. */
-const DEV_POLL_BACKOFF = 1.5
-
-/** Max consecutive failures before showing the error state. */
-const DEV_POLL_ERROR_THRESHOLD = 10
-
-type DevGateState = 'polling' | 'healthy' | 'failed'
+const BROWSER_POLL_BACKOFF = 1.5
 
 /**
- * Hook that polls `/server-health` (Vite-proxied to the server root)
+ * Consecutive failures (~12s at this backoff) after which a boot is treated as
+ * a stopped daemon rather than a slow one. Polling continues either way; only
+ * the copy escalates, so an operator is never left watching a spinner that
+ * cannot explain itself.
+ */
+const BROWSER_POLL_ESCALATE_AFTER = 10
+
+type BrowserGateState = 'polling' | 'healthy' | 'unreachable'
+
+/**
+ * Hook that polls `/health` (Vite-proxied to the daemon)
  * with exponential backoff until it receives a 2xx response.
  */
-function useDevHealthPoll(): {
-  state: DevGateState
-  retry: () => void
+function useBrowserHealthPoll(): {
+  state: BrowserGateState
 } {
-  const [state, setState] = useState<DevGateState>('polling')
-  const failureCount = useRef(0)
-  const intervalRef = useRef(DEV_POLL_INITIAL_MS)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const mountedRef = useRef(true)
-
-  const poll = useCallback(async () => {
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 2000)
-      const response = await fetch('/server-health', {
-        signal: controller.signal,
-        redirect: 'error',
-      })
-      clearTimeout(timeoutId)
-
-      if (response.ok) {
-        if (mountedRef.current) {
-          setState('healthy')
-        }
-        return
-      }
-    } catch {
-      // Connection refused, timeout, etc.
-    }
-
-    if (!mountedRef.current) {
-      return
-    }
-
-    failureCount.current += 1
-
-    if (failureCount.current >= DEV_POLL_ERROR_THRESHOLD) {
-      setState('failed')
-    }
-
-    // Schedule next poll with backoff.
-    intervalRef.current = Math.min(
-      intervalRef.current * DEV_POLL_BACKOFF,
-      DEV_POLL_MAX_MS
-    )
-    timerRef.current = setTimeout(() => {
-      poll()
-    }, intervalRef.current)
-  }, [])
-
-  const retry = useCallback(() => {
-    // Reset state and restart polling.
-    failureCount.current = 0
-    intervalRef.current = DEV_POLL_INITIAL_MS
-    setState('polling')
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
-    }
-    poll()
-  }, [poll])
+  const [state, setState] = useState<BrowserGateState>('polling')
 
   useEffect(() => {
-    mountedRef.current = true
+    let cancelled = false
+    let interval = BROWSER_POLL_INITIAL_MS
+    let failures = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let requestController: AbortController | undefined
+
+    const poll = async () => {
+      const controller = new AbortController()
+      requestController = controller
+      const timeout = setTimeout(() => controller.abort(), 2000)
+      let healthy = false
+
+      try {
+        const response = await fetch('/health', {
+          signal: controller.signal,
+          redirect: 'error',
+        })
+        healthy = response.ok
+      } catch {
+        // Connection refused, timeout, etc.
+      } finally {
+        clearTimeout(timeout)
+        if (requestController === controller) {
+          requestController = undefined
+        }
+      }
+
+      if (cancelled) {
+        return
+      }
+      if (healthy) {
+        setState('healthy')
+        return
+      }
+
+      failures += 1
+      if (failures >= BROWSER_POLL_ESCALATE_AFTER) {
+        setState('unreachable')
+      }
+      interval = Math.min(interval * BROWSER_POLL_BACKOFF, BROWSER_POLL_MAX_MS)
+      timer = setTimeout(() => {
+        poll()
+      }, interval)
+    }
+
     poll()
 
     return () => {
-      mountedRef.current = false
-      if (timerRef.current) {
-        clearTimeout(timerRef.current)
+      cancelled = true
+      requestController?.abort()
+      if (timer) {
+        clearTimeout(timer)
       }
     }
-  }, [poll])
+  }, [])
 
-  return { state, retry }
+  return { state }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,129 +122,60 @@ function useDevHealthPoll(): {
  * Uses sidecar events in Electron production, HTTP polling in dev.
  */
 function ServerGate({ children }: { readonly children: ReactNode }) {
-  const bridge = getDesktopBridge()
-
-  // Electron production: use sidecar status events from the DesktopBridge.
-  if (bridge && isElectronProduction()) {
-    return <ElectronServerGate bridge={bridge}>{children}</ElectronServerGate>
-  }
-
-  // Dev mode (browser or Electron dev): poll the health endpoint.
-  return <DevServerGate>{children}</DevServerGate>
-}
-
-/** Check if running in Electron production (not dev). */
-function isElectronProduction(): boolean {
-  return isElectron() && import.meta.env.PROD
+  return <BrowserServerGate>{children}</BrowserServerGate>
 }
 
 // ---------------------------------------------------------------------------
-// Dev mode gate
+// Browser gate
 // ---------------------------------------------------------------------------
 
-function DevServerGate({ children }: { readonly children: ReactNode }) {
-  const { state, retry } = useDevHealthPoll()
-
-  if (state === 'healthy') {
-    return <>{children}</>
-  }
-
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
-      <div className="flex flex-col items-center gap-3">
-        {state === 'polling' && (
-          <Loader2 className="size-8 animate-spin text-muted-foreground" />
-        )}
-        <h2 className="font-medium text-lg">
-          {state === 'failed' ? 'Cannot reach server' : 'Waiting for server'}
-        </h2>
-        <p className="max-w-sm text-center text-muted-foreground text-sm">
-          {state === 'failed'
-            ? 'The backend server is not responding. Make sure your dev services are running (turbo dev).'
-            : 'Connecting to backend services...'}
-        </p>
-      </div>
-
-      {state === 'failed' && (
-        <Button onClick={retry} variant="outline">
-          Retry
-        </Button>
-      )}
-    </div>
+function BrowserServerGate({ children }: { readonly children: ReactNode }) {
+  const { state } = useBrowserHealthPoll()
+  const connection = useSyncExternalStore(
+    rendererConnectionSupervisor.subscribe,
+    rendererConnectionSupervisor.getSnapshot,
+    rendererConnectionSupervisor.getSnapshot
   )
-}
 
-// ---------------------------------------------------------------------------
-// Electron production gate
-// ---------------------------------------------------------------------------
-
-function ElectronServerGate({
-  bridge,
-  children,
-}: {
-  readonly bridge: NonNullable<ReturnType<typeof getDesktopBridge>>
-  readonly children: ReactNode
-}) {
-  const statuses = useSidecarStatuses()
-  const allHealthy = areCoreServicesHealthy(statuses)
-
-  if (allHealthy) {
+  if (state === 'healthy' && connection.phase !== 'blocked') {
     return <>{children}</>
   }
 
-  const hasCrash = hasAnyCoreServiceCrashed(statuses)
-
-  const handleRestartAll = () => {
-    for (const name of CORE_SIDECAR_NAMES) {
-      if (statuses[name].state === 'crashed') {
-        bridge.restartSidecar(name as SidecarName)
-      }
-    }
+  if (connection.phase === 'blocked') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+        <h2 className="font-medium text-lg">Daemon restart failed</h2>
+        <p className="max-w-sm text-muted-foreground text-sm">
+          Laborer could not start a healthy daemon after several attempts. Quit
+          and reopen the desktop app to try again.
+        </p>
+      </div>
+    )
   }
+
+  const unreachable = state === 'unreachable'
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
-      <div className="flex flex-col items-center gap-3">
-        {!hasCrash && (
-          <Loader2 className="size-8 animate-spin text-muted-foreground" />
-        )}
+      {/* Polling never stops, so the escalation only changes what the operator
+          is told — it is announced rather than swapped in silently. */}
+      <output
+        aria-live="polite"
+        className="flex flex-col items-center gap-3 text-center"
+      >
+        <Loader2
+          aria-hidden="true"
+          className="size-8 animate-spin text-muted-foreground motion-reduce:animate-none"
+        />
         <h2 className="font-medium text-lg">
-          {hasCrash ? 'Service startup failed' : 'Starting services'}
+          {unreachable ? 'Can’t reach the daemon' : 'Starting daemon'}
         </h2>
-        <p className="text-muted-foreground text-sm">
-          {hasCrash
-            ? 'One or more services failed to start. You can retry below.'
-            : 'Waiting for backend services to become ready...'}
+        <p className="max-w-sm text-muted-foreground text-sm">
+          {unreachable
+            ? 'The daemon isn’t responding. Start it with “bun run dev”; mission control loads on its own once it answers.'
+            : 'Connecting to backend services…'}
         </p>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        {CORE_SIDECAR_NAMES.map((name) => {
-          const state = statuses[name]
-          const color = getStatusColor(state)
-          const label = getStatusLabel(state)
-
-          return (
-            <div className="flex items-center gap-3 text-sm" key={name}>
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'inline-block size-2 rounded-full',
-                  DOT_CLASSES[color]
-                )}
-              />
-              <span className="w-28 font-medium">{getDisplayName(name)}</span>
-              <span className="text-muted-foreground">{label}</span>
-            </div>
-          )
-        })}
-      </div>
-
-      {hasCrash && (
-        <Button onClick={handleRestartAll} variant="outline">
-          Restart failed services
-        </Button>
-      )}
+      </output>
     </div>
   )
 }

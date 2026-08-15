@@ -27,13 +27,15 @@
 import {
   type AgentStatusSnapshot,
   type TerminalLifecycleEventSchema,
+  TerminalRpcError,
   TerminalRpcs,
 } from '@laborer/shared/rpc'
-import { Effect, Stream } from 'effect'
+import { Cause, Effect, Queue, Stream } from 'effect'
 import {
   type TerminalLifecycleEvent,
   TerminalManager,
 } from '../services/terminal-manager.js'
+import { TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT } from '../services/terminal-transport.js'
 
 /**
  * Converts a TerminalLifecycleEvent (from TerminalManager's PubSub) to
@@ -42,7 +44,7 @@ import {
  * The internal events carry full TerminalRecord objects for Spawned and
  * Restarted events. The schema events carry only the essential fields.
  */
-const toLifecycleEventSchema = (
+export const toLifecycleEventSchema = (
   event: TerminalLifecycleEvent
 ): TerminalLifecycleEventSchema => {
   switch (event._tag) {
@@ -99,7 +101,7 @@ const toLifecycleEventSchema = (
  * diverge in the future, this function will catch the mismatch at
  * compile time.
  */
-const toTerminalInfo = (record: {
+export const toTerminalInfo = (record: {
   readonly agentStatus: AgentStatusSnapshot | null
   readonly args: readonly string[]
   readonly command: string
@@ -180,6 +182,50 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
       // -------------------------------------------------------------------
       'terminal.write': ({ id, data }) => tm.write(id, data),
 
+      'terminal.attach': ({ id, leaseId, cursor, epoch }) =>
+        Stream.callback(
+          (queue) =>
+            Effect.acquireRelease(
+              tm.attach(
+                id,
+                {
+                  ...(cursor === undefined ? {} : { cursor }),
+                  ...(epoch === undefined ? {} : { epoch }),
+                  leaseId,
+                },
+                (event) => {
+                  const offered = Queue.offerUnsafe(queue, event)
+                  if (!offered) {
+                    Queue.failCauseUnsafe(
+                      queue,
+                      Cause.fail(
+                        new TerminalRpcError({
+                          message: 'Terminal attach callback buffer overflowed',
+                          code: 'TERMINAL_ATTACH_OVERFLOW',
+                        })
+                      )
+                    )
+                  }
+                  return offered
+                }
+              ),
+              ({ subscriberId }) => tm.unsubscribe(id, subscriberId)
+            ),
+          {
+            bufferSize: TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT,
+            strategy: 'dropping',
+          }
+        ),
+
+      'terminal.ack': ({ id, leaseId, cursor }) =>
+        tm.acknowledge(id, leaseId, cursor),
+
+      'terminal.transportMetrics': ({ id }) => tm.transportMetrics(id),
+
+      'terminal.hostStatus': () => tm.hostStatus(),
+
+      'terminal.restartHost': () => tm.restartHost(),
+
       // -------------------------------------------------------------------
       // terminal.resize — resize a terminal's PTY
       // -------------------------------------------------------------------
@@ -218,6 +264,13 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
       // -------------------------------------------------------------------
       'terminal.setAgentStatus': ({ id, report }) =>
         tm.setAgentStatusFromHook(id, report),
+
+      'terminal.reportWorkspacePresence': ({
+        clientId,
+        sequence,
+        workspaceIds,
+      }) =>
+        tm.reportWorkspacePresence(clientId, sequence, new Set(workspaceIds)),
 
       // -------------------------------------------------------------------
       // terminal.events — streaming lifecycle events

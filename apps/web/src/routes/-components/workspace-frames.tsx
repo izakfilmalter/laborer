@@ -351,6 +351,8 @@ function WorkspacePickerItem({
   return (
     <Button
       className="h-auto justify-start gap-2 px-2 py-1.5 text-xs"
+      data-testid="workspace-picker-item"
+      data-workspace-id={workspace.id}
       onClick={handleClick}
       variant="ghost"
     >
@@ -587,6 +589,40 @@ function WorkspaceFrameAttentionOutline({
  * panel layout is shown. Otherwise, falls back to rendering the flat
  * `subLayout` directly.
  */
+/**
+ * The region a dropped workspace frame will occupy, painted as a
+ * translucent overlay over half the target frame (VS Code's editor-group
+ * split preview). Side edges preview a new column beside the target;
+ * top/bottom edges preview stacking within the target's column.
+ */
+const WORKSPACE_DROP_INDICATOR_CLASS: Record<WorkspaceDropEdge, string> = {
+  top: 'inset-x-0 top-0 h-1/2 border-b',
+  bottom: 'inset-x-0 bottom-0 h-1/2 border-t',
+  left: 'inset-y-0 left-0 w-1/2 border-r',
+  right: 'inset-y-0 right-0 w-1/2 border-l',
+}
+
+function WorkspaceFrameDropIndicator({
+  edge,
+}: {
+  readonly edge: WorkspaceDropEdge | null
+}) {
+  if (!edge) {
+    return null
+  }
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        'pointer-events-none absolute z-10 border-primary bg-primary/20',
+        WORKSPACE_DROP_INDICATOR_CLASS[edge]
+      )}
+      data-drop-edge={edge}
+      data-testid="workspace-frame-drop-indicator"
+    />
+  )
+}
+
 function WorkspaceFrame({
   workspaceId,
   subLayout,
@@ -866,12 +902,6 @@ function WorkspaceFrame({
       ref={frameRef}
     >
       <WorkspaceFrameAttentionOutline workspaceId={workspaceId} />
-      {closestEdge === 'top' && (
-        <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-primary" />
-      )}
-      {closestEdge === 'left' && (
-        <div className="absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />
-      )}
       <WorkspaceFrameHeaderContainer
         diffIsOpen={showDiff}
         dragHandleRef={dragHandleRef}
@@ -900,12 +930,7 @@ function WorkspaceFrame({
       )}
       <WorkspaceFrameCloseDialog workspaceId={workspaceId} />
       <WorkspaceFrameDestroyOnCloseDialog workspaceId={workspaceId} />
-      {closestEdge === 'bottom' && (
-        <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-primary" />
-      )}
-      {closestEdge === 'right' && (
-        <div className="absolute inset-y-0 right-0 z-10 w-0.5 bg-primary" />
-      )}
+      <WorkspaceFrameDropIndicator edge={closestEdge} />
     </div>
   )
 }

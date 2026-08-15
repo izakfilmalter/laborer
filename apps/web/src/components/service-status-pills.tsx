@@ -15,7 +15,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
-import { getDesktopBridge } from '@/lib/desktop'
 import {
   ALL_SIDECAR_NAMES,
   getDisplayName,
@@ -61,11 +60,7 @@ function shouldPulse(state: ServiceState): boolean {
  * status bar affordance (ADR 0003).
  */
 function restartUnresponsiveSidecar(name: SidecarName): void {
-  getDesktopBridge()
-    ?.restartSidecar(name)
-    .catch((error: unknown) => {
-      console.error(`[service-pills] Failed to restart ${name}:`, error)
-    })
+  console.warn(`[service-pills] ${name} recovery is owned by daemon RPC`)
 }
 
 /** A single service status pill with a colored dot, name, and tooltip. */

@@ -8,13 +8,13 @@
     ],
     "catalog": {
       "dotenv": "^17.2.2",
-      "effect": "4.0.0-beta.99",
-      "@effect/atom-react": "4.0.0-beta.99",
-      "@effect/platform-bun": "4.0.0-beta.99",
-      "@effect/platform-node": "4.0.0-beta.99",
-      "@effect/sql-sqlite-bun": "4.0.0-beta.99",
-      "@effect/sql-sqlite-node": "4.0.0-beta.99",
-      "@effect/vitest": "4.0.0-beta.99",
+      "effect": "4.0.0-rc.109",
+      "@effect/atom-react": "4.0.0-rc.109",
+      "@effect/platform-bun": "4.0.0-rc.109",
+      "@effect/platform-node": "4.0.0-rc.109",
+      "@effect/sql-sqlite-bun": "4.0.0-rc.109",
+      "@effect/sql-sqlite-node": "4.0.0-rc.109",
+      "@effect/vitest": "4.0.0-rc.109",
       "ioredis": "^5.7.0",
       "typescript": "^5",
       "zod": "^4.1.13"
@@ -23,14 +23,15 @@
   "type": "module",
   "scripts": {
     "sandcastle": "bun .sandcastle/main.ts",
-    "dev": "turbo dev dev:electron",
+    "dev": "bun scripts/dev-runner.ts",
+    "dev:desktop": "bun scripts/dev-runner.ts --desktop",
     "dev:bot": "bun run --cwd apps/bot dev:slack",
     "start:bot": "bun run --cwd apps/bot start:slack",
     "build": "turbo build",
     "typecheck": "turbo typecheck --ui=stream",
     "build:app": "tsx scripts/build-desktop-artifact.ts",
     "cleanup:livestore": "tsx scripts/cleanup-livestore-files.ts",
-    "test": "turbo test --ui=stream --concurrency=3",
+    "test": "bun test scripts/dev-runner.test.ts && turbo test --ui=stream --concurrency=3",
     "test:watch": "turbo test:watch --ui=stream --concurrency=3",
     "check": "turbo run //#format:fix typecheck test --ui=stream --concurrency=3 && bun run --cwd apps/bot check:secrets && bun run --cwd apps/bot test:acp-compatibility",
     "check:secrets": "bun run --cwd apps/bot check:secrets",
@@ -44,12 +45,13 @@
   },
   "dependencies": {
     "@laborer/env": "workspace:*",
+    "@laborer/ensure": "workspace:*",
     "dotenv": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.0",
-    "@effect/language-service": "^0.87.0",
+    "@effect/language-service": "0.87.2",
     "@laborer/config": "workspace:*",
     "dotenv-cli": "^11.0.0",
     "tsx": "^4.19.4",
@@ -60,7 +62,7 @@
   },
   "packageManager": "bun@1.3.5",
   "overrides": {
-    "@effect/platform-node-shared": "4.0.0-beta.99"
+    "@effect/platform-node-shared": "4.0.0-rc.109"
   },
   "patchedDependencies": {}
 }

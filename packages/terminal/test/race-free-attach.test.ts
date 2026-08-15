@@ -1,16 +1,13 @@
 /**
  * Race-free WebSocket attach protocol tests.
  *
- * Tests the terminal manager's subscribe + getScreenState API that
- * underpins the race-free WebSocket attach protocol introduced in
- * Issue #8. The protocol ensures no output is lost between the screen
- * state snapshot and the start of live streaming by subscribing to
- * live output BEFORE serializing the headless terminal's screen state.
+ * Tests the terminal manager's attach stream and the headless terminal
+ * snapshot behavior that underpin race-free WebSocket replay.
  *
  * Tests are split into two groups:
  * 1. Integration tests using the full TerminalManager + PtyHostClient stack
  *    (API shape and behavior verification)
- * 2. Unit tests for the subscribe-before-serialize pattern using the
+ * 2. Unit tests for the snapshot/live-output boundary using the
  *    headless terminal manager directly (avoids PTY host limitations
  *    under bun's test runner where pty.onData doesn't fire)
  *
@@ -40,9 +37,8 @@ const runEffect = <A, E>(
 ): Promise<A> =>
   Effect.runPromise(Effect.provide(effect, Layer.succeedContext(testContext)))
 
-/** No-op subscriber for tests that don't inspect output. */
-// biome-ignore lint/suspicious/noEmptyBlockStatements: intentional no-op for tests
-const noopSubscriber = (): void => {}
+/** Subscriber for tests that accept but do not inspect attach events. */
+const noopSubscriber = (): boolean => true
 
 /** Helper to wait for xterm async processing. */
 const waitForXterm = (ms = 50): Promise<void> =>
@@ -63,105 +59,108 @@ const TEST_CWD = '/tmp'
 const TEST_WORKSPACE_ID = 'test-workspace'
 
 // ---------------------------------------------------------------------------
-// Integration tests: subscribe API shape
+// Integration tests: attach API shape
 // ---------------------------------------------------------------------------
 
-describe(
-  'Race-free attach protocol — subscribe API',
-  { timeout: 30_000 },
-  () => {
-    it('subscribe returns subscriberId without scrollback', async () => {
-      const terminal = await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          return yield* tm.spawn({
-            command: 'echo hello',
-            cwd: TEST_CWD,
-            cols: 80,
-            rows: 24,
-            workspaceId: TEST_WORKSPACE_ID,
-          })
+describe('Race-free attach protocol — attach API', { timeout: 30_000 }, () => {
+  it('attach returns a subscriber id without embedding scrollback', async () => {
+    const terminal = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'echo hello',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
         })
-      )
+      })
+    )
 
-      const subscribeResult = await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          return yield* tm.subscribe(terminal.id, noopSubscriber)
+    const subscribeResult = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.attach(
+          terminal.id,
+          { leaseId: 'attach-shape' },
+          noopSubscriber
+        )
+      })
+    )
+
+    // Should have subscriberId but NOT scrollback
+    expect(subscribeResult.subscriberId).toBeDefined()
+    expect(typeof subscribeResult.subscriberId).toBe('string')
+    expect(subscribeResult.subscriberId.length).toBeGreaterThan(0)
+
+    // Verify scrollback is NOT in the return type
+    expect('scrollback' in subscribeResult).toBe(false)
+
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.unsubscribe(terminal.id, subscribeResult.subscriberId)
+        yield* tm.kill(terminal.id)
+      })
+    )
+  })
+
+  it('getScreenState returns empty string for non-existent terminal', async () => {
+    const screenState = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return tm.getScreenState('non-existent-terminal-id')
+      })
+    )
+
+    expect(screenState).toBe('')
+  })
+
+  it('attach and getScreenState are independently callable', async () => {
+    const terminal = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.spawn({
+          command: 'cat',
+          cwd: TEST_CWD,
+          cols: 80,
+          rows: 24,
+          workspaceId: TEST_WORKSPACE_ID,
         })
-      )
+      })
+    )
 
-      // Should have subscriberId but NOT scrollback
-      expect(subscribeResult.subscriberId).toBeDefined()
-      expect(typeof subscribeResult.subscriberId).toBe('string')
-      expect(subscribeResult.subscriberId.length).toBeGreaterThan(0)
+    const { subscriberId } = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return yield* tm.attach(
+          terminal.id,
+          { leaseId: 'attach-and-screen' },
+          noopSubscriber
+        )
+      })
+    )
 
-      // Verify scrollback is NOT in the return type
-      expect('scrollback' in subscribeResult).toBe(false)
+    // getScreenState (step 2 of race-free pattern) — should not throw
+    const screenState = await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        return tm.getScreenState(terminal.id)
+      })
+    )
 
-      await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          yield* tm.unsubscribe(terminal.id, subscribeResult.subscriberId)
-          yield* tm.kill(terminal.id)
-        })
-      )
-    })
+    // For a fresh terminal with no output yet, screen state may be empty
+    expect(typeof screenState).toBe('string')
 
-    it('getScreenState returns empty string for non-existent terminal', async () => {
-      const screenState = await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          return tm.getScreenState('non-existent-terminal-id')
-        })
-      )
-
-      expect(screenState).toBe('')
-    })
-
-    it('subscribe and getScreenState are independently callable', async () => {
-      const terminal = await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          return yield* tm.spawn({
-            command: 'cat',
-            cwd: TEST_CWD,
-            cols: 80,
-            rows: 24,
-            workspaceId: TEST_WORKSPACE_ID,
-          })
-        })
-      )
-
-      // Subscribe (step 1 of race-free pattern)
-      const { subscriberId } = await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          return yield* tm.subscribe(terminal.id, noopSubscriber)
-        })
-      )
-
-      // getScreenState (step 2 of race-free pattern) — should not throw
-      const screenState = await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          return tm.getScreenState(terminal.id)
-        })
-      )
-
-      // For a fresh terminal with no output yet, screen state may be empty
-      expect(typeof screenState).toBe('string')
-
-      await runEffect(
-        Effect.gen(function* () {
-          const tm = yield* TerminalManager
-          yield* tm.unsubscribe(terminal.id, subscriberId)
-          yield* tm.kill(terminal.id)
-        })
-      )
-    })
-  }
-)
+    await runEffect(
+      Effect.gen(function* () {
+        const tm = yield* TerminalManager
+        yield* tm.unsubscribe(terminal.id, subscriberId)
+        yield* tm.kill(terminal.id)
+      })
+    )
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Unit tests: subscribe-before-serialize pattern

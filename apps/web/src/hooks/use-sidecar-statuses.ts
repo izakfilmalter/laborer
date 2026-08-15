@@ -1,18 +1,13 @@
 /**
- * React hook that tracks the live status of all sidecar services.
+ * React hook that tracks the live status of daemon-owned capabilities.
  *
- * In Electron production mode, subscribes to SidecarStatusEvent IPC from the
- * DesktopBridge (events emitted by HealthMonitor in the main process).
- *
- * In dev mode (both browser and Electron dev), polls health endpoints for
- * each service through the Vite proxy and synthesizes status events.
- * The Electron main process does NOT spawn sidecars or emit IPC events in
- * dev mode — services are run separately via `turbo dev`.
+ * Browser and Electron clients poll same-origin daemon health aliases for
+ * each capability and synthesize status events. The aliases share one daemon
+ * lifecycle but preserve the existing capability-level UI model.
  *
  * @see packages/shared/src/desktop-bridge.ts — SidecarStatusEvent type
  * @see apps/web/src/lib/sidecar-statuses.ts — pure derivation logic
- * @see apps/web/vite.config.ts — /server-health, /terminal-health, /file-watcher-health proxies
- * @see apps/desktop/src/main.ts — HealthMonitor only created when !isDev
+ * @see packages/server/src/daemon-main.ts — capability health aliases
  */
 
 import type {
@@ -21,7 +16,6 @@ import type {
 } from '@laborer/shared/desktop-bridge'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { getDesktopBridge } from '@/lib/desktop'
 import {
   deriveSidecarStatuses,
   type SidecarStatuses,
@@ -30,23 +24,11 @@ import {
 /** Initial state with all services unknown. */
 const INITIAL_STATUSES = deriveSidecarStatuses([])
 
-/** Polling interval for dev mode health checks (ms). */
+/** Polling interval for daemon health checks (ms). */
 const DEV_POLL_INTERVAL_MS = 3000
 
 /**
- * Whether sidecar status should come from IPC events (Electron production)
- * rather than HTTP health polling (dev mode).
- *
- * In Electron dev mode, the bridge exists but the main process does NOT
- * create a HealthMonitor or emit sidecar status events (sidecars are run
- * externally via `turbo dev`). So we must use HTTP polling in dev mode
- * regardless of whether the bridge is present.
- */
-const useIpcEvents = Boolean(getDesktopBridge()) && import.meta.env.PROD
-
-/**
- * Health endpoint paths for each service in dev mode.
- * These are proxied by Vite to the respective service's root endpoint.
+ * Health aliases for each daemon-owned capability.
  */
 const DEV_HEALTH_ENDPOINTS: Partial<Record<SidecarName, string>> = {
   server: '/server-health',
@@ -55,7 +37,7 @@ const DEV_HEALTH_ENDPOINTS: Partial<Record<SidecarName, string>> = {
 }
 
 /**
- * Track the live status of all sidecar services.
+ * Track the live status of all daemon-owned capabilities.
  *
  * Returns a `SidecarStatuses` record mapping each service name to its
  * current state (unknown | starting | healthy | crashed | restarting).
@@ -69,36 +51,8 @@ function useSidecarStatuses(): SidecarStatuses {
     setStatuses(deriveSidecarStatuses(eventsRef.current))
   }, [])
 
-  // Electron production: subscribe to sidecar status events via IPC,
-  // and query current statuses on mount to catch up on events that
-  // were broadcast before the window was ready.
+  // Browser and Electron renderers poll the daemon's same-origin aliases.
   useEffect(() => {
-    if (!useIpcEvents) {
-      return
-    }
-
-    const bridge = getDesktopBridge()
-    if (!bridge) {
-      return
-    }
-
-    // Query current statuses immediately to catch up on events
-    // that were broadcast before the window was created.
-    bridge.getSidecarStatuses().then((statuses) => {
-      for (const status of statuses) {
-        handleEvent(status)
-      }
-    })
-
-    return bridge.onSidecarStatus(handleEvent)
-  }, [handleEvent])
-
-  // Dev mode (browser or Electron dev): poll health endpoints.
-  useEffect(() => {
-    if (useIpcEvents) {
-      return
-    }
-
     const healthState = new Map<SidecarName, boolean>()
     const failureCount = new Map<SidecarName, number>()
 

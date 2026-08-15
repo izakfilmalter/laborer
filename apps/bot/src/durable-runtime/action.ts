@@ -116,7 +116,7 @@ export interface RegisteredAction<Name extends string = string> {
   readonly revision: string
 }
 
-export class ActionRegistrationError extends Schema.TaggedErrorClass<ActionRegistrationError>()(
+export class ActionRegistrationError extends Schema.TaggedError<ActionRegistrationError>()(
   'ActionRegistrationError',
   {
     reason: Schema.Literals([

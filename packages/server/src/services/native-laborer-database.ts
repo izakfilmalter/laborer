@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { LABEL_COLORS, labelColorForName } from '@laborer/shared/labels'
 import type { LabelColor } from '@laborer/shared/rpc'
 import { parseLabelIds, serializeLabelIds } from '@laborer/task-db'
+import { DatabaseSync } from '@laborer/task-db/database-sync'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
 import { createTaskUlid } from '@laborer/task-db/ulid'
 import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
@@ -866,7 +866,7 @@ export class NativeLaborerDatabase {
     const row = this.#database
       .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
       .get(id)
-    return row === undefined ? null : rowToTask(row)
+    return row === undefined || row === null ? null : rowToTask(row)
   }
 
   findTaskByWorktreePath(worktreePath: string): LaborerTask | null {
@@ -878,7 +878,7 @@ export class NativeLaborerDatabase {
          ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1`
       )
       .get(worktreePath)
-    return row === undefined ? null : rowToTask(row)
+    return row === undefined || row === null ? null : rowToTask(row)
   }
 
   listTasks(): readonly LaborerTask[] {
@@ -1108,14 +1108,14 @@ export class NativeLaborerDatabase {
     const row = this.#database
       .prepare(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`)
       .get(id)
-    return row === undefined ? null : rowToProject(row)
+    return row === undefined || row === null ? null : rowToProject(row)
   }
 
   findProjectByRepoId(repoId: string): Project | null {
     const row = this.#database
       .prepare(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE repo_id = ?`)
       .get(repoId)
-    return row === undefined ? null : rowToProject(row)
+    return row === undefined || row === null ? null : rowToProject(row)
   }
 
   listProjects(): readonly Project[] {
@@ -1257,7 +1257,7 @@ export class NativeLaborerDatabase {
     const row = this.#database
       .prepare(`SELECT ${SETTING_COLUMNS} FROM app_settings WHERE key = ?`)
       .get(key)
-    return row === undefined ? null : rowToSetting(row)
+    return row === undefined || row === null ? null : rowToSetting(row)
   }
 
   listSettings(): readonly AppSetting[] {

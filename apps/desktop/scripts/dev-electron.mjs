@@ -14,7 +14,7 @@ import waitOn from 'wait-on'
 import { desktopDir, resolveElectronPath } from './electron-launcher.mjs'
 
 // Load .env.local from the repo root so its variables are available in
-// process.env before Electron inherits them for utility processes.
+// process.env before Electron and its daemon supervisor inherit them.
 const repoRoot = resolve(desktopDir, '..', '..')
 dotenv.config({ path: join(repoRoot, '.env.local') })
 
@@ -92,12 +92,17 @@ function startApp() {
     }
   })
 
-  app.once('exit', () => {
+  app.once('exit', (code) => {
     if (currentApp === app) {
       currentApp = null
     }
 
-    if (!(shuttingDown || expectedExits.has(app))) {
+    if (!(shuttingDown || expectedExits.has(app)) && code === 0) {
+      // A clean Electron exit is an explicit app quit, not a crash to hide
+      // behind a restart. End the desktop runner so it can issue the daemon's
+      // shutdown-flavoured stop and take the detached host down too.
+      shutdown(0)
+    } else if (!(shuttingDown || expectedExits.has(app))) {
       scheduleRestart()
     }
   })

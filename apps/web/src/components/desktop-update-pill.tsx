@@ -7,7 +7,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { isElectron } from '@/lib/desktop'
 import {
   type DesktopUpdateError,
   downloadDesktopUpdate,
@@ -18,6 +17,7 @@ import {
   shouldShowDesktopUpdateButton,
   useDesktopUpdateState,
 } from '@/lib/desktop-update'
+import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 
 function showDesktopUpdateError(error: DesktopUpdateError): void {
@@ -91,7 +91,7 @@ export function DesktopUpdatePill() {
   const [dismissed, setDismissed] = useState(false)
 
   const visible =
-    isElectron() && shouldShowDesktopUpdateButton(state) && !dismissed
+    localApi.isDesktop && shouldShowDesktopUpdateButton(state) && !dismissed
   const tooltip = state
     ? getDesktopUpdateButtonTooltip(state)
     : 'Update available'

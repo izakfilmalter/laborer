@@ -40,6 +40,7 @@ function SettingsButton() {
       <TooltipTrigger
         render={
           <Button
+            data-testid="open-app-settings"
             onClick={() => onOpenChange(true)}
             size="icon"
             variant="outline"

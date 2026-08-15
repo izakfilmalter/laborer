@@ -1,6 +1,6 @@
 import { LabelColor, PositiveInt } from '@laborer/shared/rpc'
 import { Effect, Layer, Schema } from 'effect'
-import { McpServer, Tool, Toolkit } from 'effect/unstable/ai'
+import { McpProtocol, McpServer, Tool, Toolkit } from 'effect/unstable/ai'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
 
 const TaskStatus = Schema.Literals([
@@ -267,5 +267,10 @@ export const TaskMcpToolsLayer = McpServer.toolkit(TaskToolkit).pipe(
 
 export const TaskMcpStdioProtocolLayer = McpServer.layerStdio({
   name: 'laborer-current',
+  protocols: [
+    McpProtocol.v2024_11_05,
+    McpProtocol.v2025_03_26,
+    McpProtocol.v2025_06_18,
+  ],
   version: '1.0.0',
 })

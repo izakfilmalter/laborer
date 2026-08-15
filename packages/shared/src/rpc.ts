@@ -6,6 +6,9 @@ import { TerminalStatus, WorkspaceStatus } from './types.js'
 const APP_SETTING_KEY_MAX_LENGTH = 128
 const APP_SETTING_VALUE_MAX_LENGTH = 16_384
 const MUTATION_ID_MAX_LENGTH = 128
+const PRESENCE_CLIENT_ID_MAX_LENGTH = 128
+const PRESENCE_WORKSPACE_ID_MAX_LENGTH = 1000
+const PRESENCE_WORKSPACE_MAX_ITEMS = 1000
 
 /** Longest label name accepted at the RPC, MCP, and persistence boundaries. */
 export const LABEL_NAME_MAX_LENGTH = 60
@@ -95,11 +98,54 @@ export const TerminalLifecycleEventSchema = Schema.Union([
 export type TerminalLifecycleEventSchema =
   typeof TerminalLifecycleEventSchema.Type
 
+/** Ordered terminal data carried by the daemon's single WebSocket. */
+export const TerminalAttachEvent = Schema.Union([
+  Schema.TaggedStruct('Snapshot', {
+    cursor: NonNegativeInt,
+    data: Schema.String,
+  }),
+  Schema.TaggedStruct('Delta', {
+    cursor: NonNegativeInt,
+    data: Schema.String,
+  }),
+  Schema.TaggedStruct('Meta', {
+    epoch: Schema.String,
+    status: Schema.Literals(['running', 'stopped']),
+  }),
+  Schema.TaggedStruct('ReplayComplete', {}),
+  Schema.TaggedStruct('Reset', {
+    epoch: Schema.String,
+    reason: Schema.Literals(['epoch_changed', 'cursor_out_of_range']),
+  }),
+  Schema.TaggedStruct('Exit', {
+    exitCode: Schema.Int,
+    signal: Schema.Int,
+  }),
+])
+
+export type TerminalAttachEvent = typeof TerminalAttachEvent.Type
+
+/** Daemon-observed health of the detached terminal host process. */
+export const TerminalHostStatus = Schema.Struct({
+  expectedVersion: Schema.String,
+  runningVersion: Schema.optional(Schema.String),
+  state: Schema.Literals([
+    'healthy',
+    'warning',
+    'unresponsive',
+    'outdated',
+    'restarting',
+    'unavailable',
+  ]),
+})
+
+export type TerminalHostStatus = typeof TerminalHostStatus.Type
+
 // ---------------------------------------------------------------------------
 // Error Types
 // ---------------------------------------------------------------------------
 
-export class RpcError extends Schema.TaggedErrorClass<RpcError>()('RpcError', {
+export class RpcError extends Schema.TaggedError<RpcError>()('RpcError', {
   message: Schema.String,
   code: Schema.optional(Schema.String),
 }) {}
@@ -117,7 +163,7 @@ export class RpcError extends Schema.TaggedErrorClass<RpcError>()('RpcError', {
  *
  * @see Issue #137: Terminal RPC contract
  */
-export class TerminalRpcError extends Schema.TaggedErrorClass<TerminalRpcError>()(
+export class TerminalRpcError extends Schema.TaggedError<TerminalRpcError>()(
   'TerminalRpcError',
   {
     message: Schema.String,
@@ -668,6 +714,28 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
 
+  /**
+   * Lists child directories on the daemon host for the browser folder picker.
+   * An omitted path starts at the daemon user's home directory.
+   */
+  Rpc.make('local.directory.list', {
+    success: Schema.Struct({
+      directories: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          path: Schema.String,
+        })
+      ),
+      parentPath: Schema.NullOr(Schema.String),
+      path: Schema.String,
+      truncated: Schema.Boolean,
+    }),
+    error: RpcError,
+    payload: {
+      path: Schema.optional(Schema.String),
+    },
+  }),
+
   /** Revision-CAS manual-order write used by project drags. Rank is the only field it writes. */
   Rpc.make('project.move', {
     success: Schema.Struct({
@@ -1177,7 +1245,7 @@ export class LaborerRpcs extends RpcGroup.make(
  * - `NOT_FOUND` — no subscription with the given ID
  * - `INTERNAL_ERROR` — unexpected internal failure
  */
-export class FileWatcherRpcError extends Schema.TaggedErrorClass<FileWatcherRpcError>()(
+export class FileWatcherRpcError extends Schema.TaggedError<FileWatcherRpcError>()(
   'FileWatcherRpcError',
   {
     message: Schema.String,
@@ -1413,7 +1481,7 @@ export type TerminalInfo = typeof TerminalInfo.Type
 /**
  * RPC group for the standalone terminal service (`@laborer/terminal`).
  *
- * All 7 endpoints operate on terminal instances managed by the terminal
+ * These endpoints operate on terminal instances and detached-host health
  * service. The `workspaceId` is opaque metadata passed at spawn time —
  * the terminal service stores it but does not interpret it.
  *
@@ -1475,6 +1543,53 @@ export class TerminalRpcs extends RpcGroup.make(
       id: Schema.String,
       data: Schema.String,
     },
+  }),
+
+  /** Cursor-replay terminal stream used by browser clients on the shared WS. */
+  Rpc.make('terminal.attach', {
+    success: TerminalAttachEvent,
+    error: TerminalRpcError,
+    payload: {
+      id: Schema.String,
+      leaseId: Schema.String,
+      cursor: Schema.optional(NonNegativeInt),
+      epoch: Schema.optional(Schema.String),
+    },
+    stream: true,
+  }),
+
+  /** Commit output only after xterm has parsed and rendered it. */
+  Rpc.make('terminal.ack', {
+    error: TerminalRpcError,
+    payload: {
+      id: Schema.String,
+      leaseId: Schema.String,
+      cursor: NonNegativeInt,
+    },
+  }),
+
+  /** Bounded-transport diagnostics for terminal/WS fairness. */
+  Rpc.make('terminal.transportMetrics', {
+    success: Schema.Struct({
+      ackLatencyMs: NonNegativeInt,
+      backlogBytes: NonNegativeInt,
+      resetCount: NonNegativeInt,
+      wsBufferedBytes: Schema.NullOr(NonNegativeInt),
+    }),
+    error: TerminalRpcError,
+    payload: { id: Schema.String },
+  }),
+
+  /** Advisory health for the detached pty host. Heartbeat silence never kills it. */
+  Rpc.make('terminal.hostStatus', {
+    success: TerminalHostStatus,
+    error: TerminalRpcError,
+  }),
+
+  /** Explicit checkpoint → host restart → revival action. */
+  Rpc.make('terminal.restartHost', {
+    success: TerminalHostStatus,
+    error: TerminalRpcError,
   }),
 
   // -----------------------------------------------------------------------
@@ -1550,6 +1665,24 @@ export class TerminalRpcs extends RpcGroup.make(
     },
   }),
 
+  /** Refresh one mission-control client's focused-workspace presence lease. */
+  Rpc.make('terminal.reportWorkspacePresence', {
+    payload: {
+      clientId: Schema.String.check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(PRESENCE_CLIENT_ID_MAX_LENGTH)
+      ),
+      /** Monotonic per-client ordering guard for overlapping refreshes. */
+      sequence: NonNegativeInt,
+      workspaceIds: Schema.Array(
+        Schema.String.check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(PRESENCE_WORKSPACE_ID_MAX_LENGTH)
+        )
+      ).check(Schema.isMaxLength(PRESENCE_WORKSPACE_MAX_ITEMS)),
+    },
+  }),
+
   // -----------------------------------------------------------------------
   // terminal.events — streaming lifecycle events
   // -----------------------------------------------------------------------
@@ -1568,3 +1701,12 @@ export class TerminalRpcs extends RpcGroup.make(
     stream: true,
   })
 ) {}
+
+/** All mission-control capabilities carried by the daemon's single socket. */
+export const DaemonRpcs = LaborerRpcs.merge(
+  // Both legacy groups contain `terminal.spawn`. The public daemon keeps the
+  // orchestration-aware Laborer contract; all other terminal manager methods
+  // come from TerminalRpcs.
+  TerminalRpcs.omit('terminal.spawn'),
+  FileWatcherRpcs
+)

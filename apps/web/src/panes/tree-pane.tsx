@@ -40,7 +40,9 @@ import type { FileNode, FileWatcherEvent } from '@laborer/shared/rpc'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { rendererConnectionGenerationAtom } from '@/atoms/renderer-connection'
 import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
@@ -51,6 +53,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 import { extractErrorMessage } from '@/lib/utils'
 import { invalidateFromWatcher } from '@/panes/file-tree/invalidate-from-watcher'
@@ -97,50 +100,63 @@ const fileStatusMutation = LaborerClient.mutation('file.status')
  * - Copy Path: copies the absolute path (worktreePath + filePath) to clipboard
  * - Copy Relative Path: copies the path relative to the worktree root
  */
-function FileTreeContextMenuContent({
-  item,
-  workspaceId,
-  worktreePath,
-}: {
-  readonly item: TreeViewSelectionItem
-  readonly workspaceId: string
-  readonly worktreePath: string
-}) {
+type FileTreeMenuAction = 'open-editor' | 'copy-path' | 'copy-relative-path'
+
+const FILE_TREE_MENU_ITEMS = [
+  { id: 'open-editor', label: 'Open in Editor' },
+  { id: 'copy-path', label: 'Copy Path' },
+  { id: 'copy-relative-path', label: 'Copy Relative Path' },
+] as const
+
+function useFileTreeContextActions(workspaceId: string, worktreePath: string) {
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
 
-  const handleOpenInEditor = useCallback(async () => {
-    try {
-      await openEditor({
-        payload: { workspaceId, filePath: item.path },
-      })
-    } catch (error: unknown) {
-      toast.error(`Failed to open file: ${extractErrorMessage(error)}`)
-    }
-  }, [item.path, openEditor, workspaceId])
+  return useCallback(
+    async (action: FileTreeMenuAction, item: TreeViewSelectionItem) => {
+      if (action === 'open-editor') {
+        try {
+          await openEditor({
+            payload: { workspaceId, filePath: item.path },
+          })
+        } catch (error: unknown) {
+          toast.error(`Failed to open file: ${extractErrorMessage(error)}`)
+        }
+        return
+      }
+      const path =
+        action === 'copy-path' ? `${worktreePath}/${item.path}` : item.path
+      try {
+        await navigator.clipboard.writeText(path)
+        toast.success(
+          action === 'copy-path'
+            ? 'Path copied to clipboard'
+            : 'Relative path copied to clipboard'
+        )
+      } catch (error: unknown) {
+        toast.error(`Failed to copy path: ${extractErrorMessage(error)}`)
+      }
+    },
+    [openEditor, workspaceId, worktreePath]
+  )
+}
 
-  const handleCopyPath = useCallback(() => {
-    const absolutePath = `${worktreePath}/${item.path}`
-    navigator.clipboard.writeText(absolutePath)
-    toast.success('Path copied to clipboard')
-  }, [item.path, worktreePath])
-
-  const handleCopyRelativePath = useCallback(() => {
-    navigator.clipboard.writeText(item.path)
-    toast.success('Relative path copied to clipboard')
-  }, [item.path])
-
+function FileTreeContextMenuContent({
+  execute,
+}: {
+  readonly execute: (action: FileTreeMenuAction) => void
+}) {
   return (
     <ContextMenuContent className="min-w-[200px]">
-      <ContextMenuItem onSelect={handleOpenInEditor}>
+      <ContextMenuItem onSelect={() => execute('open-editor')}>
         <ExternalLink />
         Open in Editor
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <ContextMenuItem onSelect={handleCopyPath}>
+      <ContextMenuItem onSelect={() => execute('copy-path')}>
         <Files />
         Copy Path
       </ContextMenuItem>
-      <ContextMenuItem onSelect={handleCopyRelativePath}>
+      <ContextMenuItem onSelect={() => execute('copy-relative-path')}>
         <Files />
         Copy Relative Path
       </ContextMenuItem>
@@ -217,24 +233,6 @@ const fetchGitStatus = async (
 // Watcher subscription hook
 // ---------------------------------------------------------------------------
 
-/**
- * Get or create the `file.watcher.subscribe` pull atom for a workspace.
- * Cached by workspaceId so multiple mounts share one stream subscription.
- */
-const watcherAtomCache = new Map<
-  string,
-  ReturnType<typeof LaborerClient.query>
->()
-
-const getWatcherAtom = (workspaceId: string) => {
-  let atom = watcherAtomCache.get(workspaceId)
-  if (!atom) {
-    atom = LaborerClient.query('file.watcher.subscribe', { workspaceId })
-    watcherAtomCache.set(workspaceId, atom)
-  }
-  return atom
-}
-
 // ---------------------------------------------------------------------------
 // Tree pane content — lazy per-directory fetching
 // ---------------------------------------------------------------------------
@@ -262,6 +260,7 @@ const getWatcherAtom = (workspaceId: string) => {
  * item before allowing the menu to open.
  */
 function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
+  const connectionGeneration = useAtomValue(rendererConnectionGenerationAtom)
   const workspaceRows = useAtomValue(workspaceViewsAtom)
   const listFiles = useAtomSet(fileListMutation, { mode: 'promise' })
 
@@ -294,7 +293,7 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   }, [treeStore.listDir])
 
   // --- Watcher subscription for invalidation ---
-  const watcherAtom = useMemo(() => getWatcherAtom(workspaceId), [workspaceId])
+  const watcherAtom = fileWatcherEventsAtom(workspaceId)
   useAtomMount(watcherAtom)
   const watcherResult = useAtomValue(watcherAtom)
 
@@ -313,8 +312,12 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
 
   // Fetch git status on mount.
   useEffect(() => {
+    if (connectionGeneration === 0) {
+      return
+    }
     refreshGitStatus()
-  }, [refreshGitStatus])
+    treeStore.refreshLoadedDirs()
+  }, [connectionGeneration, refreshGitStatus, treeStore.refreshLoadedDirs])
 
   // Process watcher events for tree invalidation and status refresh.
   const lastProcessedIndexRef = useRef(0)
@@ -374,6 +377,10 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
     useState<TreeViewSelectionItem | null>(null)
   const [selectedItem, setSelectedItem] =
     useState<TreeViewSelectionItem | null>(null)
+  const executeContextAction = useFileTreeContextActions(
+    workspaceId,
+    worktreePath
+  )
 
   const handleSelect = useCallback((item: TreeViewSelectionItem) => {
     setSelectedItem(item)
@@ -434,22 +441,50 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
     )
   }
 
+  const treeView = (
+    <FileTreeView
+      gitStatus={gitStatus}
+      onContextMenuItem={handleContextMenuItem}
+      onSelect={handleSelect}
+      selectedPath={selectedItem?.path ?? null}
+      store={treeStore}
+    />
+  )
+
   return (
     <ContextMenu onOpenChange={handleOpenChange}>
-      <ContextMenuTrigger className="h-full">
-        <FileTreeView
-          gitStatus={gitStatus}
-          onContextMenuItem={handleContextMenuItem}
-          onSelect={handleSelect}
-          selectedPath={selectedItem?.path ?? null}
-          store={treeStore}
-        />
+      <ContextMenuTrigger
+        className="h-full"
+        onContextMenu={(event) => {
+          if (
+            localApi.contextMenuKind !== 'native' ||
+            contextMenuItemRef.current === null
+          ) {
+            return
+          }
+          event.preventDefault()
+          const item = contextMenuItemRef.current
+          localApi
+            .showContextMenu(
+              FILE_TREE_MENU_ITEMS,
+              { x: event.clientX, y: event.clientY },
+              async () => null
+            )
+            .then((action) =>
+              action ? executeContextAction(action, item) : undefined
+            )
+            .catch((error: unknown) => toast.error(extractErrorMessage(error)))
+        }}
+      >
+        {treeView}
       </ContextMenuTrigger>
-      {contextMenuItem !== null && (
+      {localApi.contextMenuKind === 'dom' && contextMenuItem !== null && (
         <FileTreeContextMenuContent
-          item={contextMenuItem}
-          workspaceId={workspaceId}
-          worktreePath={worktreePath}
+          execute={(action) => {
+            executeContextAction(action, contextMenuItem).catch(
+              (error: unknown) => toast.error(extractErrorMessage(error))
+            )
+          }}
         />
       )}
     </ContextMenu>

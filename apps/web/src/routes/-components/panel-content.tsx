@@ -118,7 +118,7 @@ function FullscreenWorkspaceOverlay({
 /**
  * Renders a single window tab's workspace frames inside a container that
  * is hidden via `display: none` when the tab is inactive. This keeps
- * xterm.js terminal instances, MessagePort data channels, and RPC
+ * xterm.js terminal instances, attach streams, and RPC
  * subscriptions alive across tab switches (VS Code pattern).
  *
  * We use `display: none` rather than `visibility: hidden` or zero-size
@@ -151,6 +151,7 @@ function WindowTabContent({
   return (
     <div
       className={isActive ? 'relative h-full w-full' : 'relative'}
+      data-testid="window-tab-content"
       data-window-tab-id={tab.id}
       style={isActive ? undefined : { display: 'none' }}
     >

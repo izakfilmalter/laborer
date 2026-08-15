@@ -2,18 +2,10 @@
  * PtyHostClient — Effect Service Tag & Types
  *
  * Defines the `PtyHostClient` service interface for managing PTY processes.
- * The concrete implementation is provided by `pty-direct.ts` which runs
- * node-pty directly inside the utility process (no child process).
- *
- * The previous child-process-based implementation (which spawned a separate
- * pty-host.ts script with ELECTRON_RUN_AS_NODE=1) was removed during the
- * utility process migration (Issue #20). Utility processes run natively in
- * Electron's Node.js context, so node-pty loads correctly without ABI
- * workarounds.
+ * The concrete implementation is provided by `pty-direct.ts`, which runs
+ * node-pty inside the detached PTY host process.
  *
  * @see pty-direct.ts — the concrete implementation
- * @see Issue #6: Terminal utility process (flattened architecture)
- * @see Issue #20: Build script update + port reservation removal
  */
 
 import { Context } from 'effect'

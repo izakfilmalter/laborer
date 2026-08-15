@@ -12,7 +12,8 @@
     "test:watch": "vitest"
   },
   "exports": {
-    ".": "./src/utility-main.ts",
+    ".": "./src/rpc/handlers.ts",
+    "./rpc/handlers": "./src/rpc/handlers.ts",
     "./services/file-watcher": "./src/services/file-watcher.ts",
     "./services/watcher-manager": "./src/services/watcher-manager.ts"
   },

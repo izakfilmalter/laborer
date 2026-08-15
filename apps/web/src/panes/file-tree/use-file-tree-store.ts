@@ -208,6 +208,8 @@ export interface FileTreeStore {
   readonly nodeType: (path: string) => 'file' | 'directory' | undefined
   /** Handle expanded items change from @pierre/trees (for lazy loading). */
   readonly onExpandedItemsChange: (items: string[]) => void
+  /** Re-fetch every directory already represented in the stale tree. */
+  readonly refreshLoadedDirs: () => void
 }
 
 export const useFileTreeStore = (
@@ -222,6 +224,10 @@ export const useFileTreeStore = (
   const listRef = useRef(options.list)
   listRef.current = options.list
   const expandedDirsRef = useRef(new Set<string>(['']))
+  const loadedDirsRef = useRef<readonly string[]>([])
+  loadedDirsRef.current = Object.keys(state.dirs).filter(
+    (dir) => state.dirs[dir]?.loaded === true
+  )
 
   const ensureDir = useCallback((dir: string) => {
     setState((prev) => {
@@ -322,6 +328,12 @@ export const useFileTreeStore = (
     [ensureDir, listDir]
   )
 
+  const refreshLoadedDirs = useCallback(() => {
+    for (const dir of loadedDirsRef.current) {
+      listDir(dir, { force: true })
+    }
+  }, [listDir])
+
   const collapseDir = useCallback((dir: string) => {
     expandedDirsRef.current.delete(dir)
     setState((prev) => ({
@@ -405,5 +417,6 @@ export const useFileTreeStore = (
     listDir,
     nodeType,
     onExpandedItemsChange,
+    refreshLoadedDirs,
   }
 }

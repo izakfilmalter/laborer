@@ -13,7 +13,9 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@laborer/ensure": "workspace:*",
     "@laborer/shared": "workspace:*",
+    "effect": "catalog:",
     "electron": "40.6.0",
     "electron-updater": "^6.6.2"
   },

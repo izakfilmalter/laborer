@@ -11,7 +11,9 @@
  * @see Issue #143: Server TerminalClient + remove server terminal modules
  */
 
-import { join } from 'node:path'
+import { opendir, realpath, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import {
   type AgentProvider,
   type BoardTask,
@@ -49,6 +51,53 @@ import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
 
 const startTime = Date.now()
+const MAX_DIRECTORY_PICKER_ENTRIES = 1000
+
+export const listLocalDirectories = (requestedPath?: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const path = await realpath(resolve(requestedPath ?? homedir()))
+      const directories: Array<{ name: string; path: string }> = []
+      let entriesRead = 0
+      let truncated = false
+
+      for await (const entry of await opendir(path)) {
+        if (entriesRead >= MAX_DIRECTORY_PICKER_ENTRIES) {
+          truncated = true
+          break
+        }
+        entriesRead += 1
+
+        const entryPath = join(path, entry.name)
+        let isDirectory = entry.isDirectory()
+        if (!isDirectory && entry.isSymbolicLink()) {
+          isDirectory = await stat(entryPath)
+            .then((value) => value.isDirectory())
+            .catch(() => false)
+        }
+        if (isDirectory) {
+          directories.push({ name: entry.name, path: entryPath })
+        }
+      }
+
+      directories.sort((left, right) => left.name.localeCompare(right.name))
+      const parentPath = dirname(path)
+      return {
+        directories,
+        parentPath: parentPath === path ? null : parentPath,
+        path,
+        truncated,
+      }
+    },
+    catch: (error) =>
+      new RpcError({
+        code: 'DIRECTORY_BROWSE_FAILED',
+        message:
+          error instanceof Error
+            ? `Unable to browse directory: ${error.message}`
+            : 'Unable to browse directory',
+      }),
+  })
 
 export const projectContainsRoot = (
   repoPath: string,
@@ -57,7 +106,9 @@ export const projectContainsRoot = (
   repoPath === rootPath ||
   rootPath.startsWith(repoPath.endsWith('/') ? repoPath : `${repoPath}/`)
 
-const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
+export const ensureTaskProjects = (
+  tasks: readonly Pick<BoardTask, 'rootPath'>[]
+) =>
   Effect.gen(function* () {
     const registry = yield* ProjectRegistry
     const roots = [...new Set(tasks.map(({ rootPath }) => rootPath))]
@@ -77,9 +128,11 @@ const ensureTaskProjects = (tasks: readonly BoardTask[]) =>
             .addProject(rootPath, false)
             .pipe(
               Effect.catch((error) =>
-                Effect.logWarning(
-                  `[task-board] Could not auto-register ${rootPath}: ${error.message}`
-                ).pipe(Effect.as(undefined))
+                error.code === 'INVALID_PATH'
+                  ? Effect.void
+                  : Effect.logWarning(
+                      `[task-board] Could not auto-register ${rootPath}: ${error.message}`
+                    ).pipe(Effect.as(undefined))
               )
             )
           if (project) {
@@ -1049,6 +1102,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         yield* registry.removeProject(projectId)
       }),
     'project.list': handleProjectList,
+    'local.directory.list': ({ path }) => listLocalDirectories(path),
     'project.move': handleProjectMove,
 
     'task.board.subscribe': () =>

@@ -419,7 +419,11 @@ interface HeadlessTerminalManager {
    * The headless terminal parses the data to maintain screen state.
    * No-op if the terminal does not exist.
    */
-  readonly write: (terminalId: string, data: string) => void
+  readonly write: (
+    terminalId: string,
+    data: string,
+    onParsed?: (() => void) | undefined
+  ) => void
 }
 
 /**
@@ -550,10 +554,16 @@ const createHeadlessTerminalManager = (
     })
   }
 
-  const write = (terminalId: string, data: string): void => {
+  const write = (
+    terminalId: string,
+    data: string,
+    onParsed?: (() => void) | undefined
+  ): void => {
     const state = terminals.get(terminalId)
     if (state !== undefined) {
-      state.terminal.write(data)
+      state.terminal.write(data, onParsed)
+    } else {
+      onParsed?.()
     }
   }
 

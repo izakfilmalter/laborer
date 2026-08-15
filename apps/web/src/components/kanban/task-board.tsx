@@ -117,7 +117,7 @@ import {
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
-import { openExternalUrl } from '@/lib/desktop'
+import { localApi } from '@/lib/local-api'
 import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
@@ -317,7 +317,7 @@ function TaskBoardCard({
   const openSlack = (event: React.MouseEvent) => {
     event.stopPropagation()
     if (task.slackPermalink) {
-      openExternalUrl(task.slackPermalink)
+      localApi.openExternal(task.slackPermalink)
     }
   }
 
@@ -727,6 +727,8 @@ function ProjectLane({
         'group/project relative flex flex-col gap-1.5 transition-opacity',
         isDragging && 'opacity-40'
       )}
+      data-project-id={project.id}
+      data-testid="task-board-lane"
       ref={laneRef}
     >
       <ProjectDropIndicator edge={closestEdge} />
@@ -867,9 +869,16 @@ function LaneBoard({
           const composerOpen = composerColumn === column.id
           const cards = columnTasks[column.id] ?? []
           const isDone = column.id === 'done'
-          // Clipped Done is laid out over its own footprint, so its cards
-          // cannot stretch the lane; every other column still can.
-          const clipped = isDone && !doneExpanded
+          // Done is always laid out over its own footprint, so neither the
+          // archive nor an expanded archive can stretch the lane past the
+          // board and push its own toggle off screen; every other column can.
+          const clipped = isDone
+          // Collapsed Done shows only the most recent cards; expanded shows
+          // them all, scrolling inside the same footprint.
+          const visibleCards =
+            isDone && !doneExpanded
+              ? cards.slice(0, DONE_COLLAPSED_CARD_LIMIT)
+              : cards
           const closeComposer = (reason: ComposerCloseReason) => {
             setComposerColumn(null)
             if (reason === 'cancel') {
@@ -880,6 +889,8 @@ function LaneBoard({
           return (
             <KanbanColumn
               className="min-h-0 min-w-0"
+              data-status={column.id}
+              data-testid="task-board-column"
               key={column.id}
               value={column.id}
             >
@@ -930,8 +941,13 @@ function LaneBoard({
                         className="flex min-h-24 flex-col gap-2 px-2 pt-1.5 pb-2"
                         value={column.id}
                       >
-                        {cards.map((task) => (
-                          <KanbanItem key={task.id} value={task.id}>
+                        {visibleCards.map((task) => (
+                          <KanbanItem
+                            data-task-id={task.id}
+                            data-testid="task-board-card"
+                            key={task.id}
+                            value={task.id}
+                          >
                             <KanbanItemHandle>
                               <TaskBoardCard
                                 attachBlocked={
@@ -975,7 +991,7 @@ function LaneBoard({
                   </div>
                 </div>
                 {isDone && (
-                  <div className="flex min-w-0 items-center gap-2 px-3 pb-2">
+                  <div className="flex min-w-0 shrink-0 items-center gap-2 px-3 pb-2">
                     <p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70">
                       Done cards auto-hide after 7 days
                     </p>
@@ -1330,7 +1346,10 @@ function TaskBoard({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      data-testid="task-board"
+    >
       <div className="flex h-10 shrink-0 items-center border-b px-3">
         <BoardSearch
           onChange={setSearchQuery}

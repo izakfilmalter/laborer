@@ -528,7 +528,7 @@ export type ResourceInspectionOutcome<Resource> =
       readonly status: 'ambiguous'
     }
 
-export class WorktreeProvisioningUncertain extends Schema.TaggedErrorClass<WorktreeProvisioningUncertain>()(
+export class WorktreeProvisioningUncertain extends Schema.TaggedError<WorktreeProvisioningUncertain>()(
   'WorktreeProvisioningUncertain',
   { failure: HandlerFailure }
 ) {}
@@ -2001,7 +2001,7 @@ const isMissingFile = (error: unknown): boolean =>
   'code' in error &&
   error.code === 'ENOENT'
 
-class ApplicationSnapshotMissing extends Schema.TaggedErrorClass<ApplicationSnapshotMissing>()(
+class ApplicationSnapshotMissing extends Schema.TaggedError<ApplicationSnapshotMissing>()(
   'ApplicationSnapshotMissing',
   {}
 ) {}
@@ -2653,7 +2653,7 @@ const migrateVersionFifteenState = Effect.fnUntraced(function* (
   })
 })
 
-class ActionOperationIdentityInvalid extends Schema.TaggedErrorClass<ActionOperationIdentityInvalid>()(
+class ActionOperationIdentityInvalid extends Schema.TaggedError<ActionOperationIdentityInvalid>()(
   'ActionOperationIdentityInvalid',
   {}
 ) {}

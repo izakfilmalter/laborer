@@ -68,5 +68,6 @@ OpenCode-managed references are readable under `~/.local/share/opencode/repos/`:
 - `@t3code` — `github.com/pingdotgg/t3code`
 - `@vscode` — `github.com/microsoft/vscode`
 - `@github-desktop` — `github.com/desktop/desktop`
+- `@xterm` — `github.com/xtermjs/xterm.js`
 
 Use them for specifications, implementation patterns, tests, and examples. Prefer this repository's installed dependency versions when APIs differ.

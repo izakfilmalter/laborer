@@ -46,6 +46,10 @@
       "repository": "desktop/desktop",
       "branch": "development",
       "description": "Use for GitHub Desktop architecture, Electron patterns, Git integrations, tests, and examples"
+    },
+    "xterm": {
+      "repository": "xtermjs/xterm.js",
+      "description": "Use for xterm.js terminal APIs, browser terminal implementation patterns, addons, tests, and examples"
     }
   }
 }

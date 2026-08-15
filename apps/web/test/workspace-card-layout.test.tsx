@@ -113,7 +113,7 @@ vi.mock('@/hooks/use-destroy-workspace-checks', () => ({
   }),
 }))
 
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),
@@ -129,7 +129,7 @@ vi.mock('@/components/ui/tooltip', () => ({
   ),
 }))
 
-vi.mock('@/components/ui/alert-dialog', () => ({
+vi.mock('@laborer/ui/components/alert-dialog', () => ({
   AlertDialog: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),

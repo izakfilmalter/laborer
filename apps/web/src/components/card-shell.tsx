@@ -13,9 +13,14 @@
  * that only responds to a click on a div is unreachable without one.
  */
 
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@laborer/ui/components/card'
+import { cn } from '@laborer/ui/lib/utils'
 import type { ComponentProps, MouseEvent, ReactNode } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
 
 interface CardShellProps
   extends Omit<ComponentProps<'div'>, 'onClick' | 'title'> {

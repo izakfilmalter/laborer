@@ -37,7 +37,7 @@ vi.mock('@/panels/panel-context', () => ({
   usePanelActions: () => null,
 }))
 
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipContent: () => null,
   TooltipTrigger: ({ render }: { render: React.ReactElement }) => render,

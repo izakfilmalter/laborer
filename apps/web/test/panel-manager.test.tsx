@@ -14,7 +14,7 @@ const {
   setActivePaneIdMock: vi.fn(),
 }))
 
-vi.mock('@/components/ui/resizable', () => ({
+vi.mock('@laborer/ui/components/resizable', () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
   ResizablePanel: ({
     children,
@@ -93,7 +93,7 @@ vi.mock('@/routes/-components/close-dialogs', () => ({
   PaneCloseConfirmDialog: () => null,
 }))
 
-vi.mock('@/components/ui/panel-type-picker', () => ({
+vi.mock('@/components/panel-type-picker', () => ({
   PanelTypePicker: () => (
     <div data-testid="panel-type-picker" role="listbox" tabIndex={0} />
   ),
@@ -109,8 +109,11 @@ vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn() },
 }))
 
-vi.mock('@/lib/utils', () => ({
+vi.mock('@laborer/ui/lib/utils', () => ({
   cn: (...classes: unknown[]) => classes.filter(Boolean).join(' '),
+}))
+
+vi.mock('@/lib/errors', () => ({
   extractErrorMessage: (e: unknown) => String(e),
 }))
 

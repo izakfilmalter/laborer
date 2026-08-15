@@ -23,7 +23,8 @@
     "rootDirs": ["."],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@laborer/ui/*": ["../../packages/ui/src/*"]
     },
     "plugins": [
       {

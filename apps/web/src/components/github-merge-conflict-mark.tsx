@@ -8,12 +8,12 @@
  * carries its full sentence in a tooltip.
  */
 
-import { GitCompareArrows } from 'lucide-react'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { GitCompareArrows } from 'lucide-react'
 
 function GitHubMergeConflictMark({
   baseBranch,

@@ -37,6 +37,13 @@ import {
   useAtomValue,
 } from '@effect/atom-react/Hooks'
 import type { FileNode, FileWatcherEvent } from '@laborer/shared/rpc'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@laborer/ui/components/context-menu'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -45,17 +52,10 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import { rendererConnectionGenerationAtom } from '@/atoms/renderer-connection'
 import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from '@/components/ui/context-menu'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
 import { invalidateFromWatcher } from '@/panes/file-tree/invalidate-from-watcher'
 import {
   FileTreeView,

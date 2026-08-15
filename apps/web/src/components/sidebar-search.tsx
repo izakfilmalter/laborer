@@ -8,16 +8,16 @@
  * @see Issue #171: Replace ProjectSwitcher with search bar
  */
 
-import { Search, X } from 'lucide-react'
-import type { KeyboardEvent } from 'react'
-import { useCallback, useRef } from 'react'
-import { Input } from '@/components/ui/input'
+import { Input } from '@laborer/ui/components/input'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { Search, X } from 'lucide-react'
+import type { KeyboardEvent } from 'react'
+import { useCallback, useRef } from 'react'
 
 interface SidebarSearchProps {
   /** Additional classes for the outer wrapper. */

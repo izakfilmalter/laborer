@@ -1,5 +1,5 @@
 /**
- * Stateful fake for `@/components/ui/resizable` used by workspace frame
+ * Stateful fake for `@laborer/ui/components/resizable` used by workspace frame
  * tests.
  *
  * Emulates the react-resizable-panels v4 behaviors that matter for

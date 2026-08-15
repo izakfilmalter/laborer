@@ -15,6 +15,25 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { createTaskUlid } from '@laborer/task-db/ulid'
+import { Badge } from '@laborer/ui/components/badge'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Kanban,
+  KanbanBoard,
+  KanbanColumn,
+  KanbanColumnContent,
+  KanbanItem,
+  KanbanItemHandle,
+  KanbanOverlay,
+} from '@laborer/ui/components/reui/kanban'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
+import { Spinner } from '@laborer/ui/components/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
 import {
   AlignLeft,
   Bot,
@@ -91,31 +110,12 @@ import {
   useProjectReorderMonitor,
 } from '@/components/project-reorder'
 import {
-  Kanban,
-  KanbanBoard,
-  KanbanColumn,
-  KanbanColumnContent,
-  KanbanItem,
-  KanbanItemHandle,
-  KanbanOverlay,
-} from '@/components/reui/kanban'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Spinner } from '@/components/ui/spinner'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
+import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
-import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 

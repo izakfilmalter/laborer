@@ -1,4 +1,13 @@
 import type { WindowLayout } from '@laborer/shared/types'
+import { Button } from '@laborer/ui/components/button'
+import { Kbd } from '@laborer/ui/components/kbd'
+import type { TabBarItem } from '@laborer/ui/components/tab-bar'
+import { TabBar } from '@laborer/ui/components/tab-bar'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@laborer/ui/components/tooltip'
 import {
   Columns3,
   PanelLeftClose,
@@ -6,15 +15,6 @@ import {
   SquareKanban,
 } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
-import { Button } from '@/components/ui/button'
-import { Kbd } from '@/components/ui/kbd'
-import type { TabBarItem } from '@/components/ui/tab-bar'
-import { TabBar } from '@/components/ui/tab-bar'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 
 interface WindowTabBarProps {
   readonly onCloseTab: (() => void) | undefined

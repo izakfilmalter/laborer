@@ -1,4 +1,4 @@
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@laborer/ui/components/badge'
 import { localApi } from '@/lib/local-api'
 
 import { LifecyclePhase, useLifecyclePhase } from './lifecycle-phase-context'

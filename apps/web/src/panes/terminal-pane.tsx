@@ -44,6 +44,15 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  InputGroupText,
+} from '@laborer/ui/components/input-group'
+import { Kbd } from '@laborer/ui/components/kbd'
+import { Spinner } from '@laborer/ui/components/spinner'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -58,15 +67,6 @@ import {
   TERMINAL_REVIVAL_ANNOUNCEMENT,
   TerminalRevivalMarker,
 } from '@/components/terminal-revival-marker'
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-  InputGroupText,
-} from '@/components/ui/input-group'
-import { Kbd } from '@/components/ui/kbd'
-import { Spinner } from '@/components/ui/spinner'
 import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import {

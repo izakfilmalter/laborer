@@ -1,6 +1,3 @@
-import type { KeyboardEvent } from 'react'
-import { useCallback, useEffect, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,9 +7,12 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
-import { Kbd } from '@/components/ui/kbd'
+} from '@laborer/ui/components/alert-dialog'
+import { Button } from '@laborer/ui/components/button'
+import { Kbd } from '@laborer/ui/components/kbd'
+import type { KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { isExactEnter, isMetaEnter, isMetaShiftEnter } from '@/lib/dialog-keys'
 import { localApi } from '@/lib/local-api'
 import {

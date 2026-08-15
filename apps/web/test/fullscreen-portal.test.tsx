@@ -36,7 +36,7 @@ vi.mock('@/components/terminal-overlay-toolbar', () => ({
   TerminalOverlayToolbar: () => null,
 }))
 
-vi.mock('@/components/ui/resizable', () => ({
+vi.mock('@laborer/ui/components/resizable', () => ({
   ResizableHandle: () => <div data-testid="resize-handle" />,
   ResizablePanel: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="resizable-panel">{children}</div>
@@ -91,8 +91,11 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }))
 
-vi.mock('@/lib/utils', () => ({
+vi.mock('@laborer/ui/lib/utils', () => ({
   cn: (...args: string[]) => args.filter(Boolean).join(' '),
+}))
+
+vi.mock('@/lib/errors', () => ({
   extractErrorMessage: (e: unknown) => String(e),
 }))
 

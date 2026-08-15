@@ -27,6 +27,7 @@ const Task = Schema.Struct({
       'needs-attention',
     ])
   ),
+  identifier: Schema.String,
   id: Schema.String,
   revision: Schema.Int,
   rootPath: Schema.String,
@@ -39,6 +40,7 @@ const Task = Schema.Struct({
     'worktree',
   ]),
   status: TaskStatus,
+  taskNumber: Schema.Int,
   title: Schema.String,
   updatedAt: Schema.Int,
   worktreePath: Schema.NullOr(Schema.String),
@@ -46,12 +48,17 @@ const Task = Schema.Struct({
 
 const ListProjects = Tool.make('list_projects', {
   description:
-    'List registered Laborer projects and their canonical repository paths.',
+    'List registered Laborer projects with their task-ID short names and canonical repository paths.',
   success: Schema.Struct({
     projects: Schema.Array(
-      Schema.Struct({ name: Schema.String, repoPath: Schema.String })
+      Schema.Struct({
+        name: Schema.String,
+        repoPath: Schema.String,
+        shortName: Schema.String,
+      })
     ),
   }),
+  failure: AgentTaskError,
 })
 const CreateTask = Tool.make('create_task', {
   description:
@@ -66,7 +73,7 @@ const CreateTask = Tool.make('create_task', {
 })
 const UpdateTask = Tool.make('update_task', {
   description:
-    'Update only the title and/or description of a non-Execution task using revision CAS.',
+    'Update only the title and/or description of a non-Execution task using revision CAS. The id may be a readable identifier such as LAB-123 or the internal ULID.',
   parameters: Schema.Struct({
     description: Schema.optional(Schema.NullOr(Schema.String)),
     expected_revision: PositiveInt,
@@ -78,7 +85,7 @@ const UpdateTask = Tool.make('update_task', {
 })
 const DeleteTask = Tool.make('delete_task', {
   description:
-    'Soft-delete a task by changing its status to cancelled using revision CAS.',
+    'Soft-delete a task by changing its status to cancelled using revision CAS. The id may be a readable identifier such as LAB-123 or the internal ULID.',
   parameters: Schema.Struct({
     expected_revision: PositiveInt,
     id: Schema.String,
@@ -88,7 +95,7 @@ const DeleteTask = Tool.make('delete_task', {
 })
 const ListTasks = Tool.make('list_tasks', {
   description:
-    'List board tasks, excluding cancelled tasks by default. Search matches title and branch.',
+    'List board tasks, excluding cancelled tasks by default. Search matches identifier, title, and branch.',
   parameters: Schema.Struct({
     include_cancelled: Schema.optional(Schema.Boolean),
     path: Schema.optional(Schema.String),
@@ -99,7 +106,8 @@ const ListTasks = Tool.make('list_tasks', {
   failure: AgentTaskError,
 })
 const GetTask = Tool.make('get_task', {
-  description: 'Fetch the full shared task row by id.',
+  description:
+    'Fetch the full shared task row by readable identifier (for example LAB-123) or internal ULID.',
   parameters: Schema.Struct({ id: Schema.String }),
   success: Task,
   failure: AgentTaskError,
@@ -130,7 +138,9 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
     const service = yield* AgentTaskService
     return TaskToolkit.of({
       list_projects: () =>
-        service.listProjects().pipe(Effect.map((projects) => ({ projects }))),
+        exposeErrorCode(service.listProjects()).pipe(
+          Effect.map((projects) => ({ projects }))
+        ),
       create_task: ({ description, path, title }) =>
         exposeErrorCode(
           service.createTask({

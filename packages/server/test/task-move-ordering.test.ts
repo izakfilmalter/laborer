@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
@@ -23,6 +23,51 @@ const seed = (path: string) => {
 }
 
 describe('task.move manual ordering', () => {
+  it('canonicalizes a readable identifier before moving and writing the ledger', () =>
+    Effect.gen(function* () {
+      const root = mkdtempSync(join(tmpdir(), 'laborer-task-move-readable-'))
+      const path = join(root, 'laborer.sqlite')
+      writeFileSync(join(root, 'laborer.json'), '{"shortName":"MOVE"}\n')
+      const database = NativeLaborerDatabase.open(path)
+      database.insertProject({
+        canonicalGitCommonDir: root,
+        id: 'project-1',
+        name: 'Move',
+        repoId: 'repo-1',
+        rootPath: root,
+      })
+      const task = database.insertTask({
+        id: 'internal-move-id',
+        rootPath: root,
+        source: 'manual',
+        status: 'todo',
+        title: 'Move readably',
+      }).row
+      database.close()
+
+      const moved = yield* handleTaskMoveAtPath(
+        {
+          expectedRevision: task.revision,
+          mutationId: 'readable-move',
+          sortOrder: 3,
+          status: 'in_review',
+          taskId: `MOVE-${String(task.taskNumber)}`,
+        },
+        path
+      )
+      assert.strictEqual(moved.row.id, 'internal-move-id')
+      const reopened = NativeLaborerDatabase.open(path)
+      assert.strictEqual(
+        reopened.findTask('internal-move-id')?.status,
+        'in_review'
+      )
+      assert.strictEqual(
+        reopened.taskChangesAfter(1)[0]?.taskId,
+        'internal-move-id'
+      )
+      reopened.close()
+    }))
+
   it('persists fractional order and the settlement token in one commit', () =>
     Effect.gen(function* () {
       const path = databasePath()

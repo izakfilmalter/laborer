@@ -3,18 +3,26 @@ import { realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
+import { formatTaskIdentifier } from '@laborer/task-db/task-identifier'
 import { createTaskUlid } from '@laborer/task-db/ulid'
 import { Context, Effect, Layer, Schema } from 'effect'
+import { ConfigService } from './config-service.js'
 import { LaborerDatabase } from './laborer-database.js'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
+import {
+  findTaskByReference,
+  nearestTaskProject,
+  type TaskIdentifierProject,
+} from './task-identifier-resolver.js'
 
 const MAX_TITLE_LENGTH = 100
 const MAX_DESCRIPTION_LENGTH = 100_000
 const MAX_SEARCH_LENGTH = 1000
 
-export interface AgentTaskProject {
-  readonly name: string
-  readonly repoPath: string
+export interface AgentTaskProject extends TaskIdentifierProject {}
+
+export interface AgentTask extends Task {
+  readonly identifier: string
 }
 
 export interface AgentTaskListFilters {
@@ -31,18 +39,6 @@ export class AgentTaskError extends Schema.TaggedErrorClass<AgentTaskError>()(
     message: Schema.String,
   }
 ) {}
-
-const pathContains = (parent: string, child: string): boolean =>
-  parent === child ||
-  child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
-
-const nearestProject = (
-  path: string,
-  projects: readonly AgentTaskProject[]
-): AgentTaskProject | undefined =>
-  projects
-    .filter((project) => pathContains(project.repoPath, path))
-    .sort((left, right) => right.repoPath.length - left.repoPath.length)[0]
 
 const linkedWorktreeMainPath = (path: string): string | undefined => {
   try {
@@ -131,22 +127,25 @@ export class AgentTaskService extends Context.Service<
       readonly description?: string | null
       readonly path: string
       readonly title: string
-    }) => Effect.Effect<Task, AgentTaskError>
+    }) => Effect.Effect<AgentTask, AgentTaskError>
     readonly deleteTask: (
       id: string,
       expectedRevision: number
-    ) => Effect.Effect<Task, AgentTaskError>
-    readonly getTask: (id: string) => Effect.Effect<Task, AgentTaskError>
-    readonly listProjects: () => Effect.Effect<readonly AgentTaskProject[]>
+    ) => Effect.Effect<AgentTask, AgentTaskError>
+    readonly getTask: (id: string) => Effect.Effect<AgentTask, AgentTaskError>
+    readonly listProjects: () => Effect.Effect<
+      readonly AgentTaskProject[],
+      AgentTaskError
+    >
     readonly listTasks: (
       filters: AgentTaskListFilters
-    ) => Effect.Effect<readonly Task[], AgentTaskError>
+    ) => Effect.Effect<readonly AgentTask[], AgentTaskError>
     readonly updateTask: (input: {
       readonly description?: string | null
       readonly expectedRevision: number
       readonly id: string
       readonly title?: string
-    }) => Effect.Effect<Task, AgentTaskError>
+    }) => Effect.Effect<AgentTask, AgentTaskError>
   }
 >()('@laborer/server/AgentTaskService') {
   static layer(
@@ -156,12 +155,33 @@ export class AgentTaskService extends Context.Service<
       AgentTaskService,
       Effect.gen(function* () {
         const laborerDatabase = yield* LaborerDatabase
-        const listProjects = () =>
+        const configService = yield* ConfigService
+        const listRegisteredProjects = () =>
           laborerDatabase.read('list agent task projects', (database) =>
             database
               .listProjects()
               .map(({ name, rootPath: repoPath }) => ({ name, repoPath }))
           )
+        const listProjects = () =>
+          Effect.gen(function* () {
+            const projects = yield* listRegisteredProjects()
+            return yield* Effect.forEach(projects, (project) =>
+              configService.resolveConfig(project.repoPath, project.name).pipe(
+                Effect.map((config) => ({
+                  ...project,
+                  aliases: config.shortNameAliases.value,
+                  shortName: config.shortName.value,
+                })),
+                Effect.mapError(
+                  (error) =>
+                    new AgentTaskError({
+                      code: 'INVALID_PROJECT_CONFIG',
+                      message: `${project.repoPath}: ${error.message}`,
+                    })
+                )
+              )
+            )
+          })
         const withDatabase = <A>(
           operation: (database: NodeTaskBoardDatabase) => A
         ) =>
@@ -185,8 +205,11 @@ export class AgentTaskService extends Context.Service<
             })
             const projects = yield* listProjects()
             const project =
-              nearestProject(canonical, projects) ??
-              nearestProject(linkedWorktreeMainPath(canonical) ?? '', projects)
+              nearestTaskProject(canonical, projects) ??
+              nearestTaskProject(
+                linkedWorktreeMainPath(canonical) ?? '',
+                projects
+              )
             if (!project) {
               return yield* new AgentTaskError({
                 code: 'UNKNOWN_PROJECT',
@@ -194,6 +217,30 @@ export class AgentTaskService extends Context.Service<
               })
             }
             return project
+          })
+        const exposeTask = (
+          task: Task,
+          projects: readonly AgentTaskProject[]
+        ): AgentTask => {
+          const project = nearestTaskProject(task.rootPath, projects)
+          const shortName = project?.shortName ?? 'TASK'
+          return {
+            ...task,
+            identifier: formatTaskIdentifier(shortName, task.taskNumber),
+          }
+        }
+        const resolveTask = (id: string) =>
+          Effect.gen(function* () {
+            const projects = yield* listProjects()
+            const task = yield* withDatabase((database) =>
+              findTaskByReference(
+                database,
+                id,
+                projects,
+                (code, message) => new AgentTaskError({ code, message })
+              )
+            )
+            return exposeTask(task, projects)
           })
 
         return AgentTaskService.of({
@@ -205,7 +252,7 @@ export class AgentTaskService extends Context.Service<
               const validDescription = yield* serviceTry(() =>
                 validateDescription(description)
               )
-              return yield* withDatabase((database) =>
+              const task = yield* withDatabase((database) =>
                 database.insert({
                   description: validDescription ?? null,
                   id: createTaskUlid(),
@@ -215,18 +262,9 @@ export class AgentTaskService extends Context.Service<
                   title: validTitle,
                 })
               )
+              return exposeTask(task, yield* listProjects())
             }),
-          getTask: (id) =>
-            withDatabase((database) => {
-              const task = database.find(id)
-              if (!task) {
-                throw new AgentTaskError({
-                  code: 'NOT_FOUND',
-                  message: `Task not found: ${id}`,
-                })
-              }
-              return task
-            }),
+          getTask: resolveTask,
           listTasks: (filters) =>
             Effect.gen(function* () {
               const project = filters.path
@@ -240,60 +278,73 @@ export class AgentTaskService extends Context.Service<
               }
               const projects = yield* listProjects()
               return yield* withDatabase((database) =>
-                database.snapshot().tasks.filter((task) => {
-                  const taskProject = nearestProject(task.rootPath, projects)
-                  return (
-                    (filters.includeCancelled === true ||
-                      task.status !== 'cancelled') &&
-                    (!filters.status || task.status === filters.status) &&
-                    (!project || taskProject?.repoPath === project.repoPath) &&
-                    (!search ||
-                      task.title.toLowerCase().includes(search) ||
-                      task.branchName?.toLowerCase().includes(search) === true)
-                  )
-                })
+                database
+                  .snapshot()
+                  .tasks.filter((task) => {
+                    const taskProject = nearestTaskProject(
+                      task.rootPath,
+                      projects
+                    )
+                    const identifier = formatTaskIdentifier(
+                      taskProject?.shortName ?? 'TASK',
+                      task.taskNumber
+                    ).toLowerCase()
+                    return (
+                      (filters.includeCancelled === true ||
+                        task.status !== 'cancelled') &&
+                      (!filters.status || task.status === filters.status) &&
+                      (!project ||
+                        taskProject?.repoPath === project.repoPath) &&
+                      (!search ||
+                        task.title.toLowerCase().includes(search) ||
+                        task.branchName?.toLowerCase().includes(search) ===
+                          true ||
+                        identifier.includes(search))
+                    )
+                  })
+                  .map((task) => exposeTask(task, projects))
               )
             }),
           updateTask: ({ description, expectedRevision, id, title }) =>
-            withDatabase((database) => {
-              const current = database.find(id)
-              if (!current) {
-                throw new AgentTaskError({
-                  code: 'NOT_FOUND',
-                  message: `Task not found: ${id}`,
-                })
-              }
-              if (current.source === 'execution') {
-                throw new AgentTaskError({
-                  code: 'LOCKED_TASK',
-                  message:
-                    'Execution-source tasks are read-only to update_task',
-                })
-              }
-              return database.update(
-                id,
-                expectedRevision,
-                editablePatch({
-                  ...(description === undefined ? {} : { description }),
-                  ...(title === undefined ? {} : { title }),
-                })
-              )
+            Effect.gen(function* () {
+              const resolved = yield* resolveTask(id)
+              const projects = yield* listProjects()
+              return yield* withDatabase((database) => {
+                const current = database.find(resolved.id)
+                if (!current) {
+                  throw invalid(`Task not found: ${id}`)
+                }
+                if (current.source === 'execution') {
+                  throw new AgentTaskError({
+                    code: 'LOCKED_TASK',
+                    message:
+                      'Execution-source tasks are read-only to update_task',
+                  })
+                }
+                const updated = database.update(
+                  current.id,
+                  expectedRevision,
+                  editablePatch({
+                    ...(description === undefined ? {} : { description }),
+                    ...(title === undefined ? {} : { title }),
+                  })
+                )
+                return exposeTask(updated, projects)
+              })
             }),
           deleteTask: (id, expectedRevision) =>
-            withDatabase((database) => {
-              const current = database.find(id)
-              if (!current) {
-                throw new AgentTaskError({
-                  code: 'NOT_FOUND',
-                  message: `Task not found: ${id}`,
+            Effect.gen(function* () {
+              const resolved = yield* resolveTask(id)
+              const projects = yield* listProjects()
+              const task = yield* withDatabase((database) =>
+                database.update(resolved.id, expectedRevision, {
+                  status: 'cancelled',
                 })
-              }
-              return database.update(id, expectedRevision, {
-                status: 'cancelled',
-              })
+              )
+              return exposeTask(task, projects)
             }),
         })
       })
-    )
+    ).pipe(Layer.provide(ConfigService.layer))
   }
 }

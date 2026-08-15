@@ -14,6 +14,7 @@
     "./migrations": "./src/migrations.ts",
     "./path": "./src/path.ts",
     "./schema": "./src/schema.sql.ts",
+    "./task-identifier": "./src/task-identifier.ts",
     "./ulid": "./src/task-ulid.ts"
   },
   "dependencies": {

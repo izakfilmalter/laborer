@@ -8,12 +8,14 @@ interface SetupScriptItem {
 interface ResolvedConfigSnapshot {
   readonly agent: AgentProvider
   readonly setupScripts: readonly string[]
+  readonly shortName: string
   readonly worktreeDir: string
 }
 
 interface ConfigUpdates {
   agent?: AgentProvider
   setupScripts?: string[]
+  shortName?: string
   worktreeDir?: string
 }
 
@@ -44,15 +46,22 @@ const areStringArraysEqual = (
 const buildConfigUpdates = ({
   agent,
   resolvedConfig,
+  shortName,
   setupScripts,
   worktreeDir,
 }: {
   agent: AgentProvider
   resolvedConfig: ResolvedConfigSnapshot
+  shortName: string
   setupScripts: readonly SetupScriptItem[]
   worktreeDir: string
 }): ConfigUpdates => {
   const updates: ConfigUpdates = {}
+
+  const normalizedShortName = shortName.trim().toUpperCase()
+  if (normalizedShortName !== resolvedConfig.shortName) {
+    updates.shortName = normalizedShortName
+  }
 
   if (agent !== resolvedConfig.agent) {
     updates.agent = agent

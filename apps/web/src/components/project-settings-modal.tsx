@@ -104,6 +104,7 @@ function ProjectSettingsForm({
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
   const [agent, setAgent] = useState<AgentProvider>('opencode2')
+  const [shortName, setShortName] = useState('')
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
   const [initialized, setInitialized] = useState(false)
@@ -123,6 +124,7 @@ function ProjectSettingsForm({
     }
 
     setAgent(configResult.value.agent.value)
+    setShortName(configResult.value.shortName.value)
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
     setInitialized(true)
@@ -171,10 +173,12 @@ function ProjectSettingsForm({
       agent,
       resolvedConfig: {
         agent: resolvedConfig.agent.value,
+        shortName: resolvedConfig.shortName.value,
         setupScripts: resolvedConfig.setupScripts.value,
         worktreeDir: resolvedConfig.worktreeDir.value,
       },
       setupScripts,
+      shortName,
       worktreeDir,
     })
 
@@ -220,6 +224,30 @@ function ProjectSettingsForm({
     >
       <div className="grid gap-4 py-2">
         <FieldSet>
+          <Field>
+            <FieldLabel htmlFor={`short-name-${projectId}`}>
+              Project short name
+            </FieldLabel>
+            <Input
+              data-testid="project-short-name"
+              id={`short-name-${projectId}`}
+              maxLength={10}
+              onChange={(event) =>
+                setShortName(
+                  event.target.value.toUpperCase().replaceAll(/[^A-Z0-9]/g, '')
+                )
+              }
+              pattern="[A-Z][A-Z0-9]{0,9}"
+              placeholder="LAB"
+              required
+              value={shortName}
+            />
+            <FieldDescription className={provenanceClassName}>
+              Used for task IDs, for example {shortName || 'LAB'}-123. Source:{' '}
+              {resolvedConfig.shortName.source}
+            </FieldDescription>
+          </Field>
+
           <Field>
             <FieldLabel>Agent</FieldLabel>
             <Select
@@ -409,8 +437,8 @@ function ProjectSettingsModal({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Configure the agent, worktree path, and setup scripts for{' '}
-            {projectName}.
+            Configure the task short name, agent, worktree path, and setup
+            scripts for {projectName}.
           </DialogDescription>
         </DialogHeader>
         {open && !isServerReady && (

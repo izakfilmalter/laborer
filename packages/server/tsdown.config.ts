@@ -31,6 +31,7 @@ export default defineConfig([
     clean: process.env.LABORER_DEV_WATCH !== '1',
     entry: ['src/daemon-main.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
+    inlineOnly: false,
     // Native addons are loaded from the installed package at runtime.
     external: ['@parcel/watcher', 'node-pty'],
   },
@@ -42,6 +43,7 @@ export default defineConfig([
     // node_modules. It remains separate from the tiny guarded launcher so an
     // old Node never resolves node:sqlite.
     noExternal: [/.*/],
+    inlineOnly: false,
     outputOptions: { codeSplitting: false },
   },
   {

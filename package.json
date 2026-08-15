@@ -50,6 +50,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@ai-hero/sandcastle": "^0.12.0",
     "@biomejs/biome": "2.4.0",
     "@effect/language-service": "0.87.2",
     "@laborer/config": "workspace:*",

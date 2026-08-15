@@ -333,7 +333,7 @@ export const devChildDefinitions = (
   {
     label: 'daemon',
     command: [
-      'bun',
+      'node',
       '--watch',
       join(root, 'packages/server/dist/daemon-main.mjs'),
     ],
@@ -432,7 +432,7 @@ export const runDev = async (arguments_: readonly string[]) => {
   }
 
   // The watched runtime targets dist. Seed that entry once so a clean checkout
-  // cannot race tsdown's first watch build and leave Bun watching a missing file.
+  // cannot race tsdown's first watch build and leave Node watching a missing file.
   await initialServerBuild(root, environment)
 
   const children: readonly RunningDevChild[] = devChildDefinitions(

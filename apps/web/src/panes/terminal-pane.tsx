@@ -1145,6 +1145,7 @@ function TerminalPaneRenderer({
     <div
       className="relative h-full w-full overflow-hidden"
       data-terminal-id={terminalId}
+      data-testid="terminal-emulator"
       ref={terminalElementRef}
     >
       {/* xterm.js container */}

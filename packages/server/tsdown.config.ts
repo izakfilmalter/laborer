@@ -25,8 +25,8 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
-    // The dev runner seeds dist before launching Bun's watcher. Preserve that
-    // complete entry while the first watch build replaces its chunks, or Bun
+    // The dev runner seeds dist before launching Node's watcher. Preserve that
+    // complete entry while the first watch build replaces its chunks, or Node
     // can observe a transient missing entry and stay dead until another save.
     clean: process.env.LABORER_DEV_WATCH !== '1',
     entry: ['src/daemon-main.ts'],

@@ -109,11 +109,13 @@ import {
   useProjectDragItem,
   useProjectReorderMonitor,
 } from '@/components/project-reorder'
+import { TaskIdentifier } from '@/components/task-identifier'
 import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
+import { useProjectShortName } from '@/hooks/use-project-short-name'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
 import { usePanelActions } from '@/panels/panel-context'
@@ -279,6 +281,8 @@ interface BoardCardWorkspace {
  * whose body opens a workspace cannot also open a form.
  */
 function TaskBoardCard({
+  projectId,
+  projectShortName,
   task,
   attachBlocked = false,
   attached = false,
@@ -292,6 +296,8 @@ function TaskBoardCard({
   workspace,
 }: {
   readonly task: BoardTask
+  readonly projectId: string
+  readonly projectShortName?: string | null
   readonly attachBlocked?: boolean
   readonly attached?: boolean
   readonly attaching?: boolean
@@ -442,6 +448,7 @@ function TaskBoardCard({
         isRootWorkspace={workspace.isRoot}
         onActivate={activate}
         projectName={workspace.projectName}
+        projectShortName={projectShortName}
         showCreateSubWorkspaceAction={false}
         // The board hangs its own Pencil off `actions`, alongside the Slack
         // link and cancel that only it has.
@@ -468,6 +475,11 @@ function TaskBoardCard({
       aria-busy={analysis === 'analyzing' ? true : undefined}
       badges={
         <>
+          <TaskIdentifier
+            projectId={projectId}
+            projectShortName={projectShortName}
+            taskNumber={task.taskNumber}
+          />
           {boardBadges}
           <WorktreeChip card={task} />
           {!isOverlay && (
@@ -795,6 +807,7 @@ function LaneBoard({
   // Done is clipped by default so the archive never sets the lane's height.
   const [doneExpanded, setDoneExpanded] = useState(false)
   const laneId = useId()
+  const projectShortName = useProjectShortName(projectId)
 
   // Server-side card changes reset the local drag state without remounting the
   // lane, so a card arriving in the background never steals a half-typed
@@ -953,6 +966,8 @@ function LaneBoard({
                                     ? undefined
                                     : tasksById.get(task.parentTaskId)?.title
                                 }
+                                projectId={projectId}
+                                projectShortName={projectShortName}
                                 task={task}
                                 workspace={workspaceForCard(task)}
                               />
@@ -1024,6 +1039,8 @@ function LaneBoard({
                   ? undefined
                   : tasksById.get(task.parentTaskId)?.title
               }
+              projectId={projectId}
+              projectShortName={projectShortName}
               task={task}
               workspace={workspaceForCard(task)}
             />

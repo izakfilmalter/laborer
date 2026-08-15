@@ -77,6 +77,7 @@ interface WorkspaceListProps {
   readonly projectId: string
   /** The project name, used by the sub-workspace creation dialog. */
   readonly projectName: string
+  readonly projectShortName?: string | null | undefined
   /**
    * The repository path (project.repoPath) used to identify the root workspace.
    * The root workspace is the one where worktreePath matches this path.
@@ -96,6 +97,7 @@ interface WorkspaceTreeGroupProps {
     | PendingWorkspaceCreationChangeHandler
     | undefined
   readonly projectName: string
+  readonly projectShortName?: string | null | undefined
   readonly repoPath: string
 }
 
@@ -113,6 +115,7 @@ function WorkspaceTreeGroup({
   collapseState,
   onPendingCreationChange,
   projectName,
+  projectShortName,
   repoPath,
 }: WorkspaceTreeGroupProps) {
   const { workspace, children } = node
@@ -122,6 +125,7 @@ function WorkspaceTreeGroup({
       isRootWorkspace={workspace.worktreePath === repoPath}
       onPendingCreationChange={onPendingCreationChange}
       projectName={projectName}
+      projectShortName={projectShortName}
       showCreateSubWorkspaceAction={children.length === 0}
       workspace={workspace}
     />
@@ -199,6 +203,7 @@ function WorkspaceTreeGroup({
               node={child}
               onPendingCreationChange={onPendingCreationChange}
               projectName={projectName}
+              projectShortName={projectShortName}
               repoPath={repoPath}
             />
           ))}
@@ -246,6 +251,7 @@ function WorkspaceList({
   pendingCreations = [],
   projectId,
   projectName,
+  projectShortName,
   repoPath,
 }: WorkspaceListProps) {
   const workspaceList = useAtomValue(workspaceViewsAtom)
@@ -303,6 +309,7 @@ function WorkspaceList({
           node={node}
           onPendingCreationChange={onPendingCreationChange}
           projectName={projectName}
+          projectShortName={projectShortName}
           repoPath={repoPath}
         />
       ))}

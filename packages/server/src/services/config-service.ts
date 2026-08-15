@@ -15,6 +15,7 @@
  * Config schema:
  * ```json
  * {
+ *   "shortName": "LAB",
  *   "worktreeDir": "/path/to/my-project.worktrees",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
  * }
@@ -48,6 +49,10 @@ import {
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type { AgentProvider } from '@laborer/shared/rpc'
+import {
+  defaultProjectShortName,
+  isProjectShortName,
+} from '@laborer/task-db/task-identifier'
 import { Context, Data, Effect, Layer } from 'effect'
 
 // ---------------------------------------------------------------------------
@@ -95,6 +100,8 @@ interface LaborerConfig {
   /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
   readonly setupScripts?: readonly string[]
+  readonly shortName?: string
+  readonly shortNameAliases?: readonly string[]
   readonly watchIgnore?: readonly string[]
   readonly worktreeDir?: string
 }
@@ -103,6 +110,8 @@ interface LaborerConfig {
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
   readonly setupScripts?: readonly string[] | undefined
+  readonly shortName?: string | undefined
+  readonly shortNameAliases?: readonly string[] | undefined
   readonly watchIgnore?: readonly string[] | undefined
   readonly worktreeDir?: string | undefined
 }
@@ -126,6 +135,9 @@ interface ResolvedLaborerConfig {
   /** Preferred AI coding agent CLI command (defaults to "opencode2"). */
   readonly agent: ResolvedValue<AgentProvider>
   readonly setupScripts: ResolvedValue<readonly string[]>
+  readonly shortName: ResolvedValue<string>
+  /** Historical project keys that continue to resolve existing task IDs. */
+  readonly shortNameAliases: ResolvedValue<readonly string[]>
   /**
    * Additional ignore patterns appended to the default set.
    * These are first-segment prefixes (e.g. ".cache", "tmp")
@@ -314,6 +326,14 @@ const applyConfigUpdates = (
     next.agent = updates.agent
   }
 
+  if (updates.shortName !== undefined) {
+    next.shortName = updates.shortName
+  }
+
+  if (updates.shortNameAliases !== undefined) {
+    next.shortNameAliases = [...updates.shortNameAliases]
+  }
+
   if (updates.worktreeDir !== undefined) {
     next.worktreeDir = updates.worktreeDir
   }
@@ -449,6 +469,14 @@ const mergeConfigs = (
     value: 'opencode2',
     source: 'default',
   }
+  let shortName: ResolvedValue<string> = {
+    value: defaultProjectShortName(_projectName),
+    source: 'default',
+  }
+  let shortNameAliases: ResolvedValue<readonly string[]> = {
+    value: [],
+    source: 'default',
+  }
   let worktreeDir: ResolvedValue<string> = {
     value: defaultWorktreeDir,
     source: 'default',
@@ -478,6 +506,23 @@ const mergeConfigs = (
       }
     }
 
+    if (
+      config.shortName !== undefined &&
+      path === join(resolve(projectRepoPath), CONFIG_FILE_NAME)
+    ) {
+      shortName = { value: config.shortName, source: path }
+    }
+
+    if (
+      config.shortNameAliases !== undefined &&
+      path === join(resolve(projectRepoPath), CONFIG_FILE_NAME)
+    ) {
+      shortNameAliases = {
+        value: config.shortNameAliases,
+        source: path,
+      }
+    }
+
     if (config.worktreeDir !== undefined) {
       worktreeDir = {
         value: resolve(expandTilde(config.worktreeDir)),
@@ -502,6 +547,8 @@ const mergeConfigs = (
 
   return {
     agent,
+    shortName,
+    shortNameAliases,
     worktreeDir,
     setupScripts,
     watchIgnore,
@@ -548,7 +595,7 @@ class ConfigService extends Context.Service<
     readonly writeProjectConfig: (
       projectRepoPath: string,
       updates: ProjectConfigUpdates
-    ) => Effect.Effect<void, never>
+    ) => Effect.Effect<void, ConfigIOError>
 
     /**
      * Write global config updates to `~/.config/laborer/laborer.json`.
@@ -588,11 +635,42 @@ class ConfigService extends Context.Service<
         // 5. Merge with closest-wins strategy and apply defaults
         const resolved = mergeConfigs(allLayers, projectName, projectRepoPath)
 
+        if (!isProjectShortName(resolved.shortName.value)) {
+          return yield* new ConfigValidationError({
+            message:
+              'Project shortName must be 1-10 uppercase letters or digits and start with a letter',
+          })
+        }
+
+        if (
+          !(
+            Array.isArray(resolved.shortNameAliases.value) &&
+            resolved.shortNameAliases.value.every(
+              (alias) => typeof alias === 'string' && isProjectShortName(alias)
+            )
+          )
+        ) {
+          return yield* new ConfigValidationError({
+            message:
+              'Project shortNameAliases must contain only 1-10 uppercase letter/digit keys that start with a letter',
+          })
+        }
+
+        const canonicalAliases = [
+          ...new Set(resolved.shortNameAliases.value),
+        ].filter((alias) => alias !== resolved.shortName.value)
+
         yield* Effect.logDebug(
           `Resolved config for "${projectName}": agent="${resolved.agent.value}" (from ${resolved.agent.source}), worktreeDir="${resolved.worktreeDir.value}" (from ${resolved.worktreeDir.source}), setupScripts=${resolved.setupScripts.value.length} (from ${resolved.setupScripts.source})`
         ).pipe(Effect.annotateLogs('module', logPrefix))
 
-        return resolved
+        return {
+          ...resolved,
+          shortNameAliases: {
+            ...resolved.shortNameAliases,
+            value: canonicalAliases,
+          },
+        }
       }),
 
       readGlobalConfig: Effect.fn('ConfigService.readGlobalConfig')(
@@ -617,7 +695,7 @@ class ConfigService extends Context.Service<
             ({} as Record<string, unknown>)
           const next = applyConfigUpdates(existing, updates)
 
-          yield* writeJsonAtomic(projectConfigPath, next)
+          yield* writeJsonAtomicStrict(projectConfigPath, next)
 
           yield* Effect.logDebug(
             `Wrote project config at ${projectConfigPath}`
@@ -647,6 +725,7 @@ class ConfigService extends Context.Service<
 
 export {
   ConfigService,
+  ConfigIOError,
   ConfigValidationError,
   VALID_AGENT_PROVIDERS,
   // Exported for testing

@@ -14,5 +14,6 @@
     "sh ./scripts/worktree-setup.sh --no-ports"
   ],
   "agent": "opencode2",
+  "shortName": "LAB",
   "worktreeDir": "/Users/izakfilmalter/Projects/izakfilmalter/laborer.worktrees"
 }

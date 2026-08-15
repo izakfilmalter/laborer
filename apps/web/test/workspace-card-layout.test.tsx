@@ -46,7 +46,10 @@ vi.mock('@effect/atom-react/Hooks', () => ({
       if (atom === Symbol.for('tasksById')) {
         return tasksByIdRef.current
       }
-      return { _tag: 'Success', value: {} }
+      return {
+        _tag: 'Success',
+        value: { shortName: { source: 'test', value: 'LAB' } },
+      }
     })(),
 }))
 
@@ -189,6 +192,7 @@ const makeWorkspace = (
     origin: string
     createdAt: string
     taskSource: string | null
+    taskNumber: number | null
     worktreeSetupStep: string | null
     prNumber: number | null
     prBaseBranch: string | null
@@ -208,6 +212,7 @@ const makeWorkspace = (
   origin: 'laborer',
   createdAt: new Date().toISOString(),
   taskSource: null,
+  taskNumber: null,
   worktreeSetupStep: null,
   prNumber: null,
   prBaseBranch: null,
@@ -248,6 +253,7 @@ const mockTask = (workspaceId: string) => {
         sortOrder: null,
         source: 'manual',
         status: 'in_progress',
+        taskNumber: 7,
         title: 'Add feature',
         updatedAt: Date.now(),
         worktreeExists: true,
@@ -296,12 +302,19 @@ describe('Workspace card layout — editing the card behind the workspace', () =
   })
 
   it('offers to edit the card a workspace is doing the work of', () => {
-    mockStore([makeWorkspace()])
+    mockStore([makeWorkspace({ taskNumber: 7 })])
     mockTask('ws-1')
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(
+      <WorkspaceList
+        projectId="project-1"
+        projectShortName="LAB"
+        repoPath="/repo"
+      />
+    )
 
     expect(screen.getByRole('button', { name: EDIT_CARD_RE })).toBeTruthy()
+    expect(screen.getByText('LAB-7')).toBeTruthy()
   })
 
   it('offers nothing to edit when the workspace has no card', () => {

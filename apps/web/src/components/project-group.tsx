@@ -63,6 +63,7 @@ import type {
   PendingWorkspaceCreation,
   PendingWorkspaceCreationChangeHandler,
 } from '@/hooks/use-create-workspace'
+import { useProjectShortName } from '@/hooks/use-project-short-name'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { extractErrorMessage } from '@/lib/errors'
@@ -92,6 +93,7 @@ function ProjectGroup({
   reorderEnabled,
 }: ProjectGroupProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
+  const projectShortName = useProjectShortName(project.id)
   const groupRef = useRef<HTMLDivElement | null>(null)
   const headingRef = useRef<HTMLDivElement | null>(null)
   // An order written before the server is up cannot be stored, so the group
@@ -323,6 +325,7 @@ function ProjectGroup({
               pendingCreations={pendingWorkspaceCreations}
               projectId={project.id}
               projectName={project.name}
+              projectShortName={projectShortName}
               repoPath={project.repoPath}
             />
           </div>

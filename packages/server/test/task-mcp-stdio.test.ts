@@ -199,13 +199,16 @@ describe('task MCP stdio entry point', () => {
     ])
 
     const projects = await callTool(server.request, 'list_projects', {})
-    expect(projects.projects).toEqual([{ name: 'Project', repoPath: project }])
+    expect(projects.projects).toEqual([
+      { name: 'Project', repoPath: project, shortName: 'PROJECT' },
+    ])
     const created = await callTool(server.request, 'create_task', {
       description: 'Initial description',
       path: project,
       title: 'Stdio task',
     })
-    const taskId = created.id as string
+    const taskId = created.identifier as string
+    expect(taskId).toBe('PROJECT-1')
     expect(
       (await callTool(server.request, 'get_task', { id: taskId })).title
     ).toBe('Stdio task')
@@ -216,7 +219,9 @@ describe('task MCP stdio entry point', () => {
     })
     expect(updated.title).toBe('Updated task')
     const listedTasks = await callTool(server.request, 'list_tasks', {})
-    expect(listedTasks.tasks).toEqual([expect.objectContaining({ id: taskId })])
+    expect(listedTasks.tasks).toEqual([
+      expect.objectContaining({ identifier: taskId }),
+    ])
     // Agents see the seeded defaults without creating anything first.
     const seeded = (await callTool(server.request, 'list_labels', {}))
       .labels as ReadonlyArray<{ readonly name: string }>
@@ -307,6 +312,8 @@ describe('task MCP stdio entry point', () => {
       ).error
     ).toBeUndefined()
     const projects = await callTool(server.request, 'list_projects', {})
-    expect(projects.projects).toEqual([{ name: 'Project', repoPath: project }])
+    expect(projects.projects).toEqual([
+      { name: 'Project', repoPath: project, shortName: 'PROJECT' },
+    ])
   })
 })

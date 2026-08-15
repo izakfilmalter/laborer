@@ -2,8 +2,15 @@ import { basename } from 'node:path'
 import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
 import { BranchStateTracker, getCurrentBranch } from './branch-state-tracker.js'
+import { ConfigService } from './config-service.js'
 import { LaborerDatabase } from './laborer-database.js'
 import type { Project } from './native-laborer-database.js'
+import {
+  aliasesAfterRename,
+  resolveProjectTaskIdentifierNamespaces,
+  validateProjectTaskIdentifierNamespace,
+  withProjectIdentifierNamespaceLock,
+} from './project-task-identifiers.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import { RepositoryWatchCoordinator } from './repository-watch-coordinator.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'
@@ -48,6 +55,7 @@ class ProjectRegistry extends Context.Service<
     ProjectRegistry,
     Effect.gen(function* () {
       const database = yield* LaborerDatabase
+      const configService = yield* ConfigService
       const repoIdentity = yield* RepositoryIdentity
       const worktreeReconciler = yield* WorktreeReconciler
       const branchTracker = yield* BranchStateTracker
@@ -82,85 +90,172 @@ class ProjectRegistry extends Context.Service<
           return project
         })
 
-      const addProject = Effect.fn('ProjectRegistry.addProject')(function* (
-        repoPath: string,
-        rePointExisting = true
-      ) {
-        const identity = yield* repoIdentity.resolve(repoPath).pipe(
-          Effect.mapError((error) => {
-            const isPathError =
-              error.message.includes('does not exist') ||
-              error.message.includes('not a directory')
-            return new RpcError({
-              message: isPathError
-                ? error.message
-                : `Path is not a git repository: ${repoPath}`,
-              code: isPathError ? 'INVALID_PATH' : 'NOT_GIT_REPO',
+      const addProjectUnlocked = Effect.fn('ProjectRegistry.addProject')(
+        function* (repoPath: string, rePointExisting = true) {
+          const identity = yield* repoIdentity.resolve(repoPath).pipe(
+            Effect.mapError((error) => {
+              const isPathError =
+                error.message.includes('does not exist') ||
+                error.message.includes('not a directory')
+              return new RpcError({
+                message: isPathError
+                  ? error.message
+                  : `Path is not a git repository: ${repoPath}`,
+                code: isPathError ? 'INVALID_PATH' : 'NOT_GIT_REPO',
+              })
             })
-          })
-        )
-        const existing = yield* database
-          .run('find project by repository identity', (db) =>
-            db.findProjectByRepoId(identity.repoId)
           )
-          .pipe(
-            Effect.mapError((cause) => databaseRpcError('read projects', cause))
-          )
-
-        if (existing && !rePointExisting) {
-          return projectRecord(existing)
-        }
-        if (
-          existing?.rootPath === identity.canonicalRoot ||
-          existing?.canonicalGitCommonDir === identity.canonicalGitCommonDir
-        ) {
-          return yield* new RpcError({
-            message: `${repoPath} resolves to the already registered repository ${existing.rootPath} (project ${existing.name})`,
-            code: 'ALREADY_REGISTERED',
-          })
-        }
-        const name = basename(identity.canonicalRoot)
-        const branchName = yield* getCurrentBranch(identity.canonicalRoot).pipe(
-          Effect.catch(() => Effect.succeed(null))
-        )
-        const stored = existing
-          ? yield* database
-              .run(
-                're-point project',
-                (db) =>
-                  db.updateProject(existing.id, existing.revision, {
-                    canonicalGitCommonDir: identity.canonicalGitCommonDir,
-                    branchName,
-                    name,
-                    rootPath: identity.canonicalRoot,
-                  }).row
+          const existing = yield* database
+            .run('find project by repository identity', (db) =>
+              db.findProjectByRepoId(identity.repoId)
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                databaseRpcError('read projects', cause)
               )
+            )
+
+          if (existing && !rePointExisting) {
+            return projectRecord(existing)
+          }
+          if (
+            existing?.rootPath === identity.canonicalRoot ||
+            existing?.canonicalGitCommonDir === identity.canonicalGitCommonDir
+          ) {
+            return yield* new RpcError({
+              message: `${repoPath} resolves to the already registered repository ${existing.rootPath} (project ${existing.name})`,
+              code: 'ALREADY_REGISTERED',
+            })
+          }
+          const name = basename(identity.canonicalRoot)
+          const existingConfig = existing
+            ? yield* configService
+                .resolveConfig(existing.rootPath, existing.name)
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new RpcError({
+                        code: 'INVALID_PROJECT_CONFIG',
+                        message: `${existing.rootPath}: ${error.message}`,
+                      })
+                  )
+                )
+            : undefined
+          const candidateConfig = yield* configService
+            .resolveConfig(identity.canonicalRoot, name)
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new RpcError({
+                    code: 'INVALID_PROJECT_CONFIG',
+                    message: `${identity.canonicalRoot}: ${error.message}`,
+                  })
+              )
+            )
+          const registeredProjects = yield* database
+            .run('list project identifier namespaces', (db) =>
+              db.listProjects().map(projectRecord)
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                databaseRpcError('read projects', cause)
+              )
+            )
+          const namespaces = yield* resolveProjectTaskIdentifierNamespaces(
+            registeredProjects,
+            configService
+          ).pipe(
+            Effect.mapError(
+              (error) =>
+                new RpcError({
+                  code: 'INVALID_PROJECT_CONFIG',
+                  message: error.message,
+                })
+            )
+          )
+          const candidateAliases = existingConfig
+            ? aliasesAfterRename(
+                existingConfig.shortName.value,
+                [
+                  ...existingConfig.shortNameAliases.value,
+                  ...candidateConfig.shortNameAliases.value,
+                ],
+                candidateConfig.shortName.value
+              )
+            : candidateConfig.shortNameAliases.value
+          yield* validateProjectTaskIdentifierNamespace(
+            {
+              aliases: candidateAliases,
+              id: existing?.id ?? 'candidate-project',
+              name,
+              repoPath: identity.canonicalRoot,
+              shortName: candidateConfig.shortName.value,
+            },
+            namespaces
+          )
+          if (existingConfig) {
+            yield* configService
+              .writeProjectConfig(identity.canonicalRoot, {
+                shortName: candidateConfig.shortName.value,
+                shortNameAliases: candidateAliases,
+              })
               .pipe(
-                Effect.mapError((cause) =>
-                  databaseRpcError('re-point project', cause)
+                Effect.mapError(
+                  (error) =>
+                    new RpcError({
+                      code: 'CONFIG_WRITE_FAILED',
+                      message: error.message,
+                    })
                 )
               )
-          : yield* database
-              .run(
-                'register project',
-                (db) =>
-                  db.insertProject({
-                    id: crypto.randomUUID(),
-                    name,
-                    rootPath: identity.canonicalRoot,
-                    repoId: identity.repoId,
-                    canonicalGitCommonDir: identity.canonicalGitCommonDir,
-                    branchName,
-                  }).row
-              )
-              .pipe(
-                Effect.mapError((cause) =>
-                  databaseRpcError('register project', cause)
+          }
+          const branchName = yield* getCurrentBranch(
+            identity.canonicalRoot
+          ).pipe(Effect.catch(() => Effect.succeed(null)))
+          const stored = existing
+            ? yield* database
+                .run(
+                  're-point project',
+                  (db) =>
+                    db.updateProject(existing.id, existing.revision, {
+                      canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                      branchName,
+                      name,
+                      rootPath: identity.canonicalRoot,
+                    }).row
                 )
-              )
+                .pipe(
+                  Effect.mapError((cause) =>
+                    databaseRpcError('re-point project', cause)
+                  )
+                )
+            : yield* database
+                .run(
+                  'register project',
+                  (db) =>
+                    db.insertProject({
+                      id: crypto.randomUUID(),
+                      name,
+                      rootPath: identity.canonicalRoot,
+                      repoId: identity.repoId,
+                      canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                      branchName,
+                    }).row
+                )
+                .pipe(
+                  Effect.mapError((cause) =>
+                    databaseRpcError('register project', cause)
+                  )
+                )
 
-        return yield* prepareProject(projectRecord(stored))
-      })
+          return yield* prepareProject(projectRecord(stored))
+        }
+      )
+
+      const addProject = (repoPath: string, rePointExisting = true) =>
+        withProjectIdentifierNamespaceLock(
+          addProjectUnlocked(repoPath, rePointExisting)
+        )
 
       const removeProject = Effect.fn('ProjectRegistry.removeProject')(
         function* (projectId: string) {

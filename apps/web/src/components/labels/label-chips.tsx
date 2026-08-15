@@ -7,11 +7,10 @@
  * the board, the sidebar, and the detail dialog.
  */
 
-import { Tag } from 'lucide-react'
-import type { ComponentPropsWithRef, ReactElement } from 'react'
-
 import { Badge } from '@laborer/ui/components/badge'
 import { cn } from '@laborer/ui/lib/utils'
+import { Tag } from 'lucide-react'
+import type { ComponentPropsWithRef, ReactElement } from 'react'
 
 import { labelDotClassName } from './label-colors'
 

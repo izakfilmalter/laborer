@@ -18,7 +18,7 @@ import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
-  description, created_at, updated_at, revision, label_ids`
+  description, created_at, updated_at, revision, task_number, label_ids`
 const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
 const MAX_BRANCH_TASKS = 1000
 const MAX_CAS_ATTEMPTS = 5
@@ -119,6 +119,7 @@ const rowToTask = (row: SqliteRow): Task => {
     slackPermalink: nullableString(row.slack_permalink, 'slack_permalink'),
     source: taskSource(row.source),
     status: taskStatus(row.status),
+    taskNumber: safeInteger(row.task_number, 'task_number'),
     title: requiredString(row.title, 'title'),
     updatedAt: safeInteger(row.updated_at, 'updated_at'),
     worktreePath: nullableString(row.worktree_path, 'worktree_path'),

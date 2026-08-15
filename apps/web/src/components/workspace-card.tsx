@@ -61,6 +61,7 @@ import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { boardTaskFromSharedRow } from '@/components/kanban/board-data'
 import { useTaskEditor } from '@/components/kanban/task-editor'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { TaskIdentifier } from '@/components/task-identifier'
 import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import type { PendingWorkspaceCreationChangeHandler } from '@/hooks/use-create-workspace'
@@ -429,6 +430,7 @@ interface WorkspaceCardProps {
     | undefined
   /** The project name, used by the sub-workspace creation dialog. */
   readonly projectName: string
+  readonly projectShortName?: string | null | undefined
   /** Whether to show the sub-workspace creation action in the card header. */
   readonly showCreateSubWorkspaceAction?: boolean | undefined
   /**
@@ -466,6 +468,7 @@ interface WorkspaceCardWorkspace {
   readonly prTitle: string | null
   readonly prUrl: string | null
   readonly status: string
+  readonly taskNumber?: number | null
   readonly taskSource: string | null
   readonly worktreePath: string
   readonly worktreeSetupStep: string | null
@@ -760,6 +763,7 @@ function WorkspaceCard({
   onActivate,
   onPendingCreationChange,
   projectName,
+  projectShortName,
   showCreateSubWorkspaceAction = true,
   showDestroyAction = true,
   showEditAction = true,
@@ -853,6 +857,13 @@ function WorkspaceCard({
       //
       badges={
         <>
+          {workspace.taskNumber ? (
+            <TaskIdentifier
+              projectId={workspace.projectId}
+              projectShortName={projectShortName}
+              taskNumber={workspace.taskNumber}
+            />
+          ) : null}
           {/* The pull request is a status, not a control: it leads the rail
               because it is the furthest along the work has got, and it sits
               opposite the controls that start more of it. */}

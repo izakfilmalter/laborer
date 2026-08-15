@@ -55,6 +55,7 @@ export interface Task {
   readonly slackPermalink: string | null
   readonly source: TaskSource
   readonly status: TaskStatus
+  readonly taskNumber: number
   readonly title: string
   readonly updatedAt: number
   readonly worktreePath: string | null
@@ -154,7 +155,7 @@ interface RetryOptions {
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
-  description, created_at, updated_at, revision, label_ids`
+  description, created_at, updated_at, revision, task_number, label_ids`
 const MAX_SNAPSHOT_TASKS = 10_000
 
 const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
@@ -302,6 +303,7 @@ const rowToTask = (row: SqliteRow): Task => {
     rootPath: requiredString(row.root_path, 'root_path'),
     title: requiredString(row.title, 'title'),
     status: taskStatus(row.status),
+    taskNumber: safeInteger(row.task_number, 'task_number'),
     source: taskSource(row.source),
     executionId: nullableString(row.execution_id, 'execution_id'),
     actionName: nullableString(row.action_name, 'action_name'),

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Effect, Layer } from 'effect'
@@ -12,6 +12,7 @@ import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.
 const fixture = () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-agent-task-')))
   const databasePath = join(root, 'tasks.sqlite')
+  writeFileSync(join(root, 'laborer.json'), '{"shortName":"AGT"}\n')
   const project = { id: 'project-1', name: 'Project', repoPath: root }
   const database = NativeLaborerDatabase.connect(databasePath)
   database.initialize()
@@ -74,6 +75,8 @@ describe('AgentTaskService', () => {
           rootPath: root,
           source: 'agent',
           status: 'todo',
+          identifier: 'AGT-1',
+          taskNumber: 1,
           title: 'Follow up',
         })
 
@@ -81,12 +84,15 @@ describe('AgentTaskService', () => {
         const updated = yield* service.updateTask({
           description: null,
           expectedRevision: created.revision,
-          id: created.id,
+          id: created.identifier,
           title: 'Refined follow-up',
         })
         expect(updated).toMatchObject({ description: null, revision: 2 })
 
-        const deleted = yield* service.deleteTask(updated.id, updated.revision)
+        const deleted = yield* service.deleteTask(
+          updated.identifier,
+          updated.revision
+        )
         expect(deleted.status).toBe('cancelled')
         const staleDelete = yield* Effect.flip(
           service.deleteTask(updated.id, updated.revision)
@@ -103,6 +109,59 @@ describe('AgentTaskService', () => {
     const database = NodeTaskBoardDatabase.open(databasePath)
     expect(database.readChanges(0).cursor).toBe(3)
     database.close()
+  })
+
+  it('resolves historical project aliases while exposing the current identifier', async () => {
+    const { layer, root } = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const created = yield* service.createTask({
+          path: root,
+          title: 'Alias',
+        })
+        writeFileSync(
+          join(root, 'laborer.json'),
+          '{"shortName":"NEW","shortNameAliases":["AGT"]}\n'
+        )
+
+        expect(yield* service.getTask(created.identifier)).toMatchObject({
+          id: created.id,
+          identifier: 'NEW-1',
+        })
+        expect(yield* service.getTask('NEW-1')).toMatchObject({
+          id: created.id,
+        })
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
+  it('rejects a readable identifier that matches duplicate nested-root numbers', async () => {
+    const { databasePath, layer, root } = fixture()
+    const database = NodeTaskBoardDatabase.open(databasePath)
+    database.insert({
+      id: 'root-task',
+      rootPath: root,
+      source: 'manual',
+      status: 'todo',
+      title: 'Root task',
+    })
+    database.insert({
+      id: 'nested-task',
+      rootPath: join(root, 'packages', 'nested'),
+      source: 'manual',
+      status: 'todo',
+      title: 'Nested task',
+    })
+    database.close()
+
+    const error = await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        return yield* Effect.flip(service.getTask('AGT-1'))
+      }).pipe(Effect.provide(layer))
+    )
+    expect(error.code).toBe('AMBIGUOUS_IDENTIFIER')
   })
 
   it('rejects unknown projects, stale revisions, and Execution updates', async () => {

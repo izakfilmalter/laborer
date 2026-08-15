@@ -613,6 +613,7 @@ export interface WorkspaceView {
   readonly prTitle: string | null
   readonly prUrl: string | null
   readonly status: string
+  readonly taskNumber: number | null
   readonly taskSource: string
   readonly worktreePath: string
   readonly worktreeSetupStep: string | null
@@ -679,6 +680,7 @@ const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
   prUrl: null,
   status: 'running',
   taskSource: rootWorkspaceId(project.id),
+  taskNumber: null,
   worktreePath: project.rootPath,
   worktreeSetupStep: null,
 })
@@ -727,6 +729,7 @@ export const workspaceViewsFromRows = (
       prUrl: task.prUrl,
       status: workspaceStatus(task.worktreeStatus),
       taskSource: task.id,
+      taskNumber: task.taskNumber,
       worktreePath: task.worktreePath,
       worktreeSetupStep: null,
     })

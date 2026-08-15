@@ -95,6 +95,7 @@ export interface LaborerTask {
   readonly sortOrder: number | null
   readonly source: TaskSource
   readonly status: TaskStatus
+  readonly taskNumber: number
   readonly title: string
   readonly updatedAt: number
   readonly worktreeError: string | null
@@ -379,7 +380,8 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   description, created_at, updated_at, revision, worktree_status,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
   pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order,
-  pr_base_branch, pr_merge_status, pr_check_status, pr_checks, label_ids`
+  pr_base_branch, pr_merge_status, pr_check_status, pr_checks, task_number,
+  label_ids`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
   created_at, updated_at, revision, sort_order, branch_name`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
@@ -690,6 +692,7 @@ const rowToTask = (value: unknown): LaborerTask => {
       ['todo', 'in_progress', 'in_review', 'done', 'cancelled'],
       'tasks.status'
     ),
+    taskNumber: integer(row.task_number, 'tasks.task_number'),
     title: string(row.title, 'tasks.title'),
     updatedAt: integer(row.updated_at, 'tasks.updated_at'),
     worktreeError: nullableString(row.worktree_error, 'tasks.worktree_error'),

@@ -23,6 +23,7 @@ import {
 } from '@laborer/shared/rpc'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
+import { isProjectShortName } from '@laborer/task-db/task-identifier'
 import { Array, Effect, Semaphore, Stream, SubscriptionRef } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
@@ -37,6 +38,12 @@ import {
 import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { ProjectRegistry } from '../services/project-registry.js'
+import {
+  aliasesAfterRename,
+  resolveProjectTaskIdentifierNamespaces,
+  validateProjectTaskIdentifierNamespace,
+  withProjectIdentifierNamespaceLock,
+} from '../services/project-task-identifiers.js'
 import { subscribeToSharedState } from '../services/shared-state-reader.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
@@ -45,6 +52,7 @@ import {
   manualTaskBranchName,
   markSlackAnalysisFailed,
 } from '../services/task-card-creator.js'
+import { resolveTaskReferenceAtPath } from '../services/task-identifier-resolver.js'
 import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
@@ -185,39 +193,107 @@ export const handleConfigUpdate = ({
   projectId: string
   config: {
     agent?: AgentProvider | undefined
+    shortName?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
 }) =>
-  Effect.gen(function* () {
-    const validAgents = ['opencode2', 'claude', 'codex'] as const
-    const isValidAgent =
-      config.agent === undefined || validAgents.some((a) => a === config.agent)
+  withProjectIdentifierNamespaceLock(
+    Effect.gen(function* () {
+      const validAgents = ['opencode2', 'claude', 'codex'] as const
+      const isValidAgent =
+        config.agent === undefined ||
+        validAgents.some((a) => a === config.agent)
 
-    const isValidSetupScripts =
-      config.setupScripts === undefined ||
-      (config.setupScripts.every((script) => typeof script === 'string') &&
-        Array.isArray(config.setupScripts))
+      const isValidSetupScripts =
+        config.setupScripts === undefined ||
+        (config.setupScripts.every((script) => typeof script === 'string') &&
+          Array.isArray(config.setupScripts))
 
-    const isValidConfig =
-      isValidAgent &&
-      (config.worktreeDir === undefined ||
-        typeof config.worktreeDir === 'string') &&
-      isValidSetupScripts
+      const isValidConfig =
+        isValidAgent &&
+        (config.shortName === undefined ||
+          isProjectShortName(config.shortName)) &&
+        (config.worktreeDir === undefined ||
+          typeof config.worktreeDir === 'string') &&
+        isValidSetupScripts
 
-    if (!isValidConfig) {
-      return yield* new RpcError({
-        code: 'INVALID_INPUT',
-        message:
-          'Invalid config payload. Expected optional worktreeDir, agent (opencode2/claude/codex), and setupScripts as a string array.',
-      })
-    }
+      if (!isValidConfig) {
+        return yield* new RpcError({
+          code: 'INVALID_INPUT',
+          message:
+            'Invalid config payload. Expected optional shortName (1-10 uppercase letters/digits, starting with a letter), worktreeDir, agent (opencode2/claude/codex), and setupScripts as a string array.',
+        })
+      }
 
-    const configService = yield* ConfigService
+      const configService = yield* ConfigService
 
-    const project = yield* getProject(projectId)
-    yield* configService.writeProjectConfig(project.repoPath, config)
-  })
+      const project = yield* getProject(projectId)
+      const current = yield* configService
+        .resolveConfig(project.repoPath, project.name)
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new RpcError({
+                code: 'INVALID_PROJECT_CONFIG',
+                message: error.message,
+              })
+          )
+        )
+      const shortName = config.shortName ?? current.shortName.value
+      const shortNameAliases =
+        config.shortName === undefined ||
+        config.shortName === current.shortName.value
+          ? current.shortNameAliases.value
+          : aliasesAfterRename(
+              current.shortName.value,
+              current.shortNameAliases.value,
+              config.shortName
+            )
+
+      if (config.shortName !== undefined) {
+        const registry = yield* ProjectRegistry
+        const projects = yield* registry.listProjects()
+        const namespaces = yield* resolveProjectTaskIdentifierNamespaces(
+          projects,
+          configService
+        ).pipe(
+          Effect.mapError(
+            (error) =>
+              new RpcError({
+                code: 'INVALID_PROJECT_CONFIG',
+                message: error.message,
+              })
+          )
+        )
+        yield* validateProjectTaskIdentifierNamespace(
+          {
+            aliases: shortNameAliases,
+            id: project.id,
+            name: project.name,
+            repoPath: project.repoPath,
+            shortName,
+          },
+          namespaces
+        )
+      }
+
+      yield* configService
+        .writeProjectConfig(project.repoPath, {
+          ...config,
+          ...(config.shortName === undefined ? {} : { shortNameAliases }),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new RpcError({
+                code: 'CONFIG_WRITE_FAILED',
+                message: error.message,
+              })
+          )
+        )
+    })
+  )
 
 export const handleGlobalConfigGet = () =>
   Effect.gen(function* () {
@@ -667,9 +743,16 @@ export const handleTaskMoveAtPath = (
   },
   databasePath = taskDatabasePath()
 ) =>
-  withTaskMoveLock(
-    payload.taskId,
-    handleTaskMoveAtPathUnlocked(payload, databasePath)
+  resolveTaskReferenceAtPath(payload.taskId, databasePath).pipe(
+    Effect.flatMap((task) =>
+      withTaskMoveLock(
+        task.id,
+        handleTaskMoveAtPathUnlocked(
+          { ...payload, taskId: task.id },
+          databasePath
+        )
+      )
+    )
   )
 
 /**
@@ -952,62 +1035,71 @@ export const handleTaskUpdate = (
   },
   databasePath = taskDatabasePath()
 ) =>
-  Effect.acquireUseRelease(
-    Effect.try({
-      try: () => NodeTaskBoardDatabase.open(databasePath),
-      catch: () =>
-        new RpcError({
-          code: 'TASK_UPDATE_FAILED',
-          message: 'Unable to open the task database',
-        }),
-    }),
-    (database) =>
+  Effect.gen(function* () {
+    const resolvedTask = yield* resolveTaskReferenceAtPath(taskId, databasePath)
+    return yield* Effect.acquireUseRelease(
       Effect.try({
-        try: () => {
-          const trimmedTitle = title.trim()
-          if (trimmedTitle.length === 0 || trimmedTitle.length > 100) {
-            throw new Error('Task titles must be between 1 and 100 characters')
-          }
-          if (description !== null && description.length > 100_000) {
-            throw new Error(
-              'Task descriptions must be 100000 characters or fewer'
-            )
-          }
-          return database.update(taskId, expectedRevision, {
-            description,
-            title: trimmedTitle,
-          })
-        },
-        catch: (cause) =>
+        try: () => NodeTaskBoardDatabase.open(databasePath),
+        catch: () =>
           new RpcError({
-            code:
-              cause instanceof Error && cause.message.includes('stale revision')
-                ? 'CAS_CONFLICT'
-                : 'TASK_UPDATE_FAILED',
-            message:
-              cause instanceof Error ? cause.message : 'Unable to update task',
+            code: 'TASK_UPDATE_FAILED',
+            message: 'Unable to open the task database',
           }),
-      }).pipe(
-        Effect.map((task) => ({
-          description: task.description,
-          revision: task.revision,
-          title: task.title,
-          updatedAt: task.updatedAt,
-        }))
-      ),
-    (database) => Effect.sync(() => database.close())
-  )
+      }),
+      (database) =>
+        Effect.try({
+          try: () => {
+            const trimmedTitle = title.trim()
+            if (trimmedTitle.length === 0 || trimmedTitle.length > 100) {
+              throw new Error(
+                'Task titles must be between 1 and 100 characters'
+              )
+            }
+            if (description !== null && description.length > 100_000) {
+              throw new Error(
+                'Task descriptions must be 100000 characters or fewer'
+              )
+            }
+            return database.update(resolvedTask.id, expectedRevision, {
+              description,
+              title: trimmedTitle,
+            })
+          },
+          catch: (cause) =>
+            new RpcError({
+              code:
+                cause instanceof Error &&
+                cause.message.includes('stale revision')
+                  ? 'CAS_CONFLICT'
+                  : 'TASK_UPDATE_FAILED',
+              message:
+                cause instanceof Error
+                  ? cause.message
+                  : 'Unable to update task',
+            }),
+        }).pipe(
+          Effect.map((task) => ({
+            description: task.description,
+            revision: task.revision,
+            title: task.title,
+            updatedAt: task.updatedAt,
+          }))
+        ),
+      (database) => Effect.sync(() => database.close())
+    )
+  })
 
 export const handleTaskTerminalAttach = (
   { taskId }: { readonly taskId: string },
   databasePath = taskDatabasePath()
 ) =>
   Effect.gen(function* () {
+    const resolvedTask = yield* resolveTaskReferenceAtPath(taskId, databasePath)
     const task = yield* Effect.try({
       try: () => {
         const database = NodeTaskBoardDatabase.open(databasePath)
         try {
-          return database.findTask(taskId)
+          return database.findTask(resolvedTask.id)
         } finally {
           database.close()
         }

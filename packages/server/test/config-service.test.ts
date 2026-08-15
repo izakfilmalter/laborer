@@ -26,6 +26,7 @@ import { Effect } from 'effect'
 import { afterAll, beforeAll } from 'vitest'
 import {
   CONFIG_FILE_NAME,
+  type ConfigIOError,
   ConfigService,
   type ConfigValidationError,
   GLOBAL_CONFIG_DIR,
@@ -72,7 +73,7 @@ const writeProjectConfig = (
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
-): Effect.Effect<void> =>
+): Effect.Effect<void, ConfigIOError> =>
   Effect.gen(function* () {
     const service = yield* ConfigService
     yield* service.writeProjectConfig(projectRepoPath, updates)
@@ -138,6 +139,10 @@ describe('ConfigService', () => {
         assert.strictEqual(result.worktreeDir.value, `${projectDir}.worktrees`)
         assert.strictEqual(result.setupScripts.source, 'default')
         assert.deepStrictEqual(result.setupScripts.value, [])
+        assert.strictEqual(result.shortName.value, 'TESTPROJEC')
+        assert.strictEqual(result.shortName.source, 'default')
+        assert.deepStrictEqual(result.shortNameAliases.value, [])
+        assert.strictEqual(result.shortNameAliases.source, 'default')
       })
     )
 
@@ -146,6 +151,7 @@ describe('ConfigService', () => {
         const projectDir = join(testRoot, 'project-root-config')
         mkdirSync(projectDir, { recursive: true })
         const configPath = writeConfig(projectDir, {
+          shortName: 'TPC',
           worktreeDir: '/custom/worktrees',
           setupScripts: ['bun install', 'cp .env.example .env'],
         })
@@ -159,6 +165,44 @@ describe('ConfigService', () => {
           'cp .env.example .env',
         ])
         assert.strictEqual(result.setupScripts.source, configPath)
+        assert.strictEqual(result.shortName.value, 'TPC')
+        assert.strictEqual(result.shortName.source, configPath)
+      })
+    )
+
+    it.effect(
+      'reads, validates, and canonicalizes aliases only from the project root',
+      () =>
+        Effect.gen(function* () {
+          const parent = join(testRoot, 'alias-parent')
+          const projectDir = join(parent, 'alias-project')
+          mkdirSync(projectDir, { recursive: true })
+          writeConfig(parent, { shortNameAliases: ['PARENT'] })
+          const configPath = writeConfig(projectDir, {
+            shortName: 'CURRENT',
+            shortNameAliases: ['OLD', 'OLD', 'CURRENT'],
+          })
+
+          const result = yield* resolveConfig(projectDir, 'alias-project')
+          assert.deepStrictEqual(result.shortNameAliases, {
+            source: configPath,
+            value: ['OLD'],
+          })
+        })
+    )
+
+    it.effect('rejects malformed project aliases', () =>
+      Effect.gen(function* () {
+        const projectDir = join(testRoot, 'invalid-alias-project')
+        mkdirSync(projectDir, { recursive: true })
+        writeConfig(projectDir, {
+          shortNameAliases: ['not-valid'],
+        })
+
+        const error = yield* Effect.flip(
+          resolveConfig(projectDir, 'invalid-alias-project')
+        )
+        assert.include(error.message, 'shortNameAliases')
       })
     )
 
@@ -194,6 +238,7 @@ describe('ConfigService', () => {
         mkdirSync(child, { recursive: true })
 
         writeConfig(parent, {
+          shortName: 'PARENT',
           worktreeDir: '~/parent-worktrees',
         })
         const childConfigPath = writeConfig(child, {
@@ -211,6 +256,8 @@ describe('ConfigService', () => {
           result.worktreeDir.value,
           join(homedir(), 'parent-worktrees')
         )
+        assert.strictEqual(result.shortName.value, 'CHILDPROJE')
+        assert.strictEqual(result.shortName.source, 'default')
       })
     )
 
@@ -370,6 +417,22 @@ describe('ConfigService', () => {
   // ---------------------------------------------------------------------------
 
   describe('writeProjectConfig', () => {
+    it.effect('surfaces project config write failures', () =>
+      Effect.gen(function* () {
+        const missingProjectDir = join(
+          testRoot,
+          'missing-config-parent',
+          'project'
+        )
+        const error = yield* Effect.flip(
+          writeProjectConfig(missingProjectDir, {
+            worktreeDir: '/tmp/worktrees',
+          })
+        )
+        assert.include(error.message, 'Failed to write temp config file')
+      })
+    )
+
     it.effect('should create laborer.json when missing', () =>
       Effect.gen(function* () {
         const projectDir = join(testRoot, 'write-create-missing')

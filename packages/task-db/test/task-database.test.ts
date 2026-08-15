@@ -27,7 +27,8 @@ const migrationNames = [
   '0008_complete_removed_worktrees',
   '0009_git_hosted_status',
   '0010_pr_check_runs',
-  '0011_task_labels',
+  '0011_task_numbers',
+  '0012_task_labels',
 ]
 
 const temporaryDatabasePath = (): string => {
@@ -359,6 +360,39 @@ describe('NativeTaskDatabase', () => {
     })
     expect(database.changesAfter(0)).toHaveLength(1)
     database.close()
+  })
+
+  it('assigns monotonic task numbers independently per project root', () => {
+    const path = temporaryDatabasePath()
+    const database = NativeTaskDatabase.open(path)
+    const insert = (id: string, rootPath: string) =>
+      database.insert({
+        id,
+        rootPath,
+        source: 'manual',
+        status: 'todo',
+        title: id,
+      }).task
+
+    expect(insert('first-a', '/repo-a').taskNumber).toBe(1)
+    expect(insert('first-b', '/repo-b').taskNumber).toBe(1)
+    expect(insert('second-a', '/repo-a').taskNumber).toBe(2)
+    database.close()
+
+    const raw = new DatabaseSync(path)
+    raw.prepare('DELETE FROM tasks WHERE id = ?').run('second-a')
+    raw.close()
+    const reopened = NativeTaskDatabase.open(path)
+    expect(
+      reopened.insert({
+        id: 'third-a',
+        rootPath: '/repo-a',
+        source: 'manual',
+        status: 'todo',
+        title: 'third-a',
+      }).task.taskNumber
+    ).toBe(3)
+    reopened.close()
   })
 
   it('appends exactly one change transactionally for each mutation', () => {

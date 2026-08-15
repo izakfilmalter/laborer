@@ -11,11 +11,10 @@
 'use client'
 
 import { Combobox as ComboboxPrimitive } from '@base-ui/react'
+import { cn } from '@laborer/ui/lib/utils'
 import { CheckIcon } from 'lucide-react'
 import type { ReactElement, ReactNode, RefObject } from 'react'
 import { useEffect, useState } from 'react'
-
-import { cn } from '@laborer/ui/lib/utils'
 
 /**
  * The portal, positioner, and bordered card every picker shares. Pass picker

@@ -85,6 +85,7 @@ export const pendingTaskRow = (input: {
     sortOrder: null,
     source: slackUrl === null ? 'manual' : 'slack_url',
     status: input.status,
+    taskNumber: 0,
     title: slackUrl ?? text,
     updatedAt: input.now,
     worktreeBotOwned: false,

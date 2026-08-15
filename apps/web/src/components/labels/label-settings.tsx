@@ -14,17 +14,6 @@
 
 import { LABEL_COLORS, labelColorForName } from '@laborer/shared/labels'
 import type { LabelColor } from '@laborer/shared/rpc'
-import {
-  Check,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-} from 'lucide-react'
-import type { ReactElement, ReactNode } from 'react'
-import { useState } from 'react'
-
 import { Alert, AlertDescription } from '@laborer/ui/components/alert'
 import { Button } from '@laborer/ui/components/button'
 import {
@@ -51,6 +40,16 @@ import {
   TableRow,
 } from '@laborer/ui/components/table'
 import { cn } from '@laborer/ui/lib/utils'
+import {
+  Check,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from 'lucide-react'
+import type { ReactElement, ReactNode } from 'react'
+import { useState } from 'react'
 
 import { labelColorDotClassName, labelDotClassName } from './label-colors'
 

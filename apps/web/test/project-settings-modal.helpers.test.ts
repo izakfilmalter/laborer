@@ -33,6 +33,7 @@ describe('project settings modal helpers', () => {
       agent: 'opencode2',
       resolvedConfig: {
         agent: 'claude',
+        shortName: 'OLD',
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },
@@ -40,11 +41,13 @@ describe('project settings modal helpers', () => {
         { id: '1', value: 'bun install' },
         { id: '2', value: 'bun test' },
       ],
+      shortName: 'lab',
       worktreeDir: '~/worktrees',
     })
 
     expect(result).toEqual({
       agent: 'opencode2',
+      shortName: 'LAB',
       setupScripts: ['bun install', 'bun test'],
       worktreeDir: '~/worktrees',
     })
@@ -55,10 +58,12 @@ describe('project settings modal helpers', () => {
       agent: 'opencode2',
       resolvedConfig: {
         agent: 'claude',
+        shortName: 'LAB',
         setupScripts: [],
         worktreeDir: '/tmp/worktrees',
       },
       setupScripts: [],
+      shortName: 'LAB',
       worktreeDir: '/tmp/worktrees',
     })
 
@@ -70,6 +75,7 @@ describe('project settings modal helpers', () => {
       agent: 'claude',
       resolvedConfig: {
         agent: 'claude',
+        shortName: 'LAB',
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
       },
@@ -77,6 +83,7 @@ describe('project settings modal helpers', () => {
         { id: '1', value: ' bun install ' },
         { id: '2', value: '' },
       ],
+      shortName: ' lab ',
       worktreeDir: '   /tmp/worktrees ',
     })
 

@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { NodeRuntime, NodeStdio } from '@effect/platform-node'
 import { taskDatabasePath } from '@laborer/task-db/path'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Logger } from 'effect'
 import { AgentTaskService } from './services/agent-task-service.js'
 import { LaborerDatabase } from './services/laborer-database.js'
 import {
@@ -44,7 +44,8 @@ const serverLayer = TaskMcpToolsLayer.pipe(
   Layer.provideMerge(TaskMcpStdioProtocolLayer),
   Layer.provide(AgentTaskService.layer(databasePath)),
   Layer.provide(databaseLayer),
-  Layer.provide(NodeStdio.layer)
+  Layer.provide(NodeStdio.layer),
+  Layer.provide(Logger.layer([]))
 )
 
 writeLog('starting')

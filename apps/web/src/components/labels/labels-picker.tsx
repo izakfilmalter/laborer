@@ -9,16 +9,20 @@
 'use client'
 
 import { Combobox as ComboboxPrimitive } from '@base-ui/react'
-import { Plus } from 'lucide-react'
-import type { ReactElement, ReactNode, RefObject } from 'react'
-import { useMemo, useState } from 'react'
-import { Combobox, ComboboxEmpty, ComboboxList } from '@laborer/ui/components/combobox'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxList,
+} from '@laborer/ui/components/combobox'
 import {
   ComboboxOption,
   PickerHeader,
   PickerPopup,
   usePickerOpener,
 } from '@laborer/ui/components/combobox-picker'
+import { Plus } from 'lucide-react'
+import type { ReactElement, ReactNode, RefObject } from 'react'
+import { useMemo, useState } from 'react'
 
 import { LabelDot, type TaskLabelOption } from './label-chips'
 

@@ -13,6 +13,7 @@ export const tasks = sqliteTable(
     id: text().primaryKey(),
     rootPath: text('root_path').notNull(),
     title: text().notNull(),
+    taskNumber: integer('task_number'),
     status: text().notNull(),
     source: text().notNull(),
     executionId: text('execution_id').unique(),

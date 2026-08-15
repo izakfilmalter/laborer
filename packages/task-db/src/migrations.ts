@@ -97,9 +97,16 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
     ),
   },
   {
-    name: '0011_task_labels',
+    name: '0011_task_numbers',
     sql: readFileSync(
-      new URL('./migrations/0011_task_labels.sql', import.meta.url),
+      new URL('./migrations/0011_task_numbers.sql', import.meta.url),
+      'utf8'
+    ),
+  },
+  {
+    name: '0012_task_labels',
+    sql: readFileSync(
+      new URL('./migrations/0012_task_labels.sql', import.meta.url),
       'utf8'
     ),
   },

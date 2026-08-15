@@ -1,4 +1,4 @@
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import { localApi } from '@/lib/local-api'
 
 /**

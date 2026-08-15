@@ -26,32 +26,33 @@ import {
   buildWorkspaceTree,
   type WorkspaceTreeNode,
 } from '@laborer/shared/workspace-tree'
-import { ChevronRight, GitBranch, GitBranchPlus } from 'lucide-react'
-import { useMemo } from 'react'
-import { workspaceViewsAtom } from '@/atoms/shared-state'
-import { CardShell } from '@/components/card-shell'
-import { CreateWorkspaceForm } from '@/components/create-workspace-form'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Badge } from '@laborer/ui/components/badge'
+import { Button } from '@laborer/ui/components/button'
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { DialogTrigger } from '@/components/ui/dialog'
+} from '@laborer/ui/components/collapsible'
+import { DialogTrigger } from '@laborer/ui/components/dialog'
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
-import { Spinner } from '@/components/ui/spinner'
+} from '@laborer/ui/components/empty'
+import { Spinner } from '@laborer/ui/components/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { ChevronRight, GitBranch, GitBranchPlus } from 'lucide-react'
+import { useMemo } from 'react'
+import { workspaceViewsAtom } from '@/atoms/shared-state'
+import { CardShell } from '@/components/card-shell'
+import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
@@ -64,7 +65,6 @@ import {
   type CollapseState,
   useWorkspaceGroupCollapseState,
 } from '@/hooks/use-project-collapse-state'
-import { cn } from '@/lib/utils'
 
 interface WorkspaceListProps {
   /** Reports pending sub-workspace creation changes to the project group. */
@@ -77,6 +77,7 @@ interface WorkspaceListProps {
   readonly projectId: string
   /** The project name, used by the sub-workspace creation dialog. */
   readonly projectName: string
+  readonly projectShortName?: string | null | undefined
   /**
    * The repository path (project.repoPath) used to identify the root workspace.
    * The root workspace is the one where worktreePath matches this path.
@@ -96,6 +97,7 @@ interface WorkspaceTreeGroupProps {
     | PendingWorkspaceCreationChangeHandler
     | undefined
   readonly projectName: string
+  readonly projectShortName?: string | null | undefined
   readonly repoPath: string
 }
 
@@ -113,6 +115,7 @@ function WorkspaceTreeGroup({
   collapseState,
   onPendingCreationChange,
   projectName,
+  projectShortName,
   repoPath,
 }: WorkspaceTreeGroupProps) {
   const { workspace, children } = node
@@ -122,6 +125,7 @@ function WorkspaceTreeGroup({
       isRootWorkspace={workspace.worktreePath === repoPath}
       onPendingCreationChange={onPendingCreationChange}
       projectName={projectName}
+      projectShortName={projectShortName}
       showCreateSubWorkspaceAction={children.length === 0}
       workspace={workspace}
     />
@@ -199,6 +203,7 @@ function WorkspaceTreeGroup({
               node={child}
               onPendingCreationChange={onPendingCreationChange}
               projectName={projectName}
+              projectShortName={projectShortName}
               repoPath={repoPath}
             />
           ))}
@@ -246,6 +251,7 @@ function WorkspaceList({
   pendingCreations = [],
   projectId,
   projectName,
+  projectShortName,
   repoPath,
 }: WorkspaceListProps) {
   const workspaceList = useAtomValue(workspaceViewsAtom)
@@ -303,6 +309,7 @@ function WorkspaceList({
           node={node}
           onPendingCreationChange={onPendingCreationChange}
           projectName={projectName}
+          projectShortName={projectShortName}
           repoPath={repoPath}
         />
       ))}

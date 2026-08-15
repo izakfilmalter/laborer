@@ -87,8 +87,13 @@ describe('LaborerRpcs config management', () => {
           const canonicalProjectConfigPath = realpathSync(projectConfigPath)
           const canonicalAncestorConfigPath = realpathSync(ancestorConfigPath)
 
-          const { agent: resolvedAgent, ...configWithoutAgent } = config
+          const {
+            agent: resolvedAgent,
+            shortName: resolvedShortName,
+            ...configWithoutAgent
+          } = config
           assert.deepStrictEqual(configWithoutAgent, {
+            shortNameAliases: { source: 'default', value: [] },
             setupScripts: {
               source: canonicalProjectConfigPath,
               value: ['bun install', 'bun test'],
@@ -101,6 +106,60 @@ describe('LaborerRpcs config management', () => {
           })
           assert.strictEqual(resolvedAgent.value, 'opencode2')
           assert.isString(resolvedAgent.source)
+          assert.isNotEmpty(resolvedShortName.value)
+        })
+      )
+  )
+
+  it.effect(
+    'preserves renamed short names as aliases and rejects namespace conflicts',
+    () =>
+      runWithRpcTestContext(({ client }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+          const firstPath = createTempDir('rpc-alias-first', tempRoots)
+          const secondPath = createTempDir('rpc-alias-second', tempRoots)
+          initRepoAt(firstPath)
+          initRepoAt(secondPath)
+          writeLaborerConfig(firstPath, { shortName: 'FIRST' })
+          writeLaborerConfig(secondPath, { shortName: 'SECOND' })
+          const first = yield* client['project.add']({ repoPath: firstPath })
+          const second = yield* client['project.add']({ repoPath: secondPath })
+
+          yield* client['config.update']({
+            projectId: first.id,
+            config: { shortName: 'RENAMED' },
+          })
+          const renamed = yield* client['config.get']({ projectId: first.id })
+          assert.strictEqual(renamed.shortName.value, 'RENAMED')
+          assert.deepStrictEqual(renamed.shortNameAliases.value, ['FIRST'])
+
+          const conflict = yield* client['config.update']({
+            projectId: second.id,
+            config: { shortName: 'FIRST' },
+          }).pipe(Effect.result)
+          assert.isTrue(Result.isFailure(conflict))
+          if (Result.isFailure(conflict)) {
+            assert.strictEqual(
+              conflict.failure.code,
+              'PROJECT_SHORT_NAME_CONFLICT'
+            )
+          }
+
+          yield* client['config.update']({
+            projectId: first.id,
+            config: { shortName: 'FIRST' },
+          })
+          const renamedBack = yield* client['config.get']({
+            projectId: first.id,
+          })
+          assert.strictEqual(renamedBack.shortName.value, 'FIRST')
+          assert.deepStrictEqual(renamedBack.shortNameAliases.value, [
+            'RENAMED',
+          ])
         })
       )
   )
@@ -148,6 +207,7 @@ describe('LaborerRpcs config management', () => {
             projectId: project.id,
             config: {
               agent: 'opencode2',
+              shortName: 'RPC',
               setupScripts: ['bun install'],
               worktreeDir: '~/updated-worktrees',
             },
@@ -168,6 +228,16 @@ describe('LaborerRpcs config management', () => {
 
           assert.deepStrictEqual(resolved, {
             agent: { source: canonicalConfigPath, value: 'opencode2' },
+            shortName: { source: canonicalConfigPath, value: 'RPC' },
+            shortNameAliases: {
+              source: canonicalConfigPath,
+              value: [
+                project.name
+                  .toUpperCase()
+                  .replaceAll(/[^A-Z0-9]/g, '')
+                  .slice(0, 10),
+              ],
+            },
             setupScripts: {
               source: canonicalConfigPath,
               value: ['bun install'],

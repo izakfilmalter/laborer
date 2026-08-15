@@ -1,6 +1,6 @@
+import { Input } from '@laborer/ui/components/input'
 import { Search, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { Input } from '@/components/ui/input'
 
 /** Local search input for the board toolbar. */
 function BoardSearch({

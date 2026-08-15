@@ -5,7 +5,7 @@
  * (arrow keys, number keys, Enter, Escape), mouse interaction, and
  * pre-selection of the agent option.
  *
- * @see apps/web/src/components/ui/panel-type-picker.tsx
+ * @see apps/web/src/components/panel-type-picker.tsx
  * @see docs/tabbed-window-layout/issues.md — Issue #11
  */
 
@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // ---------------------------------------------------------------------------
 
 // Stub haptics to avoid web-haptics dependency in jsdom
-vi.mock('@/lib/haptics', () => ({
+vi.mock('@laborer/ui/lib/haptics', () => ({
   haptics: { buttonTap: vi.fn(), heavyImpact: vi.fn() },
 }))
 
@@ -28,7 +28,7 @@ vi.mock('@/lib/haptics', () => ({
 import {
   PANEL_TYPE_OPTIONS,
   PanelTypePicker,
-} from '../src/components/ui/panel-type-picker'
+} from '@/components/panel-type-picker'
 
 // ---------------------------------------------------------------------------
 // Helpers

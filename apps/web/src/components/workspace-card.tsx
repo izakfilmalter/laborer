@@ -15,6 +15,26 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@laborer/ui/components/alert-dialog'
+import { Badge } from '@laborer/ui/components/badge'
+import { Button } from '@laborer/ui/components/button'
+import { DialogTrigger } from '@laborer/ui/components/dialog'
+import { Kbd } from '@laborer/ui/components/kbd'
+import { Spinner } from '@laborer/ui/components/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
 import { GitBranch, GitBranchPlus, Pencil, Trash2 } from 'lucide-react'
 import {
   type FC,
@@ -41,26 +61,8 @@ import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { boardTaskFromSharedRow } from '@/components/kanban/board-data'
 import { useTaskEditor } from '@/components/kanban/task-editor'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { TaskIdentifier } from '@/components/task-identifier'
 import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { DialogTrigger } from '@/components/ui/dialog'
-import { Kbd } from '@/components/ui/kbd'
-import { Spinner } from '@/components/ui/spinner'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import type { PendingWorkspaceCreationChangeHandler } from '@/hooks/use-create-workspace'
 import {
@@ -74,8 +76,8 @@ import {
   showsWorkspaceAgentStatus,
 } from '@/lib/agent-status-presentation'
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
+import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
-import { cn, extractErrorMessage } from '@/lib/utils'
 import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
 import { useActiveWorkspaceId, usePanelActions } from '@/panels/panel-context'
 
@@ -428,6 +430,7 @@ interface WorkspaceCardProps {
     | undefined
   /** The project name, used by the sub-workspace creation dialog. */
   readonly projectName: string
+  readonly projectShortName?: string | null | undefined
   /** Whether to show the sub-workspace creation action in the card header. */
   readonly showCreateSubWorkspaceAction?: boolean | undefined
   /**
@@ -465,6 +468,7 @@ interface WorkspaceCardWorkspace {
   readonly prTitle: string | null
   readonly prUrl: string | null
   readonly status: string
+  readonly taskNumber?: number | null
   readonly taskSource: string | null
   readonly worktreePath: string
   readonly worktreeSetupStep: string | null
@@ -759,6 +763,7 @@ function WorkspaceCard({
   onActivate,
   onPendingCreationChange,
   projectName,
+  projectShortName,
   showCreateSubWorkspaceAction = true,
   showDestroyAction = true,
   showEditAction = true,
@@ -852,6 +857,13 @@ function WorkspaceCard({
       //
       badges={
         <>
+          {workspace.taskNumber ? (
+            <TaskIdentifier
+              projectId={workspace.projectId}
+              projectShortName={projectShortName}
+              taskNumber={workspace.taskNumber}
+            />
+          ) : null}
           {/* The pull request is a status, not a control: it leads the rail
               because it is the furthest along the work has got, and it sits
               opposite the controls that start more of it. */}

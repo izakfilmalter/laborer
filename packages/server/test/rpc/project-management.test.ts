@@ -4,6 +4,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs'
 import { basename, join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
@@ -30,6 +31,34 @@ const runWithRpcTestContext = <A, E>(
   }) as Effect.Effect<A, E, Scope.Scope>
 
 describe('LaborerRpcs project management', () => {
+  it.effect('project.add rejects a project key used by another project', () =>
+    runWithRpcTestContext(({ client, database }) =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => cleanupTempRoots(tempRoots))
+        )
+        const firstPath = initRepo('rpc-project-key-first', tempRoots)
+        const secondPath = initRepo('rpc-project-key-second', tempRoots)
+        writeFileSync(join(firstPath, 'laborer.json'), '{"shortName":"SAME"}\n')
+        writeFileSync(
+          join(secondPath, 'laborer.json'),
+          '{"shortName":"SAME"}\n'
+        )
+
+        yield* client['project.add']({ repoPath: firstPath })
+        const result = yield* client['project.add']({
+          repoPath: secondPath,
+        }).pipe(Effect.result)
+        assert.isTrue(Result.isFailure(result))
+        if (Result.isFailure(result)) {
+          assert.strictEqual(result.failure.code, 'PROJECT_SHORT_NAME_CONFLICT')
+        }
+        assert.strictEqual(database.listProjects().length, 1)
+      })
+    )
+  )
+
   it.effect(
     'project.add registers a real git repo with canonical identity',
     () =>
@@ -235,8 +264,15 @@ describe('LaborerRpcs project management', () => {
 
         const first = yield* client['project.add']({ repoPath: firstClone })
         const second = yield* client['project.add']({ repoPath: secondClone })
+        const rePointedConfig = yield* client['config.get']({
+          projectId: second.id,
+        })
 
         assert.strictEqual(second.id, first.id)
+        assert.strictEqual(rePointedConfig.shortName.value, 'SECOND')
+        assert.deepStrictEqual(rePointedConfig.shortNameAliases.value, [
+          'FIRST',
+        ])
         assert.strictEqual(database.listProjects().length, 1)
         assert.strictEqual(
           database.findProject(first.id)?.rootPath,

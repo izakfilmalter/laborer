@@ -13,7 +13,8 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
 import { useSidecarStatuses } from '@/hooks/use-sidecar-statuses'
 import {
   ALL_SIDECAR_NAMES,
@@ -23,7 +24,6 @@ import {
   type ServiceState,
   type StatusColor,
 } from '@/lib/sidecar-statuses'
-import { cn } from '@/lib/utils'
 
 /** Map semantic colors to Tailwind utility classes for the status dot. */
 const DOT_COLOR_CLASSES: Record<StatusColor, string> = {

@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Effect, Layer } from 'effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { handleTaskTerminalAttach } from '../src/rpc/handlers.js'
+import { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 import { TerminalClient } from '../src/services/terminal-client.js'
 
@@ -25,6 +26,16 @@ describe('task terminal attach', () => {
     mkdirSync(worktreePath)
     const database = NodeTaskBoardDatabase.open(databasePath)
     database.close()
+    writeFileSync(join(root, 'laborer.json'), '{"shortName":"ATTACH"}\n')
+    const projectDatabase = NativeLaborerDatabase.open(databasePath)
+    projectDatabase.insertProject({
+      canonicalGitCommonDir: root,
+      id: 'project-1',
+      name: 'Attach',
+      repoId: 'repo-1',
+      rootPath: root,
+    })
+    projectDatabase.close()
     const writer = new DatabaseSync(databasePath)
     writer
       .prepare(`INSERT INTO tasks (
@@ -63,7 +74,7 @@ describe('task terminal attach', () => {
     )
 
     const result = await Effect.runPromise(
-      handleTaskTerminalAttach({ taskId: 'task-1' }, databasePath).pipe(
+      handleTaskTerminalAttach({ taskId: 'ATTACH-1' }, databasePath).pipe(
         Effect.provide(terminalLayer)
       )
     )
@@ -74,7 +85,7 @@ describe('task terminal attach', () => {
 
     rmSync(worktreePath, { recursive: true })
     const missing = await Effect.runPromise(
-      handleTaskTerminalAttach({ taskId: 'task-1' }, databasePath).pipe(
+      handleTaskTerminalAttach({ taskId: 'ATTACH-1' }, databasePath).pipe(
         Effect.provide(terminalLayer),
         Effect.flip
       )

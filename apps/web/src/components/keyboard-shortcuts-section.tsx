@@ -1,10 +1,10 @@
+import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import { Keyboard } from 'lucide-react'
 import { BrowserShortcutNotice } from '@/components/browser-shortcut-notice'
 import {
   CloseShortcutHint,
   CloseWindowTabShortcutHint,
 } from '@/components/close-shortcut-hint'
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
 
 /**
  * Static keyboard-shortcut reference shown in app settings.

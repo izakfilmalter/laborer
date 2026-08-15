@@ -15,6 +15,25 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { createTaskUlid } from '@laborer/task-db/ulid'
+import { Badge } from '@laborer/ui/components/badge'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Kanban,
+  KanbanBoard,
+  KanbanColumn,
+  KanbanColumnContent,
+  KanbanItem,
+  KanbanItemHandle,
+  KanbanOverlay,
+} from '@laborer/ui/components/reui/kanban'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
+import { Spinner } from '@laborer/ui/components/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
 import {
   AlignLeft,
   Bot,
@@ -90,32 +109,15 @@ import {
   useProjectDragItem,
   useProjectReorderMonitor,
 } from '@/components/project-reorder'
-import {
-  Kanban,
-  KanbanBoard,
-  KanbanColumn,
-  KanbanColumnContent,
-  KanbanItem,
-  KanbanItemHandle,
-  KanbanOverlay,
-} from '@/components/reui/kanban'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Spinner } from '@/components/ui/spinner'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { TaskIdentifier } from '@/components/task-identifier'
 import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
+import { useProjectShortName } from '@/hooks/use-project-short-name'
+import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
-import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
@@ -279,6 +281,8 @@ interface BoardCardWorkspace {
  * whose body opens a workspace cannot also open a form.
  */
 function TaskBoardCard({
+  projectId,
+  projectShortName,
   task,
   attachBlocked = false,
   attached = false,
@@ -292,6 +296,8 @@ function TaskBoardCard({
   workspace,
 }: {
   readonly task: BoardTask
+  readonly projectId: string
+  readonly projectShortName?: string | null
   readonly attachBlocked?: boolean
   readonly attached?: boolean
   readonly attaching?: boolean
@@ -442,6 +448,7 @@ function TaskBoardCard({
         isRootWorkspace={workspace.isRoot}
         onActivate={activate}
         projectName={workspace.projectName}
+        projectShortName={projectShortName}
         showCreateSubWorkspaceAction={false}
         // The board hangs its own Pencil off `actions`, alongside the Slack
         // link and cancel that only it has.
@@ -468,6 +475,11 @@ function TaskBoardCard({
       aria-busy={analysis === 'analyzing' ? true : undefined}
       badges={
         <>
+          <TaskIdentifier
+            projectId={projectId}
+            projectShortName={projectShortName}
+            taskNumber={task.taskNumber}
+          />
           {boardBadges}
           <WorktreeChip card={task} />
           {!isOverlay && (
@@ -795,6 +807,7 @@ function LaneBoard({
   // Done is clipped by default so the archive never sets the lane's height.
   const [doneExpanded, setDoneExpanded] = useState(false)
   const laneId = useId()
+  const projectShortName = useProjectShortName(projectId)
 
   // Server-side card changes reset the local drag state without remounting the
   // lane, so a card arriving in the background never steals a half-typed
@@ -857,9 +870,16 @@ function LaneBoard({
           const composerOpen = composerColumn === column.id
           const cards = columnTasks[column.id] ?? []
           const isDone = column.id === 'done'
-          // Clipped Done is laid out over its own footprint, so its cards
-          // cannot stretch the lane; every other column still can.
-          const clipped = isDone && !doneExpanded
+          // Done is always laid out over its own footprint, so neither the
+          // archive nor an expanded archive can stretch the lane past the
+          // board and push its own toggle off screen; every other column can.
+          const clipped = isDone
+          // Collapsed Done shows only the most recent cards; expanded shows
+          // them all, scrolling inside the same footprint.
+          const visibleCards =
+            isDone && !doneExpanded
+              ? cards.slice(0, DONE_COLLAPSED_CARD_LIMIT)
+              : cards
           const closeComposer = (reason: ComposerCloseReason) => {
             setComposerColumn(null)
             if (reason === 'cancel') {
@@ -922,7 +942,7 @@ function LaneBoard({
                         className="flex min-h-24 flex-col gap-2 px-2 pt-1.5 pb-2"
                         value={column.id}
                       >
-                        {cards.map((task) => (
+                        {visibleCards.map((task) => (
                           <KanbanItem
                             data-task-id={task.id}
                             data-testid="task-board-card"
@@ -946,6 +966,8 @@ function LaneBoard({
                                     ? undefined
                                     : tasksById.get(task.parentTaskId)?.title
                                 }
+                                projectId={projectId}
+                                projectShortName={projectShortName}
                                 task={task}
                                 workspace={workspaceForCard(task)}
                               />
@@ -972,7 +994,7 @@ function LaneBoard({
                   </div>
                 </div>
                 {isDone && (
-                  <div className="flex min-w-0 items-center gap-2 px-3 pb-2">
+                  <div className="flex min-w-0 shrink-0 items-center gap-2 px-3 pb-2">
                     <p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70">
                       Done cards auto-hide after 7 days
                     </p>
@@ -1017,6 +1039,8 @@ function LaneBoard({
                   ? undefined
                   : tasksById.get(task.parentTaskId)?.title
               }
+              projectId={projectId}
+              projectShortName={projectShortName}
               task={task}
               workspace={workspaceForCard(task)}
             />

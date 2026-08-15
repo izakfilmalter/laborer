@@ -222,6 +222,7 @@ export const BoardTask = Schema.Struct({
     'worktree',
   ]),
   status: StoredTaskStatus,
+  taskNumber: Schema.Int,
   title: Schema.String,
   updatedAt: Schema.Int,
   worktreeBotOwned: Schema.Boolean,
@@ -372,6 +373,8 @@ const ConfigResolvedValueAgent = Schema.Struct({
 
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
+  shortName: ConfigResolvedValueString,
+  shortNameAliases: ConfigResolvedValueStringArray,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
   watchIgnore: ConfigResolvedValueStringArray,
@@ -844,6 +847,7 @@ export class LaborerRpcs extends RpcGroup.make(
       projectId: Schema.String,
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
+        shortName: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
       }),

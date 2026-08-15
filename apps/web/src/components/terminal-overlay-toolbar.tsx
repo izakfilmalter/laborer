@@ -14,15 +14,15 @@
  * @see panels/panel-manager.tsx — LeafPaneRenderer (renders this toolbar)
  */
 
-import { Columns2, Maximize, Minimize, Rows2, X } from 'lucide-react'
-import { CloseShortcutHint } from '@/components/close-shortcut-hint'
-import { Button } from '@/components/ui/button'
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import { Button } from '@laborer/ui/components/button'
+import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { Columns2, Maximize, Minimize, Rows2, X } from 'lucide-react'
+import { CloseShortcutHint } from '@/components/close-shortcut-hint'
 import type { PanelActions } from '@/panels/panel-context'
 
 interface TerminalOverlayToolbarProps {

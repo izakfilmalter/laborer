@@ -1,10 +1,10 @@
 import type { WindowLayout, WindowTab } from '@laborer/shared/types'
-import { useCallback, useMemo, useState } from 'react'
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-} from '@/components/ui/resizable'
+} from '@laborer/ui/components/resizable'
+import { useCallback, useMemo, useState } from 'react'
 import {
   FullscreenPortalContext,
   usePanelActions,

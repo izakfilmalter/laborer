@@ -15,7 +15,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Stub the Button component to render a plain button (avoids @base-ui dependency).
-vi.mock('@/components/ui/button', () => ({
+vi.mock('@laborer/ui/components/button', () => ({
   Button: ({
     children,
     ...props
@@ -27,7 +27,7 @@ vi.mock('@/components/ui/button', () => ({
 }))
 
 // Stub the Kbd component to render a plain <kbd> element.
-vi.mock('@/components/ui/kbd', () => ({
+vi.mock('@laborer/ui/components/kbd', () => ({
   Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
 }))
 

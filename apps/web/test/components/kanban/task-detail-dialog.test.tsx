@@ -23,7 +23,7 @@ vi.mock('sonner', () => ({
 
 // Stub tooltip — the real trigger merges its children into `render`, so the
 // stub has to as well or every chip loses its label.
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({
     children,
@@ -74,6 +74,7 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
   slackPermalink: null,
   source: 'agent',
   status: 'todo',
+  taskNumber: 12,
   title: 'Improve task details',
   updatedAt: 2,
   worktreeBotOwned: false,
@@ -85,10 +86,18 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
 
 describe('task card details', () => {
   it('makes agent-authored and described cards distinct', () => {
-    render(<TaskBoardCard onOpen={vi.fn()} task={task()} />)
+    render(
+      <TaskBoardCard
+        onOpen={vi.fn()}
+        projectId="project-1"
+        projectShortName="LAB"
+        task={task()}
+      />
+    )
 
     expect(screen.getByText('Agent staged')).toBeTruthy()
     expect(screen.getByText('Has description')).toBeTruthy()
+    expect(screen.getByText('LAB-12')).toBeTruthy()
   })
 
   it('sends the card body to the work and leaves editing to its own button', async () => {

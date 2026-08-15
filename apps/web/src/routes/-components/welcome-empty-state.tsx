@@ -1,5 +1,3 @@
-import { FolderGit2 } from 'lucide-react'
-import { AddProjectForm } from '@/components/add-project-form'
 import {
   Empty,
   EmptyContent,
@@ -7,7 +5,9 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
+} from '@laborer/ui/components/empty'
+import { FolderGit2 } from 'lucide-react'
+import { AddProjectForm } from '@/components/add-project-form'
 
 /**
  * Welcome empty state shown in the main content area when no projects

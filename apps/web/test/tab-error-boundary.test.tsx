@@ -4,10 +4,11 @@
  * Verifies that errors in child components are caught and displayed
  * with a retry button, and that non-errored children render normally.
  *
- * @see apps/web/src/components/ui/tab-error-boundary.tsx
+ * @see packages/ui/src/components/tab-error-boundary.tsx
  * @see docs/tabbed-window-layout/issues.md — Issue #28
  */
 
+import { TabErrorBoundary } from '@laborer/ui/components/tab-error-boundary'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import {
@@ -19,7 +20,6 @@ import {
   it,
   vi,
 } from 'vitest'
-import { TabErrorBoundary } from '../src/components/ui/tab-error-boundary'
 
 afterEach(cleanup)
 

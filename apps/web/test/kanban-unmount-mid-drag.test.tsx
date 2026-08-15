@@ -9,14 +9,11 @@
  *
  * The Kanban root now bails out of its drag handlers once unmounted.
  *
- * @see apps/web/src/components/reui/kanban.tsx
+ * @see packages/ui/src/components/reui/kanban.tsx
  * @see apps/web/src/components/kanban/task-board.tsx (persistMove)
  * @see apps/web/src/atoms/renderer-connection.ts (generation bump)
  */
 
-import { cleanup, fireEvent, render } from '@testing-library/react'
-import { useState } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   Kanban,
   KanbanBoard,
@@ -24,7 +21,10 @@ import {
   KanbanColumnContent,
   KanbanItem,
   type KanbanMoveEvent,
-} from '../src/components/reui/kanban'
+} from '@laborer/ui/components/reui/kanban'
+import { cleanup, fireEvent, render } from '@testing-library/react'
+import { useState } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // Layout stubs — jsdom has no layout, so droppable/draggable rects come from

@@ -1,4 +1,3 @@
-const DEBUG_STORAGE_KEY = 'laborer:renderer-debug'
 const MAX_EVENTS = 500
 const PREFIX = '[laborer-debug]'
 
@@ -20,7 +19,6 @@ interface DebugTrace {
 interface LaborerDebugApi {
   readonly clear: () => void
   readonly copy: () => Promise<string>
-  readonly disable: () => void
   readonly dump: () => DebugTrace
 }
 
@@ -29,24 +27,6 @@ declare global {
     laborerDebug?: LaborerDebugApi
   }
 }
-
-const enabled = (() => {
-  if (typeof window === 'undefined') {
-    return false
-  }
-  try {
-    const requested = new URLSearchParams(window.location.search).get(
-      'laborerDebug'
-    )
-    if (requested === '1') {
-      window.localStorage.setItem(DEBUG_STORAGE_KEY, '1')
-      return true
-    }
-    return window.localStorage.getItem(DEBUG_STORAGE_KEY) === '1'
-  } catch {
-    return false
-  }
-})()
 
 const startedAt = globalThis.performance?.now() ?? 0
 const sessionId = globalThis.crypto?.randomUUID?.() ?? 'unknown'
@@ -63,7 +43,7 @@ const trace = (): DebugTrace => ({
   userAgent: globalThis.navigator?.userAgent ?? 'unknown',
 })
 
-if (enabled && typeof window !== 'undefined') {
+if (typeof window !== 'undefined') {
   window.laborerDebug = {
     clear: () => {
       events.length = 0
@@ -82,15 +62,9 @@ if (enabled && typeof window !== 'undefined') {
       )
       return output
     },
-    disable: () => {
-      window.localStorage.removeItem(DEBUG_STORAGE_KEY)
-      console.info(`${PREFIX} disabled; reload the page`)
-    },
     dump: trace,
   }
-  console.info(
-    `${PREFIX} enabled for session ${sessionId}; run await window.laborerDebug.copy() after reproducing`
-  )
+  console.info(`${PREFIX} session ${sessionId} started`)
 }
 
 export const rendererDebug = (
@@ -98,9 +72,6 @@ export const rendererDebug = (
   event: string,
   details?: unknown
 ): void => {
-  if (!enabled) {
-    return
-  }
   const entry: DebugEvent = {
     at: Math.round((globalThis.performance?.now() ?? startedAt) - startedAt),
     category,
@@ -111,7 +82,7 @@ export const rendererDebug = (
   if (events.length > MAX_EVENTS) {
     events.shift()
   }
-  console.debug(PREFIX, entry)
+  console.info(PREFIX, entry)
 }
 
 export const rendererDebugSampled = (
@@ -144,9 +115,6 @@ export const instrumentWebSocket = (
   owner: 'rpc' | 'supervisor',
   url: string
 ): void => {
-  if (!enabled) {
-    return
-  }
   const socketId = globalThis.crypto.randomUUID()
   const safeUrl = new URL(url)
   const details = {

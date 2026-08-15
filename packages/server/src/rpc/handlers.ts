@@ -17,6 +17,7 @@ import { dirname, join, resolve } from 'node:path'
 import {
   type AgentProvider,
   type BoardTask,
+  type LabelColor,
   LaborerRpcs,
   RpcError,
 } from '@laborer/shared/rpc'
@@ -903,6 +904,123 @@ export const handleAppSettingSet = (payload: {
       )
   })
 
+const labelWriteError = (
+  cause: unknown,
+  code: string,
+  fallback: string
+): RpcError => {
+  if (cause instanceof LaborerDatabaseStaleRevisionError) {
+    return new RpcError({
+      code: 'CAS_CONFLICT',
+      message: cause.message,
+    })
+  }
+  return new RpcError({
+    code,
+    message: cause instanceof Error ? cause.message : fallback,
+  })
+}
+
+export const handleLabelCreate = (payload: {
+  readonly color?: LabelColor | undefined
+  readonly id?: string | undefined
+  readonly name: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('create label', (native) =>
+        native.createLabel({
+          ...(payload.color === undefined ? {} : { color: payload.color }),
+          ...(payload.id === undefined ? {} : { id: payload.id }),
+          name: payload.name,
+        })
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          labelWriteError(cause, 'LABEL_WRITE_FAILED', 'Unable to create label')
+        )
+      )
+  })
+
+export const handleLabelUpdate = (payload: {
+  readonly color?: LabelColor | undefined
+  readonly expectedRevision: number
+  readonly labelId: string
+  readonly name?: string | undefined
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('update label', (native) =>
+        native.updateLabel(payload.labelId, payload.expectedRevision, {
+          ...(payload.color === undefined ? {} : { color: payload.color }),
+          ...(payload.name === undefined ? {} : { name: payload.name }),
+        })
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          labelWriteError(cause, 'LABEL_WRITE_FAILED', 'Unable to update label')
+        )
+      )
+  })
+
+export const handleLabelDelete = (payload: {
+  readonly expectedRevision: number
+  readonly labelId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    const result = yield* database
+      .run('delete label', (native) =>
+        native.deleteLabel(payload.labelId, payload.expectedRevision)
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          labelWriteError(
+            cause,
+            'LABEL_DELETE_FAILED',
+            'Unable to delete label'
+          )
+        )
+      )
+    return { cursor: result.cursor }
+  })
+
+export const handleTaskLabelsSet = (payload: {
+  readonly expectedRevision: number
+  readonly labelIds: readonly string[]
+  readonly mutationId: string
+  readonly taskId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    const result = yield* database
+      .run('set task labels', (native) =>
+        native.setTaskLabels(
+          payload.taskId,
+          payload.expectedRevision,
+          payload.labelIds,
+          payload.mutationId
+        )
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          labelWriteError(
+            cause,
+            'TASK_LABELS_WRITE_FAILED',
+            'Unable to save task labels'
+          )
+        )
+      )
+    return {
+      cursor: result.cursor,
+      revision: result.row.revision,
+      row: sharedTaskRow(result.row),
+      updatedAt: result.row.updatedAt,
+    }
+  })
+
 export const handleTaskUpdate = (
   {
     description,
@@ -1104,6 +1222,14 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       }),
     'task.move': handleTaskMove,
     'task.update': (payload) => handleTaskUpdate(payload),
+
+    // -------------------------------------------------------------------
+    // Label RPCs
+    // -------------------------------------------------------------------
+    'label.create': handleLabelCreate,
+    'label.update': handleLabelUpdate,
+    'label.delete': handleLabelDelete,
+    'task.labels.set': handleTaskLabelsSet,
 
     'task.terminal.attach': (payload) => handleTaskTerminalAttach(payload),
 

@@ -44,6 +44,7 @@ import {
 import { BOARD_COLUMNS } from '@/components/kanban/board-columns'
 import { type BoardTask, boardTaskTitle } from '@/components/kanban/board-data'
 import { SourceBadge } from '@/components/kanban/source-badge'
+import { TaskLabelsControl } from '@/components/labels/task-labels-control'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
 
@@ -347,6 +348,12 @@ function TaskDetailDialog({
             Name the card and write the brief its agent starts from.
           </DialogDescription>
           <TaskDetailMeta task={task} />
+          {/* Labels save on selection through their own write, so they sit
+              outside the draft form the Save button governs. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-muted-foreground text-xs">Labels</span>
+            <TaskLabelsControl task={task} />
+          </div>
         </DialogHeader>
         {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: ⌘↵ submits from either field */}
         <form

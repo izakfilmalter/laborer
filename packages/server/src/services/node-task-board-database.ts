@@ -4,6 +4,7 @@ import {
   type ExecutionStatus,
   NativeTaskDatabase,
   type NewTask,
+  parseLabelIds,
   type Task,
   type TaskPatch,
   type TaskRead,
@@ -17,7 +18,7 @@ import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
-  description, created_at, updated_at, revision, task_number`
+  description, created_at, updated_at, revision, task_number, label_ids`
 const BUSY_MESSAGE = /SQLITE_BUSY|database is locked/i
 const MAX_BRANCH_TASKS = 1000
 const MAX_CAS_ATTEMPTS = 5
@@ -112,6 +113,7 @@ const rowToTask = (row: SqliteRow): Task => {
     executionStatus: executionStatus(row.execution_status),
     id: requiredString(row.id, 'id'),
     description: nullableString(row.description, 'description'),
+    labelIds: parseLabelIds(row.label_ids),
     revision,
     rootPath: requiredString(row.root_path, 'root_path'),
     slackPermalink: nullableString(row.slack_permalink, 'slack_permalink'),

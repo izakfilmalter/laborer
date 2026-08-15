@@ -18,6 +18,7 @@ const task = (revision = 1): SharedTaskRow => ({
   executionId: null,
   executionStatus: null,
   id: 'task-1',
+  labelIds: [],
   parentTaskId: null,
   prIsDraft: false,
   prNumber: null,

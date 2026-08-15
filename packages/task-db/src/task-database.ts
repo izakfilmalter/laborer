@@ -48,6 +48,8 @@ export interface Task {
   readonly executionId: string | null
   readonly executionStatus: ExecutionStatus | null
   readonly id: string
+  /** Ids of the labels applied to this task, in application order. */
+  readonly labelIds: readonly string[]
   readonly revision: number
   readonly rootPath: string
   readonly slackPermalink: string | null
@@ -153,7 +155,7 @@ interface RetryOptions {
 
 const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   action_name, execution_status, slack_permalink, worktree_path, branch_name,
-  description, created_at, updated_at, revision, task_number`
+  description, created_at, updated_at, revision, task_number, label_ids`
 const MAX_SNAPSHOT_TASKS = 10_000
 
 const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
@@ -264,6 +266,33 @@ const executionStatus = (value: unknown): ExecutionStatus | null => {
   }
 }
 
+/**
+ * Label ids are a presentation concern denormalized onto the task row, so a
+ * value written by a newer build — or corrupted by hand — reads as "no labels"
+ * rather than failing the whole snapshot the task row travels in.
+ */
+export const parseLabelIds = (value: unknown): readonly string[] => {
+  if (typeof value !== 'string') {
+    return []
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) {
+    return []
+  }
+  return parsed.every((entry) => typeof entry === 'string')
+    ? (parsed as readonly string[])
+    : []
+}
+
+/** Canonical storage form for a task's label ids: deduped, order preserving. */
+export const serializeLabelIds = (labelIds: readonly string[]): string =>
+  JSON.stringify([...new Set(labelIds)])
+
 const rowToTask = (row: SqliteRow): Task => {
   const revision = safeInteger(row.revision, 'revision')
   if (revision < 1) {
@@ -283,6 +312,7 @@ const rowToTask = (row: SqliteRow): Task => {
     worktreePath: nullableString(row.worktree_path, 'worktree_path'),
     branchName: nullableString(row.branch_name, 'branch_name'),
     description: nullableString(row.description, 'description'),
+    labelIds: parseLabelIds(row.label_ids),
     createdAt: safeInteger(row.created_at, 'created_at'),
     updatedAt: safeInteger(row.updated_at, 'updated_at'),
     revision,

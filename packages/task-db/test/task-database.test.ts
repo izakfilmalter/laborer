@@ -28,6 +28,7 @@ const migrationNames = [
   '0009_git_hosted_status',
   '0010_pr_check_runs',
   '0011_task_numbers',
+  '0012_task_labels',
 ]
 
 const temporaryDatabasePath = (): string => {

@@ -25,6 +25,8 @@ const migrationNames = [
   '0008_complete_removed_worktrees',
   '0009_git_hosted_status',
   '0010_pr_check_runs',
+  '0011_task_numbers',
+  '0012_task_labels',
 ]
 
 const temporaryDatabasePath = (): string => {
@@ -301,6 +303,14 @@ describe('NativeTaskDatabase', () => {
       [
         '0010_pr_check_runs',
         'e7938c241a71411f6357c961d0e93d45c1a5d8a9211c9f29f498047df7c86a21',
+      ],
+      [
+        '0011_task_numbers',
+        '35a3125b9e6fc416742731a6247acb89bbed61522208c42a5ff5ddbb1e0bde83',
+      ],
+      [
+        '0012_task_labels',
+        'e0889187314cb52bfde30a4127664ea60b0e926bb4cd8a36a68894ab627ec9e5',
       ],
     ])
   })

@@ -185,11 +185,16 @@ describe('task MCP stdio entry point', () => {
     const listed = await server.request('tools/list')
     const tools = listed.result?.tools as { readonly name: string }[]
     expect(tools.map(({ name }) => name).sort()).toEqual([
+      'create_label',
       'create_task',
+      'delete_label',
       'delete_task',
       'get_task',
+      'list_labels',
       'list_projects',
       'list_tasks',
+      'set_task_labels',
+      'update_label',
       'update_task',
     ])
 
@@ -217,8 +222,41 @@ describe('task MCP stdio entry point', () => {
     expect(listedTasks.tasks).toEqual([
       expect.objectContaining({ identifier: taskId }),
     ])
-    const deleted = await callTool(server.request, 'delete_task', {
+    // Agents see the seeded defaults without creating anything first.
+    const seeded = (await callTool(server.request, 'list_labels', {}))
+      .labels as ReadonlyArray<{ readonly name: string }>
+    expect(seeded.map(({ name }) => name)).toEqual(['BE', 'FE', 'Full Stack'])
+    const label = await callTool(server.request, 'create_label', {
+      name: 'Bug',
+    })
+    expect(label).toMatchObject({ name: 'Bug' })
+    expect(label).not.toHaveProperty('rootPath')
+    const renamed = await callTool(server.request, 'update_label', {
+      color: 'teal',
+      expected_revision: 1,
+      id: label.id as string,
+      name: 'Defect',
+    })
+    expect(renamed).toMatchObject({ color: 'teal', name: 'Defect' })
+    expect(
+      (await callTool(server.request, 'list_labels', {})).labels
+    ).toContainEqual(expect.objectContaining({ id: label.id }))
+    const labeled = await callTool(server.request, 'set_task_labels', {
       expected_revision: 2,
+      id: taskId,
+      label_ids: [label.id as string],
+    })
+    expect(labeled.labelIds).toEqual([label.id])
+    await callTool(server.request, 'delete_label', {
+      expected_revision: 2,
+      id: label.id as string,
+    })
+    expect(
+      (await callTool(server.request, 'get_task', { id: taskId })).labelIds
+    ).toEqual([])
+
+    const deleted = await callTool(server.request, 'delete_task', {
+      expected_revision: 4,
       id: taskId,
     })
     expect(deleted.status).toBe('cancelled')

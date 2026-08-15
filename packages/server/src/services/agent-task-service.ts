@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { labelColorForName } from '@laborer/shared/labels'
+import { LABEL_NAME_MAX_LENGTH, type LabelColor } from '@laborer/shared/rpc'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { formatTaskIdentifier } from '@laborer/task-db/task-identifier'
@@ -8,6 +10,13 @@ import { createTaskUlid } from '@laborer/task-db/ulid'
 import { Context, Effect, Layer, Schema } from 'effect'
 import { ConfigService } from './config-service.js'
 import { LaborerDatabase } from './laborer-database.js'
+import {
+  type Label,
+  LaborerDatabaseLabelNameConflictError,
+  LaborerDatabaseStaleRevisionError,
+  LaborerDatabaseUnknownLabelError,
+  MAX_TASK_LABELS,
+} from './native-laborer-database.js'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import {
   findTaskByReference,
@@ -97,6 +106,50 @@ const editablePatch = (input: {
   }
 }
 
+const validateLabelName = (name: string): string => {
+  const value = name.trim()
+  if (value.length === 0) {
+    throw invalid('Label name must not be blank')
+  }
+  if (value.length > LABEL_NAME_MAX_LENGTH) {
+    throw invalid(
+      `Label name must be ${String(LABEL_NAME_MAX_LENGTH)} characters or fewer`
+    )
+  }
+  return value
+}
+
+/**
+ * Maps a label write failure onto the agent-facing code vocabulary. The
+ * database layer wraps unexpected causes, so the original error is unwrapped
+ * before it is classified.
+ */
+const labelFailure = (failure: unknown): AgentTaskError => {
+  const cause =
+    failure instanceof Error && failure.cause !== undefined
+      ? failure.cause
+      : failure
+  if (cause instanceof LaborerDatabaseLabelNameConflictError) {
+    return new AgentTaskError({
+      code: 'NAME_CONFLICT',
+      message: cause.message,
+    })
+  }
+  if (cause instanceof LaborerDatabaseUnknownLabelError) {
+    return new AgentTaskError({ code: 'NOT_FOUND', message: cause.message })
+  }
+  if (cause instanceof LaborerDatabaseStaleRevisionError) {
+    return new AgentTaskError({
+      code: 'CAS_CONFLICT',
+      message: `${cause.message}. Refetch the row and retry with its latest revision.`,
+    })
+  }
+  return new AgentTaskError({
+    code: 'TASK_DATABASE_ERROR',
+    message: cause instanceof Error ? cause.message : 'Label operation failed',
+  })
+}
+
 const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
   Effect.try({
     try: operation,
@@ -123,16 +176,25 @@ const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
 export class AgentTaskService extends Context.Service<
   AgentTaskService,
   {
+    readonly createLabel: (input: {
+      readonly color?: LabelColor
+      readonly name: string
+    }) => Effect.Effect<Label, AgentTaskError>
     readonly createTask: (input: {
       readonly description?: string | null
       readonly path: string
       readonly title: string
     }) => Effect.Effect<AgentTask, AgentTaskError>
+    readonly deleteLabel: (
+      id: string,
+      expectedRevision: number
+    ) => Effect.Effect<Label, AgentTaskError>
     readonly deleteTask: (
       id: string,
       expectedRevision: number
     ) => Effect.Effect<AgentTask, AgentTaskError>
     readonly getTask: (id: string) => Effect.Effect<AgentTask, AgentTaskError>
+    readonly listLabels: () => Effect.Effect<readonly Label[], AgentTaskError>
     readonly listProjects: () => Effect.Effect<
       readonly AgentTaskProject[],
       AgentTaskError
@@ -140,6 +202,17 @@ export class AgentTaskService extends Context.Service<
     readonly listTasks: (
       filters: AgentTaskListFilters
     ) => Effect.Effect<readonly AgentTask[], AgentTaskError>
+    readonly setTaskLabels: (input: {
+      readonly expectedRevision: number
+      readonly id: string
+      readonly labelIds: readonly string[]
+    }) => Effect.Effect<AgentTask, AgentTaskError>
+    readonly updateLabel: (input: {
+      readonly color?: LabelColor
+      readonly expectedRevision: number
+      readonly id: string
+      readonly name?: string
+    }) => Effect.Effect<Label, AgentTaskError>
     readonly updateTask: (input: {
       readonly description?: string | null
       readonly expectedRevision: number
@@ -218,6 +291,19 @@ export class AgentTaskService extends Context.Service<
             }
             return project
           })
+        const requireLabel = (id: string) =>
+          laborerDatabase
+            .read('find agent label', (database) => database.findLabel(id))
+            .pipe(
+              Effect.flatMap((label) =>
+                label === null
+                  ? new AgentTaskError({
+                      code: 'NOT_FOUND',
+                      message: `Label not found: ${id}`,
+                    })
+                  : Effect.succeed(label)
+              )
+            )
         const exposeTask = (
           task: Task,
           projects: readonly AgentTaskProject[]
@@ -331,6 +417,85 @@ export class AgentTaskService extends Context.Service<
                 )
                 return exposeTask(updated, projects)
               })
+            }),
+          listLabels: () =>
+            laborerDatabase.read('list agent labels', (database) =>
+              database.listLabels()
+            ),
+          createLabel: ({ color, name }) =>
+            Effect.gen(function* () {
+              const validName = yield* serviceTry(() => validateLabelName(name))
+              const result = yield* laborerDatabase
+                .run('create agent label', (database) =>
+                  database.createLabel({
+                    color: color ?? labelColorForName(validName),
+                    name: validName,
+                  })
+                )
+                .pipe(Effect.mapError(labelFailure))
+              return result.row
+            }),
+          updateLabel: ({ color, expectedRevision, id, name }) =>
+            Effect.gen(function* () {
+              if (color === undefined && name === undefined) {
+                return yield* invalid('update_label requires name and/or color')
+              }
+              const validName =
+                name === undefined
+                  ? undefined
+                  : yield* serviceTry(() => validateLabelName(name))
+              yield* requireLabel(id)
+              const result = yield* laborerDatabase
+                .run('update agent label', (database) =>
+                  database.updateLabel(id, expectedRevision, {
+                    ...(color === undefined ? {} : { color }),
+                    ...(validName === undefined ? {} : { name: validName }),
+                  })
+                )
+                .pipe(Effect.mapError(labelFailure))
+              return result.row
+            }),
+          deleteLabel: (id, expectedRevision) =>
+            Effect.gen(function* () {
+              yield* requireLabel(id)
+              const result = yield* laborerDatabase
+                .run('delete agent label', (database) =>
+                  database.deleteLabel(id, expectedRevision)
+                )
+                .pipe(Effect.mapError(labelFailure))
+              return result.row
+            }),
+          setTaskLabels: ({ expectedRevision, id, labelIds }) =>
+            Effect.gen(function* () {
+              const requested = [...new Set(labelIds)]
+              if (requested.length > MAX_TASK_LABELS) {
+                return yield* invalid(
+                  `A task carries at most ${String(MAX_TASK_LABELS)} labels`
+                )
+              }
+              const resolved = yield* resolveTask(id)
+              const projects = yield* listProjects()
+              yield* laborerDatabase
+                .run('set agent task labels', (database) =>
+                  database.setTaskLabels(
+                    resolved.id,
+                    expectedRevision,
+                    requested,
+                    createTaskUlid()
+                  )
+                )
+                .pipe(Effect.mapError(labelFailure))
+              const task = yield* withDatabase((database) => {
+                const row = database.find(resolved.id)
+                if (!row) {
+                  throw new AgentTaskError({
+                    code: 'NOT_FOUND',
+                    message: `Task not found: ${id}`,
+                  })
+                }
+                return row
+              })
+              return exposeTask(task, projects)
             }),
           deleteTask: (id, expectedRevision) =>
             Effect.gen(function* () {

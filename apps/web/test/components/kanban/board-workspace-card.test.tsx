@@ -106,6 +106,7 @@ const task: BoardTask = {
   executionMirror: null,
   executionStatus: null,
   id: 'task-1',
+  labelIds: [],
   parentTaskId: null,
   pr: null,
   revision: 1,

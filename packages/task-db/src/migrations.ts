@@ -103,4 +103,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       'utf8'
     ),
   },
+  {
+    name: '0012_task_labels',
+    sql: readFileSync(
+      new URL('./migrations/0012_task_labels.sql', import.meta.url),
+      'utf8'
+    ),
+  },
 ]

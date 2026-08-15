@@ -4,6 +4,7 @@ import {
 } from '@laborer/shared/root-workspace'
 import type {
   PullRequestCheckRun,
+  SharedLabelRow,
   SharedProjectRow,
   SharedSettingRow,
   SharedStateUpdate,
@@ -15,12 +16,16 @@ import { Atom } from 'effect/unstable/reactivity'
 import { LaborerClient } from './laborer-client'
 import {
   applyTaskEditOverlays,
+  applyTaskLabelOverlays,
   mergePendingTaskRows,
   type PendingTaskRows,
   settleTaskCreateOverlays,
   settleTaskEditOverlays,
+  settleTaskLabelOverlays,
   type TaskEditOverlay,
   type TaskEditOverlays,
+  type TaskLabelOverlay,
+  type TaskLabelOverlays,
 } from './optimistic-task-writes'
 import {
   applyProjectRankOverlays,
@@ -35,6 +40,7 @@ export interface AuthoritativeTable<Row> {
 }
 
 export interface AuthoritativeSharedState {
+  readonly labels: AuthoritativeTable<SharedLabelRow>
   readonly projects: AuthoritativeTable<SharedProjectRow>
   readonly settings: AuthoritativeTable<SharedSettingRow>
   readonly tasks: AuthoritativeTable<SharedTaskRow>
@@ -52,6 +58,7 @@ export interface TaskMutationReceipt {
 }
 
 const initialState: AuthoritativeSharedState = {
+  labels: { cursor: 0, rows: [] },
   projects: { cursor: 0, rows: [] },
   settings: { cursor: 0, rows: [] },
   tasks: { cursor: 0, rows: [] },
@@ -99,6 +106,10 @@ export const applySharedStateUpdate = (
   current: AuthoritativeSharedState,
   update: SharedStateUpdate
 ): AuthoritativeSharedState => ({
+  labels:
+    update.labels === undefined
+      ? current.labels
+      : applyTableUpdate(current.labels, update.labels, ({ id }) => id),
   projects:
     update.projects === undefined
       ? current.projects
@@ -135,6 +146,40 @@ export const taskCreateOverlaysAtom = Atom.make<PendingTaskRows>(new Map())
  * the authoritative row leaves the revision the draft was based on.
  */
 export const taskEditOverlaysAtom = Atom.make<TaskEditOverlays>(new Map())
+
+/**
+ * In-flight label selections, keyed by task id. The picker closes on the
+ * selected set immediately; the overlay settles when the authoritative row
+ * leaves the revision the selection was based on.
+ */
+export const taskLabelOverlaysAtom = Atom.make<TaskLabelOverlays>(new Map())
+
+/** The picker commits a selection: every task surface shows it at once. */
+export const installTaskLabelOverlayAtom = Atom.writable(
+  (get) => get(taskLabelOverlaysAtom),
+  (
+    context,
+    input: { readonly overlay: TaskLabelOverlay; readonly taskId: string }
+  ) => {
+    const next = new Map(context.get(taskLabelOverlaysAtom))
+    next.set(input.taskId, input.overlay)
+    context.set(taskLabelOverlaysAtom, next)
+  }
+)
+
+/** Reverts a rejected selection so the authoritative labels show again. */
+export const clearTaskLabelOverlayAtom = Atom.writable(
+  (get) => get(taskLabelOverlaysAtom),
+  (context, taskId: string) => {
+    const overlays = context.get(taskLabelOverlaysAtom)
+    if (!overlays.has(taskId)) {
+      return
+    }
+    const next = new Map(overlays)
+    next.delete(taskId)
+    context.set(taskLabelOverlaysAtom, next)
+  }
+)
 
 /**
  * Task IDs whose workspaces are being destroyed optimistically. The card
@@ -356,6 +401,13 @@ export const installSharedStateUpdateAtom = Atom.writable(
     if (editOverlays !== context.get(taskEditOverlaysAtom)) {
       context.set(taskEditOverlaysAtom, editOverlays)
     }
+    const labelOverlays = settleTaskLabelOverlays(
+      context.get(taskLabelOverlaysAtom),
+      state.tasks.rows
+    )
+    if (labelOverlays !== context.get(taskLabelOverlaysAtom)) {
+      context.set(taskLabelOverlaysAtom, labelOverlays)
+    }
     const destroyOverlays = settleWorkspaceDestroyOverlays(
       context.get(workspaceDestroyOverlaysAtom),
       state.tasks.rows
@@ -489,8 +541,34 @@ export const taskRowsAtom = Atom.make((get) => {
     const overlay = overlays.get(row.id)
     return overlay === undefined ? row : { ...row, ...overlay.patch }
   })
-  return applyTaskEditOverlays(moved, get(taskEditOverlaysAtom))
+  return applyTaskLabelOverlays(
+    applyTaskEditOverlays(moved, get(taskEditOverlaysAtom)),
+    get(taskLabelOverlaysAtom)
+  )
 })
+
+export const authoritativeLabelsAtom = Atom.make(
+  (get) => get(authoritativeSharedStateAtom).labels
+)
+
+/**
+ * Every label in the app, in alphabetical order. Labels are app-wide rather
+ * than scoped to a project, so this one list is the option set for every task
+ * and the row set for the settings table, and the order is applied once here.
+ */
+export const labelRowsAtom = Atom.make((get) =>
+  [...get(authoritativeLabelsAtom).rows].sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )
+)
+
+/** Every label by id, for resolving a task's stored ids into chips. */
+export const labelsByIdAtom = Atom.make(
+  (get) =>
+    new Map(
+      get(labelRowsAtom).map((label) => [label.id, label])
+    ) as ReadonlyMap<string, SharedLabelRow>
+)
 /**
  * Every project surface reads this, so the manual order is applied once: the
  * ranks a drag is promising win over the stored ones, and the same comparator

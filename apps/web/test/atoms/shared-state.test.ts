@@ -1,4 +1,5 @@
 import type {
+  SharedLabelRow,
   SharedProjectRow,
   SharedSettingRow,
   SharedTaskRow,
@@ -24,6 +25,7 @@ const task = (id: string, revision = 1): SharedTaskRow => ({
   executionId: null,
   executionStatus: null,
   id,
+  labelIds: [],
   parentTaskId: null,
   prBaseBranch: null,
   prCheckStatus: null,
@@ -50,6 +52,7 @@ const task = (id: string, revision = 1): SharedTaskRow => ({
 })
 
 const empty: AuthoritativeSharedState = {
+  labels: { cursor: 0, rows: [] },
   projects: { cursor: 0, rows: [] },
   settings: { cursor: 0, rows: [] },
   tasks: { cursor: 0, rows: [] },
@@ -76,6 +79,29 @@ const setting = (value: string, revision = 1): SharedSettingRow => ({
 })
 
 describe('applySharedStateUpdate', () => {
+  it('carries labels, and drops one the server hard-deleted', () => {
+    const label = (id: string, name: string): SharedLabelRow => ({
+      color: 'blue',
+      createdAt: 1,
+      id,
+      name,
+      revision: 1,
+      updatedAt: 1,
+    })
+    const snapshotted = applySharedStateUpdate(empty, {
+      labels: {
+        cursor: 1,
+        rows: [label('a', 'Worship'), label('b', 'Admin')],
+        type: 'snapshot',
+      },
+    })
+    const deleted = applySharedStateUpdate(snapshotted, {
+      labels: { cursor: 2, deletedRowIds: ['a'], rows: [], type: 'delta' },
+    })
+
+    expect(deleted.labels.rows).toEqual([label('b', 'Admin')])
+  })
+
   it('installs snapshots and applies explicit deletion deltas', () => {
     const snapshotted = applySharedStateUpdate(empty, {
       tasks: { cursor: 1, rows: [task('one'), task('two')], type: 'snapshot' },

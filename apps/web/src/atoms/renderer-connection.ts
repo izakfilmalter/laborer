@@ -1,10 +1,5 @@
 import { Atom } from 'effect/unstable/reactivity'
 import { getDesktopBridge } from '@/lib/desktop'
-import {
-  debugError,
-  instrumentWebSocket,
-  rendererDebug,
-} from '@/lib/renderer-debug'
 
 export const RENDERER_RECONNECT_DELAYS_MS = [3000, 4000, 8000, 16_000] as const
 export const RENDERER_RECONNECT_STABILITY_RESET_MS = 30_000
@@ -84,14 +79,11 @@ export class RendererConnectionSupervisor {
 
   start(): void {
     if (this.running) {
-      rendererDebug('supervisor', 'start-ignored-already-running')
       return
     }
-    rendererDebug('supervisor', 'start')
     this.running = true
     this.stopped = false
     this.run().catch((error: unknown) => {
-      rendererDebug('supervisor', 'unexpected-stop', debugError(error))
       console.error(
         'Renderer connection supervisor stopped unexpectedly',
         error
@@ -100,18 +92,15 @@ export class RendererConnectionSupervisor {
   }
 
   stop(): void {
-    rendererDebug('supervisor', 'stop')
     this.stopped = true
     this.interrupt?.()
   }
 
   retryNow(): void {
-    rendererDebug('supervisor', 'retry-now')
     this.interrupt?.()
   }
 
   private publish(next: RendererConnectionState): void {
-    rendererDebug('supervisor', 'state', next)
     this.state = next
     for (const listener of this.listeners) {
       listener()
@@ -151,7 +140,6 @@ export class RendererConnectionSupervisor {
         controller.abort()
       }
       try {
-        rendererDebug('supervisor', 'connect-attempt', { attempt })
         const lease = await this.connect(controller.signal)
         if (this.stopped) {
           lease.close()
@@ -163,11 +151,6 @@ export class RendererConnectionSupervisor {
             ? this.state.generation
             : this.state.generation + 1
         sessionSequence += 1
-        rendererDebug('supervisor', 'lease-connected', {
-          attempt,
-          generation,
-          session: sessionSequence,
-        })
         this.publish({
           attempt,
           generation,
@@ -183,20 +166,10 @@ export class RendererConnectionSupervisor {
           }
           lease.closed.then(resolve, resolve)
         })
-        rendererDebug('supervisor', 'lease-ended', {
-          attempt,
-          manuallyInterrupted,
-          session: sessionSequence,
-        })
         if (this.now() - connectedAt >= RENDERER_RECONNECT_STABILITY_RESET_MS) {
           failureCount = 0
         }
       } catch (error) {
-        rendererDebug('supervisor', 'connect-failed', {
-          attempt,
-          error: debugError(error),
-          manuallyInterrupted,
-        })
         // Transport failures are represented by phase, not thrown into views.
         if (error instanceof RendererConnectionBlockedError) {
           this.publish({
@@ -247,7 +220,6 @@ const connectWebSocket: RendererConnector = async (signal) => {
     const url = new URL('/ws', globalThis.location.origin)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(url)
-    instrumentWebSocket(socket, 'supervisor', url.href)
     let opened = false
     let resolveClosed: (() => void) | undefined
     const closed = new Promise<void>((done) => {

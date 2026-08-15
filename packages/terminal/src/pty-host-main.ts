@@ -51,7 +51,7 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
   const [first, second, third] = request.args
   switch (request.method) {
     case 'health':
-      return Effect.succeed({ epoch, version })
+      return Effect.succeed({ epoch, execPath: process.execPath, version })
     case 'spawn':
       return manager.spawn(first as Parameters<typeof manager.spawn>[0])
     case 'write':

@@ -3,10 +3,8 @@ import type { Atom } from 'effect/unstable/reactivity'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import {
   layerWebSocket,
-  WebSocketConstructor,
+  layerWebSocketConstructorGlobal,
 } from 'effect/unstable/socket/Socket'
-
-import { instrumentWebSocket, rendererDebug } from '@/lib/renderer-debug'
 
 import {
   rendererConnectionGenerationAtom,
@@ -23,15 +21,9 @@ export function daemonWebSocketUrl(
 }
 
 const browserProtocol = (): Layer.Layer<RpcClient.Protocol> => {
-  const url = daemonWebSocketUrl()
-  const socketConstructor = Layer.succeed(WebSocketConstructor)(
-    (socketUrl, protocols) => {
-      const socket = new globalThis.WebSocket(socketUrl, protocols)
-      instrumentWebSocket(socket, 'rpc', socketUrl)
-      return socket
-    }
+  const socket = layerWebSocket(daemonWebSocketUrl()).pipe(
+    Layer.provide(layerWebSocketConstructorGlobal)
   )
-  const socket = layerWebSocket(url).pipe(Layer.provide(socketConstructor))
 
   return Layer.effect(
     RpcClient.Protocol,
@@ -48,11 +40,9 @@ const browserProtocol = (): Layer.Layer<RpcClient.Protocol> => {
  * Browser and Electron renderers use the daemon's same-origin `/ws`.
  */
 export const rendererRpcProtocol = () => {
-  rendererDebug('rpc', 'protocol-created')
   rendererConnectionSupervisor.start()
   return (get: Atom.AtomContext) => {
-    const generation = get(rendererConnectionGenerationAtom)
-    rendererDebug('rpc', 'runtime-layer-requested', { generation })
+    get(rendererConnectionGenerationAtom)
     return browserProtocol()
   }
 }

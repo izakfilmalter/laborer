@@ -5,11 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { isTerminalRevival } from '@/components/terminal-revival-marker'
-import {
-  debugError,
-  rendererDebug,
-  rendererDebugSampled,
-} from '@/lib/renderer-debug'
 
 const ACK_BATCH_CHARS = 5000
 const INPUT_WRITE_BYTES = 64 * 1024
@@ -71,13 +66,6 @@ export function useTerminalRpc({
   const callbacksRef = useRef({ onData, onReset, onSnapshot, onStatus })
   callbacksRef.current = { onData, onReset, onSnapshot, onStatus }
 
-  useEffect(() => {
-    rendererDebug('terminal-runtime', 'result', {
-      result: runtimeResult._tag,
-      terminalId,
-    })
-  }, [runtimeResult, terminalId])
-
   const acknowledgeRef = useRef<
     (cursor: number, chars: number, force?: boolean) => void
   >(() => undefined)
@@ -89,8 +77,6 @@ export function useTerminalRpc({
     const runtime = runtimeResult.value
     const leaseId = globalThis.crypto.randomUUID()
     let active = true
-    let deltaCount = 0
-    rendererDebug('terminal-attach', 'runtime-ready', { leaseId, terminalId })
 
     const sendAck = (cursor: number, chars: number, force = false) => {
       if (!active) {
@@ -121,12 +107,6 @@ export function useTerminalRpc({
       }
       switch (event._tag) {
         case 'Reset':
-          rendererDebug('terminal-attach', 'reset', {
-            epoch: event.epoch,
-            leaseId,
-            reason: event.reason,
-            terminalId,
-          })
           cursorRef.current = undefined
           epochRef.current = event.epoch
           callbacksRef.current.onReset(event.reason)
@@ -136,26 +116,12 @@ export function useTerminalRpc({
           setReplayStatus('replaying')
           return
         case 'Snapshot':
-          rendererDebug('terminal-attach', 'snapshot', {
-            chars: event.data.length,
-            cursor: event.cursor,
-            leaseId,
-            terminalId,
-          })
           setReplayStatus('replaying')
           callbacksRef.current.onSnapshot(event.data, event.cursor, () =>
             sendAck(event.cursor, event.data.length)
           )
           return
         case 'Delta':
-          deltaCount += 1
-          rendererDebugSampled('terminal-attach', 'delta', deltaCount, {
-            chars: event.data.length,
-            count: deltaCount,
-            cursor: event.cursor,
-            leaseId,
-            terminalId,
-          })
           if (
             cursorRef.current !== undefined &&
             event.cursor <= cursorRef.current
@@ -167,34 +133,18 @@ export function useTerminalRpc({
           )
           return
         case 'Meta':
-          rendererDebug('terminal-attach', 'meta', {
-            epoch: event.epoch,
-            leaseId,
-            status: event.status,
-            terminalId,
-          })
           epochRef.current = event.epoch
           setTerminalStatus(event.status)
           callbacksRef.current.onStatus?.(event.status)
           setStatus('connected')
           return
         case 'ReplayComplete':
-          rendererDebug('terminal-attach', 'replay-complete', {
-            cursor: cursorRef.current,
-            leaseId,
-            terminalId,
-          })
           setReplayStatus('complete')
           if (cursorRef.current !== undefined) {
             sendAck(cursorRef.current, 0, true)
           }
           return
         case 'Exit':
-          rendererDebug('terminal-attach', 'exit', {
-            exitCode: event.exitCode,
-            leaseId,
-            terminalId,
-          })
           setTerminalStatus('stopped')
           callbacksRef.current.onStatus?.('stopped', event.exitCode)
           return
@@ -208,12 +158,6 @@ export function useTerminalRpc({
     const attach = Effect.suspend(() =>
       Effect.gen(function* () {
         setStatus('connecting')
-        rendererDebug('terminal-attach', 'starting', {
-          cursor: cursorRef.current,
-          epoch: epochRef.current,
-          leaseId,
-          terminalId,
-        })
         const client = yield* TerminalServiceClient
         const stream = client('terminal.attach', {
           id: terminalId,
@@ -229,22 +173,10 @@ export function useTerminalRpc({
           Effect.sync(() => handle(event))
         )
       })
-    ).pipe(
-      Effect.tapError((error) =>
-        Effect.sync(() => {
-          rendererDebug('terminal-attach', 'failed', {
-            error: debugError(error),
-            leaseId,
-            terminalId,
-          })
-          setStatus('disconnected')
-        })
-      )
-    )
+    ).pipe(Effect.tapError(() => Effect.sync(() => setStatus('disconnected'))))
 
     const fiber = Effect.runForkWith(runtime)(attach)
     return () => {
-      rendererDebug('terminal-attach', 'disposed', { leaseId, terminalId })
       active = false
       acknowledgeRef.current = () => undefined
       Effect.runFork(Fiber.interrupt(fiber))

@@ -61,7 +61,7 @@ interface TabBarProps {
   readonly closeTooltip?: React.ReactNode
   /** Ordered list of tab items to render. */
   readonly items: readonly TabBarItem[]
-  /** Optional label shown at the leading edge of the tab bar (e.g. "Window Tabs"). */
+  /** Optional accessible label for the tab bar (e.g. "Window Tabs"). */
   readonly label?: string | undefined
   /** Tooltip content for the new tab (+) button. */
   readonly newTabTooltip?: React.ReactNode
@@ -676,6 +676,7 @@ function TabBarInner({
 
   return (
     <div
+      aria-label={label}
       className={cn(
         'flex h-8 shrink-0 items-stretch border-b bg-muted/30',
         className
@@ -684,12 +685,6 @@ function TabBarInner({
       data-testid="tab-bar"
       role="tablist"
     >
-      {/* Label */}
-      {label && (
-        <span className="flex shrink-0 items-center px-2 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
-          {label}
-        </span>
-      )}
       {/* Left overflow scroll button */}
       {overflow.canScrollLeft && (
         <button

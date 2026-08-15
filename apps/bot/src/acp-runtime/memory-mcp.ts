@@ -88,7 +88,7 @@ export interface MemoryMutationResult {
   readonly target: MemoryTarget
 }
 
-export class MemoryMutationError extends Schema.TaggedErrorClass<MemoryMutationError>()(
+export class MemoryMutationError extends Schema.TaggedError<MemoryMutationError>()(
   'MemoryMutationError',
   {
     reason: Schema.Literals([
@@ -976,7 +976,7 @@ export const isLaborerMemoryMcpServerConfiguration = (
   )
 }
 
-export class LaborerMemoryRegistrationError extends Schema.TaggedErrorClass<LaborerMemoryRegistrationError>()(
+export class LaborerMemoryRegistrationError extends Schema.TaggedError<LaborerMemoryRegistrationError>()(
   'LaborerMemoryRegistrationError',
   {
     reason: Schema.Literals(['collision', 'invalid', 'missing']),

@@ -12,7 +12,7 @@ const SAFE_NONBLOCKING_FILE_OPEN_FLAGS =
   // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags are bit masks.
   SAFE_FILE_OPEN_FLAGS | constants.O_NONBLOCK
 
-export class UnsafePathError extends Schema.TaggedErrorClass<UnsafePathError>()(
+export class UnsafePathError extends Schema.TaggedError<UnsafePathError>()(
   'UnsafePathError',
   {
     operation: Schema.String,

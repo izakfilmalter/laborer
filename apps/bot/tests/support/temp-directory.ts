@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Effect, Exit, Schema } from 'effect'
 
-class TempDirectoryError extends Schema.TaggedErrorClass<TempDirectoryError>()(
+class TempDirectoryError extends Schema.TaggedError<TempDirectoryError>()(
   'TempDirectoryError',
   {
     operation: Schema.Literals(['create', 'canonicalize']),

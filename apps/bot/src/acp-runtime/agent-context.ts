@@ -104,7 +104,7 @@ export interface AcpSlackParticipantContext {
   readonly visibleName: string
 }
 
-class AgentContextFileFailure extends Schema.TaggedErrorClass<AgentContextFileFailure>()(
+class AgentContextFileFailure extends Schema.TaggedError<AgentContextFileFailure>()(
   'AgentContextFileFailure',
   { reason: Schema.Literals(['missing', 'unavailable']) }
 ) {}

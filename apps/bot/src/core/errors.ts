@@ -1,14 +1,11 @@
 import { Schema } from 'effect'
 
-export class StoreError extends Schema.TaggedErrorClass<StoreError>()(
-  'StoreError',
-  {
-    operation: Schema.String,
-    reason: Schema.String,
-  }
-) {}
+export class StoreError extends Schema.TaggedError<StoreError>()('StoreError', {
+  operation: Schema.String,
+  reason: Schema.String,
+}) {}
 
-export class HandlerFailure extends Schema.TaggedErrorClass<HandlerFailure>()(
+export class HandlerFailure extends Schema.TaggedError<HandlerFailure>()(
   'HandlerFailure',
   {
     category: Schema.Literals([

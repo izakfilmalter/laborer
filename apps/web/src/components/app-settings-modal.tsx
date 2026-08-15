@@ -6,6 +6,7 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import { settingRowsAtom } from '@/atoms/shared-state'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
+import { KeyboardShortcutsSection } from '@/components/keyboard-shortcuts-section'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { parseGithubOAuthCallback } from '@/lib/github-oauth-callback'
@@ -267,7 +268,9 @@ export function AppSettingsModal() {
           <GlobalConfigInitializer onResolved={handleGlobalConfigResolved} />
         )}
 
-        <div className="space-y-6 py-2">
+        {/* Constrained so the shortcut reference can't push the dialog past
+            the viewport on short screens. */}
+        <div className="max-h-[60vh] space-y-6 overflow-y-auto py-2">
           {/* Default Agent Section */}
           <FieldSet>
             <Field>
@@ -431,6 +434,9 @@ export function AppSettingsModal() {
               </p>
             )}
           </div>
+
+          {/* Keyboard Shortcuts Section */}
+          <KeyboardShortcutsSection />
         </div>
 
         <DialogFooter />

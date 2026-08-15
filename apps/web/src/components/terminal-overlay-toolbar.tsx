@@ -15,6 +15,7 @@
  */
 
 import { Columns2, Maximize, Minimize, Rows2, X } from 'lucide-react'
+import { CloseShortcutHint } from '@/components/close-shortcut-hint'
 import { Button } from '@/components/ui/button'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
@@ -124,10 +125,7 @@ function TerminalOverlayToolbar({
         </TooltipTrigger>
         <TooltipContent side="bottom">
           Close pane
-          <KbdGroup>
-            <Kbd>⌘</Kbd>
-            <Kbd>W</Kbd>
-          </KbdGroup>
+          <CloseShortcutHint />
         </TooltipContent>
       </Tooltip>
     </div>

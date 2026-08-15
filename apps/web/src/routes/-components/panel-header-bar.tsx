@@ -6,6 +6,7 @@ import {
   SquareKanban,
 } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
+import { CloseWindowTabShortcutHint } from '@/components/close-shortcut-hint'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import type { TabBarItem } from '@/components/ui/tab-bar'
@@ -108,9 +109,7 @@ function WindowTabBar({
       className="border-b-0"
       closeTooltip={
         <>
-          Close tab <Kbd>Cmd</Kbd>
-          <Kbd>Shift</Kbd>
-          <Kbd>W</Kbd>
+          Close tab <CloseWindowTabShortcutHint />
         </>
       }
       items={items}

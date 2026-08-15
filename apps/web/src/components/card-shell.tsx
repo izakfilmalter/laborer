@@ -58,8 +58,13 @@ interface CardShellProps
  * Nested links and buttons own their own clicks. Without this, opening a PR
  * or a terminal from a chip would also activate the card underneath it.
  */
-const isNestedControl = (event: MouseEvent): boolean =>
-  event.target instanceof Element && event.target.closest('a,button') !== null
+const isNestedControl = (event: MouseEvent): boolean => {
+  if (!(event.target instanceof Element)) {
+    return false
+  }
+  const control = event.target.closest('a,button,[role="button"]')
+  return control !== null && control !== event.currentTarget
+}
 
 function CardShell({
   actions,
@@ -109,14 +114,34 @@ function CardShell({
             {icon}
             <CardTitle className="min-w-0 flex-1">
               {onActivate ? (
-                <button
+                // A span rather than a button: card titles carry their own
+                // controls — copy actions, links — and a button may not
+                // contain a button. `role="button"` keeps the keyboard entry
+                // point the card needs without breaking that nesting rule.
+                // biome-ignore lint/a11y/useSemanticElements: a real button would nest the title's own buttons inside it, which is invalid HTML.
+                <span
                   aria-label={activateLabel}
                   className="block w-full min-w-0 cursor-pointer text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-                  onClick={onActivate}
-                  type="button"
+                  onClick={(event) => {
+                    if (isNestedControl(event)) {
+                      return
+                    }
+                    onActivate()
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) {
+                      return
+                    }
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onActivate()
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                 >
                   {title}
-                </button>
+                </span>
               ) : (
                 title
               )}

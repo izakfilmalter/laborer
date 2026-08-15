@@ -98,7 +98,7 @@ vi.mock('@/panels/panel-context', () => {
   }
 })
 
-vi.mock('@/components/ui/resizable', async () => {
+vi.mock('@laborer/ui/components/resizable', async () => {
   const fake = await import('./helpers/fake-resizable')
   return {
     ResizableHandle: fake.ResizableHandle,

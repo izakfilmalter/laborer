@@ -11,7 +11,7 @@ import { useState } from 'react'
 
 import { LaborerClient } from '@/atoms/laborer-client'
 import { labelRowsAtom, taskRowsAtom } from '@/atoms/shared-state'
-import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
+import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 
 import { LabelSettings, type LabelSettingsRow } from './label-settings'
 

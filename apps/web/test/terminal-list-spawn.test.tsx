@@ -141,7 +141,7 @@ vi.mock('@/components/agent-icons', () => ({
 }))
 
 // Tooltip — stub the portal-based tooltip so the trigger renders its content
-vi.mock('@/components/ui/tooltip', () => ({
+vi.mock('@laborer/ui/components/tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ render }: { render: React.ReactElement }) => render,
   TooltipContent: ({ children }: { children: React.ReactNode }) => (

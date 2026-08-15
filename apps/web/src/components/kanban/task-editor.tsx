@@ -14,6 +14,25 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@laborer/ui/components/dialog'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from '@laborer/ui/components/field'
+import { Input } from '@laborer/ui/components/input'
+import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
+import { Textarea } from '@laborer/ui/components/textarea'
+import { cn } from '@laborer/ui/lib/utils'
 import { ExternalLink, GitBranch, TriangleAlert } from 'lucide-react'
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -26,26 +45,8 @@ import { BOARD_COLUMNS } from '@/components/kanban/board-columns'
 import { type BoardTask, boardTaskTitle } from '@/components/kanban/board-data'
 import { SourceBadge } from '@/components/kanban/source-badge'
 import { TaskLabelsControl } from '@/components/labels/task-labels-control'
-import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldLabel,
-} from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
-import { Kbd, KbdGroup } from '@/components/ui/kbd'
-import { Textarea } from '@/components/ui/textarea'
+import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
-import { cn, extractErrorCode, extractErrorMessage } from '@/lib/utils'
 
 const updateTaskMutation = LaborerClient.mutation('task.update')
 

@@ -1,6 +1,6 @@
+import { Button } from '@laborer/ui/components/button'
+import { cn } from '@laborer/ui/lib/utils'
 import { History, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 
 export const isTerminalRevival = (
   resetReason: 'epoch_changed' | 'cursor_out_of_range'

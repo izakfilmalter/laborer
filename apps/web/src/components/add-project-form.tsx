@@ -15,11 +15,7 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
-import { ChevronLeft, Folder, FolderPlus } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { LaborerClient } from '@/atoms/laborer-client'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   Dialog,
   DialogContent,
@@ -27,11 +23,15 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '@laborer/ui/components/dialog'
+import { ChevronLeft, Folder, FolderPlus } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { LaborerClient } from '@/atoms/laborer-client'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
 
 const addProjectMutation = LaborerClient.mutation('project.add')
 const listDirectoriesMutation = LaborerClient.mutation('local.directory.list')

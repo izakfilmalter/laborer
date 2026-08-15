@@ -1,5 +1,29 @@
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { AgentProvider } from '@laborer/shared/rpc'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@laborer/ui/components/dialog'
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+  FieldSet,
+} from '@laborer/ui/components/field'
+import { Input } from '@laborer/ui/components/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@laborer/ui/components/select'
+import { Spinner } from '@laborer/ui/components/spinner'
 import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -9,29 +33,10 @@ import { useAppSettings } from '@/components/app-settings-context'
 import { LabelSettingsSection } from '@/components/labels/label-settings-section'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { extractErrorMessage } from '@/lib/errors'
 import { parseGithubOAuthCallback } from '@/lib/github-oauth-callback'
 import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
-import { Button } from './ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog'
-import { Field, FieldDescription, FieldLabel, FieldSet } from './ui/field'
-import { Input } from './ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select'
-import { Spinner } from './ui/spinner'
 
 const AGENT_OPTIONS: ReadonlyArray<{
   readonly label: string

@@ -13,21 +13,22 @@
  * @see Issue #169: Per-project "+" button
  */
 
-import { Plus } from 'lucide-react'
-import type { KeyboardEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
-} from '@/components/ui/input-group'
+} from '@laborer/ui/components/input-group'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { cn, extractErrorMessage } from '@/lib/utils'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { Plus } from 'lucide-react'
+import type { KeyboardEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { extractErrorMessage } from '@/lib/errors'
 
 /**
  * Why the composer closed. Esc is a deliberate cancel, so focus goes back to

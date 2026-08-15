@@ -22,16 +22,17 @@
  */
 
 import type { TerminalHostStatus } from '@laborer/shared/rpc'
-import { AlertTriangle, CircleArrowUp, RotateCcw, X } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
+import { Badge } from '@laborer/ui/components/badge'
+import { Button } from '@laborer/ui/components/button'
+import { Spinner } from '@laborer/ui/components/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@laborer/ui/components/tooltip'
+import { cn } from '@laborer/ui/lib/utils'
+import { AlertTriangle, CircleArrowUp, RotateCcw, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { type ServiceName, useServiceStatus } from '@/hooks/use-service-status'
 import { useTerminalHostStatus } from '@/hooks/use-terminal-host-status'
 import {
@@ -40,7 +41,6 @@ import {
   type ServiceState,
   type StatusColor,
 } from '@/lib/sidecar-statuses'
-import { cn } from '@/lib/utils'
 
 /** Core services shown as status badges (excludes sync). */
 const STATUS_DOT_SERVICES: readonly ServiceName[] = [

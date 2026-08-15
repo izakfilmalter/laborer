@@ -95,7 +95,7 @@ vi.mock('@/panels/panel-context', () => {
   }
 })
 
-vi.mock('@/components/ui/resizable', () => ({
+vi.mock('@laborer/ui/components/resizable', () => ({
   ResizableHandle: () => <div data-testid="resize-handle" />,
   ResizablePanel: ({
     children,

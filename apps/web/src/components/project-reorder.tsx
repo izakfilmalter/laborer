@@ -16,10 +16,10 @@ import {
   dropTargetForElements,
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
+import { cn } from '@laborer/ui/lib/utils'
 import { GripVertical } from 'lucide-react'
 import { type RefObject, useEffect, useRef, useState } from 'react'
 import { useProjectReorder } from '@/hooks/use-project-reorder'
-import { cn } from '@/lib/utils'
 
 const PROJECT_DRAG_TYPE = 'project-item'
 

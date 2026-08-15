@@ -25,8 +25,8 @@ import {
 import type { ReactElement, ReactNode } from 'react'
 import { useState } from 'react'
 
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@laborer/ui/components/alert'
+import { Button } from '@laborer/ui/components/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,14 +34,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
-import { Kbd } from '@/components/ui/kbd'
+} from '@laborer/ui/components/dropdown-menu'
+import { Input } from '@laborer/ui/components/input'
+import { Kbd } from '@laborer/ui/components/kbd'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from '@/components/ui/popover'
+} from '@laborer/ui/components/popover'
 import {
   Table,
   TableBody,
@@ -49,8 +49,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
-import { cn } from '@/lib/utils'
+} from '@laborer/ui/components/table'
+import { cn } from '@laborer/ui/lib/utils'
 
 import { labelColorDotClassName, labelDotClassName } from './label-colors'
 

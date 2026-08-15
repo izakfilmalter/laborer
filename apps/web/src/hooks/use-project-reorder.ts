@@ -27,8 +27,8 @@ import {
   planProjectNudge,
 } from '@/atoms/project-order'
 import { projectRowsAtom } from '@/atoms/shared-state'
+import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
 
 const moveProjectMutation = LaborerClient.mutation('project.move')
 

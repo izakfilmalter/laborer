@@ -1,19 +1,18 @@
 'use client'
 
 import type { Button as ButtonPrimitive } from '@base-ui/react/button'
-import type { VariantProps } from 'class-variance-authority'
-import { Boolean, pipe } from 'effect'
-import { CheckIcon, ClipboardIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
-
-import { Button, type buttonVariants } from '@/components/ui/button'
+import { Button, type buttonVariants } from '@laborer/ui/components/button'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { haptics } from '@/lib/haptics'
-import { cn } from '@/lib/utils'
+} from '@laborer/ui/components/tooltip'
+import { haptics } from '@laborer/ui/lib/haptics'
+import { cn } from '@laborer/ui/lib/utils'
+import type { VariantProps } from 'class-variance-authority'
+import { Boolean, pipe } from 'effect'
+import { CheckIcon, ClipboardIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface CopyButtonProps
   extends ButtonPrimitive.Props,

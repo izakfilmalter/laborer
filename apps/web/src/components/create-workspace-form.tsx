@@ -18,13 +18,7 @@
  * @see Issue #169: Per-project "+" button and CreateWorkspaceForm pre-selection
  */
 
-import { useForm } from '@tanstack/react-form'
-import { GitBranch, Layers, Slack } from 'lucide-react'
-import type { ReactNode } from 'react'
-import { useCallback, useId, useState } from 'react'
-import { IMaskInput } from 'react-imask'
-import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   Dialog,
   DialogContent,
@@ -33,12 +27,23 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
-import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
-import { inputClassName } from '@/components/ui/input'
-import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
-import { Kbd } from '@/components/ui/kbd'
-import { Spinner } from '@/components/ui/spinner'
+} from '@laborer/ui/components/dialog'
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+} from '@laborer/ui/components/field'
+import { inputClassName } from '@laborer/ui/components/input'
+import { InputGroup, InputGroupAddon } from '@laborer/ui/components/input-group'
+import { Kbd } from '@laborer/ui/components/kbd'
+import { Spinner } from '@laborer/ui/components/spinner'
+import { cn } from '@laborer/ui/lib/utils'
+import { useForm } from '@tanstack/react-form'
+import { GitBranch, Layers, Slack } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useCallback, useId, useState } from 'react'
+import { IMaskInput } from 'react-imask'
+import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
   ALLOWED_INPUT_PATTERN,
   isSlackUrlInput,
@@ -48,8 +53,8 @@ import {
   useCreateWorkspace,
 } from '@/hooks/use-create-workspace'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
-import { cn, extractErrorMessage } from '@/lib/utils'
 
 /** Strips the border/ring so the input blends into its InputGroup wrapper. */
 const inputGroupControlClassName =

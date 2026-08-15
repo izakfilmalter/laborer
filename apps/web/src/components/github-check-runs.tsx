@@ -9,6 +9,12 @@
 
 import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '@laborer/ui/components/hover-card'
+import { cn } from '@laborer/ui/lib/utils'
+import {
   CircleCheck,
   CircleDashed,
   CircleSlash,
@@ -16,13 +22,7 @@ import {
   LoaderCircle,
 } from 'lucide-react'
 import type { ComponentType, MouseEvent } from 'react'
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from '@/components/ui/hover-card'
 import { localApi } from '@/lib/local-api'
-import { cn } from '@/lib/utils'
 
 type CheckStatus = 'pending' | 'success' | 'failure'
 type CheckBucket = PullRequestCheckRun['bucket']

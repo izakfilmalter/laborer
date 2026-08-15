@@ -10,8 +10,8 @@
 import { Tag } from 'lucide-react'
 import type { ComponentPropsWithRef, ReactElement } from 'react'
 
-import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import { Badge } from '@laborer/ui/components/badge'
+import { cn } from '@laborer/ui/lib/utils'
 
 import { labelDotClassName } from './label-colors'
 

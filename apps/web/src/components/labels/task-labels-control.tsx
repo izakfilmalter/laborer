@@ -19,7 +19,7 @@ import {
   labelRowsAtom,
   labelsByIdAtom,
 } from '@/atoms/shared-state'
-import { extractErrorCode, extractErrorMessage } from '@/lib/utils'
+import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 
 import { type TaskLabelOption, TaskLabelsPillTrigger } from './label-chips'
 import { LabelsPicker } from './labels-picker'

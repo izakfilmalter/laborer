@@ -12,14 +12,7 @@ import type {
   WorkspaceTileNode,
   WorkspaceTileSplit,
 } from '@laborer/shared/types'
-import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  GroupImperativeHandle,
-  PanelImperativeHandle,
-} from 'react-resizable-panels'
-import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
-import { Button } from '@/components/ui/button'
+import { Button } from '@laborer/ui/components/button'
 import {
   Empty,
   EmptyContent,
@@ -27,20 +20,27 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
-import { Kbd } from '@/components/ui/kbd'
-import { PanelTypePicker } from '@/components/ui/panel-type-picker'
+} from '@laborer/ui/components/empty'
+import { Kbd } from '@laborer/ui/components/kbd'
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-} from '@/components/ui/resizable'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { TabBar, type TabBarItem } from '@/components/ui/tab-bar'
-import { TabErrorBoundary } from '@/components/ui/tab-error-boundary'
+} from '@laborer/ui/components/resizable'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
+import { TabBar, type TabBarItem } from '@laborer/ui/components/tab-bar'
+import { TabErrorBoundary } from '@laborer/ui/components/tab-error-boundary'
+import { cn } from '@laborer/ui/lib/utils'
+import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  GroupImperativeHandle,
+  PanelImperativeHandle,
+} from 'react-resizable-panels'
+import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
+import { PanelTypePicker } from '@/components/panel-type-picker'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
-import { cn } from '@/lib/utils'
 import {
   usePanelActions,
   usePendingClosePanelTab,

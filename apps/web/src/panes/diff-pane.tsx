@@ -61,6 +61,15 @@ import {
 } from '@effect/atom-react/Hooks'
 import type { FileDiffEntry, FileWatcherEvent } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
+import { Button } from '@laborer/ui/components/button'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@laborer/ui/components/empty'
+import { Spinner } from '@laborer/ui/components/spinner'
 import type { FileDiffMetadata } from '@pierre/diffs'
 import { FileDiff, Virtualizer } from '@pierre/diffs/react'
 import { Cause, Effect, Option } from 'effect'
@@ -84,19 +93,10 @@ import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { DiffWorkerPoolProvider } from '@/components/diff-worker-pool-provider'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
-import { Button } from '@/components/ui/button'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
-import { Spinner } from '@/components/ui/spinner'
 import { useWhenPhase } from '@/hooks/use-when-phase'
+import { extractErrorMessage } from '@/lib/errors'
 import { parseFileDiffEntry } from '@/lib/file-diff'
 import { toast } from '@/lib/toast'
-import { extractErrorMessage } from '@/lib/utils'
 import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { writeJsonRegistration } from '@laborer/ensure'
 import { Effect, Fiber, Layer, ManagedRuntime, Stream } from 'effect'
 import { directLayer } from './services/pty-direct.js'
+import { makePtyHostLifecycleGate } from './services/pty-host-lifecycle-gate.js'
 import {
   preparePtyHostSocketPath,
   resolvePtyHostPaths,
@@ -46,6 +47,12 @@ const send = (socket: Socket, message: PtyHostServerMessage): boolean => {
 
 const connections = new Set<Socket>()
 const MAX_PROTOCOL_FRAME_BYTES = 1024 * 1024
+const lifecycleGate = makePtyHostLifecycleGate()
+const isAcceptedShutdownResult = (outcome: unknown): boolean =>
+  typeof outcome === 'object' &&
+  outcome !== null &&
+  Reflect.get(outcome, '_tag') === 'Success' &&
+  Reflect.get(outcome, 'success') === true
 
 const invoke = (socket: Socket, request: PtyHostRequest) => {
   const [first, second, third] = request.args
@@ -87,6 +94,10 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
       // The response is flushed before requestStop disposes the runtime. Its
       // persistence finalizer checkpoints every terminal for revival.
       return Effect.void
+    case 'shutdownIfEmpty':
+      return manager
+        .listTerminals()
+        .pipe(Effect.map((terminals) => terminals.length === 0))
     case 'listTerminals':
       return manager.listTerminals(first as string | undefined)
     case 'killAllForWorkspace':
@@ -154,8 +165,10 @@ const server = createServer((socket) => {
       requestLane = requestLane
         // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: serialized protocol dispatch keeps request ordering and shutdown response atomic
         .then(async () => {
-          const result = await runtime.runPromise(
-            Effect.result(invoke(socket, request))
+          const result = await lifecycleGate.run(
+            request.method,
+            () => runtime.runPromise(Effect.result(invoke(socket, request))),
+            isAcceptedShutdownResult
           )
           if (result._tag === 'Success') {
             if (request.method === 'attach') {
@@ -171,7 +184,11 @@ const server = createServer((socket) => {
               requestId: request.requestId,
               result: result.success,
             })
-            if (request.method === 'shutdown') {
+            if (
+              request.method === 'shutdown' ||
+              (request.method === 'shutdownIfEmpty' &&
+                (result.success as unknown) === true)
+            ) {
               setImmediate(requestStop)
             }
             return

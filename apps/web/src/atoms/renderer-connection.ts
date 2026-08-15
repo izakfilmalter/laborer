@@ -47,8 +47,9 @@ const retryDelay = (failureCount: number): number =>
  * The sole owner of browser reconnect timing. RPC transports get one attempt;
  * a successful reconnection advances generation so mounted atoms acquire
  * fresh transports while retaining their last successful values. The initial
- * lease keeps generation zero because the RPC runtime is already being built;
- * invalidating it during startup can interrupt its first requests.
+ * lease keeps generation zero only when its first attempt succeeds because the
+ * RPC runtime is already being built; invalidating it during uninterrupted
+ * startup can interrupt its first requests.
  */
 export class RendererConnectionSupervisor {
   private readonly connect: RendererConnector
@@ -124,6 +125,7 @@ export class RendererConnectionSupervisor {
   private async run(): Promise<void> {
     let failureCount = 0
     let sessionSequence = 0
+    let initialAttemptUninterrupted = true
     while (!this.stopped) {
       const attempt = failureCount + 1
       this.publish({
@@ -147,7 +149,7 @@ export class RendererConnectionSupervisor {
         }
         const connectedAt = this.now()
         const generation =
-          sessionSequence === 0
+          sessionSequence === 0 && initialAttemptUninterrupted
             ? this.state.generation
             : this.state.generation + 1
         sessionSequence += 1
@@ -170,6 +172,7 @@ export class RendererConnectionSupervisor {
           failureCount = 0
         }
       } catch (error) {
+        initialAttemptUninterrupted = false
         // Transport failures are represented by phase, not thrown into views.
         if (error instanceof RendererConnectionBlockedError) {
           this.publish({

@@ -32,4 +32,24 @@ describe('terminal loading state', () => {
       })
     ).toBe('Starting terminal...')
   })
+
+  it('covers a stopped terminal while its final screen replays', () => {
+    expect(
+      terminalLoadingMessage({
+        hasReceivedData: true,
+        isRunning: false,
+        replayStatus: 'replaying',
+      })
+    ).toBe('Restoring terminal...')
+  })
+
+  it('never promises startup for a process that has exited', () => {
+    expect(
+      terminalLoadingMessage({
+        hasReceivedData: false,
+        isRunning: false,
+        replayStatus: 'idle',
+      })
+    ).toBeUndefined()
+  })
 })

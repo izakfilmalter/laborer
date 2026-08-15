@@ -201,7 +201,71 @@ const requestHostShutdown = async (
   })
 }
 
-/** Explicit daemon shutdown is the only daemon path allowed to stop the host. */
+const requestHostShutdownIfEmpty = async (
+  registration: PtyHostRegistration
+): Promise<boolean> => {
+  const socket = await openSocket(registration.socketPath)
+  return await new Promise<boolean>((resolveShutdown, reject) => {
+    const finish = (result: boolean | Error): void => {
+      clearTimeout(timeout)
+      socket.destroy()
+      if (result instanceof Error) {
+        reject(result)
+      } else {
+        resolveShutdown(result)
+      }
+    }
+    const timeout = setTimeout(
+      () =>
+        finish(new Error('Timed out waiting for PTY host shutdown response')),
+      REQUEST_TIMEOUT_MS
+    )
+    let buffer = ''
+    socket.setEncoding('utf8')
+    socket.once('error', finish)
+    socket.on('data', (chunk: string) => {
+      buffer += chunk
+      if (Buffer.byteLength(buffer, 'utf8') > MAX_PROTOCOL_FRAME_BYTES) {
+        finish(new Error('PTY host protocol frame exceeded limit'))
+        return
+      }
+      const newline = buffer.indexOf('\n')
+      if (newline < 0) {
+        return
+      }
+      try {
+        const response = JSON.parse(buffer.slice(0, newline)) as {
+          readonly error?: { readonly message?: string }
+          readonly requestId?: string
+          readonly result?: unknown
+          readonly type?: string
+        }
+        if (
+          response.type !== 'response' ||
+          response.requestId !== 'shutdown-if-empty' ||
+          response.error !== undefined ||
+          typeof response.result !== 'boolean'
+        ) {
+          finish(
+            new Error(
+              response.error?.message ??
+                'PTY host does not support conditional shutdown'
+            )
+          )
+          return
+        }
+        finish(response.result)
+      } catch {
+        finish(new Error('PTY host sent an invalid shutdown response'))
+      }
+    })
+    socket.write(
+      `${JSON.stringify({ type: 'request', requestId: 'shutdown-if-empty', method: 'shutdownIfEmpty', args: [] })}\n`
+    )
+  })
+}
+
+/** Explicit daemon shutdown remains available and unconditional. */
 export const shutdownPtyHost = async (): Promise<void> => {
   // Disable the proxy's crash-recovery path before asking the host to exit.
   // Otherwise the connection close can race daemon teardown and immediately
@@ -266,11 +330,17 @@ const ensurePtyHost = async (
       if (!staleDevRuntime) {
         return incumbent
       }
+      const shutdownAccepted = await requestHostShutdownIfEmpty(
+        incumbent
+      ).catch(() => false)
+      if (!shutdownAccepted) {
+        return incumbent
+      }
       console.info(
         `[pty-host] Replacing development host runtime ${health.execPath ?? 'unknown'} with ${process.execPath}`
       )
       await stopWithEscalation(incumbent, {
-        requestStop: requestHostShutdown,
+        requestStop: async () => undefined,
       })
     }
   }
@@ -705,8 +775,8 @@ export const ptyHostProxyLayer = Layer.effect(
             [...workspaceIds],
           ]).pipe(Effect.orElseSucceed(() => undefined)),
         getTerminals: () => Effect.succeed([]),
-        setRevivedReplayEvent: () => Effect.succeed(undefined),
-        takeRevivedReplayEvent: () => Effect.succeed<undefined>(undefined),
+        setRevivedReplayEvent: () => Effect.void,
+        takeRevivedReplayEvent: () => Effect.sync(() => undefined),
         lifecycleEvents,
       })
       return {

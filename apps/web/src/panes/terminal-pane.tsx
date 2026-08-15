@@ -77,6 +77,7 @@ import {
   shouldBypassTerminal,
 } from '@/lib/keybinds'
 import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
+import { terminalLoadingMessage } from './terminal-loading-state'
 
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
 type ReplayStatus = 'idle' | 'replaying' | 'complete'
@@ -397,7 +398,6 @@ function TerminalPaneRpc({
 }: TerminalPaneProps) {
   const terminalRef = useRef<Terminal | null>(null)
   const pendingRef = useRef<Array<{ data: string; commit: () => void }>>([])
-  const [replayEpoch, setReplayEpoch] = useState(0)
 
   const write = useCallback(
     (data: string, _cursor: number, commit: () => void) => {
@@ -417,7 +417,6 @@ function TerminalPaneRpc({
   const snapshot = useCallback(
     (data: string, cursor: number, commit: () => void) => {
       terminalRef.current?.reset()
-      setReplayEpoch((value) => value + 1)
       write(data, cursor, commit)
     },
     [write]
@@ -452,7 +451,6 @@ function TerminalPaneRpc({
       connection={connection}
       onTerminalReady={ready}
       onTitleChange={onTitleChange}
-      replayEpoch={replayEpoch}
       terminalId={terminalId}
       terminalRef={terminalRef}
     />
@@ -464,7 +462,6 @@ interface TerminalPaneRendererProps {
   readonly connection: TerminalConnection
   readonly onTerminalReady: () => void
   readonly onTitleChange?: ((title: string) => void) | undefined
-  readonly replayEpoch: number
   readonly terminalId: string
   readonly terminalRef: React.RefObject<Terminal | null>
 }
@@ -486,7 +483,6 @@ function TerminalPaneRenderer({
   onTitleChange,
   onTerminalReady,
   connection,
-  replayEpoch,
   terminalRef,
 }: TerminalPaneRendererProps) {
   const {
@@ -549,16 +545,12 @@ function TerminalPaneRenderer({
   const [hasReceivedData, setHasReceivedData] = useState(false)
   const hasReceivedDataRef = useRef(false)
 
-  useEffect(() => {
-    if (replayEpoch === 0) {
-      return
-    }
-
-    hasReceivedDataRef.current = false
-    setHasReceivedData(false)
-  }, [replayEpoch])
-
   const isRunning = terminalStatus !== 'stopped'
+  const loadingMessage = terminalLoadingMessage({
+    hasReceivedData,
+    isRunning,
+    replayStatus,
+  })
   /** Revival is only truthful once the restored history is fully on screen. */
   const showRevivalMarker = wasRevived && replayStatus === 'complete'
 
@@ -1177,14 +1169,8 @@ function TerminalPaneRenderer({
           with a spinner and message. Disappears on first data frame.
           Only shown for running terminals (stopped terminals get immediate
           screen state on reconnection). */}
-      {(!hasReceivedData || replayStatus === 'replaying') && isRunning && (
-        <TerminalLoadingOverlay
-          message={
-            replayStatus === 'replaying'
-              ? 'Restoring terminal...'
-              : 'Starting terminal...'
-          }
-        />
+      {loadingMessage !== undefined && (
+        <TerminalLoadingOverlay message={loadingMessage} />
       )}
 
       {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed

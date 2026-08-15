@@ -12,6 +12,8 @@ import {
 } from '@laborer/ensure'
 import { config as loadDotEnv } from 'dotenv'
 
+import { DEV_TERMINAL_XDG_STATE_HOME } from '../packages/server/src/services/terminal-spawn-environment'
+
 export const BASE_DAEMON_PORT = 2100
 export const BASE_WEB_PORT = 2101
 export const MAX_HASH_OFFSET = 3000
@@ -414,6 +416,8 @@ export const runDev = async (arguments_: readonly string[]) => {
 
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
+    [DEV_TERMINAL_XDG_STATE_HOME]:
+      process.env.XDG_STATE_HOME?.trim() || join(homedir(), '.local', 'state'),
     LABORER_DAEMON_PORT: String(ports.daemonPort),
     LABORER_DEV_WATCH: '1',
     VITE_PORT: String(ports.webPort),

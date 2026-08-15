@@ -116,13 +116,13 @@ describe('dev runner', () => {
     ).toBe(false)
   })
 
-  it('runs the built daemon under Bun watch as a direct runner child', () => {
+  it('runs the built daemon under Node watch as a direct runner child', () => {
     const root = '/repo'
     const children = devChildDefinitions(root)
     expect(children.find(({ label }) => label === 'daemon')).toEqual({
       label: 'daemon',
       command: [
-        'bun',
+        'node',
         '--watch',
         join(root, 'packages/server/dist/daemon-main.mjs'),
       ],

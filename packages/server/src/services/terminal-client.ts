@@ -52,6 +52,7 @@ import {
   installOpenCodeStatusPlugin,
   writeAgentHookDiscovery,
 } from './opencode-status-plugin.js'
+import { terminalSpawnEnvironment } from './terminal-spawn-environment.js'
 import { WorkspaceProvider } from './workspace-provider.js'
 
 /** Logger tag used for structured Effect.log output in this module. */
@@ -761,9 +762,11 @@ class TerminalClient extends Context.Service<
               args: shellArgs,
               cwd: workspace.worktreePath,
               env: {
-                ...process.env,
-                ...workspaceEnv,
-                ...extraEnv,
+                ...terminalSpawnEnvironment(
+                  process.env,
+                  workspaceEnv,
+                  extraEnv
+                ),
                 TERM: 'xterm-256color',
                 COLORTERM: 'truecolor',
               } as Record<string, string>,

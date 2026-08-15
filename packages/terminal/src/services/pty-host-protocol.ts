@@ -12,6 +12,7 @@ export type PtyHostMethod =
   | 'resize'
   | 'restart'
   | 'shutdown'
+  | 'shutdownIfEmpty'
   | 'setAgentStatusFromHook'
   | 'setObservedWorkspaces'
   | 'reportWorkspacePresence'

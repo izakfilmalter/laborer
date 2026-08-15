@@ -128,9 +128,9 @@ describe('dev runner', () => {
       ],
       cwd: root,
     })
-    expect(children.find(({ label }) => label === 'web')?.command).toContain(
-      '--open'
-    )
+    expect(
+      children.find(({ label }) => label === 'web')?.command
+    ).not.toContain('--open')
   })
 
   it('stops sibling watchers when any required child exits', async () => {

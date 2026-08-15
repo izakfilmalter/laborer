@@ -164,7 +164,7 @@ export const parseDevRunnerArguments = (
     } else if (argument === '--help' || argument === '-h') {
       console.log(`Usage: bun dev [--desktop] [--state-home PATH | --use-real-state] [--dry-run]
 
-  --desktop          Launch the Electron client instead of opening a browser
+  --desktop          Launch the Electron client alongside the web dev server
   --state-home PATH  Use an explicit XDG state home (highest precedence)
   --use-real-state   Opt in to ambient XDG state instead of worktree state
   --dry-run          Print the resolved environment without spawning processes`)
@@ -341,10 +341,7 @@ export const devChildDefinitions = (
   },
   {
     label: 'web',
-    command: [
-      join(root, 'apps/web/node_modules/.bin/vite'),
-      ...(desktop ? [] : ['--open']),
-    ],
+    command: [join(root, 'apps/web/node_modules/.bin/vite')],
     cwd: join(root, 'apps/web'),
   },
   ...(desktop

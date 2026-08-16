@@ -240,6 +240,7 @@
         "effect": "catalog:",
         "ignore": "7.0.5",
         "ioredis": "catalog:",
+        "redis": "^6.2.1",
       },
       "devDependencies": {
         "@effect/vitest": "catalog:",

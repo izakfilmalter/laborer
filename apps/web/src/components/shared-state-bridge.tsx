@@ -1,59 +1,44 @@
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
-import type { SharedStateUpdate } from '@laborer/shared/rpc'
+import { RegistryContext } from '@effect/atom-react/RegistryContext'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
-import { useEffect, useMemo } from 'react'
+import { useContext, useEffect, useMemo } from 'react'
 import {
   installSharedStateUpdateAtom,
   makeSharedStateEventsAtom,
 } from '@/atoms/shared-state'
 import {
-  preloadSharedStateCollections,
-  sharedStateCoordinator,
+  type SharedStateSource,
+  sharedCollectionBundle,
 } from '@/db/shared-state'
-
-const publishSharedUpdates = async (
-  updates: readonly SharedStateUpdate[],
-  isActive: () => boolean
-): Promise<void> => {
-  try {
-    await preloadSharedStateCollections()
-    if (isActive()) {
-      for (const update of updates) {
-        sharedStateCoordinator.apply(update)
-      }
-    }
-  } catch {
-    // The existing projection remains available if TanStack DB cannot
-    // initialize; one failed consumer must not stall the RPC stream.
-  }
-}
 
 /** Owns the one app-wide shared database subscription. */
 export function SharedStateBridge(): null {
+  const registry = useContext(RegistryContext)
   const eventsAtom = useMemo(makeSharedStateEventsAtom, [])
-  const result = useAtomValue(eventsAtom)
-  const pullNext = useAtomSet(eventsAtom)
-  const installLegacyProjection = useAtomSet(installSharedStateUpdateAtom)
+  const source = useMemo<SharedStateSource>(
+    () => ({
+      start: (publish) =>
+        registry.subscribe(
+          eventsAtom,
+          (result) => {
+            if (!(Result.isSuccess(result) && !result.waiting)) {
+              return
+            }
+            for (const update of result.value.items) {
+              publish(update)
+              // Keep the cumulative branch's legacy consumers coherent until
+              // their direct-query cutover lands in its own descendant issue.
+              registry.set(installSharedStateUpdateAtom, update)
+            }
+            // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
+            registry.set(eventsAtom, undefined as void)
+          },
+          { immediate: true }
+        ),
+    }),
+    [eventsAtom, registry]
+  )
 
-  useEffect(() => {
-    if (Result.isSuccess(result) && !result.waiting) {
-      let active = true
-      publishSharedUpdates(result.value.items, () => active).then(() => {
-        if (!active) {
-          return
-        }
-        for (const update of result.value.items) {
-          installLegacyProjection(update)
-        }
-        // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
-        pullNext(undefined as void)
-      })
-      return () => {
-        active = false
-      }
-    }
-    return undefined
-  }, [installLegacyProjection, pullNext, result])
+  useEffect(() => sharedCollectionBundle.activate(source), [source])
 
   return null
 }

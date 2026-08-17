@@ -421,7 +421,7 @@ interface StoredPanelLayout {
   readonly windowLayout: unknown | null
 }
 
-/** Decode the untrusted the local preference collection envelope without letting it block startup. */
+/** Decode an untrusted legacy localStorage envelope without blocking startup. */
 export const decodeStoredPanelLayout = (
   raw: string | null
 ): StoredPanelLayout => {
@@ -469,7 +469,8 @@ const WORKSPACE_PRESENCE_HEARTBEAT_MS = 5000
 
 /**
  * Manages the panel layout state, providing split and close actions
- * that mutate the `WindowLayout` and persist changes to the local preference collection.
+ * that mutate the `WindowLayout` and persist changes to the local preference
+ * collection.
  *
  * Layout persistence flow:
  * 1. Read the per-window `WindowLayout` from the local preference collection.
@@ -680,7 +681,7 @@ export function usePanelLayout() {
   )
 
   /**
-   * Commit reconciled layout to per-window the local preference collection.
+   * Commit a reconciled layout to the per-window local preference collection.
    */
   const commitReconciledLayouts = useCallback(
     (liveIds: ReadonlySet<string>, respawnedIds: Map<string, string>) => {
@@ -1861,7 +1862,8 @@ export function usePanelLayout() {
   // -------------------------------------------------------------------
 
   /**
-   * Helper to persist a panel tab layout update to per-window the local preference collection.
+   * Persist a panel tab layout update to the per-window local preference
+   * collection.
    */
   const commitPanelTabLayout = useCallback(
     (reason: string, newLayout: WindowLayout) => {

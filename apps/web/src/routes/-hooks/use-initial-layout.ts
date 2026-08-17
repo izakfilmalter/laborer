@@ -55,8 +55,8 @@ function buildSeedWindowLayout(
 /**
  * Computes an initial panel layout from streamed tasks and live terminals.
  *
- * Returns a complete `WindowLayout` ready to be persisted to the local preference collection
- * when no persisted layout exists yet.
+ * Returns a complete `WindowLayout` ready to be persisted to the local
+ * preference collection when no persisted layout exists yet.
  *
  * - Multiple running terminals -> horizontal SplitNode (side-by-side panes)
  * - Single running terminal -> LeafNode

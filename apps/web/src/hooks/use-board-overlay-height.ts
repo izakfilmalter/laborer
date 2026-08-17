@@ -27,7 +27,7 @@ interface BoardOverlayHeightState {
  * Persisted height for the kanban board overlay, stored as a fraction of
  * the main content area so window resizes keep the same relative coverage.
  *
- * Mirrors the `useSidebarWidth` the local preference collection pattern.
+ * Mirrors the `useSidebarWidth` local preference collection pattern.
  */
 function useBoardOverlayHeight(): BoardOverlayHeightState {
   const { data } = useLiveQuery((query) =>

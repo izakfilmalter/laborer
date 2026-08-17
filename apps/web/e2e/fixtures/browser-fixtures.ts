@@ -247,7 +247,7 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
 
   seededWorkspace: async ({ daemon }, use) => {
     const tempRoots: string[] = []
-    const repoPath = initRepo('browser-e2e', tempRoots)
+    const repoPath = initRepo(`b${crypto.randomUUID().slice(0, 8)}`, tempRoots)
     const branchName = `e2e-terminal-${crypto.randomUUID()}`
     const seeded = await daemon.rpc.run((client) =>
       Effect.gen(function* () {

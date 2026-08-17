@@ -24,15 +24,16 @@ import {
   SelectValue,
 } from '@laborer/ui/components/select'
 import { Spinner } from '@laborer/ui/components/spinner'
+import { useLiveQuery } from '@tanstack/react-db'
 import { Check, ExternalLink, Github, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { settingRowsAtom } from '@/atoms/shared-state'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppSettings } from '@/components/app-settings-context'
 import { KeyboardShortcutsSection } from '@/components/keyboard-shortcuts-section'
 import { LabelSettingsSection } from '@/components/labels/label-settings-section'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { settingCollection } from '@/db/shared-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { extractErrorMessage } from '@/lib/errors'
 import { parseGithubOAuthCallback } from '@/lib/github-oauth-callback'
@@ -80,7 +81,9 @@ function GlobalConfigInitializer({
 
 export function AppSettingsModal() {
   const { open, onOpenChange } = useAppSettings()
-  const settings = useAtomValue(settingRowsAtom)
+  const { data: settings } = useLiveQuery((query) =>
+    query.from({ settings: settingCollection })
+  )
   const exchangeCode = useAtomSet(exchangeCodeMutation, { mode: 'promise' })
   const setAppSetting = useAtomSet(setAppSettingMutation, { mode: 'promise' })
   const updateGlobalConfig = useAtomSet(updateGlobalConfigMutation, {

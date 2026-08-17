@@ -1,31 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-
-const STORAGE_KEY = 'laborer:sidebar-width'
+import { useLiveQuery } from '@tanstack/react-db'
+import { useCallback } from 'react'
+import {
+  setSingletonPreference,
+  sidebarWidthCollection,
+} from '@/db/local-preferences'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max))
-}
-
-function readStoredWidth(): number | undefined {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) {
-      return undefined
-    }
-
-    const parsed = Number.parseFloat(raw)
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function writeStoredWidth(px: number): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, String(Math.round(px)))
-  } catch {
-    // Ignore storage failures; resizing should keep working for the session.
-  }
 }
 
 interface SidebarWidthState {
@@ -40,29 +21,19 @@ function useSidebarWidth(
   maxPx: number,
   defaultPx: number
 ): SidebarWidthState {
-  const preferredPxRef = useRef<number | null>(null)
-
-  const [widthPx, setWidthPxState] = useState(() => {
-    const stored = readStoredWidth() ?? defaultPx
-    const initialWidth = clamp(stored, minPx, maxPx)
-    preferredPxRef.current = initialWidth
-    return initialWidth
-  })
+  const { data } = useLiveQuery((query) =>
+    query.from({ sidebarWidth: sidebarWidthCollection })
+  )
+  const preferredWidth = data[0]?.value ?? defaultPx
+  const widthPx = clamp(preferredWidth, minPx, maxPx)
 
   const setWidthPx = useCallback(
     (nextWidthPx: number) => {
       const clampedWidth = clamp(nextWidthPx, minPx, maxPx)
-      preferredPxRef.current = clampedWidth
-      setWidthPxState(clampedWidth)
-      writeStoredWidth(clampedWidth)
+      setSingletonPreference(sidebarWidthCollection, Math.round(clampedWidth))
     },
     [maxPx, minPx]
   )
-
-  useEffect(() => {
-    const preferredWidth = preferredPxRef.current ?? defaultPx
-    setWidthPxState(clamp(preferredWidth, minPx, maxPx))
-  }, [defaultPx, maxPx, minPx])
 
   return {
     maxPx,

@@ -9,7 +9,8 @@
  * overlay toolbar on each terminal pane instead.
  *
  * The data-fetching wrapper lives in routes/index.tsx and queries
- * shared state for project/task data and localStorage for layout data.
+ * shared collections for project/task data and the local preference collection
+ * for layout data.
  *
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */

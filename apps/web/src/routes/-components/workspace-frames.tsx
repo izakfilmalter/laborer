@@ -4,7 +4,6 @@ import {
   dropTargetForElements,
   monitorForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
-import { useAtomValue } from '@effect/atom-react/Hooks'
 import type {
   PanelNode,
   PaneType,
@@ -31,14 +30,20 @@ import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { TabBar, type TabBarItem } from '@laborer/ui/components/tab-bar'
 import { TabErrorBoundary } from '@laborer/ui/components/tab-error-boundary'
 import { cn } from '@laborer/ui/lib/utils'
+import { useLiveQuery } from '@tanstack/react-db'
 import { GitBranch, Layers, LayoutGrid, PanelTop } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   GroupImperativeHandle,
   PanelImperativeHandle,
 } from 'react-resizable-panels'
-import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
 import { PanelTypePicker } from '@/components/panel-type-picker'
+import {
+  orderedProjectsFromRows,
+  projectCollection,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { getAgentStatusSurface } from '@/lib/agent-status-presentation'
 import {
@@ -204,8 +209,20 @@ interface ProjectWorkspaceGroup {
  */
 export function EmptyWindowTabState() {
   const actions = usePanelActions()
-  const workspaceList = useAtomValue(workspaceViewsAtom)
-  const projectList = useAtomValue(projectViewsAtom)
+  const { data: projects } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: tasks } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const projectList = useMemo(
+    () => orderedProjectsFromRows(projects),
+    [projects]
+  )
+  const workspaceList = useMemo(
+    () => workspaceViewsFromRows(tasks, projects),
+    [projects, tasks]
+  )
 
   // Collect workspace IDs that are already open in any window tab
   const openWorkspaceIds = useMemo(() => {

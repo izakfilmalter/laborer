@@ -62,8 +62,28 @@ vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomValue: () => workspaceRowsRef.current,
 }))
 
-vi.mock('@/atoms/shared-state', () => ({
-  workspaceViewsAtom: Symbol.for('workspaceViews'),
+vi.mock('@/db/shared-state', () => ({
+  projectCollection: Symbol.for('projectCollection'),
+  taskCollection: Symbol.for('taskCollection'),
+  workspaceViewsFromRows: () => workspaceRowsRef.current,
+}))
+
+vi.mock('@tanstack/react-db', () => ({
+  useLiveQuery: (
+    build: (query: { from: (sources: object) => object }) => object
+  ) => {
+    let sources: Record<string, unknown> = {}
+    build({
+      from: (next: object) => {
+        sources = next as Record<string, unknown>
+        return next
+      },
+    })
+    return {
+      data:
+        'layouts' in sources ? Array.from(panelLayoutCollection.values()) : [],
+    }
+  },
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({

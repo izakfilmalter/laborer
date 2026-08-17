@@ -16,21 +16,24 @@ const LABELS: readonly TaskLabelOption[] = [
   { color: 'emerald', id: 'label-worship', name: 'Worship' },
 ]
 
-// Sentinels stand in for the atoms so the stubbed `useAtomValue` can tell the
-// option list apart from the by-id map.
-vi.mock('@/atoms/shared-state', () => ({
+vi.mock('@/atoms/legacy-shared-state-writes', () => ({
   clearTaskLabelOverlayAtom: 'clear-overlay',
   installTaskLabelOverlayAtom: 'install-overlay',
-  labelRowsAtom: 'label-rows',
-  labelsByIdAtom: 'labels-by-id',
 }))
 
 vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: () => vi.fn(),
-  useAtomValue: (atom: unknown) =>
-    atom === 'label-rows'
-      ? LABELS
-      : new Map(LABELS.map((label) => [label.id, label])),
+}))
+
+vi.mock('@tanstack/react-db', () => ({
+  useLiveQuery: () => ({ data: LABELS }),
+}))
+
+vi.mock('@/db/shared-state', () => ({
+  labelCollection: Symbol.for('labelCollection'),
+  labelsForIds: (ids: readonly string[], labels: readonly TaskLabelOption[]) =>
+    ids.flatMap((id) => labels.find((label) => label.id === id) ?? []),
+  orderedLabelsFromRows: (labels: readonly TaskLabelOption[]) => labels,
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -51,13 +54,11 @@ vi.mock('@/components/labels/labels-picker', () => ({
   ),
 }))
 
-const { TaskLabelsControl, resolveTaskLabels } = await import(
+const { TaskLabelsControl } = await import(
   '@/components/labels/task-labels-control'
 )
 
 afterEach(cleanup)
-
-const label = (id: string): TaskLabelOption => ({ color: 'blue', id, name: id })
 
 describe('label options', () => {
   it('offers every label to a task, whichever project the task belongs to', () => {
@@ -79,38 +80,5 @@ describe('label options', () => {
 
     expect(screen.getByText('Admin')).toBeTruthy()
     expect(screen.getByText('Worship')).toBeTruthy()
-  })
-
-  it('applies one label to tasks in two different projects', () => {
-    // The same label id is carried by both cards, and both resolve it — a
-    // label crosses projects rather than belonging to one.
-    const byId = new Map(LABELS.map((option) => [option.id, option]))
-
-    expect(resolveTaskLabels(['label-admin'], byId)).toEqual([
-      { color: 'blue', id: 'label-admin', name: 'Admin' },
-    ])
-    expect(
-      resolveTaskLabels(['label-admin', 'label-worship'], byId)
-    ).toHaveLength(2)
-  })
-})
-
-describe('resolving a task’s labels', () => {
-  it('keeps application order', () => {
-    const byId = new Map([
-      ['b', label('b')],
-      ['a', label('a')],
-    ])
-
-    expect(resolveTaskLabels(['b', 'a'], byId).map(({ id }) => id)).toEqual([
-      'b',
-      'a',
-    ])
-  })
-
-  it('drops ids no label answers, so a deleted label cannot render', () => {
-    expect(
-      resolveTaskLabels(['a', 'gone'], new Map([['a', label('a')]]))
-    ).toEqual([label('a')])
   })
 })

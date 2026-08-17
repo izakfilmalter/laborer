@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import type {
   LeafNode,
   PanelNode,
@@ -8,9 +8,13 @@ import type {
 import { useLiveQuery } from '@tanstack/react-db'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { panelLayoutCollection } from '@/db/local-preferences'
+import {
+  projectCollection,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
 import {
   removeTerminalListItem,
@@ -523,7 +527,16 @@ export function usePanelLayout() {
 
   // The hierarchical WindowLayout is the single source of truth.
   const persistedWindowLayout = windowLayoutRepair.windowLayout
-  const workspaceList = useAtomValue(workspaceViewsAtom)
+  const { data: projects } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: tasks } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const workspaceList = useMemo(
+    () => workspaceViewsFromRows(tasks, projects),
+    [projects, tasks]
+  )
   // Agent panes opened optimistically while their workspace is still being
   // set up. Maps workspaceId -> placeholder paneId (null when the pane
   // couldn't be opened yet, e.g. the task hadn't landed in the stream).

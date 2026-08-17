@@ -7,8 +7,9 @@
  * `<TaskLabelsControl task={task} />` and nothing else.
  */
 
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import { createTaskUlid } from '@laborer/task-db/ulid'
+import { useLiveQuery } from '@tanstack/react-db'
 import type { ReactElement, RefObject } from 'react'
 import { toast } from 'sonner'
 
@@ -16,9 +17,12 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearTaskLabelOverlayAtom,
   installTaskLabelOverlayAtom,
-  labelRowsAtom,
-  labelsByIdAtom,
-} from '@/atoms/shared-state'
+} from '@/atoms/legacy-shared-state-writes'
+import {
+  labelCollection,
+  labelsForIds,
+  orderedLabelsFromRows,
+} from '@/db/shared-state'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 
 import { type TaskLabelOption, TaskLabelsPillTrigger } from './label-chips'
@@ -26,23 +30,6 @@ import { LabelsPicker } from './labels-picker'
 
 const createLabelMutation = LaborerClient.mutation('label.create')
 const setTaskLabelsMutation = LaborerClient.mutation('task.labels.set')
-
-/** Resolves a task's stored ids into labels, dropping ids no label answers. */
-export const resolveTaskLabels = (
-  labelIds: readonly string[],
-  byId: ReadonlyMap<string, TaskLabelOption>
-): readonly TaskLabelOption[] =>
-  labelIds
-    .map((id) => byId.get(id))
-    .filter((label): label is TaskLabelOption => label !== undefined)
-
-/** A task's labels, resolved against shared state. */
-export function useTaskLabels(
-  labelIds: readonly string[]
-): readonly TaskLabelOption[] {
-  const byId = useAtomValue(labelsByIdAtom)
-  return resolveTaskLabels(labelIds, byId)
-}
 
 export function TaskLabelsControl({
   task,
@@ -58,8 +45,14 @@ export function TaskLabelsControl({
   }
 }): ReactElement {
   // Labels are app-wide, so every label is an option for every task.
-  const options = useAtomValue(labelRowsAtom)
-  const selected = useTaskLabels(task.labelIds)
+  const { data: labelRows } = useLiveQuery((query) =>
+    query.from({ labels: labelCollection })
+  )
+  const options: readonly TaskLabelOption[] = orderedLabelsFromRows(labelRows)
+  const selected: readonly TaskLabelOption[] = labelsForIds(
+    task.labelIds,
+    labelRows
+  )
   const createLabel = useAtomSet(createLabelMutation, { mode: 'promise' })
   const setTaskLabels = useAtomSet(setTaskLabelsMutation, { mode: 'promise' })
   const installOverlay = useAtomSet(installTaskLabelOverlayAtom)

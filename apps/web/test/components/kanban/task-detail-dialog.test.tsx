@@ -48,7 +48,6 @@ vi.mock('@/components/github-pr-status-badge', () => ({
 // pull shared state into a suite about the editing cycle.
 vi.mock('@/components/labels/task-labels-control', () => ({
   TaskLabelsControl: () => null,
-  useTaskLabels: () => [],
 }))
 
 vi.mock('@/components/kanban/worktree-affordance', () => ({

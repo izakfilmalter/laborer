@@ -11,11 +11,15 @@
  * @see packages/shared/src/desktop-bridge.ts — DesktopBridge contract
  */
 
-import { useAtomValue } from '@effect/atom-react/Hooks'
 import { isRootWorkspaceId } from '@laborer/shared/root-workspace'
-import { useEffect, useRef } from 'react'
+import { useLiveQuery } from '@tanstack/react-db'
+import { useEffect, useMemo, useRef } from 'react'
 
-import { workspaceViewsAtom } from '@/atoms/shared-state'
+import {
+  projectCollection,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import { localApi } from '@/lib/local-api'
 
 /**
@@ -28,7 +32,17 @@ import { localApi } from '@/lib/local-api'
 function useTrayWorkspaceCount(): void {
   // Synthetic root workspaces (one per project, always present) are not
   // running work — only task-backed workspaces count toward the tray badge.
-  const runningWs = useAtomValue(workspaceViewsAtom).filter(
+  const { data: projects } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: tasks } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const workspaces = useMemo(
+    () => workspaceViewsFromRows(tasks, projects),
+    [projects, tasks]
+  )
+  const runningWs = workspaces.filter(
     ({ id, status }) => status === 'running' && !isRootWorkspaceId(id)
   )
   const count = runningWs.length

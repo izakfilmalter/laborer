@@ -40,7 +40,7 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearTaskEditOverlayAtom,
   installTaskEditOverlayAtom,
-} from '@/atoms/shared-state'
+} from '@/atoms/legacy-shared-state-writes'
 import { BOARD_COLUMNS } from '@/components/kanban/board-columns'
 import { type BoardTask, boardTaskTitle } from '@/components/kanban/board-data'
 import { SourceBadge } from '@/components/kanban/source-badge'

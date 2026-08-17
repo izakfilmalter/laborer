@@ -1,14 +1,8 @@
-import type {
-  BoardTask,
-  SharedTaskRow,
-  TaskBoardEvent,
-} from '@laborer/shared/rpc'
+import type { BoardTask, SharedTaskRow } from '@laborer/shared/rpc'
 import { describe, expect, it } from 'vitest'
 import {
-  applySharedTaskUpdates,
-  applyTaskBoardEvents,
+  boardTasksFromSharedRows,
   boardTaskTitle,
-  projectForTask,
   slackAnalysisState,
   workspaceForTask,
 } from '@/components/kanban/board-data'
@@ -55,98 +49,37 @@ const sharedTask = (overrides: Partial<SharedTaskRow> = {}): SharedTaskRow => ({
 describe('board task projection', () => {
   it('projects queued worktrees as provisioning and missing completed worktrees as gone', () => {
     expect(
-      applyTaskBoardEvents([
-        {
-          _tag: 'snapshot',
-          cursor: 1,
-          tasks: [
-            task({
-              executionStatus: 'queued',
-              source: 'execution',
-              status: 'in_progress',
-              worktreePath: '/repo.worktrees/task',
-            }),
-          ],
-        },
+      boardTasksFromSharedRows([
+        sharedTask({
+          executionStatus: 'queued',
+          source: 'execution',
+          status: 'in_progress',
+          worktreePath: '/repo.worktrees/task',
+        }),
       ])[0]?.worktreeState
     ).toBe('provisioning')
     expect(
-      applyTaskBoardEvents([
-        {
-          _tag: 'snapshot',
-          cursor: 1,
-          tasks: [
-            task({
-              executionStatus: 'completed',
-              source: 'execution',
-              status: 'in_review',
-              worktreePath: '/repo.worktrees/task',
-            }),
-          ],
-        },
+      boardTasksFromSharedRows([
+        sharedTask({
+          executionStatus: 'completed',
+          source: 'execution',
+          status: 'in_review',
+          worktreePath: '/repo.worktrees/task',
+        }),
       ])[0]?.worktreeState
     ).toBe('gone')
   })
 
-  it('replaces snapshots and applies updates and deletions', () => {
-    const events: TaskBoardEvent[] = [
-      { _tag: 'snapshot', cursor: 1, tasks: [task()] },
-      {
-        _tag: 'delta',
-        cursor: 2,
-        deletedTaskIds: [],
-        tasks: [task({ revision: 2, status: 'in_review' })],
-      },
-      {
-        _tag: 'delta',
-        cursor: 3,
-        deletedTaskIds: ['task-1'],
-        tasks: [],
-      },
-    ]
-
-    expect(applyTaskBoardEvents(events)).toEqual([])
-  })
-
-  it('applies a non-accumulating delta to the prior projection', () => {
-    const initial = applyTaskBoardEvents([
-      { _tag: 'snapshot', cursor: 1, tasks: [task()] },
-    ])
-    const updated = applyTaskBoardEvents(
-      [
-        {
-          _tag: 'delta',
-          cursor: 2,
-          deletedTaskIds: [],
-          tasks: [task({ revision: 2, status: 'in_progress' })],
-        },
-      ],
-      initial
-    )
-
-    expect(updated).toMatchObject([
-      { id: 'task-1', revision: 2, status: 'in_progress' },
-    ])
-  })
-
-  it('preserves shared parent and PR facts while applying updates', () => {
-    const [projected] = applySharedTaskUpdates([
-      {
-        tasks: {
-          cursor: 1,
-          rows: [
-            sharedTask({
-              parentTaskId: 'parent',
-              prIsDraft: true,
-              prNumber: 421,
-              prState: 'open',
-              prTitle: 'Stream workspace surfaces',
-              prUrl: 'https://github.com/example/repo/pull/421',
-            }),
-          ],
-          type: 'snapshot',
-        },
-      },
+  it('preserves shared parent and PR facts in presentation mapping', () => {
+    const [projected] = boardTasksFromSharedRows([
+      sharedTask({
+        parentTaskId: 'parent',
+        prIsDraft: true,
+        prNumber: 421,
+        prState: 'open',
+        prTitle: 'Stream workspace surfaces',
+        prUrl: 'https://github.com/example/repo/pull/421',
+      }),
     ])
 
     expect(projected).toMatchObject({
@@ -160,31 +93,11 @@ describe('board task projection', () => {
   })
 
   it('preserves the durable manual order in the board projection', () => {
-    const [projected] = applySharedTaskUpdates([
-      {
-        tasks: {
-          cursor: 1,
-          rows: [sharedTask({ sortOrder: 12.5 })],
-          type: 'snapshot',
-        },
-      },
+    const [projected] = boardTasksFromSharedRows([
+      sharedTask({ sortOrder: 12.5 }),
     ])
 
     expect(projected?.sortOrder).toBe(12.5)
-  })
-
-  it('chooses the nearest ancestor project without prefix collisions', () => {
-    const projects = [
-      { id: 'broad', repoPath: '/repo' },
-      { id: 'nearest', repoPath: '/repo/packages/app' },
-      { id: 'collision', repoPath: '/rep' },
-    ]
-    expect(
-      projectForTask(task({ rootPath: '/repo/packages/app/src' }), projects)?.id
-    ).toBe('nearest')
-    expect(projectForTask(task({ rootPath: '/repository' }), projects)).toBe(
-      undefined
-    )
   })
 
   it('projects Slack planning progress and failure from durable card fields', () => {

@@ -21,7 +21,6 @@
  * @see Issue #160: UI for detected workspaces
  */
 
-import { useAtomValue } from '@effect/atom-react/Hooks'
 import {
   buildWorkspaceTree,
   type WorkspaceTreeNode,
@@ -48,15 +47,20 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
+import { useLiveQuery } from '@tanstack/react-db'
 import { ChevronRight, GitBranch, GitBranchPlus } from 'lucide-react'
 import { useMemo } from 'react'
-import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { CardShell } from '@/components/card-shell'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
+import {
+  projectCollection,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import type {
   PendingWorkspaceCreation,
   PendingWorkspaceCreationChangeHandler,
@@ -79,10 +83,10 @@ interface WorkspaceListProps {
   readonly projectName: string
   readonly projectShortName?: string | null | undefined
   /**
-   * The repository path (project.repoPath) used to identify the root workspace.
+   * The canonical Project root path used to identify the root workspace.
    * The root workspace is the one where worktreePath matches this path.
    */
-  readonly repoPath: string
+  readonly rootPath: string
 }
 
 /** Workspace row shape used by the sidebar tree. */
@@ -98,7 +102,7 @@ interface WorkspaceTreeGroupProps {
     | undefined
   readonly projectName: string
   readonly projectShortName?: string | null | undefined
-  readonly repoPath: string
+  readonly rootPath: string
 }
 
 /**
@@ -116,13 +120,13 @@ function WorkspaceTreeGroup({
   onPendingCreationChange,
   projectName,
   projectShortName,
-  repoPath,
+  rootPath,
 }: WorkspaceTreeGroupProps) {
   const { workspace, children } = node
 
   const card = (
     <WorkspaceCard
-      isRootWorkspace={workspace.worktreePath === repoPath}
+      isRootWorkspace={workspace.worktreePath === rootPath}
       onPendingCreationChange={onPendingCreationChange}
       projectName={projectName}
       projectShortName={projectShortName}
@@ -204,7 +208,7 @@ function WorkspaceTreeGroup({
               onPendingCreationChange={onPendingCreationChange}
               projectName={projectName}
               projectShortName={projectShortName}
-              repoPath={repoPath}
+              rootPath={rootPath}
             />
           ))}
         </div>
@@ -252,9 +256,18 @@ function WorkspaceList({
   projectId,
   projectName,
   projectShortName,
-  repoPath,
+  rootPath,
 }: WorkspaceListProps) {
-  const workspaceList = useAtomValue(workspaceViewsAtom)
+  const { data: projects } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: tasks } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const workspaceList = useMemo(
+    () => workspaceViewsFromRows(tasks, projects),
+    [projects, tasks]
+  )
   const collapseState = useWorkspaceGroupCollapseState()
 
   // Filter out destroyed workspaces, scoped to the given project
@@ -267,18 +280,18 @@ function WorkspaceList({
   )
 
   // The database owns promotion on parent deletion (`ON DELETE SET NULL`).
-  // The root workspace (the main checkout, worktreePath === repoPath) is
+  // The root workspace (the main checkout, worktreePath === rootPath) is
   // always pinned to the top of the tree.
   const workspaceTree = useMemo(() => {
     const tree = buildWorkspaceTree<WorkspaceTreeRow>(activeWorkspaces)
     const rootNodes = tree.filter(
-      (node) => node.workspace.worktreePath === repoPath
+      (node) => node.workspace.worktreePath === rootPath
     )
     const otherNodes = tree.filter(
-      (node) => node.workspace.worktreePath !== repoPath
+      (node) => node.workspace.worktreePath !== rootPath
     )
     return [...rootNodes, ...otherNodes]
-  }, [activeWorkspaces, repoPath])
+  }, [activeWorkspaces, rootPath])
 
   if (activeWorkspaces.length === 0 && pendingCreations.length === 0) {
     return (
@@ -310,7 +323,7 @@ function WorkspaceList({
           onPendingCreationChange={onPendingCreationChange}
           projectName={projectName}
           projectShortName={projectShortName}
-          repoPath={repoPath}
+          rootPath={rootPath}
         />
       ))}
     </div>

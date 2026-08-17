@@ -65,17 +65,23 @@ vi.mock('@effect/atom-react/Hooks', () => ({
     })(),
 }))
 
-vi.mock('@/atoms/shared-state', () => ({
+vi.mock('@/atoms/legacy-shared-state-writes', () => ({
   clearWorkspaceDestroyOverlayAtom: Symbol.for('clearWorkspaceDestroyOverlay'),
   installWorkspaceDestroyOverlayAtom: Symbol.for(
     'installWorkspaceDestroyOverlay'
   ),
   clearTaskEditOverlayAtom: Symbol.for('clearTaskEditOverlay'),
   installTaskEditOverlayAtom: Symbol.for('installTaskEditOverlay'),
-  // The card looks its task up here to offer the "Edit card" button; these
-  // fixtures have no tasks, so every card is a workspace without one.
-  tasksByIdAtom: Symbol.for('tasksById'),
-  workspaceViewsAtom: Symbol.for('workspaceViews'),
+}))
+
+vi.mock('@tanstack/react-db', () => ({
+  useLiveQuery: () => ({ data: [] }),
+}))
+
+vi.mock('@/db/shared-state', () => ({
+  projectCollection: Symbol.for('projectCollection'),
+  taskCollection: Symbol.for('taskCollection'),
+  workspaceViewsFromRows: () => workspaceRowsRef.current,
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -206,7 +212,7 @@ describe('First-launch empty cache handling', () => {
 
   // Tracer bullet: empty workspace list shows onboarding content
   it('workspace list shows onboarding content when snapshot has no workspaces', () => {
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     // Should use the Empty component pattern — not just plain "No workspaces" text
     const emptySlot = screen.getByText('No workspaces')
@@ -216,7 +222,7 @@ describe('First-launch empty cache handling', () => {
   })
 
   it('workspace list shows guidance description in empty state', () => {
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     // Should have a description guiding the user to create their first workspace
     expect(screen.getByText(CREATE_WORKSPACE_PATTERN)).toBeTruthy()
@@ -225,7 +231,7 @@ describe('First-launch empty cache handling', () => {
   it('workspace list updates reactively when data arrives via sync', () => {
     // Start with an empty snapshot (simulating first launch)
     const { rerender } = render(
-      <WorkspaceList projectId="project-1" repoPath="/repo" />
+      <WorkspaceList projectId="project-1" rootPath="/repo" />
     )
 
     // Initially shows empty state
@@ -255,7 +261,7 @@ describe('First-launch empty cache handling', () => {
       },
     ]
 
-    rerender(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    rerender(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     // Empty state should be gone, workspace card should be visible
     expect(screen.queryByText('No workspaces')).toBeNull()
@@ -270,7 +276,7 @@ describe('First-launch empty cache handling', () => {
 
     // Should not throw during render
     expect(() => {
-      render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+      render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
     }).not.toThrow()
 
     // Should not produce console errors

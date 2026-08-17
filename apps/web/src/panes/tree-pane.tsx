@@ -44,14 +44,19 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@laborer/ui/components/context-menu'
+import { useLiveQuery } from '@tanstack/react-db'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { rendererConnectionGenerationAtom } from '@/atoms/renderer-connection'
-import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import {
+  projectCollection,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
@@ -261,7 +266,16 @@ const fetchGitStatus = async (
  */
 function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
   const connectionGeneration = useAtomValue(rendererConnectionGenerationAtom)
-  const workspaceRows = useAtomValue(workspaceViewsAtom)
+  const { data: projects } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: tasks } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const workspaceRows = useMemo(
+    () => workspaceViewsFromRows(tasks, projects),
+    [projects, tasks]
+  )
   const listFiles = useAtomSet(fileListMutation, { mode: 'promise' })
 
   // Look up the workspace's worktreePath for building absolute file paths.

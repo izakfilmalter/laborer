@@ -46,9 +46,9 @@ const expansionSchema = z.object({
 })
 export type ExpansionPreference = z.infer<typeof expansionSchema>
 
-const panelLayoutSchema = z.object({
+export const panelLayoutSchema = z.object({
   id: z.string().min(1),
-  layout: z.custom<WindowLayout>((value) =>
+  windowLayout: z.custom<WindowLayout>((value) =>
     Schema.is(WindowLayoutSchema)(value)
   ),
 })
@@ -151,6 +151,21 @@ export const setBoardOverlayHeightPreference = (fraction: number): void => {
     })
   } else {
     boardOverlayHeightCollection.insert({ fraction, id: 'current' })
+  }
+}
+
+export const setPanelLayoutPreference = (
+  id: string,
+  windowLayout: WindowLayout
+): void => {
+  if (panelLayoutCollection.has(id)) {
+    panelLayoutCollection.update(id, (draft) => {
+      draft.windowLayout = structuredClone(
+        windowLayout
+      ) as typeof draft.windowLayout
+    })
+  } else {
+    panelLayoutCollection.insert({ id, windowLayout })
   }
 }
 

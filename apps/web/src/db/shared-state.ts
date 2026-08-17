@@ -10,10 +10,17 @@ import type {
   SharedStateUpdate,
   SharedTaskRow,
 } from '@laborer/shared/rpc'
+import {
+  SharedLabelRow as SharedLabelRowSchema,
+  SharedProjectRow as SharedProjectRowSchema,
+  SharedSettingRow as SharedSettingRowSchema,
+  SharedTaskRow as SharedTaskRowSchema,
+} from '@laborer/shared/rpc'
 import { createCollection, type SyncConfig } from '@tanstack/db'
+import { Schema } from 'effect'
 
-type TableName = 'labels' | 'projects' | 'settings' | 'tasks'
-type TableUpdate<Row> = NonNullable<SharedStateUpdate[TableName]> & {
+export type SharedCollectionName = 'labels' | 'projects' | 'settings' | 'tasks'
+type TableUpdate<Row> = NonNullable<SharedStateUpdate[SharedCollectionName]> & {
   readonly rows: readonly Row[]
 }
 type SyncControls<Row extends object> = Parameters<
@@ -24,21 +31,148 @@ interface RegisteredTable {
   readonly apply: (update: TableUpdate<never>) => void
 }
 
+export interface SharedStateSource {
+  /** The source is already decoded at the Effect RPC boundary. */
+  readonly start: (publish: (update: SharedStateUpdate) => void) => () => void
+}
+
+export interface OperationReceipt {
+  readonly cancel: () => void
+  readonly published: Promise<void>
+}
+
+const TABLE_ORDER: readonly SharedCollectionName[] = [
+  'labels',
+  'projects',
+  'settings',
+  'tasks',
+]
+
+const MAX_RETAINED_OPERATION_IDS = 2048
+
+class OperationReceipts {
+  private readonly observed = new Map<SharedCollectionName, Set<string>>(
+    TABLE_ORDER.map((name) => [name, new Set()])
+  )
+  private readonly observedOrder = new Map<SharedCollectionName, string[]>(
+    TABLE_ORDER.map((name) => [name, []])
+  )
+  private readonly pending = new Map<
+    string,
+    Set<{
+      readonly collections: ReadonlySet<SharedCollectionName>
+      readonly observed: Set<SharedCollectionName>
+      readonly resolve: () => void
+    }>
+  >()
+
+  register(
+    operationId: string,
+    collections: readonly SharedCollectionName[]
+  ): OperationReceipt {
+    const expected = new Set(collections)
+    let resolvePromise: () => void = () => undefined
+    const published = new Promise<void>((resolve) => {
+      resolvePromise = resolve
+    })
+    const waiter = {
+      collections: expected,
+      observed: new Set(
+        collections.filter((collection) =>
+          this.observed.get(collection)?.has(operationId)
+        )
+      ),
+      resolve: resolvePromise,
+    }
+
+    if (this.hasObservedEvery(operationId, expected)) {
+      resolvePromise()
+    } else {
+      const waiters = this.pending.get(operationId) ?? new Set()
+      waiters.add(waiter)
+      this.pending.set(operationId, waiters)
+    }
+
+    return {
+      cancel: () => {
+        const waiters = this.pending.get(operationId)
+        waiters?.delete(waiter)
+        if (waiters?.size === 0) {
+          this.pending.delete(operationId)
+        }
+      },
+      published,
+    }
+  }
+
+  observe(collection: SharedCollectionName, operationIds: readonly string[]) {
+    const observed = this.observed.get(collection)
+    const order = this.observedOrder.get(collection)
+    if (!(observed && order)) {
+      throw new Error(`Unknown shared collection ${collection}`)
+    }
+    for (const operationId of operationIds) {
+      if (!observed.has(operationId)) {
+        observed.add(operationId)
+        order.push(operationId)
+      }
+      for (const waiter of this.pending.get(operationId) ?? []) {
+        waiter.observed.add(collection)
+        if (
+          [...waiter.collections].every((expected) =>
+            waiter.observed.has(expected)
+          )
+        ) {
+          waiter.resolve()
+          this.pending.get(operationId)?.delete(waiter)
+        }
+      }
+      if (this.pending.get(operationId)?.size === 0) {
+        this.pending.delete(operationId)
+      }
+    }
+
+    while (order.length > MAX_RETAINED_OPERATION_IDS) {
+      const oldest = order.shift()
+      if (oldest !== undefined) {
+        observed.delete(oldest)
+      }
+    }
+  }
+
+  private hasObservedEvery(
+    operationId: string,
+    collections: ReadonlySet<SharedCollectionName>
+  ): boolean {
+    for (const collection of collections) {
+      if (!this.observed.get(collection)?.has(operationId)) {
+        return false
+      }
+    }
+    return true
+  }
+}
+
 /**
  * Collection-local stream ordering. Snapshots replace membership even when a
  * reconnect starts from a lower cursor; deltas can only move forward.
  */
 class SharedStateCoordinator {
-  private readonly tables = new Map<TableName, RegisteredTable>()
-  private readonly cursors: Record<TableName, number> = {
+  private readonly receipts: OperationReceipts
+  private readonly tables = new Map<SharedCollectionName, RegisteredTable>()
+  private readonly cursors: Record<SharedCollectionName, number> = {
     labels: 0,
     projects: 0,
     settings: 0,
     tasks: 0,
   }
 
+  constructor(receipts: OperationReceipts) {
+    this.receipts = receipts
+  }
+
   register<Row extends object>(
-    name: TableName,
+    name: SharedCollectionName,
     controls: SyncControls<Row>
   ): () => void {
     const apply = (update: TableUpdate<Row>) => {
@@ -62,13 +196,27 @@ class SharedStateCoordinator {
       }
       controls.commit()
       this.cursors[name] = update.cursor
-      controls.markReady()
+      if (update.type === 'snapshot') {
+        controls.markReady()
+      } else {
+        this.receipts.observe(name, update.operationIds ?? [])
+      }
     }
 
-    this.tables.set(name, { apply: apply as RegisteredTable['apply'] })
-    return () => {
-      this.tables.delete(name)
+    const registration = { apply: apply as RegisteredTable['apply'] }
+    if (this.tables.has(name)) {
+      throw new Error(`Shared collection ${name} registered more than once`)
     }
+    this.tables.set(name, registration)
+    return () => {
+      if (this.tables.get(name) === registration) {
+        this.tables.delete(name)
+      }
+    }
+  }
+
+  get isComplete(): boolean {
+    return TABLE_ORDER.every((name) => this.tables.has(name))
   }
 
   apply(update: SharedStateUpdate): void {
@@ -80,7 +228,7 @@ class SharedStateCoordinator {
   }
 
   private applyTable<Row>(
-    name: TableName,
+    name: SharedCollectionName,
     update: TableUpdate<Row> | undefined
   ): void {
     if (update !== undefined) {
@@ -89,65 +237,151 @@ class SharedStateCoordinator {
   }
 }
 
-export const sharedStateCoordinator = new SharedStateCoordinator()
-
-const sharedOptions = <Row extends object>(
+const makeSharedOptions = <Row extends object>(
+  coordinator: SharedStateCoordinator,
   id: string,
-  name: TableName,
-  getKey: (row: Row) => string
+  name: SharedCollectionName,
+  getKey: (row: Row) => string,
+  schema: Schema.Codec<Row, Row>
 ) => ({
   gcTime: 0,
   getKey,
   id,
+  schema: Schema.toStandardSchemaV1(schema),
   startSync: false,
   sync: {
     rowUpdateMode: 'full' as const,
-    sync: (controls: SyncControls<Row>) =>
-      sharedStateCoordinator.register(name, controls),
+    sync: (controls: SyncControls<Row>) => coordinator.register(name, controls),
   },
 })
 
-export const labelCollection = createCollection(
-  sharedOptions<SharedLabelRow>(
-    'laborer.shared.labels.v1',
-    'labels',
-    ({ id }) => id
+export const createSharedCollectionBundle = (idSuffix = 'v1') => {
+  const receipts = new OperationReceipts()
+  const coordinator = new SharedStateCoordinator(receipts)
+  const labelCollection = createCollection(
+    makeSharedOptions<SharedLabelRow>(
+      coordinator,
+      `laborer.shared.labels.${idSuffix}`,
+      'labels',
+      ({ id }) => id,
+      SharedLabelRowSchema
+    )
   )
-)
-export const projectCollection = createCollection(
-  sharedOptions<SharedProjectRow>(
-    'laborer.shared.projects.v1',
-    'projects',
-    ({ id }) => id
+  const projectCollection = createCollection(
+    makeSharedOptions<SharedProjectRow>(
+      coordinator,
+      `laborer.shared.projects.${idSuffix}`,
+      'projects',
+      ({ id }) => id,
+      SharedProjectRowSchema
+    )
   )
-)
-export const settingCollection = createCollection(
-  sharedOptions<SharedSettingRow>(
-    'laborer.shared.settings.v1',
-    'settings',
-    ({ key }) => key
+  const settingCollection = createCollection(
+    makeSharedOptions<SharedSettingRow>(
+      coordinator,
+      `laborer.shared.settings.${idSuffix}`,
+      'settings',
+      ({ key }) => key,
+      SharedSettingRowSchema
+    )
   )
-)
-export const taskCollection = createCollection(
-  sharedOptions<SharedTaskRow>(
-    'laborer.shared.tasks.v1',
-    'tasks',
-    ({ id }) => id
+  const taskCollection = createCollection(
+    makeSharedOptions<SharedTaskRow>(
+      coordinator,
+      `laborer.shared.tasks.${idSuffix}`,
+      'tasks',
+      ({ id }) => id,
+      SharedTaskRowSchema
+    )
   )
-)
+  const collections = {
+    labels: labelCollection,
+    projects: projectCollection,
+    settings: settingCollection,
+    tasks: taskCollection,
+  } as const
 
-let preloadPromise: Promise<unknown> | undefined
+  let references = 0
+  let sourceCleanup: (() => void) | undefined
+  let cleanupGeneration = 0
 
-/** Start all collection registrations before the shared RPC source is pulled. */
-export const preloadSharedStateCollections = (): Promise<unknown> => {
-  preloadPromise ??= Promise.all([
-    labelCollection.preload(),
-    projectCollection.preload(),
-    settingCollection.preload(),
-    taskCollection.preload(),
-  ])
-  return preloadPromise
+  const stop = async () => {
+    // Collection cleanup removes each sync-control registration synchronously.
+    // Release the single Effect source only after the final registration is gone.
+    const collectionCleanups: Promise<void>[] = []
+    for (const name of TABLE_ORDER) {
+      collectionCleanups.push(collections[name].cleanup())
+    }
+    sourceCleanup?.()
+    sourceCleanup = undefined
+    await Promise.all(collectionCleanups)
+  }
+
+  return {
+    collections,
+    activate(source: SharedStateSource): () => void {
+      references += 1
+      cleanupGeneration += 1
+      if (sourceCleanup === undefined) {
+        // Registration is synchronous. Opening the source before this complete
+        // set exists would allow an initial snapshot to be lost.
+        for (const name of TABLE_ORDER) {
+          collections[name].startSyncImmediate()
+        }
+        if (!coordinator.isComplete) {
+          throw new Error('Shared collection bundle registration is incomplete')
+        }
+        try {
+          sourceCleanup = source.start((update) => coordinator.apply(update))
+        } catch (error) {
+          references -= 1
+          stop().catch((cleanupError) => {
+            queueMicrotask(() => {
+              throw cleanupError
+            })
+          })
+          throw error
+        }
+      }
+
+      let released = false
+      return () => {
+        if (released) {
+          return
+        }
+        released = true
+        references -= 1
+        const generation = ++cleanupGeneration
+        // React StrictMode replays effects synchronously. Deferring final cleanup
+        // keeps one source alive across that replay and lets direct live-query
+        // consumers release their subscriptions before the base collections.
+        setTimeout(() => {
+          if (references === 0 && cleanupGeneration === generation) {
+            stop().catch((error) => {
+              queueMicrotask(() => {
+                throw error
+              })
+            })
+          }
+        }, 0)
+      }
+    },
+    registerOperationReceipt(
+      operationId: string,
+      affectedCollections: readonly SharedCollectionName[]
+    ): OperationReceipt {
+      return receipts.register(operationId, affectedCollections)
+    },
+  }
 }
+
+export const sharedCollectionBundle = createSharedCollectionBundle()
+export const {
+  labels: labelCollection,
+  projects: projectCollection,
+  settings: settingCollection,
+  tasks: taskCollection,
+} = sharedCollectionBundle.collections
 
 export interface ProjectView extends SharedProjectRow {
   readonly repoPath: string

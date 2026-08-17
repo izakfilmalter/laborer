@@ -65,6 +65,7 @@ describe('task.update RPC handler', () => {
         {
           description: 'Run the focused test first.',
           expectedRevision: 1,
+          operationId: 'edit-task-1',
           taskId: 'task-1',
           title: 'After',
         },
@@ -83,6 +84,11 @@ describe('task.update RPC handler', () => {
     )
     expect(updated.readChanges(0).cursor).toBe(2)
     updated.close()
+    const ledger = NativeLaborerDatabase.open(path)
+    expect(ledger.taskChangesAfter(1)).toMatchObject([
+      { operationId: 'edit-task-1', taskId: 'task-1' },
+    ])
+    ledger.close()
   })
 
   it('reports a stale revision without overwriting or appending a change', async () => {

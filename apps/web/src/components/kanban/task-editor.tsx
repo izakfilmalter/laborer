@@ -37,14 +37,11 @@ import { ExternalLink, GitBranch, TriangleAlert } from 'lucide-react'
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import {
-  clearTaskEditOverlayAtom,
-  installTaskEditOverlayAtom,
-} from '@/atoms/legacy-shared-state-writes'
 import { BOARD_COLUMNS } from '@/components/kanban/board-columns'
 import { type BoardTask, boardTaskTitle } from '@/components/kanban/board-data'
 import { SourceBadge } from '@/components/kanban/source-badge'
 import { TaskLabelsControl } from '@/components/labels/task-labels-control'
+import { updateTask as updateTaskOptimistically } from '@/db/shared-mutations'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
 
@@ -496,13 +493,13 @@ interface TaskEditRecovery {
  * The card-editing cycle for a surface that shows cards.
  *
  * The caller hands over the cards it can show and gets back a way to open the
- * editor and a node to render. Everything between — the optimistic overlay,
+ * editor and a node to render. Everything between — the optimistic action,
  * the CAS conflict, the reopen that hands a rejected draft back — is in here,
  * because a half-owned version of this is how a surface loses somebody's
  * text.
  *
- * The overlay patches the card the instant the dialog hands over its draft
- * and settles when the authoritative row leaves the draft's revision.
+ * TanStack patches the card the instant the dialog hands over its draft and
+ * settles the transaction against correlated authoritative publication.
  */
 function useTaskEditor(tasks: readonly BoardTask[]): {
   readonly openTaskEditor: (taskId: string) => void
@@ -511,8 +508,6 @@ function useTaskEditor(tasks: readonly BoardTask[]): {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [recovery, setRecovery] = useState<TaskEditRecovery | null>(null)
   const updateTask = useAtomSet(updateTaskMutation, { mode: 'promise' })
-  const installEditOverlay = useAtomSet(installTaskEditOverlayAtom)
-  const clearEditOverlay = useAtomSet(clearTaskEditOverlayAtom)
 
   const editingTask = tasks.find((task) => task.id === editingTaskId)
 
@@ -524,23 +519,13 @@ function useTaskEditor(tasks: readonly BoardTask[]): {
       readonly title: string
     }
   ) => {
-    installEditOverlay({
-      overlay: {
-        expectedRevision: draft.expectedRevision,
-        patch: { description: draft.description, title: draft.title },
-      },
+    updateTaskOptimistically({
+      description: draft.description,
+      operationId: crypto.randomUUID(),
+      send: (payload) => updateTask({ payload }),
       taskId,
-    })
-    updateTask({
-      payload: {
-        description: draft.description,
-        expectedRevision: draft.expectedRevision,
-        operationId: crypto.randomUUID(),
-        taskId,
-        title: draft.title,
-      },
+      title: draft.title,
     }).catch((error: unknown) => {
-      clearEditOverlay(taskId)
       const conflict = extractErrorCode(error) === 'CAS_CONFLICT'
       const message = conflict
         ? 'This card changed elsewhere while saving. Your edits are below — Save again to apply them over the newer version.'

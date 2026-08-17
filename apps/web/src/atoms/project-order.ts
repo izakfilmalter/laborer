@@ -13,17 +13,11 @@
  * the list identically and a drag can never settle into a different position
  * than the one it promised.
  *
- * A drop writes an overlay first so the list settles under the pointer
- * instantly; the overlay is released when the project leaves the revision the
- * drag was based on — the same rule the task edit overlay uses, so the list
- * can never flash back between the response and the delta.
+ * A drop plans one atomic rank assignment set. TanStack DB applies those ranks
+ * immediately and retains them until the correlated authoritative publication.
  *
- * This module is pure apart from its atoms and imports the shared package only
- * for types, which keeps the ordering rules directly testable.
+ * This module is pure, which keeps the ordering rules directly testable.
  */
-
-import type { SharedProjectRow } from '@laborer/shared/rpc'
-import { Atom } from 'effect/unstable/reactivity'
 
 /**
  * Distance between minted ranks, in the milliseconds `createdAt` is measured
@@ -37,48 +31,6 @@ export interface ProjectRankAssignment {
   readonly projectId: string
   readonly sortOrder: number
 }
-
-export interface ProjectRankOverlay {
-  /** Identifies the move across its writes, so only it can withdraw itself. */
-  readonly dragId: string
-  /** The row revision the drag was based on; any other revision settles it. */
-  readonly expectedRevision: number
-  readonly sortOrder: number
-}
-
-/** Ranks a drag is promising, keyed by project id. */
-export type ProjectRankOverlays = ReadonlyMap<string, ProjectRankOverlay>
-
-/** Drag intent, deliberately separate from the authoritative stream. */
-export const projectRankOverlaysAtom = Atom.make<ProjectRankOverlays>(new Map())
-
-export const installProjectRankOverlaysAtom = Atom.writable(
-  (get) => get(projectRankOverlaysAtom),
-  (context, overlays: ProjectRankOverlays) => {
-    const next = new Map(context.get(projectRankOverlaysAtom))
-    for (const [projectId, overlay] of overlays) {
-      next.set(projectId, overlay)
-    }
-    context.set(projectRankOverlaysAtom, next)
-  }
-)
-
-/**
- * Reverts to the stored order after a rejected write. A project that a later
- * drag has since claimed keeps that drag's rank rather than snapping back.
- */
-export const clearProjectRankOverlaysAtom = Atom.writable(
-  (get) => get(projectRankOverlaysAtom),
-  (context, dragId: string) => {
-    const current = context.get(projectRankOverlaysAtom)
-    const next = new Map(
-      [...current].filter(([, overlay]) => overlay.dragId !== dragId)
-    )
-    if (next.size !== current.size) {
-      context.set(projectRankOverlaysAtom, next)
-    }
-  }
-)
 
 /** A project the renderer can order: the streamed row, or any stand-in. */
 export interface RankableProject {
@@ -110,38 +62,6 @@ export const compareProjects = (
 export const sortProjectsByRank = <Row extends RankableProject>(
   rows: readonly Row[]
 ): readonly Row[] => (rows.length < 2 ? rows : [...rows].sort(compareProjects))
-
-/** Replaces stored ranks with the ones a drag is promising. */
-export const applyProjectRankOverlays = <Row extends RankableProject>(
-  rows: readonly Row[],
-  overlays: ProjectRankOverlays
-): readonly Row[] =>
-  overlays.size === 0
-    ? rows
-    : rows.map((row) => {
-        const overlay = overlays.get(row.id)
-        return overlay === undefined
-          ? row
-          : { ...row, sortOrder: overlay.sortOrder }
-      })
-
-/** An overlay lives exactly as long as the revision it was written against. */
-export const settleProjectRankOverlays = (
-  overlays: ProjectRankOverlays,
-  rows: readonly SharedProjectRow[]
-): ProjectRankOverlays => {
-  if (overlays.size === 0) {
-    return overlays
-  }
-  const revisions = new Map(rows.map(({ id, revision }) => [id, revision]))
-  const next = new Map(
-    [...overlays].filter(
-      ([projectId, overlay]) =>
-        revisions.get(projectId) === overlay.expectedRevision
-    )
-  )
-  return next.size === overlays.size ? overlays : next
-}
 
 /**
  * Spaces every project evenly. Used only when the neighbours a project is

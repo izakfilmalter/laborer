@@ -6,11 +6,17 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
+import { createTaskUlid } from '@laborer/task-db/ulid'
 import { useLiveQuery } from '@tanstack/react-db'
 import type { ReactElement } from 'react'
 import { useMemo, useState } from 'react'
 
 import { LaborerClient } from '@/atoms/laborer-client'
+import {
+  createLabel as createLabelOptimistically,
+  deleteLabel as deleteLabelOptimistically,
+  updateLabel as updateLabelOptimistically,
+} from '@/db/shared-mutations'
 import {
   labelCollection,
   orderedLabelsFromRows,
@@ -75,8 +81,11 @@ export function LabelSettingsSection(): ReactElement {
       labels={labels}
       onCreate={(name) => {
         run(() =>
-          createLabel({
-            payload: { name, operationId: crypto.randomUUID() },
+          createLabelOptimistically({
+            id: createTaskUlid(),
+            name,
+            operationId: crypto.randomUUID(),
+            send: (payload) => createLabel({ payload }),
           })
         )
       }}
@@ -86,12 +95,10 @@ export function LabelSettingsSection(): ReactElement {
           return
         }
         run(() =>
-          deleteLabel({
-            payload: {
-              expectedRevision,
-              labelId: label.id,
-              operationId: crypto.randomUUID(),
-            },
+          deleteLabelOptimistically({
+            labelId: label.id,
+            operationId: crypto.randomUUID(),
+            send: (payload) => deleteLabel({ payload }),
           })
         )
       }}
@@ -101,13 +108,11 @@ export function LabelSettingsSection(): ReactElement {
           return
         }
         run(() =>
-          updateLabel({
-            payload: {
-              color,
-              expectedRevision,
-              labelId: label.id,
-              operationId: crypto.randomUUID(),
-            },
+          updateLabelOptimistically({
+            color,
+            labelId: label.id,
+            operationId: crypto.randomUUID(),
+            send: (payload) => updateLabel({ payload }),
           })
         )
       }}
@@ -117,13 +122,11 @@ export function LabelSettingsSection(): ReactElement {
           return
         }
         run(() =>
-          updateLabel({
-            payload: {
-              expectedRevision,
-              labelId: label.id,
-              name,
-              operationId: crypto.randomUUID(),
-            },
+          updateLabelOptimistically({
+            labelId: label.id,
+            name,
+            operationId: crypto.randomUUID(),
+            send: (payload) => updateLabel({ payload }),
           })
         )
       }}

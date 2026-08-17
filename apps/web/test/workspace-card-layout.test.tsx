@@ -53,13 +53,9 @@ vi.mock('@effect/atom-react/Hooks', () => ({
     })(),
 }))
 
-vi.mock('@/atoms/legacy-shared-state-writes', () => ({
-  clearWorkspaceDestroyOverlayAtom: Symbol.for('clearWorkspaceDestroyOverlay'),
-  installWorkspaceDestroyOverlayAtom: Symbol.for(
-    'installWorkspaceDestroyOverlay'
-  ),
-  clearTaskEditOverlayAtom: Symbol.for('clearTaskEditOverlay'),
-  installTaskEditOverlayAtom: Symbol.for('installTaskEditOverlay'),
+vi.mock('@/db/shared-mutations', () => ({
+  destroyWorkspace: vi.fn(),
+  updateTask: vi.fn(),
 }))
 
 vi.mock('@tanstack/react-db', () => ({

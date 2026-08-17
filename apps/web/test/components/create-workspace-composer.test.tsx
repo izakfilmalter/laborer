@@ -29,6 +29,14 @@ vi.mock('@/atoms/laborer-client', () => ({
   LaborerClient: { mutation: (name: string) => name },
 }))
 
+vi.mock('@/db/shared-mutations', () => ({
+  confirmWorkspaceCreation: ({
+    send,
+  }: {
+    readonly send: () => Promise<unknown>
+  }) => send(),
+}))
+
 vi.mock('@/lib/toast', () => ({
   toast: { error: toastError, success: vi.fn() },
 }))

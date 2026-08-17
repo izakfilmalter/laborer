@@ -20,6 +20,7 @@ import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { pipe, String as Str } from 'effect'
 import { useCallback, useId, useRef } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import { confirmWorkspaceCreation } from '@/db/shared-mutations'
 import { usePanelActions } from '@/panels/panel-context'
 
 const createWorkspaceMutation = LaborerClient.mutation('workspace.create')
@@ -178,13 +179,18 @@ function useCreateWorkspace(
         }
 
         onPhaseChange?.('creating')
-        const result = await createWorkspace({
-          payload: {
-            operationId: crypto.randomUUID(),
-            projectId,
-            ...(branchName ? { branchName } : {}),
-            ...(baseWorkspaceId ? { baseWorkspaceId } : {}),
-          },
+        const operationId = crypto.randomUUID()
+        const result = await confirmWorkspaceCreation({
+          operationId,
+          send: () =>
+            createWorkspace({
+              payload: {
+                operationId,
+                projectId,
+                ...(branchName ? { branchName } : {}),
+                ...(baseWorkspaceId ? { baseWorkspaceId } : {}),
+              },
+            }),
         })
 
         if (initialPrompt === undefined) {

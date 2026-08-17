@@ -4,15 +4,11 @@
  * @see apps/web/src/atoms/project-order.ts
  */
 
-import type { SharedProjectRow } from '@laborer/shared/rpc'
 import { describe, expect, it } from 'vitest'
 import {
-  applyProjectRankOverlays,
   compareProjects,
-  type ProjectRankOverlays,
   planProjectMove,
   planProjectNudge,
-  settleProjectRankOverlays,
   sortProjectsByRank,
 } from '../../src/atoms/project-order'
 
@@ -25,22 +21,6 @@ const project = (
   createdAt,
   id,
   sortOrder,
-})
-
-const row = (
-  id: string,
-  revision: number,
-  sortOrder: number | null = null
-): SharedProjectRow => ({
-  canonicalGitCommonDir: `/repos/${id}/.git`,
-  createdAt: 1,
-  id,
-  name: id,
-  repoId: id,
-  revision,
-  rootPath: `/repos/${id}`,
-  sortOrder,
-  updatedAt: 1,
 })
 
 /** Ranks a plan promises, applied over the rows it was planned against. */
@@ -86,25 +66,6 @@ describe('compareProjects', () => {
   it('leaves a list of fewer than two projects untouched', () => {
     const rows = [project('a', 100)]
     expect(sortProjectsByRank(rows)).toBe(rows)
-  })
-})
-
-describe('applyProjectRankOverlays', () => {
-  it('returns the rows unchanged when no drag is pending', () => {
-    const rows = [project('a', 100), project('b', 200)]
-    expect(applyProjectRankOverlays(rows, new Map())).toBe(rows)
-  })
-
-  it('replaces the stored rank with the one a drag promises', () => {
-    const rows = [project('a', 100), project('b', 200)]
-    const overlays: ProjectRankOverlays = new Map([
-      ['b', { dragId: 'drag-1', expectedRevision: 1, sortOrder: 50 }],
-    ])
-    expect(
-      sortProjectsByRank(applyProjectRankOverlays(rows, overlays)).map(
-        ({ id }) => id
-      )
-    ).toEqual(['b', 'a'])
   })
 })
 
@@ -172,37 +133,5 @@ describe('planProjectNudge', () => {
     expect(planProjectNudge(rows, 'a', -1)).toEqual([])
     expect(planProjectNudge(rows, 'c', 1)).toEqual([])
     expect(planProjectNudge(rows, 'ghost', 1)).toEqual([])
-  })
-})
-
-describe('settleProjectRankOverlays', () => {
-  const overlays: ProjectRankOverlays = new Map([
-    ['b', { dragId: 'drag-1', expectedRevision: 2, sortOrder: 50 }],
-  ])
-
-  it('holds the drag while the project still owns the drag revision', () => {
-    expect(settleProjectRankOverlays(overlays, [row('b', 2)])).toBe(overlays)
-  })
-
-  it('releases the drag once the write lands', () => {
-    expect(settleProjectRankOverlays(overlays, [row('b', 3, 50)]).size).toBe(0)
-  })
-
-  it('releases a drag whose project is gone', () => {
-    expect(settleProjectRankOverlays(overlays, []).size).toBe(0)
-  })
-
-  it('settles each project independently', () => {
-    const two: ProjectRankOverlays = new Map([
-      ['a', { dragId: 'drag-1', expectedRevision: 1, sortOrder: 10 }],
-      ['b', { dragId: 'drag-1', expectedRevision: 2, sortOrder: 20 }],
-    ])
-    const settled = settleProjectRankOverlays(two, [row('a', 2), row('b', 2)])
-    expect([...settled.keys()]).toEqual(['b'])
-  })
-
-  it('has nothing to settle without a pending drag', () => {
-    const empty: ProjectRankOverlays = new Map()
-    expect(settleProjectRankOverlays(empty, [row('a', 1)])).toBe(empty)
   })
 })

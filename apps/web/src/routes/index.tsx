@@ -10,16 +10,13 @@ import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import {
-  clearWorkspaceDestroyOverlayAtom,
-  installWorkspaceDestroyOverlayAtom,
-} from '@/atoms/legacy-shared-state-writes'
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
 import { useProjectReorderMonitor } from '@/components/project-reorder'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
+import { destroyWorkspace as destroyWorkspaceOptimistically } from '@/db/shared-mutations'
 import {
   orderedProjectsFromRows,
   projectCollection,
@@ -171,8 +168,6 @@ function HomeComponent() {
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
   })
-  const installDestroyOverlay = useAtomSet(installWorkspaceDestroyOverlayAtom)
-  const clearDestroyOverlay = useAtomSet(clearWorkspaceDestroyOverlayAtom)
 
   /**
    * Look up the PR state for a workspace by its ID.
@@ -373,18 +368,16 @@ function HomeComponent() {
       const branchName = ws?.branchName ?? 'workspace'
 
       // Optimistic: the workspace leaves the sidebar and its panes close
-      // now. The overlay settles when the authoritative row drops its
-      // worktree, and is restored if the server rejects the destroy.
-      installDestroyOverlay(workspaceId)
+      // now. TanStack settles when the authoritative row disappears and rolls
+      // the deletion back if the server definitively rejects the destroy.
       panelActions.forceCloseWorkspace(workspaceId)
 
       const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
-      destroyWorkspace({
-        payload: {
-          workspaceId,
-          force: true,
-          operationId: crypto.randomUUID(),
-        },
+      destroyWorkspaceOptimistically({
+        force: true,
+        operationId: crypto.randomUUID(),
+        send: (payload) => destroyWorkspace({ payload }),
+        workspaceId,
       })
         .then(() => {
           toast.success(`Workspace "${branchName}" destroyed successfully`, {
@@ -392,18 +385,11 @@ function HomeComponent() {
           })
         })
         .catch((error: unknown) => {
-          clearDestroyOverlay(workspaceId)
           const message = extractErrorMessage(error)
           toast.error(message, { id: toastId })
         })
     },
-    [
-      clearDestroyOverlay,
-      destroyWorkspace,
-      installDestroyOverlay,
-      panelActions,
-      workspaceList,
-    ]
+    [destroyWorkspace, panelActions, workspaceList]
   )
 
   /**

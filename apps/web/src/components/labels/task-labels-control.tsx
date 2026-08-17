@@ -2,7 +2,7 @@
  * The label picker, connected to shared state.
  *
  * Applying a label is the same act wherever a card is shown, so the option
- * list, the optimistic overlay, and the recovery from a rejected write live
+ * list, the optimistic action, and the recovery from a rejected write live
  * here rather than in each surface. A surface renders
  * `<TaskLabelsControl task={task} />` and nothing else.
  */
@@ -15,9 +15,9 @@ import { toast } from 'sonner'
 
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
-  clearTaskLabelOverlayAtom,
-  installTaskLabelOverlayAtom,
-} from '@/atoms/legacy-shared-state-writes'
+  createLabel as createLabelOptimistically,
+  setTaskLabels as setTaskLabelsOptimistically,
+} from '@/db/shared-mutations'
 import {
   labelCollection,
   labelsForIds,
@@ -55,23 +55,14 @@ export function TaskLabelsControl({
   )
   const createLabel = useAtomSet(createLabelMutation, { mode: 'promise' })
   const setTaskLabels = useAtomSet(setTaskLabelsMutation, { mode: 'promise' })
-  const installOverlay = useAtomSet(installTaskLabelOverlayAtom)
-  const clearOverlay = useAtomSet(clearTaskLabelOverlayAtom)
 
   const applyLabelIds = (labelIds: readonly string[]) => {
-    installOverlay({
-      overlay: { expectedRevision: task.revision, labelIds },
+    return setTaskLabelsOptimistically({
+      labelIds,
+      operationId: crypto.randomUUID(),
+      send: (payload) => setTaskLabels({ payload }),
       taskId: task.id,
-    })
-    return setTaskLabels({
-      payload: {
-        expectedRevision: task.revision,
-        labelIds,
-        operationId: crypto.randomUUID(),
-        taskId: task.id,
-      },
     }).catch((error: unknown) => {
-      clearOverlay(task.id)
       const conflict = extractErrorCode(error) === 'CAS_CONFLICT'
       toast.error(
         conflict ? 'Card changed elsewhere' : 'Could not update labels',
@@ -91,8 +82,11 @@ export function TaskLabelsControl({
         // The id is minted here so the new label joins the selection in the
         // same gesture that created it, rather than after a round trip.
         const id = createTaskUlid()
-        createLabel({
-          payload: { id, name, operationId: crypto.randomUUID() },
+        createLabelOptimistically({
+          id,
+          name,
+          operationId: crypto.randomUUID(),
+          send: (payload) => createLabel({ payload }),
         })
           .then(() => applyLabelIds([...task.labelIds, id]))
           .catch((error: unknown) => {

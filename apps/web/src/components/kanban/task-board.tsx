@@ -12,8 +12,8 @@
  * The renderer subscribes to typed snapshots/deltas and never opens SQLite.
  */
 
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
-import type { SharedLabelRow, SharedTaskRow } from '@laborer/shared/rpc'
+import { useAtomSet } from '@effect/atom-react/Hooks'
+import type { SharedLabelRow } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { createTaskUlid } from '@laborer/task-db/ulid'
 import { Badge } from '@laborer/ui/components/badge'
@@ -55,16 +55,6 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import {
-  clearTaskCreateOverlayAtom,
-  clearTaskOptimisticOverlayAtom,
-  confirmTaskOptimisticMoveAtom,
-  installTaskCreateOverlayAtom,
-  installTaskOptimisticOverlayAtom,
-  type TaskOptimisticOverlay,
-  taskMutationReceiptAtom,
-} from '@/atoms/legacy-shared-state-writes'
-import { pendingTaskRow } from '@/atoms/optimistic-task-writes'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
@@ -86,17 +76,15 @@ import {
 } from '@/components/kanban/board-data'
 import { BoardSearch } from '@/components/kanban/board-search'
 import {
-  effectiveSortOrder,
-  fractionalOrderAt,
-  OptimisticTaskMoveQueue,
-  type TaskMoveConfirmation,
-} from '@/components/kanban/optimistic-task-moves'
-import {
   openProvisionedAgent,
   resolvePendingAgentOpen,
 } from '@/components/kanban/provisioned-agent'
 import { SourceBadge } from '@/components/kanban/source-badge'
 import { useTaskEditor } from '@/components/kanban/task-editor'
+import {
+  effectiveSortOrder,
+  fractionalOrderAt,
+} from '@/components/kanban/task-order'
 import {
   TerminalAttachButton,
   WorktreeChip,
@@ -113,6 +101,10 @@ import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
+import {
+  createTask as createTaskOptimistically,
+  moveTask as moveTaskOptimistically,
+} from '@/db/shared-mutations'
 import {
   labelCollection,
   labelsForIds,
@@ -622,32 +614,18 @@ function AddCardComposer({
   readonly projectRootPath: string
 }) {
   const createTask = useAtomSet(createTaskMutation, { mode: 'promise' })
-  const installCreateOverlay = useAtomSet(installTaskCreateOverlayAtom)
-  const clearCreateOverlay = useAtomSet(clearTaskCreateOverlayAtom)
   const panelActions = usePanelActions()
 
   const commit = (text: string) => {
-    // The card renders from the synthesized row now. The overlay settles when
+    // The collection renders the synthesized row now and reconciles it when
     // the authoritative stream stores the id.
     const id = createTaskUlid()
-    installCreateOverlay(
-      pendingTaskRow({
-        id,
-        now: Date.now(),
-        rootPath: projectRootPath,
-        status: column.id,
-        text,
-      })
-    )
-
-    return createTask({
-      payload: {
-        id,
-        operationId: crypto.randomUUID(),
-        projectId,
-        status: column.id,
-        text,
-      },
+    return createTaskOptimistically({
+      now: Date.now(),
+      operationId: crypto.randomUUID(),
+      payload: { id, projectId, status: column.id, text },
+      rootPath: projectRootPath,
+      send: (payload) => createTask({ payload }),
     })
       .then((created) => {
         openProvisionedAgent(
@@ -663,7 +641,6 @@ function AddCardComposer({
         }
       })
       .catch((cause: unknown) => {
-        clearCreateOverlay(id)
         // The composer reports it and puts the text back.
         throw cause
       })
@@ -1113,8 +1090,6 @@ function TaskBoard({
     () => orderedProjectsFromRows(projectRows),
     [projectRows]
   )
-  const authoritativeTasks: readonly SharedTaskRow[] = sharedTaskRows
-  const taskMutationReceipt = useAtomValue(taskMutationReceiptAtom)
   const workspaceList = useMemo(
     () => workspaceViewsFromRows(sharedTaskRows, projectRows),
     [projectRows, sharedTaskRows]
@@ -1140,50 +1115,6 @@ function TaskBoard({
     mode: 'promise',
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
-  const installTaskOverlay = useAtomSet(installTaskOptimisticOverlayAtom)
-  const clearTaskOverlay = useAtomSet(clearTaskOptimisticOverlayAtom)
-  const confirmTaskMove = useAtomSet(confirmTaskOptimisticMoveAtom)
-  const authoritativeTasksRef = useRef(authoritativeTasks)
-  authoritativeTasksRef.current = authoritativeTasks
-  const moveQueueRef = useRef<OptimisticTaskMoveQueue | null>(null)
-  const moveDependencies = {
-    clear: (taskId: string, operationId: string) =>
-      clearTaskOverlay({ operationId, taskId }),
-    confirm: (confirmation: TaskMoveConfirmation, operationId: string) =>
-      confirmTaskMove({ ...confirmation, operationId }),
-    getAuthoritativeTask: (taskId: string) =>
-      authoritativeTasksRef.current.find(({ id }) => id === taskId),
-    install: (taskId: string, overlay: TaskOptimisticOverlay) =>
-      installTaskOverlay({ overlay, taskId }),
-    isConflict: (error: unknown) => extractErrorCode(error) === 'CAS_CONFLICT',
-    isDefinitiveFailure: (error: unknown) =>
-      extractErrorCode(error) !== undefined,
-    operationId: () => crypto.randomUUID(),
-    send: async (command: {
-      readonly expectedRevision: number
-      readonly operationId: string
-      readonly sortOrder: number | null
-      readonly status: BoardTaskStatus
-      readonly taskId: string
-    }) => {
-      const result = await moveTask({ payload: command })
-      if (result.workspaceId !== null) {
-        openProvisionedAgent(
-          result,
-          panelActions?.autoOpenAgentWhenWorkspaceReady
-        )
-      }
-      return { cursor: result.cursor, row: result.row }
-    },
-  }
-  if (moveQueueRef.current === null) {
-    moveQueueRef.current = new OptimisticTaskMoveQueue(moveDependencies)
-  } else {
-    moveQueueRef.current.configure(moveDependencies)
-  }
-  useEffect(() => {
-    moveQueueRef.current?.observeOperationIds(taskMutationReceipt.operationIds)
-  }, [taskMutationReceipt])
   useEffect(() => {
     setBoardTasks(boardTasksFromSharedRows(sharedTaskRows))
   }, [sharedTaskRows])
@@ -1365,24 +1296,36 @@ function TaskBoard({
     status: Exclude<BoardTaskStatus, 'cancelled'>,
     sortOrder: number
   ) => {
-    moveQueueRef.current?.move(task.id, { sortOrder, status })
+    moveTaskOptimistically({
+      operationId: crypto.randomUUID(),
+      send: (payload) => moveTask({ payload }),
+      sortOrder,
+      status,
+      taskId: task.id,
+    })
+      .then((result) => {
+        if (result.workspaceId !== null) {
+          openProvisionedAgent(
+            result,
+            panelActions?.autoOpenAgentWhenWorkspaceReady
+          )
+        }
+      })
+      .catch((error: unknown) => {
+        toast.error(`Could not move “${task.title}”`, {
+          description: extractErrorMessage(error),
+        })
+      })
   }
 
   const cancelTask = (task: BoardTask) => {
-    // Hide immediately; the subscription delta confirms the durable state.
-    setBoardTasks((current) => current.filter(({ id }) => id !== task.id))
-    moveTask({
-      payload: {
-        expectedRevision: task.revision,
-        operationId: crypto.randomUUID(),
-        sortOrder: task.sortOrder,
-        status: 'cancelled',
-        taskId: task.id,
-      },
+    moveTaskOptimistically({
+      operationId: crypto.randomUUID(),
+      send: (payload) => moveTask({ payload }),
+      sortOrder: task.sortOrder,
+      status: 'cancelled',
+      taskId: task.id,
     }).catch((error) => {
-      setBoardTasks((current) =>
-        current.some(({ id }) => id === task.id) ? current : [...current, task]
-      )
       toast.error(`Could not cancel “${task.title}”`, {
         description: extractErrorMessage(error),
       })

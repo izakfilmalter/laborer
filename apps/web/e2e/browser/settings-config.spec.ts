@@ -21,7 +21,11 @@ const seedSettingsJourney = async (
   const tempRoots: string[] = []
   const repoPath = initRepo(`settings-${label}`, tempRoots)
   const project = await daemon.rpc.run((client) =>
-    client['project.add']({ repoPath })
+    client['project.add']({
+      id: crypto.randomUUID(),
+      operationId: crypto.randomUUID(),
+      repoPath,
+    })
   )
 
   return {
@@ -37,9 +41,10 @@ const cleanSettingsJourney = async (
 ): Promise<void> => {
   try {
     await daemon.rpc.run((client) =>
-      client['project.remove']({ projectId: journey.projectId }).pipe(
-        Effect.asVoid
-      )
+      client['project.remove']({
+        operationId: crypto.randomUUID(),
+        projectId: journey.projectId,
+      }).pipe(Effect.asVoid)
     )
   } finally {
     for (const root of journey.tempRoots) {

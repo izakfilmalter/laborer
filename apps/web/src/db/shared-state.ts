@@ -140,6 +140,33 @@ class OperationReceipts {
     }
   }
 
+  /**
+   * A replacement snapshot is authoritative even though it has no operation
+   * ids. It therefore reconciles every ambiguous operation waiting on this
+   * collection, whether the attempted write is present in the snapshot or not.
+   */
+  reconcile(collection: SharedCollectionName) {
+    for (const [operationId, waiters] of this.pending) {
+      for (const waiter of waiters) {
+        if (!waiter.collections.has(collection)) {
+          continue
+        }
+        waiter.observed.add(collection)
+        if (
+          [...waiter.collections].every((expected) =>
+            waiter.observed.has(expected)
+          )
+        ) {
+          waiter.resolve()
+          waiters.delete(waiter)
+        }
+      }
+      if (waiters.size === 0) {
+        this.pending.delete(operationId)
+      }
+    }
+  }
+
   private hasObservedEvery(
     operationId: string,
     collections: ReadonlySet<SharedCollectionName>
@@ -198,6 +225,7 @@ class SharedStateCoordinator {
       this.cursors[name] = update.cursor
       if (update.type === 'snapshot') {
         controls.markReady()
+        this.receipts.reconcile(name)
       } else {
         this.receipts.observe(name, update.operationIds ?? [])
       }

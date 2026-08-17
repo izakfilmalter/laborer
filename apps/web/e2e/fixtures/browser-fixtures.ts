@@ -251,12 +251,18 @@ export const test = base.extend<BrowserFixtures, BrowserWorkerFixtures>({
     const branchName = `e2e-terminal-${crypto.randomUUID()}`
     const seeded = await daemon.rpc.run((client) =>
       Effect.gen(function* () {
-        const project = yield* client['project.add']({ repoPath })
+        const project = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath,
+        })
         const workspace = yield* client['workspace.create']({
           branchName,
+          operationId: crypto.randomUUID(),
           projectId: project.id,
         })
         yield* client['task.create']({
+          operationId: crypto.randomUUID(),
           projectId: project.id,
           status: 'todo',
           text: `Terminal gate ${branchName}`,

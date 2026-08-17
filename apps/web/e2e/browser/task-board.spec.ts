@@ -23,9 +23,14 @@ const seedBoardJourney = async (
   const repoPath = initRepo(`board-${label}`, tempRoots)
   const seeded = await daemon.rpc.run((client) =>
     Effect.gen(function* () {
-      const project = yield* client['project.add']({ repoPath })
+      const project = yield* client['project.add']({
+        id: crypto.randomUUID(),
+        operationId: crypto.randomUUID(),
+        repoPath,
+      })
       const task = taskTitle
         ? yield* client['task.create']({
+            operationId: crypto.randomUUID(),
             projectId: project.id,
             status: 'todo',
             text: taskTitle,
@@ -48,9 +53,10 @@ const cleanBoardJourney = async (
 ): Promise<void> => {
   try {
     await daemon.rpc.run((client) =>
-      client['project.remove']({ projectId: journey.projectId }).pipe(
-        Effect.asVoid
-      )
+      client['project.remove']({
+        operationId: crypto.randomUUID(),
+        projectId: journey.projectId,
+      }).pipe(Effect.asVoid)
     )
   } finally {
     for (const root of journey.tempRoots) {

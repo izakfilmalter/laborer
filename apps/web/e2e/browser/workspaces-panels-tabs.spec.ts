@@ -27,15 +27,21 @@ const seedLayoutJourney = async (
   const repoPath = initRepo(`layout-${label}`, tempRoots)
   const seeded = await daemon.rpc.run((client) =>
     Effect.gen(function* () {
-      const project = yield* client['project.add']({ repoPath })
+      const project = yield* client['project.add']({
+        id: crypto.randomUUID(),
+        operationId: crypto.randomUUID(),
+        repoPath,
+      })
       const firstBranch = `${label}-first-${crypto.randomUUID()}`
       const secondBranch = `${label}-second-${crypto.randomUUID()}`
       const first = yield* client['workspace.create']({
         branchName: firstBranch,
+        operationId: crypto.randomUUID(),
         projectId: project.id,
       })
       const second = yield* client['workspace.create']({
         branchName: secondBranch,
+        operationId: crypto.randomUUID(),
         projectId: project.id,
       })
       return { first, project, second }
@@ -61,6 +67,7 @@ const cleanLayoutJourney = async (
       await daemon.rpc.run((client) =>
         client['workspace.destroy']({
           force: true,
+          operationId: crypto.randomUUID(),
           workspaceId: workspace.id,
         }).pipe(Effect.asVoid)
       )
@@ -70,9 +77,10 @@ const cleanLayoutJourney = async (
   }
   try {
     await daemon.rpc.run((client) =>
-      client['project.remove']({ projectId: journey.projectId }).pipe(
-        Effect.asVoid
-      )
+      client['project.remove']({
+        operationId: crypto.randomUUID(),
+        projectId: journey.projectId,
+      }).pipe(Effect.asVoid)
     )
   } finally {
     for (const root of journey.tempRoots) {

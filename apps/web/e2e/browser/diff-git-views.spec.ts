@@ -28,12 +28,17 @@ const seedDiffJourney = async (
 
   try {
     const project = await daemon.rpc.run((client) =>
-      client['project.add']({ repoPath })
+      client['project.add']({
+        id: crypto.randomUUID(),
+        operationId: crypto.randomUUID(),
+        repoPath,
+      })
     )
     projectId = project.id
     const workspace = await daemon.rpc.run((client) =>
       client['workspace.create']({
         branchName,
+        operationId: crypto.randomUUID(),
         projectId: project.id,
       })
     )
@@ -64,6 +69,7 @@ const seedDiffJourney = async (
         await daemon.rpc.run((client) =>
           client['workspace.destroy']({
             force: true,
+            operationId: crypto.randomUUID(),
             workspaceId: failedWorkspaceId,
           }).pipe(Effect.asVoid)
         )
@@ -75,9 +81,10 @@ const seedDiffJourney = async (
     if (failedProjectId !== undefined) {
       try {
         await daemon.rpc.run((client) =>
-          client['project.remove']({ projectId: failedProjectId }).pipe(
-            Effect.asVoid
-          )
+          client['project.remove']({
+            operationId: crypto.randomUUID(),
+            projectId: failedProjectId,
+          }).pipe(Effect.asVoid)
         )
       } catch {
         // Preserve the setup failure; worker teardown removes daemon state.
@@ -98,6 +105,7 @@ const cleanDiffJourney = async (
     await daemon.rpc.run((client) =>
       client['workspace.destroy']({
         force: true,
+        operationId: crypto.randomUUID(),
         workspaceId: journey.workspaceId,
       }).pipe(Effect.asVoid)
     )
@@ -106,9 +114,10 @@ const cleanDiffJourney = async (
   }
   try {
     await daemon.rpc.run((client) =>
-      client['project.remove']({ projectId: journey.projectId }).pipe(
-        Effect.asVoid
-      )
+      client['project.remove']({
+        operationId: crypto.randomUUID(),
+        projectId: journey.projectId,
+      }).pipe(Effect.asVoid)
     )
   } finally {
     for (const root of journey.tempRoots) {

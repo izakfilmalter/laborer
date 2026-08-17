@@ -40,7 +40,13 @@ const createRepo = async (
 }
 
 const seedProject = (daemon: DaemonFixture, repoPath: string) =>
-  daemon.rpc.run((client) => client['project.add']({ repoPath }))
+  daemon.rpc.run((client) =>
+    client['project.add']({
+      id: crypto.randomUUID(),
+      operationId: crypto.randomUUID(),
+      repoPath,
+    })
+  )
 
 const removeProject = async (
   daemon: DaemonFixture,
@@ -48,7 +54,10 @@ const removeProject = async (
 ): Promise<void> => {
   try {
     await daemon.rpc.run((client) =>
-      client['project.remove']({ projectId }).pipe(Effect.asVoid)
+      client['project.remove']({
+        operationId: crypto.randomUUID(),
+        projectId,
+      }).pipe(Effect.asVoid)
     )
   } catch {
     // A journey may already have removed the project through the UI.
@@ -61,9 +70,11 @@ const destroyWorkspace = async (
 ): Promise<void> => {
   try {
     await daemon.rpc.run((client) =>
-      client['workspace.destroy']({ force: true, workspaceId }).pipe(
-        Effect.asVoid
-      )
+      client['workspace.destroy']({
+        force: true,
+        operationId: crypto.randomUUID(),
+        workspaceId,
+      }).pipe(Effect.asVoid)
     )
   } catch {
     // A journey may already have destroyed the workspace through the UI.
@@ -180,7 +191,11 @@ test.describe('projects and worktrees journeys', () => {
     const project = await seedProject(daemon, repo.path)
     const branchName = `dirty-${crypto.randomUUID()}`
     const workspace = await daemon.rpc.run((client) =>
-      client['workspace.create']({ branchName, projectId: project.id })
+      client['workspace.create']({
+        branchName,
+        operationId: crypto.randomUUID(),
+        projectId: project.id,
+      })
     )
 
     try {

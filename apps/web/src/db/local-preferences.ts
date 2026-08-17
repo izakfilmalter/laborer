@@ -4,7 +4,7 @@ import { Schema } from 'effect'
 import { z } from 'zod'
 
 export const LOCAL_COLLECTIONS = {
-  boardHeight: {
+  boardOverlayHeight: {
     id: 'laborer.local.board-overlay-height.v1',
     storageKey: 'laborer:db:board-overlay-height:v1',
   },
@@ -20,17 +20,25 @@ export const LOCAL_COLLECTIONS = {
     id: 'laborer.local.sidebar-width.v1',
     storageKey: 'laborer:db:sidebar-width:v1',
   },
-  workspaceExpansion: {
-    id: 'laborer.local.workspace-expansion.v1',
-    storageKey: 'laborer:db:workspace-expansion:v1',
+  workspaceGroupExpansion: {
+    id: 'laborer.local.workspace-group-expansion.v1',
+    storageKey: 'laborer:db:workspace-group-expansion:v1',
   },
 } as const
 
-const singletonPreferenceSchema = z.object({
+const sidebarWidthSchema = z.object({
   id: z.literal('current'),
-  value: z.number().finite(),
+  widthPx: z.number().finite(),
 })
-export type SingletonPreference = z.infer<typeof singletonPreferenceSchema>
+export type SidebarWidthPreference = z.infer<typeof sidebarWidthSchema>
+
+const boardOverlayHeightSchema = z.object({
+  fraction: z.number().finite(),
+  id: z.literal('current'),
+})
+export type BoardOverlayHeightPreference = z.infer<
+  typeof boardOverlayHeightSchema
+>
 
 const expansionSchema = z.object({
   id: z.string().min(1),
@@ -96,55 +104,56 @@ export const panelLayoutCollection = createCollection(
 export const sidebarWidthCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.sidebarWidth,
-    getKey: (row: SingletonPreference) => row.id,
-    parser: makeValidatedLocalStorageParser(singletonPreferenceSchema),
-    schema: singletonPreferenceSchema,
+    getKey: (row: SidebarWidthPreference) => row.id,
+    schema: sidebarWidthSchema,
   })
 )
 export const boardOverlayHeightCollection = createCollection(
   localStorageCollectionOptions({
-    ...LOCAL_COLLECTIONS.boardHeight,
-    getKey: (row: SingletonPreference) => row.id,
-    parser: makeValidatedLocalStorageParser(singletonPreferenceSchema),
-    schema: singletonPreferenceSchema,
+    ...LOCAL_COLLECTIONS.boardOverlayHeight,
+    getKey: (row: BoardOverlayHeightPreference) => row.id,
+    schema: boardOverlayHeightSchema,
   })
 )
 export const projectExpansionCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.projectExpansion,
     getKey: (row: ExpansionPreference) => row.id,
-    parser: makeValidatedLocalStorageParser(expansionSchema),
     schema: expansionSchema,
   })
 )
-export const workspaceExpansionCollection = createCollection(
+export const workspaceGroupExpansionCollection = createCollection(
   localStorageCollectionOptions({
-    ...LOCAL_COLLECTIONS.workspaceExpansion,
+    ...LOCAL_COLLECTIONS.workspaceGroupExpansion,
     getKey: (row: ExpansionPreference) => row.id,
-    parser: makeValidatedLocalStorageParser(expansionSchema),
     schema: expansionSchema,
   })
 )
 
-export const setSingletonPreference = (
-  collection:
-    | typeof sidebarWidthCollection
-    | typeof boardOverlayHeightCollection,
-  value: number
-): void => {
-  if (collection.has('current')) {
-    collection.update('current', (draft) => {
-      draft.value = value
+export const setSidebarWidthPreference = (widthPx: number): void => {
+  if (sidebarWidthCollection.has('current')) {
+    sidebarWidthCollection.update('current', (draft) => {
+      draft.widthPx = widthPx
     })
   } else {
-    collection.insert({ id: 'current', value })
+    sidebarWidthCollection.insert({ id: 'current', widthPx })
+  }
+}
+
+export const setBoardOverlayHeightPreference = (fraction: number): void => {
+  if (boardOverlayHeightCollection.has('current')) {
+    boardOverlayHeightCollection.update('current', (draft) => {
+      draft.fraction = fraction
+    })
+  } else {
+    boardOverlayHeightCollection.insert({ fraction, id: 'current' })
   }
 }
 
 export const setExpansionPreference = (
   collection:
     | typeof projectExpansionCollection
-    | typeof workspaceExpansionCollection,
+    | typeof workspaceGroupExpansionCollection,
   id: string,
   expanded: boolean
 ): void => {

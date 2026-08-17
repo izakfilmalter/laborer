@@ -2,7 +2,7 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { useCallback } from 'react'
 import {
   boardOverlayHeightCollection,
-  setSingletonPreference,
+  setBoardOverlayHeightPreference,
 } from '@/db/local-preferences'
 
 /** Minimum overlay height as a fraction of the main content area. */
@@ -33,15 +33,16 @@ function useBoardOverlayHeight(): BoardOverlayHeightState {
   const { data } = useLiveQuery((query) =>
     query.from({ boardHeight: boardOverlayHeightCollection })
   )
-  const fraction = clamp(
-    data[0]?.value ?? DEFAULT_FRACTION,
-    MIN_FRACTION,
-    MAX_FRACTION
-  )
+  const storedFraction = data.find((row) => row.id === 'current')?.fraction
+  const preferredFraction =
+    typeof storedFraction === 'number' && Number.isFinite(storedFraction)
+      ? storedFraction
+      : DEFAULT_FRACTION
+  const fraction = clamp(preferredFraction, MIN_FRACTION, MAX_FRACTION)
 
   const setFraction = useCallback((nextFraction: number) => {
     const clamped = clamp(nextFraction, MIN_FRACTION, MAX_FRACTION)
-    setSingletonPreference(boardOverlayHeightCollection, clamped)
+    setBoardOverlayHeightPreference(clamped)
   }, [])
 
   return { fraction, setFraction }

@@ -13,6 +13,7 @@
  */
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import type { SharedLabelRow, SharedTaskRow } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { createTaskUlid } from '@laborer/task-db/ulid'
 import { Badge } from '@laborer/ui/components/badge'
@@ -34,6 +35,7 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
+import { useLiveQuery } from '@tanstack/react-db'
 import {
   AlignLeft,
   Bot,
@@ -53,21 +55,16 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { pendingTaskRow } from '@/atoms/optimistic-task-writes'
 import {
-  authoritativeTasksAtom,
   clearTaskCreateOverlayAtom,
   clearTaskOptimisticOverlayAtom,
   confirmTaskOptimisticMoveAtom,
   installTaskCreateOverlayAtom,
   installTaskOptimisticOverlayAtom,
-  labelsByIdAtom,
-  projectViewsAtom,
   type TaskOptimisticOverlay,
   taskMutationReceiptAtom,
-  taskRowsAtom,
-  workspaceViewsAtom,
-} from '@/atoms/shared-state'
+} from '@/atoms/legacy-shared-state-writes'
+import { pendingTaskRow } from '@/atoms/optimistic-task-writes'
 import { CardShell } from '@/components/card-shell'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import {
@@ -84,7 +81,6 @@ import {
   type BoardTaskStatus,
   boardTasksFromSharedRows,
   boardTaskTitle,
-  projectForTask,
   slackAnalysisState,
   workspaceForTask,
 } from '@/components/kanban/board-data'
@@ -93,6 +89,7 @@ import {
   effectiveSortOrder,
   fractionalOrderAt,
   OptimisticTaskMoveQueue,
+  type TaskMoveConfirmation,
 } from '@/components/kanban/optimistic-task-moves'
 import {
   openProvisionedAgent,
@@ -105,7 +102,6 @@ import {
   WorktreeChip,
 } from '@/components/kanban/worktree-affordance'
 import { TaskLabelsBadge } from '@/components/labels/label-chips'
-import { useTaskLabels } from '@/components/labels/task-labels-control'
 import {
   ProjectDragHandle,
   ProjectDropIndicator,
@@ -117,6 +113,15 @@ import {
   WorkspaceCard,
   type WorkspaceCardWorkspace,
 } from '@/components/workspace-card'
+import {
+  labelCollection,
+  labelsForIds,
+  orderedProjectsFromRows,
+  projectCollection,
+  projectForRoot,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { useProjectShortName } from '@/hooks/use-project-short-name'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
@@ -176,14 +181,16 @@ function buildColumnTasks(
 function matchesQuery(
   task: BoardTask,
   query: string,
-  labelsById: ReadonlyMap<string, { readonly name: string }>
+  labels: readonly { readonly id: string; readonly name: string }[]
 ): boolean {
   // "#212" and "212" both match PR #212.
   const prNumberQuery = query.startsWith('#') ? query.slice(1) : query
   return (
     task.title.toLowerCase().includes(query) ||
-    task.labelIds.some((labelId) =>
-      labelsById.get(labelId)?.name.toLowerCase().includes(query)
+    labels.some(
+      (label) =>
+        task.labelIds.includes(label.id) &&
+        label.name.toLowerCase().includes(query)
     ) ||
     (task.branch?.toLowerCase().includes(query) ?? false) ||
     (task.pr !== null &&
@@ -298,6 +305,7 @@ function TaskBoardCard({
   attached = false,
   attaching = false,
   isOverlay = false,
+  labelRows = [],
   onActivate,
   onAttach,
   onCancel,
@@ -312,6 +320,7 @@ function TaskBoardCard({
   readonly attached?: boolean
   readonly attaching?: boolean
   readonly isOverlay?: boolean
+  readonly labelRows?: readonly SharedLabelRow[]
   readonly onActivate?: (task: BoardTask) => void
   readonly onAttach?: (task: BoardTask) => void
   readonly onCancel?: (task: BoardTask) => void
@@ -328,7 +337,7 @@ function TaskBoardCard({
   }
 
   const analysis = slackAnalysisState(task)
-  const labels = useTaskLabels(task.labelIds)
+  const labels = labelsForIds(task.labelIds, labelRows)
   const title = boardTaskTitle(task)
   const activate = isOverlay || !onActivate ? undefined : () => onActivate(task)
 
@@ -785,6 +794,7 @@ function ProjectLane({
 function LaneBoard({
   attachedTaskId,
   attachingTaskId,
+  labelRows,
   onActivateTask,
   onAttach,
   onCancelTask,
@@ -798,6 +808,7 @@ function LaneBoard({
 }: {
   readonly attachedTaskId: string | null
   readonly attachingTaskId: string | null
+  readonly labelRows: readonly SharedLabelRow[]
   readonly onActivateTask: (task: BoardTask) => void
   readonly onAttach: (task: BoardTask) => void
   readonly onCancelTask: (task: BoardTask) => void
@@ -975,6 +986,7 @@ function LaneBoard({
                                 }
                                 attached={attachedTaskId === task.id}
                                 attaching={attachingTaskId === task.id}
+                                labelRows={labelRows}
                                 onActivate={onActivateTask}
                                 onAttach={onAttach}
                                 onCancel={onCancelTask}
@@ -1052,6 +1064,7 @@ function LaneBoard({
           return (
             <TaskBoardCard
               isOverlay
+              labelRows={labelRows}
               parentTitle={
                 task.parentTaskId === null
                   ? undefined
@@ -1087,12 +1100,25 @@ function TaskBoard({
   readonly onDismiss: () => void
   readonly open: boolean
 }) {
-  const projectList = useAtomValue(projectViewsAtom)
-  const sharedTaskRows = useAtomValue(taskRowsAtom)
-  const authoritativeTasks = useAtomValue(authoritativeTasksAtom).rows
+  const { data: projectRows } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: sharedTaskRows } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const { data: labelRows } = useLiveQuery((query) =>
+    query.from({ labels: labelCollection })
+  )
+  const projectList = useMemo(
+    () => orderedProjectsFromRows(projectRows),
+    [projectRows]
+  )
+  const authoritativeTasks: readonly SharedTaskRow[] = sharedTaskRows
   const taskMutationReceipt = useAtomValue(taskMutationReceiptAtom)
-  const workspaceList = useAtomValue(workspaceViewsAtom)
-  const labelsById = useAtomValue(labelsByIdAtom)
+  const workspaceList = useMemo(
+    () => workspaceViewsFromRows(sharedTaskRows, projectRows),
+    [projectRows, sharedTaskRows]
+  )
   const panelActions = usePanelActions()
   // Commits lane drags; the sidebar owns its own monitor.
   useProjectReorderMonitor('board')
@@ -1123,13 +1149,8 @@ function TaskBoard({
   const moveDependencies = {
     clear: (taskId: string, operationId: string) =>
       clearTaskOverlay({ operationId, taskId }),
-    confirm: (
-      confirmation: {
-        readonly cursor: number
-        readonly row: (typeof authoritativeTasks)[number]
-      },
-      operationId: string
-    ) => confirmTaskMove({ ...confirmation, operationId }),
+    confirm: (confirmation: TaskMoveConfirmation, operationId: string) =>
+      confirmTaskMove({ ...confirmation, operationId }),
     getAuthoritativeTask: (taskId: string) =>
       authoritativeTasksRef.current.find(({ id }) => id === taskId),
     install: (taskId: string, overlay: TaskOptimisticOverlay) =>
@@ -1291,7 +1312,7 @@ function TaskBoard({
   const lanes = projectList
     .map((project) => {
       const laneTasks = boardTasks.filter(
-        (task) => projectForTask(task, projectList)?.id === project.id
+        (task) => projectForRoot(task.rootPath, projectList)?.id === project.id
       )
       const visibleTasks = laneTasks.filter(
         (task) =>
@@ -1300,7 +1321,7 @@ function TaskBoard({
             task.status === 'done' &&
             task.updatedAt < Date.now() - DONE_RETENTION_MS
           ) &&
-          (!searching || matchesQuery(task, query, labelsById))
+          (!searching || matchesQuery(task, query, labelRows))
       )
       return { project, visibleTasks }
     })
@@ -1311,13 +1332,13 @@ function TaskBoard({
    */
   const workspaceForCard = (
     task: BoardTask,
-    project: { readonly name: string; readonly repoPath: string }
+    project: { readonly name: string; readonly rootPath: string }
   ) => {
     const row = workspaceForTask(task, workspaceList)
     return row === undefined
       ? undefined
       : {
-          isRoot: row.worktreePath === project.repoPath,
+          isRoot: row.worktreePath === project.rootPath,
           projectName: project.name,
           row,
         }
@@ -1399,6 +1420,7 @@ function TaskBoard({
                   <LaneBoard
                     attachedTaskId={attachedTerminal?.taskId ?? null}
                     attachingTaskId={attachingTaskId}
+                    labelRows={labelRows}
                     onActivateTask={activateTask}
                     onAttach={handleAttach}
                     onCancelTask={cancelTask}
@@ -1406,7 +1428,7 @@ function TaskBoard({
                     onOpenTask={(task) => openTaskEditor(task.id)}
                     onSlackCardQueued={queueSlackAgentOpen}
                     projectId={project.id}
-                    projectRootPath={project.repoPath}
+                    projectRootPath={project.rootPath}
                     tasks={visibleTasks}
                     workspaceForCard={(task) => workspaceForCard(task, project)}
                   />

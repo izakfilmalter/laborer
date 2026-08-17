@@ -100,16 +100,15 @@ interface MockProject {
   name: string
 }
 
-vi.mock('@effect/atom-react/Hooks', () => ({
-  useAtomValue: (atom: symbol) =>
-    atom === Symbol.for('workspaceViews')
-      ? workspaceResults.current
-      : projectResults.current,
+vi.mock('@tanstack/react-db', () => ({
+  useLiveQuery: () => ({ data: [] }),
 }))
 
-vi.mock('@/atoms/shared-state', () => ({
-  projectViewsAtom: Symbol.for('projectViews'),
-  workspaceViewsAtom: Symbol.for('workspaceViews'),
+vi.mock('@/db/shared-state', () => ({
+  orderedProjectsFromRows: () => projectResults.current,
+  projectCollection: Symbol.for('projectCollection'),
+  taskCollection: Symbol.for('taskCollection'),
+  workspaceViewsFromRows: () => workspaceResults.current,
 }))
 
 // Stub drag-and-drop (required by workspace-frames.tsx imports)

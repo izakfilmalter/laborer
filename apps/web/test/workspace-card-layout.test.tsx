@@ -53,17 +53,23 @@ vi.mock('@effect/atom-react/Hooks', () => ({
     })(),
 }))
 
-vi.mock('@/atoms/shared-state', () => ({
+vi.mock('@/atoms/legacy-shared-state-writes', () => ({
   clearWorkspaceDestroyOverlayAtom: Symbol.for('clearWorkspaceDestroyOverlay'),
   installWorkspaceDestroyOverlayAtom: Symbol.for(
     'installWorkspaceDestroyOverlay'
   ),
   clearTaskEditOverlayAtom: Symbol.for('clearTaskEditOverlay'),
   installTaskEditOverlayAtom: Symbol.for('installTaskEditOverlay'),
-  // The card looks its task up here to offer the "Edit card" button; these
-  // fixtures have no tasks, so every card is a workspace without one.
-  tasksByIdAtom: Symbol.for('tasksById'),
-  workspaceViewsAtom: Symbol.for('workspaceViews'),
+}))
+
+vi.mock('@tanstack/react-db', () => ({
+  useLiveQuery: () => ({ data: [...tasksByIdRef.current.values()] }),
+}))
+
+vi.mock('@/db/shared-state', () => ({
+  projectCollection: Symbol.for('projectCollection'),
+  taskCollection: Symbol.for('taskCollection'),
+  workspaceViewsFromRows: () => workspaceRowsRef.current,
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -286,7 +292,7 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
       }),
     ])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
@@ -309,7 +315,7 @@ describe('Workspace card layout — editing the card behind the workspace', () =
       <WorkspaceList
         projectId="project-1"
         projectShortName="LAB"
-        repoPath="/repo"
+        rootPath="/repo"
       />
     )
 
@@ -320,7 +326,7 @@ describe('Workspace card layout — editing the card behind the workspace', () =
   it('offers nothing to edit when the workspace has no card', () => {
     mockStore([makeWorkspace()])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     expect(screen.queryByRole('button', { name: EDIT_CARD_RE })).toBeNull()
   })
@@ -338,7 +344,7 @@ describe('Workspace card layout — status row', () => {
   it('stays quiet about a healthy workspace', () => {
     mockStore([makeWorkspace({ status: 'running' })])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     // Running is what a healthy workspace simply is — chipping it would
     // spend a slot on every card to say nothing.
@@ -361,7 +367,7 @@ describe('Workspace card layout — status row', () => {
   ])('shows the status badge when the workspace is %s', (status) => {
     mockStore([makeWorkspace({ status })])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     expect(screen.getByText(status)).toBeTruthy()
   })
@@ -377,7 +383,7 @@ describe('Workspace card layout — status row', () => {
     ])
 
     const { container } = render(
-      <WorkspaceList projectId="project-1" repoPath="/repo" />
+      <WorkspaceList projectId="project-1" rootPath="/repo" />
     )
 
     const statusRow = container.querySelector('[data-slot="card-status-row"]')
@@ -388,7 +394,7 @@ describe('Workspace card layout — status row', () => {
     mockStore([makeWorkspace({ status: 'errored' })])
 
     const { container } = render(
-      <WorkspaceList projectId="project-1" repoPath="/repo" />
+      <WorkspaceList projectId="project-1" rootPath="/repo" />
     )
 
     const statusRow = container.querySelector('[data-slot="card-status-row"]')
@@ -409,7 +415,7 @@ describe('Workspace card layout — status row', () => {
     ])
 
     const { container } = render(
-      <WorkspaceList projectId="project-1" repoPath="/repo" />
+      <WorkspaceList projectId="project-1" rootPath="/repo" />
     )
 
     const mark = screen.getByRole('img', { name: 'Conflicts with dev' })
@@ -446,7 +452,7 @@ describe('Workspace card layout — status row', () => {
       }),
     ])
 
-    render(<WorkspaceList projectId="project-1" repoPath="/repo" />)
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
 
     const pill = screen
       .getByText('#42')

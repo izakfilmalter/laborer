@@ -1,5 +1,5 @@
 import type { SharedTaskRow } from '@laborer/shared/rpc'
-import type { TaskOptimisticOverlay } from '@/atoms/shared-state'
+import type { TaskOptimisticOverlay } from '@/atoms/legacy-shared-state-writes'
 
 export type TaskMovePatch = Pick<SharedTaskRow, 'sortOrder' | 'status'>
 

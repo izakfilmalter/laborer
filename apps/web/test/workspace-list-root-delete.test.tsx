@@ -59,17 +59,23 @@ vi.mock('@effect/atom-react/Hooks', () => ({
     })(),
 }))
 
-vi.mock('@/atoms/shared-state', () => ({
+vi.mock('@/atoms/legacy-shared-state-writes', () => ({
   clearWorkspaceDestroyOverlayAtom: Symbol.for('clearWorkspaceDestroyOverlay'),
   installWorkspaceDestroyOverlayAtom: Symbol.for(
     'installWorkspaceDestroyOverlay'
   ),
   clearTaskEditOverlayAtom: Symbol.for('clearTaskEditOverlay'),
   installTaskEditOverlayAtom: Symbol.for('installTaskEditOverlay'),
-  // The card looks its task up here to offer the "Edit card" button; these
-  // fixtures have no tasks, so every card is a workspace without one.
-  tasksByIdAtom: Symbol.for('tasksById'),
-  workspaceViewsAtom: Symbol.for('workspaceViews'),
+}))
+
+vi.mock('@tanstack/react-db', () => ({
+  useLiveQuery: () => ({ data: [] }),
+}))
+
+vi.mock('@/db/shared-state', () => ({
+  projectCollection: Symbol.for('projectCollection'),
+  taskCollection: Symbol.for('taskCollection'),
+  workspaceViewsFromRows: () => workspaceRows.current,
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -261,7 +267,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     mockStore([rootWorkspace])
 
-    render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
+    render(<WorkspaceList projectId="project-1" rootPath={PROJECT_REPO_PATH} />)
 
     // The destroy button should NOT be present for the root workspace
     expect(
@@ -278,7 +284,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     mockStore([linkedWorkspace])
 
-    render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
+    render(<WorkspaceList projectId="project-1" rootPath={PROJECT_REPO_PATH} />)
 
     // The destroy button SHOULD be present for non-root workspaces
     expect(
@@ -300,7 +306,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     mockStore([rootWorkspace, linkedWorkspace])
 
-    render(<WorkspaceList projectId="project-1" repoPath={PROJECT_REPO_PATH} />)
+    render(<WorkspaceList projectId="project-1" rootPath={PROJECT_REPO_PATH} />)
 
     // Should have exactly ONE destroy button (for the linked workspace only)
     const destroyButtons = screen.getAllByRole('button', {
@@ -328,7 +334,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
       <WorkspaceList
         projectId="project-1"
         projectName="my-project"
-        repoPath={PROJECT_REPO_PATH}
+        rootPath={PROJECT_REPO_PATH}
       />
     )
 
@@ -350,7 +356,7 @@ describe('WorkspaceList — root workspace delete protection', () => {
         ]}
         projectId="project-1"
         projectName="my-project"
-        repoPath={PROJECT_REPO_PATH}
+        rootPath={PROJECT_REPO_PATH}
       />
     )
 

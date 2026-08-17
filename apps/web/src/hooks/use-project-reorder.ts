@@ -14,7 +14,8 @@
  * @see apps/web/src/atoms/project-order.ts — the ordering rules
  */
 
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
+import { useLiveQuery } from '@tanstack/react-db'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearProjectRankOverlaysAtom,
@@ -24,7 +25,7 @@ import {
   planProjectMove,
   planProjectNudge,
 } from '@/atoms/project-order'
-import { projectRowsAtom } from '@/atoms/shared-state'
+import { orderedProjectsFromRows, projectCollection } from '@/db/shared-state'
 import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
 
@@ -43,7 +44,10 @@ export interface ProjectReorder {
 }
 
 export function useProjectReorder(): ProjectReorder {
-  const projects = useAtomValue(projectRowsAtom)
+  const { data: projectRows } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const projects = orderedProjectsFromRows(projectRows)
   const reorderProjects = useAtomSet(reorderProjectsMutation, {
     mode: 'promise',
   })

@@ -383,27 +383,46 @@ export const {
   tasks: taskCollection,
 } = sharedCollectionBundle.collections
 
-export interface ProjectView extends SharedProjectRow {
-  readonly repoPath: string
+/** Apply Laborer's durable project presentation order without changing rows. */
+export const orderedProjectsFromRows = (
+  projects: readonly SharedProjectRow[]
+): readonly SharedProjectRow[] =>
+  [...projects].sort((left, right) => {
+    const leftRank = left.sortOrder ?? left.createdAt
+    const rightRank = right.sortOrder ?? right.createdAt
+    return leftRank - rightRank || left.id.localeCompare(right.id)
+  })
+
+/** Labels are app-wide and presented alphabetically wherever they are listed. */
+export const orderedLabelsFromRows = (
+  labels: readonly SharedLabelRow[]
+): readonly SharedLabelRow[] =>
+  [...labels].sort((left, right) => left.name.localeCompare(right.name))
+
+/** Resolve stored label order, omitting relations not published yet. */
+export const labelsForIds = (
+  labelIds: readonly string[],
+  labels: readonly SharedLabelRow[]
+): readonly SharedLabelRow[] => {
+  const byId = new Map(labels.map((label) => [label.id, label]))
+  return labelIds.flatMap((id) => {
+    const label = byId.get(id)
+    return label === undefined ? [] : [label]
+  })
 }
 
-export const projectViewsFromRows = (
-  projects: readonly SharedProjectRow[]
-): readonly ProjectView[] =>
-  [...projects]
-    .sort((left, right) => {
-      if (left.sortOrder !== null && right.sortOrder !== null) {
-        return left.sortOrder - right.sortOrder
-      }
-      if (left.sortOrder !== null) {
-        return -1
-      }
-      if (right.sortOrder !== null) {
-        return 1
-      }
-      return left.createdAt - right.createdAt
-    })
-    .map((project) => ({ ...project, repoPath: project.rootPath }))
+/** Count app-wide task usage for each currently referenced Label. */
+export const taskCountsByLabel = (
+  tasks: readonly SharedTaskRow[]
+): ReadonlyMap<string, number> => {
+  const counts = new Map<string, number>()
+  for (const task of tasks) {
+    for (const labelId of task.labelIds) {
+      counts.set(labelId, (counts.get(labelId) ?? 0) + 1)
+    }
+  }
+  return counts
+}
 
 export interface WorkspaceView {
   readonly aheadCount: number | null
@@ -433,10 +452,10 @@ export interface WorkspaceView {
   readonly worktreeSetupStep: string | null
 }
 
-export const projectForRoot = (
+export const projectForRoot = <Project extends { readonly rootPath: string }>(
   rootPath: string,
-  projects: readonly SharedProjectRow[]
-): SharedProjectRow | undefined =>
+  projects: readonly Project[]
+): Project | undefined =>
   projects
     .filter(
       (project) =>

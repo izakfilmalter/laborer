@@ -1,10 +1,15 @@
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { PanelNode } from '@laborer/shared/types'
 import { buildWorkspacePath } from '@laborer/shared/workspace-tree'
+import { useLiveQuery } from '@tanstack/react-db'
 import { useEffect, useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { projectViewsAtom, workspaceViewsAtom } from '@/atoms/shared-state'
 import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
+import {
+  projectCollection,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 import { getScopedActivePaneId } from '@/panels/window-layout-utils'
@@ -39,8 +44,16 @@ export function WorkspaceFrameHeaderContainer({
   readonly diffIsOpen?: boolean
   readonly treeIsOpen?: boolean
 }) {
-  const projectList = useAtomValue(projectViewsAtom)
-  const workspaceList = useAtomValue(workspaceViewsAtom)
+  const { data: projectList } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: tasks } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const workspaceList = useMemo(
+    () => workspaceViewsFromRows(tasks, projectList),
+    [projectList, tasks]
+  )
   const globalActivePaneId = useActivePaneId()
   const actions = usePanelActions()
   const refreshPr = useAtomSet(refreshPrMutation, { mode: 'promise' })

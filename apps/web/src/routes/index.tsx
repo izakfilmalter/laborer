@@ -13,7 +13,7 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearWorkspaceDestroyOverlayAtom,
   installWorkspaceDestroyOverlayAtom,
-} from '@/atoms/shared-state'
+} from '@/atoms/legacy-shared-state-writes'
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
@@ -21,8 +21,8 @@ import { useProjectReorderMonitor } from '@/components/project-reorder'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import {
+  orderedProjectsFromRows,
   projectCollection,
-  projectViewsFromRows,
   taskCollection,
   workspaceViewsFromRows,
 } from '@/db/shared-state'
@@ -159,7 +159,7 @@ function HomeComponent() {
     query.from({ tasks: taskCollection })
   )
   const projectList = useMemo(
-    () => projectViewsFromRows(projectRows),
+    () => orderedProjectsFromRows(projectRows),
     [projectRows]
   )
   const workspaceList = useMemo(

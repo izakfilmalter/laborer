@@ -45,7 +45,7 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearProjectRemoveOverlayAtom,
   installProjectRemoveOverlayAtom,
-} from '@/atoms/shared-state'
+} from '@/atoms/legacy-shared-state-writes'
 import {
   CreateWorkspaceButton,
   CreateWorkspaceComposer,
@@ -79,7 +79,7 @@ interface ProjectGroupProps {
   readonly project: {
     readonly id: string
     readonly name: string
-    readonly repoPath: string
+    readonly rootPath: string
   }
   /** False while a search filters the tree, where a drop slot is ambiguous. */
   readonly reorderEnabled: boolean
@@ -215,7 +215,7 @@ function ProjectGroup({
               )}
             />
             <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate" title={project.repoPath}>
+            <span className="min-w-0 flex-1 truncate" title={project.rootPath}>
               {project.name}
             </span>
           </CollapsibleTrigger>
@@ -319,7 +319,7 @@ function ProjectGroup({
               projectId={project.id}
               projectName={project.name}
               projectShortName={projectShortName}
-              repoPath={project.repoPath}
+              rootPath={project.rootPath}
             />
           </div>
         </CollapsibleContent>

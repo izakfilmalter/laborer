@@ -2,9 +2,9 @@ import { RegistryContext } from '@effect/atom-react/RegistryContext'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { useContext, useEffect, useMemo } from 'react'
 import {
-  installSharedStateUpdateAtom,
   makeSharedStateEventsAtom,
-} from '@/atoms/shared-state'
+  observeSharedStateUpdateAtom,
+} from '@/atoms/legacy-shared-state-writes'
 import {
   type SharedStateSource,
   sharedCollectionBundle,
@@ -25,9 +25,7 @@ export function SharedStateBridge(): null {
             }
             for (const update of result.value.items) {
               publish(update)
-              // Keep the cumulative branch's legacy consumers coherent until
-              // their direct-query cutover lands in its own descendant issue.
-              registry.set(installSharedStateUpdateAtom, update)
+              registry.set(observeSharedStateUpdateAtom, update)
             }
             // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
             registry.set(eventsAtom, undefined as void)

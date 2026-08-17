@@ -12,7 +12,7 @@
  * the sidebar growing them.
  */
 
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import {
@@ -35,6 +35,8 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
+import { eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { GitBranch, GitBranchPlus, Pencil, Trash2 } from 'lucide-react'
 import {
   type FC,
@@ -50,8 +52,7 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearWorkspaceDestroyOverlayAtom,
   installWorkspaceDestroyOverlayAtom,
-  tasksByIdAtom,
-} from '@/atoms/shared-state'
+} from '@/atoms/legacy-shared-state-writes'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
@@ -64,6 +65,7 @@ import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { TaskIdentifier } from '@/components/task-identifier'
 import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
+import { taskCollection } from '@/db/shared-state'
 import type { PendingWorkspaceCreationChangeHandler } from '@/hooks/use-create-workspace'
 import {
   type ActiveTerminal,
@@ -489,7 +491,14 @@ function EditTaskCardButton({
   readonly branchName: string
   readonly workspaceId: string
 }) {
-  const taskRow = useAtomValue(tasksByIdAtom).get(workspaceId)
+  const { data: taskRows } = useLiveQuery(
+    (query) =>
+      query
+        .from({ tasks: taskCollection })
+        .where(({ tasks }) => eq(tasks.id, workspaceId)),
+    [workspaceId]
+  )
+  const taskRow = taskRows[0]
   const task = taskRow === undefined ? null : boardTaskFromSharedRow(taskRow)
   const { openTaskEditor, taskEditor } = useTaskEditor(task ? [task] : [])
 

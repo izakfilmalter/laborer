@@ -43,7 +43,6 @@
  * @see Issue #148: Focused pane border fix — replaced ring with border
  */
 
-import { useAtomValue } from '@effect/atom-react/Hooks'
 import type {
   LeafNode,
   PanelNode,
@@ -72,13 +71,18 @@ import {
   SelectValue,
 } from '@laborer/ui/components/select'
 import { Spinner } from '@laborer/ui/components/spinner'
+import { useLiveQuery } from '@tanstack/react-db'
 import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
-import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { PanelTypePicker } from '@/components/panel-type-picker'
 import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
+import {
+  projectCollection,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
 import { extractErrorMessage } from '@/lib/errors'
@@ -166,7 +170,16 @@ interface EmptyTerminalPaneProps {
  * CTA so the user can retry or select a workspace.
  */
 function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
-  const workspaceList = useAtomValue(workspaceViewsAtom)
+  const { data: projects } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: tasks } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const workspaceList = useMemo(
+    () => workspaceViewsFromRows(tasks, projects),
+    [projects, tasks]
+  )
   const panelActions = usePanelActions()
   const spawnTerminal = useSpawnTerminal()
   const [isSpawning, setIsSpawning] = useState(false)

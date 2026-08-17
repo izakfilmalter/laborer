@@ -6,6 +6,7 @@ import type {
   SharedSettingRow,
   SharedTaskRow,
 } from '@laborer/shared/rpc'
+import { RpcError } from '@laborer/shared/rpc'
 import {
   createOptimisticAction,
   createPacedMutations,
@@ -40,22 +41,22 @@ const deferred = <Result>(): Deferred<Result> => {
   return { promise, reject, resolve }
 }
 
-const errorCode = (error: unknown): string | undefined => {
+const isRpcError = (error: unknown): boolean => {
   if (!(typeof error === 'object' && error !== null)) {
-    return undefined
+    return false
   }
-  if ('code' in error && typeof error.code === 'string') {
-    return error.code
+  if ('_tag' in error && error._tag === 'RpcError') {
+    return true
   }
   if ('error' in error) {
-    return errorCode(error.error)
+    return isRpcError(error.error)
   }
-  return undefined
+  return false
 }
 
 /** Only a typed server rejection is safe to roll back. */
 export const isDefinitiveSharedMutationFailure = (error: unknown): boolean =>
-  errorCode(error) !== undefined
+  isRpcError(error)
 
 interface Persistence<Result> {
   readonly affected: readonly ('labels' | 'projects' | 'settings' | 'tasks')[]
@@ -118,11 +119,15 @@ interface PacedIntent<Result = unknown> extends Persistence<Result> {
 }
 
 type PacedManager = ReturnType<typeof createPacedMutations<PacedIntent>>
-const pacedManagers = new Map<string, PacedManager>()
+interface PacedManagerEntry {
+  readonly manager: PacedManager
+  pending: number
+}
+const pacedManagers = new Map<string, PacedManagerEntry>()
 const pacedIntents = new Map<string, PacedIntent>()
 
 /** One module-stable FIFO manager per entity key, shared across mutation kinds. */
-const managerFor = (entityKey: string): PacedManager => {
+const managerFor = (entityKey: string): PacedManagerEntry => {
   const existing = pacedManagers.get(entityKey)
   if (existing !== undefined) {
     return existing
@@ -146,8 +151,8 @@ const managerFor = (entityKey: string): PacedManager => {
       if (transaction === undefined) {
         throw new Error('Paced shared mutation has no active transaction')
       }
-      pacedIntents.set(transaction.id, intent)
       intent.optimistic()
+      pacedIntents.set(transaction.id, intent)
     },
     strategy: queueStrategy({
       addItemsTo: 'back',
@@ -155,12 +160,35 @@ const managerFor = (entityKey: string): PacedManager => {
       wait: 0,
     }),
   })
-  pacedManagers.set(entityKey, manager)
-  return manager
+  const entry = { manager, pending: 0 }
+  pacedManagers.set(entityKey, entry)
+  return entry
 }
 
-const runPaced = <Result>(entityKey: string, intent: PacedIntent<Result>) =>
-  start(managerFor(entityKey)(intent), intent.outcome)
+const runPaced = <Result>(entityKey: string, intent: PacedIntent<Result>) => {
+  const entry = managerFor(entityKey)
+  entry.pending += 1
+  let transaction: Transaction
+  try {
+    transaction = entry.manager(intent)
+  } catch (error) {
+    entry.pending -= 1
+    if (entry.pending === 0 && pacedManagers.get(entityKey) === entry) {
+      pacedManagers.delete(entityKey)
+    }
+    throw error
+  }
+
+  const release = () => {
+    pacedIntents.delete(transaction.id)
+    entry.pending -= 1
+    if (entry.pending === 0 && pacedManagers.get(entityKey) === entry) {
+      pacedManagers.delete(entityKey)
+    }
+  }
+  transaction.isPersisted.promise.then(release, release)
+  return start(transaction, intent.outcome)
+}
 
 export interface CreateTaskInput<Result> {
   readonly now: number
@@ -243,8 +271,9 @@ export const moveTask = <Result>(input: MoveTaskInput<Result>) => {
     send: () => {
       const row = authoritativeTask(input.taskId)
       if (row === undefined) {
-        throw Object.assign(new Error('Task no longer exists'), {
+        throw new RpcError({
           code: 'NOT_FOUND',
+          message: 'Task no longer exists',
         })
       }
       return input.send({
@@ -290,8 +319,9 @@ export const updateTask = <Result>(input: UpdateTaskInput<Result>) => {
     send: () => {
       const row = authoritativeTask(input.taskId)
       if (row === undefined) {
-        throw Object.assign(new Error('Task no longer exists'), {
+        throw new RpcError({
           code: 'NOT_FOUND',
+          message: 'Task no longer exists',
         })
       }
       return input.send({
@@ -334,8 +364,9 @@ export const setTaskLabels = <Result>(input: SetTaskLabelsInput<Result>) => {
     send: () => {
       const row = authoritativeTask(input.taskId)
       if (row === undefined) {
-        throw Object.assign(new Error('Task no longer exists'), {
+        throw new RpcError({
           code: 'NOT_FOUND',
+          message: 'Task no longer exists',
         })
       }
       return input.send({
@@ -503,8 +534,9 @@ export const reorderProjects = <Result>(
         assignments: input.assignments.map((assignment) => {
           const row = authoritativeProject(assignment.projectId)
           if (row === undefined) {
-            throw Object.assign(new Error('Project no longer exists'), {
+            throw new RpcError({
               code: 'NOT_FOUND',
+              message: 'Project no longer exists',
             })
           }
           return { ...assignment, expectedRevision: row.revision }
@@ -606,8 +638,9 @@ export const updateLabel = <Result>(input: UpdateLabelInput<Result>) => {
     send: () => {
       const row = authoritativeLabel(input.labelId)
       if (row === undefined) {
-        throw Object.assign(new Error('Label no longer exists'), {
+        throw new RpcError({
           code: 'NOT_FOUND',
+          message: 'Label no longer exists',
         })
       }
       return input.send({
@@ -654,8 +687,9 @@ export const deleteLabel = <Result>(input: DeleteLabelInput<Result>) => {
     send: () => {
       const row = authoritativeLabel(input.labelId)
       if (row === undefined) {
-        throw Object.assign(new Error('Label no longer exists'), {
+        throw new RpcError({
           code: 'NOT_FOUND',
+          message: 'Label no longer exists',
         })
       }
       return input.send({

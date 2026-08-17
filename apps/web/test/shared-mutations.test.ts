@@ -4,6 +4,7 @@ import type {
   SharedStateUpdate,
   SharedTaskRow,
 } from '@laborer/shared/rpc'
+import { RpcError } from '@laborer/shared/rpc'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { pendingTaskRow } from '@/db/pending-task-row'
@@ -206,7 +207,7 @@ describe('shared optimistic mutations', () => {
       operationId: 'reject-first',
       send: () =>
         Promise.reject(
-          Object.assign(new Error('conflict'), { code: 'CAS_CONFLICT' })
+          new RpcError({ code: 'CAS_CONFLICT', message: 'conflict' })
         ),
       taskId: 'cascade',
       title: 'first',
@@ -238,7 +239,10 @@ describe('shared optimistic mutations', () => {
     const result = updateTask({
       description: null,
       operationId: 'ambiguous-update',
-      send: () => Promise.reject(new Error('socket closed')),
+      send: () =>
+        Promise.reject(
+          Object.assign(new Error('socket closed'), { code: 'ECONNRESET' })
+        ),
       taskId: 'ambiguous',
       title: 'possibly saved',
     })

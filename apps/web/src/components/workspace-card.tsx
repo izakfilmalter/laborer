@@ -580,7 +580,7 @@ function DestroyWorkspaceButton({
       const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
 
       destroyWorkspace({
-        payload: { workspaceId, force },
+        payload: { workspaceId, force, operationId: crypto.randomUUID() },
       })
         .then(() => {
           toast.success(`Workspace "${branchName}" destroyed successfully`, {

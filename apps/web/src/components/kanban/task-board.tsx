@@ -632,7 +632,13 @@ function AddCardComposer({
     )
 
     return createTask({
-      payload: { id, projectId, status: column.id, text },
+      payload: {
+        id,
+        operationId: crypto.randomUUID(),
+        projectId,
+        status: column.id,
+        text,
+      },
     })
       .then((created) => {
         openProvisionedAgent(
@@ -1115,15 +1121,15 @@ function TaskBoard({
   authoritativeTasksRef.current = authoritativeTasks
   const moveQueueRef = useRef<OptimisticTaskMoveQueue | null>(null)
   const moveDependencies = {
-    clear: (taskId: string, mutationId: string) =>
-      clearTaskOverlay({ mutationId, taskId }),
+    clear: (taskId: string, operationId: string) =>
+      clearTaskOverlay({ operationId, taskId }),
     confirm: (
       confirmation: {
         readonly cursor: number
         readonly row: (typeof authoritativeTasks)[number]
       },
-      mutationId: string
-    ) => confirmTaskMove({ ...confirmation, mutationId }),
+      operationId: string
+    ) => confirmTaskMove({ ...confirmation, operationId }),
     getAuthoritativeTask: (taskId: string) =>
       authoritativeTasksRef.current.find(({ id }) => id === taskId),
     install: (taskId: string, overlay: TaskOptimisticOverlay) =>
@@ -1131,10 +1137,10 @@ function TaskBoard({
     isConflict: (error: unknown) => extractErrorCode(error) === 'CAS_CONFLICT',
     isDefinitiveFailure: (error: unknown) =>
       extractErrorCode(error) !== undefined,
-    mutationId: () => crypto.randomUUID(),
+    operationId: () => crypto.randomUUID(),
     send: async (command: {
       readonly expectedRevision: number
-      readonly mutationId: string
+      readonly operationId: string
       readonly sortOrder: number | null
       readonly status: BoardTaskStatus
       readonly taskId: string
@@ -1155,7 +1161,7 @@ function TaskBoard({
     moveQueueRef.current.configure(moveDependencies)
   }
   useEffect(() => {
-    moveQueueRef.current?.observeMutationIds(taskMutationReceipt.mutationIds)
+    moveQueueRef.current?.observeOperationIds(taskMutationReceipt.operationIds)
   }, [taskMutationReceipt])
   useEffect(() => {
     setBoardTasks(boardTasksFromSharedRows(sharedTaskRows))
@@ -1347,7 +1353,7 @@ function TaskBoard({
     moveTask({
       payload: {
         expectedRevision: task.revision,
-        mutationId: crypto.randomUUID(),
+        operationId: crypto.randomUUID(),
         sortOrder: task.sortOrder,
         status: 'cancelled',
         taskId: task.id,

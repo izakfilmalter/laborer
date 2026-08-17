@@ -48,12 +48,12 @@ export interface AuthoritativeSharedState {
 
 export interface TaskOptimisticOverlay {
   readonly expectedRevision: number
-  readonly mutationId: string
+  readonly operationId: string
   readonly patch: Pick<SharedTaskRow, 'sortOrder' | 'status'>
 }
 
 export interface TaskMutationReceipt {
-  readonly mutationIds: readonly string[]
+  readonly operationIds: readonly string[]
   readonly sequence: number
 }
 
@@ -73,7 +73,7 @@ type AnyTableUpdate<Row> =
   | {
       readonly cursor: number
       readonly deletedRowIds: readonly string[]
-      readonly mutationIds?: readonly string[] | undefined
+      readonly operationIds?: readonly string[] | undefined
       readonly rows: readonly Row[]
       readonly type: 'delta'
     }
@@ -361,18 +361,18 @@ export const settleProjectRemoveOverlays = (
 
 /** A bounded notification edge used to release transport-ambiguous moves. */
 export const taskMutationReceiptAtom = Atom.make<TaskMutationReceipt>({
-  mutationIds: [],
+  operationIds: [],
   sequence: 0,
 })
 
 export const settleTaskOverlays = (
   current: ReadonlyMap<string, TaskOptimisticOverlay>,
-  mutationIds: readonly string[]
+  operationIds: readonly string[]
 ): ReadonlyMap<string, TaskOptimisticOverlay> => {
-  const settled = new Set(mutationIds)
+  const settled = new Set(operationIds)
   const overlays = new Map(current)
   for (const [taskId, overlay] of overlays) {
-    if (settled.has(overlay.mutationId)) {
+    if (settled.has(overlay.operationId)) {
       overlays.delete(taskId)
     }
   }
@@ -429,19 +429,19 @@ export const installSharedStateUpdateAtom = Atom.writable(
     if (rankOverlays !== context.get(projectRankOverlaysAtom)) {
       context.set(projectRankOverlaysAtom, rankOverlays)
     }
-    const mutationIds =
-      update.tasks?.type === 'delta' ? (update.tasks.mutationIds ?? []) : []
-    if (mutationIds.length === 0) {
+    const operationIds =
+      update.tasks?.type === 'delta' ? (update.tasks.operationIds ?? []) : []
+    if (operationIds.length === 0) {
       return
     }
     const overlays = settleTaskOverlays(
       context.get(taskOptimisticOverlaysAtom),
-      mutationIds
+      operationIds
     )
     context.set(taskOptimisticOverlaysAtom, overlays)
     const receipt = context.get(taskMutationReceiptAtom)
     context.set(taskMutationReceiptAtom, {
-      mutationIds,
+      operationIds,
       sequence: receipt.sequence + 1,
     })
   }
@@ -463,10 +463,10 @@ export const clearTaskOptimisticOverlayAtom = Atom.writable(
   (get) => get(taskOptimisticOverlaysAtom),
   (
     context,
-    input: { readonly mutationId: string; readonly taskId: string }
+    input: { readonly operationId: string; readonly taskId: string }
   ) => {
     const overlays = context.get(taskOptimisticOverlaysAtom)
-    if (overlays.get(input.taskId)?.mutationId !== input.mutationId) {
+    if (overlays.get(input.taskId)?.operationId !== input.operationId) {
       return
     }
     const next = new Map(overlays)
@@ -503,7 +503,7 @@ export const confirmTaskOptimisticMoveAtom = Atom.writable(
     context,
     input: {
       readonly cursor: number
-      readonly mutationId: string
+      readonly operationId: string
       readonly row: SharedTaskRow
     }
   ) => {
@@ -513,7 +513,7 @@ export const confirmTaskOptimisticMoveAtom = Atom.writable(
       confirmAuthoritativeTask(state, input)
     )
     const overlays = context.get(taskOptimisticOverlaysAtom)
-    if (overlays.get(input.row.id)?.mutationId === input.mutationId) {
+    if (overlays.get(input.row.id)?.operationId === input.operationId) {
       const next = new Map(overlays)
       next.delete(input.row.id)
       context.set(taskOptimisticOverlaysAtom, next)

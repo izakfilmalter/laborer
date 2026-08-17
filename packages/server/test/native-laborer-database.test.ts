@@ -148,7 +148,7 @@ describe('NativeLaborerDatabase', () => {
     expect(database.taskChangesAfter(0)).toEqual([
       {
         changedAt: 10,
-        mutationId: 'task-mutation',
+        operationId: 'task-mutation',
         sequence: 1,
         taskId: 'task-1',
       },
@@ -174,7 +174,7 @@ describe('NativeLaborerDatabase', () => {
     expect(project).toMatchObject({ cursor: 1, row: { revision: 1 } })
     expect(setting).toMatchObject({ cursor: 2, row: { revision: 1 } })
     expect(
-      database.stateChangesAfter(0).map((change) => change.mutationId)
+      database.stateChangesAfter(0).map((change) => change.operationId)
     ).toEqual(['project-mutation', 'setting-mutation'])
     database.close()
   })
@@ -284,7 +284,7 @@ describe('NativeLaborerDatabase', () => {
     expect(deletedSetting.row).toEqual(updatedSetting.row)
 
     expect(
-      database.stateChangesAfter(0).map(({ mutationId }) => mutationId)
+      database.stateChangesAfter(0).map(({ operationId }) => operationId)
     ).toEqual([
       'project-insert',
       'project-update',
@@ -382,7 +382,7 @@ describe('NativeLaborerDatabase', () => {
     database.close()
   })
 
-  it('CAS-guards a project move and records its mutation id', () => {
+  it('CAS-guards a project move and records its operation id', () => {
     const database = NativeLaborerDatabase.open(':memory:')
     const project = database.insertProject(
       {
@@ -416,11 +416,94 @@ describe('NativeLaborerDatabase', () => {
 
     // The renderer settles its optimistic rank on these ids.
     expect(
-      database.stateChangesAfter(0).map(({ mutationId }) => mutationId)
+      database.stateChangesAfter(0).map(({ operationId }) => operationId)
     ).toEqual(['project-insert', 'project-move'])
-    expect(database.stateUpdatesAfter(1)?.projects.mutationIds).toEqual([
+    expect(database.stateUpdatesAfter(1)?.projects.operationIds).toEqual([
       'project-move',
     ])
+    database.close()
+  })
+
+  it('reorders projects atomically under one operation id', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    const add = (id: string) =>
+      database.insertProject({
+        id,
+        name: id,
+        rootPath: `/${id}`,
+        repoId: id,
+        canonicalGitCommonDir: `/${id}/.git`,
+      }).row
+    const first = add('project-1')
+    const second = add('project-2')
+    const cursorBefore = database.stateChangesAfter(0).length
+
+    expect(() =>
+      database.reorderProjects(
+        [
+          {
+            expectedRevision: first.revision,
+            projectId: first.id,
+            sortOrder: 20,
+          },
+          {
+            expectedRevision: second.revision + 1,
+            projectId: second.id,
+            sortOrder: 10,
+          },
+        ],
+        'failed-reorder',
+        20
+      )
+    ).toThrow(LaborerDatabaseStaleRevisionError)
+    expect(database.findProject(first.id)).toMatchObject({
+      revision: 1,
+      sortOrder: null,
+    })
+    expect(database.stateChangesAfter(0)).toHaveLength(cursorBefore)
+
+    const result = database.reorderProjects(
+      [
+        {
+          expectedRevision: first.revision,
+          projectId: first.id,
+          sortOrder: 20,
+        },
+        {
+          expectedRevision: second.revision,
+          projectId: second.id,
+          sortOrder: 10,
+        },
+      ],
+      'atomic-reorder',
+      30
+    )
+    expect(result.rows).toMatchObject([
+      { id: first.id, revision: 2, sortOrder: 20 },
+      { id: second.id, revision: 2, sortOrder: 10 },
+    ])
+    expect(
+      database
+        .stateChangesAfter(cursorBefore)
+        .map(({ operationId }) => operationId)
+    ).toEqual(['atomic-reorder', 'atomic-reorder'])
+    database.close()
+  })
+
+  it('replays correlated project creation without duplicating its row', () => {
+    const database = NativeLaborerDatabase.open(':memory:')
+    const input = {
+      id: 'provisional-project',
+      name: 'Laborer',
+      rootPath: '/repo',
+      repoId: 'repo',
+      canonicalGitCommonDir: '/repo/.git',
+    }
+    const first = database.insertProject(input, 'create-project', 10)
+    const replay = database.insertProject(input, 'create-project', 20)
+    expect(replay.row.id).toBe(first.row.id)
+    expect(database.listProjects()).toHaveLength(1)
+    expect(database.stateChangesAfter(0)).toHaveLength(1)
     database.close()
   })
 

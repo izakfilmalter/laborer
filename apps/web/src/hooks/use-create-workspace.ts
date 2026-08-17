@@ -180,6 +180,7 @@ function useCreateWorkspace(
         onPhaseChange?.('creating')
         const result = await createWorkspace({
           payload: {
+            operationId: crypto.randomUUID(),
             projectId,
             ...(branchName ? { branchName } : {}),
             ...(baseWorkspaceId ? { baseWorkspaceId } : {}),

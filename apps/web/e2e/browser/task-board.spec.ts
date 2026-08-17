@@ -206,7 +206,7 @@ test.describe('task board and kanban journeys', () => {
       await daemon.rpc.run((client) =>
         client['task.move']({
           expectedRevision: 1,
-          mutationId: `e2e-conflict-${crypto.randomUUID()}`,
+          operationId: `e2e-conflict-${crypto.randomUUID()}`,
           sortOrder: null,
           status: 'in_review',
           taskId,

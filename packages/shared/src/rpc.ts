@@ -5,7 +5,12 @@ import { TerminalStatus, WorkspaceStatus } from './types.js'
 
 const APP_SETTING_KEY_MAX_LENGTH = 128
 const APP_SETTING_VALUE_MAX_LENGTH = 16_384
-const MUTATION_ID_MAX_LENGTH = 128
+export const OPERATION_ID_MAX_LENGTH = 128
+export const OperationId = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(OPERATION_ID_MAX_LENGTH)
+)
+export type OperationId = typeof OperationId.Type
 const PRESENCE_CLIENT_ID_MAX_LENGTH = 128
 const PRESENCE_WORKSPACE_ID_MAX_LENGTH = 1000
 const PRESENCE_WORKSPACE_MAX_ITEMS = 1000
@@ -360,7 +365,8 @@ const tableUpdate = <Row extends Schema.Top>(row: Row) =>
       type: Schema.Literal('delta'),
       cursor: Schema.Int,
       deletedRowIds: Schema.Array(Schema.String),
-      mutationIds: Schema.optional(Schema.Array(Schema.String)),
+      /** Laborer operation ids whose authoritative rows are in this delta. */
+      operationIds: Schema.optional(Schema.Array(Schema.String)),
       rows: Schema.Array(row),
     }),
   ])
@@ -701,6 +707,8 @@ export class LaborerRpcs extends RpcGroup.make(
     success: ProjectResponse,
     error: RpcError,
     payload: {
+      id: Schema.String,
+      operationId: OperationId,
       repoPath: Schema.String,
     },
   }),
@@ -708,6 +716,7 @@ export class LaborerRpcs extends RpcGroup.make(
   Rpc.make('project.remove', {
     error: RpcError,
     payload: {
+      operationId: OperationId,
       projectId: Schema.String,
     },
   }),
@@ -739,21 +748,22 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
-  /** Revision-CAS manual-order write used by project drags. Rank is the only field it writes. */
-  Rpc.make('project.move', {
+  /** Atomic revision-CAS rank assignments for one project reorder intent. */
+  Rpc.make('project.reorder', {
     success: Schema.Struct({
       cursor: NonNegativeInt,
-      row: SharedProjectRow,
+      rows: Schema.Array(SharedProjectRow),
     }),
     error: RpcError,
     payload: {
-      expectedRevision: PositiveInt,
-      mutationId: Schema.String.check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
+      assignments: Schema.Array(
+        Schema.Struct({
+          expectedRevision: PositiveInt,
+          projectId: Schema.String,
+          sortOrder: Schema.NullOr(Schema.Finite),
+        })
       ),
-      projectId: Schema.String,
-      sortOrder: Schema.NullOr(Schema.Finite),
+      operationId: OperationId,
     },
   }),
 
@@ -786,10 +796,7 @@ export class LaborerRpcs extends RpcGroup.make(
         Schema.isMinLength(1),
         Schema.isMaxLength(APP_SETTING_KEY_MAX_LENGTH)
       ),
-      mutationId: Schema.String.check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
-      ),
+      operationId: OperationId,
       value: Schema.String.check(
         Schema.isMaxLength(APP_SETTING_VALUE_MAX_LENGTH)
       ),
@@ -814,6 +821,7 @@ export class LaborerRpcs extends RpcGroup.make(
        * Omitted by older callers; the server then mints the id itself.
        */
       id: Schema.optional(Schema.String),
+      operationId: OperationId,
       projectId: Schema.String,
       status: Schema.Literals(['todo', 'in_progress', 'in_review', 'done']),
       text: Schema.String.check(
@@ -838,10 +846,7 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       expectedRevision: PositiveInt,
-      mutationId: Schema.String.check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
-      ),
+      operationId: OperationId,
       sortOrder: Schema.NullOr(Schema.Finite),
       status: StoredTaskStatus,
       taskId: Schema.String,
@@ -860,6 +865,7 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       description: Schema.NullOr(Schema.String),
       expectedRevision: Schema.Int,
+      operationId: OperationId,
       taskId: Schema.String,
       title: Schema.String,
     },
@@ -883,6 +889,7 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       color: Schema.optional(LabelColor),
       id: Schema.optional(Schema.String),
+      operationId: OperationId,
       name: Schema.String.check(
         Schema.isMinLength(1),
         Schema.isMaxLength(LABEL_NAME_MAX_LENGTH)
@@ -901,6 +908,7 @@ export class LaborerRpcs extends RpcGroup.make(
       color: Schema.optional(LabelColor),
       expectedRevision: PositiveInt,
       labelId: Schema.String,
+      operationId: OperationId,
       name: Schema.optional(
         Schema.String.check(
           Schema.isMinLength(1),
@@ -920,6 +928,7 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       expectedRevision: PositiveInt,
       labelId: Schema.String,
+      operationId: OperationId,
     },
   }),
 
@@ -935,10 +944,7 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       expectedRevision: PositiveInt,
       labelIds: Schema.Array(Schema.String),
-      mutationId: Schema.String.check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(MUTATION_ID_MAX_LENGTH)
-      ),
+      operationId: OperationId,
       taskId: Schema.String,
     },
   }),
@@ -993,6 +999,7 @@ export class LaborerRpcs extends RpcGroup.make(
     success: WorkspaceResponse,
     error: RpcError,
     payload: {
+      operationId: OperationId,
       projectId: Schema.String,
       branchName: Schema.optional(Schema.String),
       /**
@@ -1016,6 +1023,7 @@ export class LaborerRpcs extends RpcGroup.make(
   Rpc.make('workspace.destroy', {
     error: RpcError,
     payload: {
+      operationId: OperationId,
       workspaceId: Schema.String,
       force: Schema.optional(Schema.Boolean),
     },

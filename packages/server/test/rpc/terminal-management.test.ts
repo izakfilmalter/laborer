@@ -37,7 +37,11 @@ const makeWorkspaceFixture = (
 > =>
   Effect.gen(function* () {
     const repoPath = initRepo('rpc-terminal-management', tempRoots)
-    const project = yield* context.client['project.add']({ repoPath })
+    const project = yield* context.client['project.add']({
+      id: crypto.randomUUID(),
+      operationId: crypto.randomUUID(),
+      repoPath,
+    })
     const workspaceId = crypto.randomUUID()
     const worktreePath = join(repoPath, '.worktrees', workspaceId)
 

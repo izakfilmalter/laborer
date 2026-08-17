@@ -29,6 +29,7 @@ const migrationNames = [
   '0010_pr_check_runs',
   '0011_task_numbers',
   '0012_task_labels',
+  '0013_correlated_operations',
 ]
 
 const temporaryDatabasePath = (): string => {
@@ -178,24 +179,24 @@ describe('NativeTaskDatabase', () => {
       .run('github.token', 'test-value', 1, 1)
     raw
       .prepare(`INSERT INTO task_changes (
-        task_id, changed_at, mutation_id
+        task_id, changed_at, operation_id
       ) VALUES (?, ?, ?)`)
       .run('legacy-task', 1, 'task-mutation-1')
     raw
       .prepare(`INSERT INTO state_changes (
-        table_name, row_id, changed_at, mutation_id
+        table_name, row_id, changed_at, operation_id
       ) VALUES (?, ?, ?, ?)`)
       .run('app_settings', 'github.token', 1, 'mutation-1')
     expect(
-      raw.prepare('SELECT mutation_id FROM state_changes').get()
-    ).toMatchObject({ mutation_id: 'mutation-1' })
+      raw.prepare('SELECT operation_id FROM state_changes').get()
+    ).toMatchObject({ operation_id: 'mutation-1' })
     expect(
       raw
         .prepare(
-          'SELECT mutation_id FROM task_changes WHERE mutation_id IS NOT NULL'
+          'SELECT operation_id FROM task_changes WHERE operation_id IS NOT NULL'
         )
         .get()
-    ).toMatchObject({ mutation_id: 'task-mutation-1' })
+    ).toMatchObject({ operation_id: 'task-mutation-1' })
     raw.close()
   })
 

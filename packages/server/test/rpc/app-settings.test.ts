@@ -19,13 +19,13 @@ describe('LaborerRpcs app settings', () => {
         const created = yield* client['appSetting.set']({
           expectedRevision: 0,
           key: 'github_desktop_token',
-          mutationId: 'github-connect',
+          operationId: 'github-connect',
           value: 'token-one',
         })
         const updated = yield* client['appSetting.set']({
           expectedRevision: created.row.revision,
           key: created.row.key,
-          mutationId: 'github-refresh',
+          operationId: 'github-refresh',
           value: 'token-two',
         })
 
@@ -36,7 +36,7 @@ describe('LaborerRpcs app settings', () => {
           'token-two'
         )
         assert.deepStrictEqual(
-          database.stateChangesAfter(0).map(({ mutationId }) => mutationId),
+          database.stateChangesAfter(0).map(({ operationId }) => operationId),
           ['github-connect', 'github-refresh']
         )
       })
@@ -49,20 +49,20 @@ describe('LaborerRpcs app settings', () => {
         const created = yield* client['appSetting.set']({
           expectedRevision: 0,
           key: 'github_desktop_token',
-          mutationId: 'github-connect',
+          operationId: 'github-connect',
           value: 'token-one',
         })
         yield* client['appSetting.set']({
           expectedRevision: created.row.revision,
           key: created.row.key,
-          mutationId: 'other-writer',
+          operationId: 'other-writer',
           value: 'token-two',
         })
 
         const stale = yield* client['appSetting.set']({
           expectedRevision: created.row.revision,
           key: created.row.key,
-          mutationId: 'stale-writer',
+          operationId: 'stale-writer',
           value: 'stale-token',
         }).pipe(Effect.result)
 
@@ -85,7 +85,7 @@ describe('LaborerRpcs app settings', () => {
         const result = yield* client['appSetting.set']({
           expectedRevision: 0,
           key: 'github_desktop_token',
-          mutationId: 'oversized-setting',
+          operationId: 'oversized-setting',
           value: 'x'.repeat(16_385),
         }).pipe(Effect.exit)
 

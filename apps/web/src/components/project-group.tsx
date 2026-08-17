@@ -175,7 +175,7 @@ function ProjectGroup({
     setDialogOpen(false)
     installRemoveOverlay(project.id)
     removeProject({
-      payload: { projectId: project.id },
+      payload: { operationId: crypto.randomUUID(), projectId: project.id },
     })
       .then(() => {
         toast.success(`Project "${project.name}" removed`)

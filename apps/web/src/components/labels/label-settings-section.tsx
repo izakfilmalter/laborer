@@ -68,7 +68,11 @@ export function LabelSettingsSection(): ReactElement {
       error={error}
       labels={labels}
       onCreate={(name) => {
-        run(() => createLabel({ payload: { name } }))
+        run(() =>
+          createLabel({
+            payload: { name, operationId: crypto.randomUUID() },
+          })
+        )
       }}
       onDelete={(label) => {
         const expectedRevision = revisionOf(label.id)
@@ -76,7 +80,13 @@ export function LabelSettingsSection(): ReactElement {
           return
         }
         run(() =>
-          deleteLabel({ payload: { expectedRevision, labelId: label.id } })
+          deleteLabel({
+            payload: {
+              expectedRevision,
+              labelId: label.id,
+              operationId: crypto.randomUUID(),
+            },
+          })
         )
       }}
       onRecolor={(label, color) => {
@@ -86,7 +96,12 @@ export function LabelSettingsSection(): ReactElement {
         }
         run(() =>
           updateLabel({
-            payload: { color, expectedRevision, labelId: label.id },
+            payload: {
+              color,
+              expectedRevision,
+              labelId: label.id,
+              operationId: crypto.randomUUID(),
+            },
           })
         )
       }}
@@ -97,7 +112,12 @@ export function LabelSettingsSection(): ReactElement {
         }
         run(() =>
           updateLabel({
-            payload: { expectedRevision, labelId: label.id, name },
+            payload: {
+              expectedRevision,
+              labelId: label.id,
+              name,
+              operationId: crypto.randomUUID(),
+            },
           })
         )
       }}

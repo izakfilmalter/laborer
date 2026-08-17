@@ -46,8 +46,14 @@ describe('LaborerRpcs project management', () => {
           '{"shortName":"SAME"}\n'
         )
 
-        yield* client['project.add']({ repoPath: firstPath })
+        yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath: firstPath,
+        })
         const result = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
           repoPath: secondPath,
         }).pipe(Effect.result)
         assert.isTrue(Result.isFailure(result))
@@ -73,7 +79,11 @@ describe('LaborerRpcs project management', () => {
           const linkedWorktreePath = join(repoPath, '.worktrees', 'feature-rpc')
           git(`worktree add -b feature/rpc ${linkedWorktreePath}`, repoPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
 
           // ProjectRegistry now canonicalizes paths through
           // RepositoryIdentity, so the stored repoPath is the
@@ -109,9 +119,11 @@ describe('LaborerRpcs project management', () => {
           )
 
           const repoPath = createTempDir('rpc-project-invalid', tempRoots)
-          const result = yield* client['project.add']({ repoPath }).pipe(
-            Effect.result
-          )
+          const result = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          }).pipe(Effect.result)
 
           assert.isTrue(Result.isFailure(result))
           if (Result.isSuccess(result)) {
@@ -140,8 +152,14 @@ describe('LaborerRpcs project management', () => {
           const canonicalRepoPath = realpathSync(repoPath)
           mkdirSync(nestedPath, { recursive: true })
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const result = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
             repoPath: nestedPath,
           }).pipe(Effect.result)
 
@@ -183,8 +201,14 @@ describe('LaborerRpcs project management', () => {
           const canonicalRepoPath = realpathSync(repoPath)
           symlinkSync(repoPath, symlinkPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const result = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
             repoPath: symlinkPath,
           }).pipe(Effect.result)
 
@@ -216,8 +240,15 @@ describe('LaborerRpcs project management', () => {
         )
 
         const repoPath = initRepo('rpc-project-remove', tempRoots)
-        const project = yield* client['project.add']({ repoPath })
-        yield* client['project.remove']({ projectId: project.id })
+        const project = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath,
+        })
+        yield* client['project.remove']({
+          operationId: crypto.randomUUID(),
+          projectId: project.id,
+        })
 
         assert.isNull(database.findProject(project.id))
         assert.strictEqual(database.stateChangesAfter(0).length, 2)
@@ -229,6 +260,7 @@ describe('LaborerRpcs project management', () => {
     runWithRpcTestContext(({ client }) =>
       Effect.gen(function* () {
         const result = yield* client['project.remove']({
+          operationId: crypto.randomUUID(),
           projectId: 'missing-project',
         }).pipe(Effect.result)
 
@@ -262,8 +294,16 @@ describe('LaborerRpcs project management', () => {
         git(`clone ${bare} ${firstClone}`, cloneRoot)
         git(`clone ${bare} ${secondClone}`, cloneRoot)
 
-        const first = yield* client['project.add']({ repoPath: firstClone })
-        const second = yield* client['project.add']({ repoPath: secondClone })
+        const first = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath: firstClone,
+        })
+        const second = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath: secondClone,
+        })
         const rePointedConfig = yield* client['config.get']({
           projectId: second.id,
         })
@@ -294,7 +334,11 @@ describe('LaborerRpcs project management', () => {
             Effect.sync(() => cleanupTempRoots(tempRoots))
           )
           const repoPath = initRepo('rpc-project-task-preservation', tempRoots)
-          const first = yield* client['project.add']({ repoPath })
+          const first = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           database.insertTask({
             id: 'task-that-survives-project-removal',
             rootPath: realpathSync(repoPath),
@@ -303,13 +347,20 @@ describe('LaborerRpcs project management', () => {
             title: 'Survives',
           })
 
-          yield* client['project.remove']({ projectId: first.id })
+          yield* client['project.remove']({
+            operationId: crypto.randomUUID(),
+            projectId: first.id,
+          })
           assert.isNotNull(
             database.findTask('task-that-survives-project-removal')
           )
           assert.deepStrictEqual(database.listProjects(), [])
 
-          const registeredAgain = yield* client['project.add']({ repoPath })
+          const registeredAgain = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           assert.notStrictEqual(registeredAgain.id, first.id)
           assert.strictEqual(
             database.findTask('task-that-survives-project-removal')?.rootPath,

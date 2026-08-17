@@ -48,7 +48,7 @@ describe('task.move manual ordering', () => {
       const moved = yield* handleTaskMoveAtPath(
         {
           expectedRevision: task.revision,
-          mutationId: 'readable-move',
+          operationId: 'readable-move',
           sortOrder: 3,
           status: 'in_review',
           taskId: `MOVE-${String(task.taskNumber)}`,
@@ -76,7 +76,7 @@ describe('task.move manual ordering', () => {
       const moved = yield* handleTaskMoveAtPath(
         {
           expectedRevision: 1,
-          mutationId: 'drag-one',
+          operationId: 'drag-one',
           sortOrder: 10.5,
           status: 'in_review',
           taskId: 'move-me',
@@ -91,7 +91,7 @@ describe('task.move manual ordering', () => {
       const reopened = NativeLaborerDatabase.open(path)
       assert.strictEqual(reopened.findTask('move-me')?.sortOrder, 10.5)
       assert.deepStrictEqual(
-        reopened.taskChangesAfter(0).map(({ mutationId }) => mutationId),
+        reopened.taskChangesAfter(0).map(({ operationId }) => operationId),
         [null, 'drag-one']
       )
       reopened.close()
@@ -111,7 +111,7 @@ describe('task.move manual ordering', () => {
       const result = yield* handleTaskMoveAtPath(
         {
           expectedRevision: 1,
-          mutationId: 'stale-drag',
+          operationId: 'stale-drag',
           sortOrder: 8,
           status: 'in_review',
           taskId: 'move-me',
@@ -126,7 +126,7 @@ describe('task.move manual ordering', () => {
       const database = NativeLaborerDatabase.open(path)
       assert.strictEqual(database.findTask('move-me')?.status, 'done')
       assert.notInclude(
-        database.taskChangesAfter(0).map(({ mutationId }) => mutationId),
+        database.taskChangesAfter(0).map(({ operationId }) => operationId),
         'stale-drag'
       )
       database.close()

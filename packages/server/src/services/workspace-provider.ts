@@ -603,7 +603,8 @@ class WorkspaceProvider extends Context.Service<
         workspaceId: string,
         error: RpcError
       ) => Effect.Effect<void, never>,
-      taskSource?: string
+      taskSource?: string,
+      operationId?: string | null
     ) => Effect.Effect<WorkspaceRecord, RpcError>
 
     /** Find the non-destroyed workspace durably provisioned for a task. */
@@ -631,7 +632,8 @@ class WorkspaceProvider extends Context.Service<
      */
     readonly destroyWorktree: (
       workspaceId: string,
-      force?: boolean
+      force?: boolean,
+      operationId?: string | null
     ) => Effect.Effect<void, RpcError>
 
     /**
@@ -703,6 +705,7 @@ class WorkspaceProvider extends Context.Service<
           | undefined
         readonly rootPath: string
         readonly taskSource: string | undefined
+        readonly operationId: string | null
         readonly workspace: WorkspaceRecord
       }) {
         const parentTask = input.baseWorkspace
@@ -725,33 +728,41 @@ class WorkspaceProvider extends Context.Service<
         if (existingTask === null) {
           yield* persistWorkspaceFacts(
             laborerDatabase.run('create workspace task', (database) =>
-              database.insertTask({
-                baseBranch: input.workspace.baseBranch,
-                branchName: input.workspace.branchName,
-                id: taskId,
-                parentTaskId: parentTask?.id ?? null,
-                rootPath: input.rootPath,
-                source: 'worktree',
-                status: 'in_progress',
-                title: input.workspace.branchName,
-                worktreeError: null,
-                worktreePath: input.workspace.worktreePath,
-                worktreeStatus: 'provisioning',
-              })
+              database.insertTask(
+                {
+                  baseBranch: input.workspace.baseBranch,
+                  branchName: input.workspace.branchName,
+                  id: taskId,
+                  parentTaskId: parentTask?.id ?? null,
+                  rootPath: input.rootPath,
+                  source: 'worktree',
+                  status: 'in_progress',
+                  title: input.workspace.branchName,
+                  worktreeError: null,
+                  worktreePath: input.workspace.worktreePath,
+                  worktreeStatus: 'provisioning',
+                },
+                input.operationId
+              )
             )
           )
         } else {
           yield* persistWorkspaceFacts(
-            updateServerTaskFacts(laborerDatabase, taskId, {
-              baseBranch: input.workspace.baseBranch,
-              baseSha: null,
-              branchName: input.workspace.branchName,
-              parentTaskId: parentTask?.id ?? existingTask.parentTaskId,
-              setupCompletedAt: null,
-              worktreeError: null,
-              worktreePath: input.workspace.worktreePath,
-              worktreeStatus: 'provisioning',
-            })
+            updateServerTaskFacts(
+              laborerDatabase,
+              taskId,
+              {
+                baseBranch: input.workspace.baseBranch,
+                baseSha: null,
+                branchName: input.workspace.branchName,
+                parentTaskId: parentTask?.id ?? existingTask.parentTaskId,
+                setupCompletedAt: null,
+                worktreeError: null,
+                worktreePath: input.workspace.worktreePath,
+                worktreeStatus: 'provisioning',
+              },
+              input.operationId
+            )
           )
         }
         return taskId
@@ -1078,6 +1089,7 @@ class WorkspaceProvider extends Context.Service<
           readonly baseWorkspace: WorkspaceRecord | undefined
           readonly rootPath: string
           readonly taskSource: string | undefined
+          readonly operationId: string | null
           readonly workspace: WorkspaceRecord
         }) {
           const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
@@ -1132,7 +1144,8 @@ class WorkspaceProvider extends Context.Service<
             workspaceId: string,
             error: RpcError
           ) => Effect.Effect<void, never>,
-          taskSource?: string
+          taskSource?: string,
+          operationId: string | null = null
         ) {
           // 1. Validate the project exists and get its repo path
           const project = yield* registry.getProject(projectId)
@@ -1192,6 +1205,7 @@ class WorkspaceProvider extends Context.Service<
               baseWorkspace,
               rootPath: project.repoPath,
               taskSource,
+              operationId,
               workspace,
             })
           )
@@ -1321,7 +1335,11 @@ class WorkspaceProvider extends Context.Service<
       )
 
       const destroyWorktree = Effect.fn('WorkspaceProvider.destroyWorktree')(
-        function* (workspaceId: string, force?: boolean) {
+        function* (
+          workspaceId: string,
+          force?: boolean,
+          operationId: string | null = null
+        ) {
           yield* Effect.logInfo(
             `destroyWorktree called: workspaceId=${workspaceId}, force=${String(force ?? false)}`
           ).pipe(Effect.annotateLogs('module', logPrefix))
@@ -1640,12 +1658,17 @@ class WorkspaceProvider extends Context.Service<
             ).pipe(Effect.annotateLogs('module', logPrefix))
 
             if (workspaceTask !== null && !dirStillExists) {
-              yield* updateServerTaskFacts(laborerDatabase, workspaceTask.id, {
-                status: 'done',
-                worktreeError: null,
-                worktreePath: null,
-                worktreeStatus: null,
-              })
+              yield* updateServerTaskFacts(
+                laborerDatabase,
+                workspaceTask.id,
+                {
+                  status: 'done',
+                  worktreeError: null,
+                  worktreePath: null,
+                  worktreeStatus: null,
+                },
+                operationId
+              )
             } else if (workspaceTask !== null) {
               yield* updateServerTaskFacts(laborerDatabase, workspaceTask.id, {
                 worktreeError: 'Worktree removal did not remove the directory',

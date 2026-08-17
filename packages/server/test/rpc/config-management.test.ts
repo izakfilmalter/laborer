@@ -79,7 +79,11 @@ describe('LaborerRpcs config management', () => {
             setupScripts: ['bun install', 'bun test'],
           })
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const config = yield* client['config.get']({ projectId: project.id })
 
           // Config source paths are resolved relative to the
@@ -126,8 +130,16 @@ describe('LaborerRpcs config management', () => {
           initRepoAt(secondPath)
           writeLaborerConfig(firstPath, { shortName: 'FIRST' })
           writeLaborerConfig(secondPath, { shortName: 'SECOND' })
-          const first = yield* client['project.add']({ repoPath: firstPath })
-          const second = yield* client['project.add']({ repoPath: secondPath })
+          const first = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath: firstPath,
+          })
+          const second = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath: secondPath,
+          })
 
           yield* client['config.update']({
             projectId: first.id,
@@ -201,7 +213,11 @@ describe('LaborerRpcs config management', () => {
             customField: 'preserve-me',
           })
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
 
           yield* client['config.update']({
             projectId: project.id,

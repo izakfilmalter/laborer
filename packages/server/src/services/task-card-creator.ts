@@ -4,6 +4,7 @@ import type { TaskPatch, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { createTaskUlid, isTaskUlid } from '@laborer/task-db/ulid'
 import { Effect } from 'effect'
+import { NativeLaborerDatabase } from './native-laborer-database.js'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import {
   planSlackWorkspace,
@@ -26,6 +27,7 @@ export interface CreateTaskCardInput {
    * idempotent retry rather than a duplicate card.
    */
   readonly id?: string | null
+  readonly operationId?: string | null
   readonly rootPath: string
   readonly status: CreationColumn
   readonly text: string
@@ -227,17 +229,28 @@ export const createTaskCard = (
       return { ...replayed, status: input.status }
     }
 
-    const task = yield* withDatabase(path, (database) =>
-      database.insert({
-        id: requestedId ?? createTaskUlid(),
-        rootPath: input.rootPath,
-        title: slackUrl ?? text,
-        status: input.status,
-        source: slackUrl ? 'slack_url' : 'manual',
-        slackPermalink: slackUrl,
-        executionStatus: slackUrl ? 'queued' : null,
-      })
-    )
+    const task = yield* Effect.try({
+      try: () => {
+        const database = NativeLaborerDatabase.open(path)
+        try {
+          return database.insertTask(
+            {
+              id: requestedId ?? createTaskUlid(),
+              rootPath: input.rootPath,
+              title: slackUrl ?? text,
+              status: input.status,
+              source: slackUrl ? 'slack_url' : 'manual',
+              slackPermalink: slackUrl,
+              executionStatus: slackUrl ? 'queued' : null,
+            },
+            input.operationId ?? null
+          ).row
+        } finally {
+          database.close()
+        }
+      },
+      catch: databaseError,
+    })
 
     // A Slack card dropped straight into In Progress is analyzed by the
     // provisioning path instead: it needs the plan and the workspace created

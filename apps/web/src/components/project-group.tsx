@@ -215,15 +215,8 @@ function ProjectGroup({
               )}
             />
             <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="grid min-w-0 flex-1">
-              <span className="truncate">{project.name}</span>
-              <span
-                className="truncate font-mono font-normal text-[10px] text-muted-foreground"
-                data-testid="project-repo-path"
-                title={project.repoPath}
-              >
-                {project.repoPath}
-              </span>
+            <span className="min-w-0 flex-1 truncate" title={project.repoPath}>
+              {project.name}
             </span>
           </CollapsibleTrigger>
           <div className="flex shrink-0 items-center gap-0.5">

@@ -1,36 +1,99 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { WindowLayout } from '@laborer/shared/types'
+import { waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
-  decodeStoredPanelLayout,
-  readStoredPanelLayout,
-} from '@/routes/-hooks/use-panel-layout'
+  LOCAL_COLLECTIONS,
+  makeValidatedLocalStorageParser,
+  panelLayoutCollection,
+  panelLayoutSchema,
+  setPanelLayoutPreference,
+} from '@/db/local-preferences'
 
-describe('decodeStoredPanelLayout', () => {
+const WINDOW_ID = 'panel-layout-storage-test-window'
+const LEGACY_KEY = `laborer:panel-layout:v1:${WINDOW_ID}`
+const FIRST_LAYOUT: WindowLayout = { tabs: [] }
+const SECOND_LAYOUT: WindowLayout = { activeTabId: 'missing', tabs: [] }
+
+describe('panel layout collection', () => {
   afterEach(() => {
-    vi.restoreAllMocks()
+    if (panelLayoutCollection.has(WINDOW_ID)) {
+      panelLayoutCollection.delete(WINDOW_ID)
+    }
+    localStorage.removeItem(LEGACY_KEY)
   })
 
-  it('falls back for malformed JSON', () => {
-    expect(decodeStoredPanelLayout('{')).toEqual({ windowLayout: null })
+  it('uses the versioned collection and storage identities', () => {
+    expect(panelLayoutCollection.id).toBe('laborer.local.panel-layouts.v1')
+    expect(LOCAL_COLLECTIONS.panelLayouts.storageKey).toBe(
+      'laborer:db:panel-layouts:v1'
+    )
   })
 
-  it('falls back for a non-object envelope', () => {
-    expect(decodeStoredPanelLayout('[]')).toEqual({ windowLayout: null })
-    expect(decodeStoredPanelLayout('42')).toEqual({ windowLayout: null })
-  })
-
-  it('reads the layout while ignoring envelope excess keys', () => {
-    expect(
-      decodeStoredPanelLayout(
-        JSON.stringify({ windowLayout: { tabs: [] }, futureField: true })
-      )
-    ).toEqual({ windowLayout: { tabs: [] } })
-  })
-
-  it('falls back when localStorage access is blocked', () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new DOMException('Access denied', 'SecurityError')
+  it('keys valid rows by native window id', () => {
+    const row = panelLayoutSchema.parse({
+      id: WINDOW_ID,
+      windowLayout: FIRST_LAYOUT,
     })
 
-    expect(readStoredPanelLayout('window-1')).toEqual({ windowLayout: null })
+    setPanelLayoutPreference(row.id, row.windowLayout)
+
+    expect(panelLayoutCollection.get(WINDOW_ID)).toMatchObject(row)
+    expect(() =>
+      panelLayoutSchema.parse({ id: '', windowLayout: FIRST_LAYOUT })
+    ).toThrow()
+    expect(() =>
+      panelLayoutSchema.parse({ id: WINDOW_ID, windowLayout: null })
+    ).toThrow()
+  })
+
+  it('drops corrupt persisted rows before collection hydration', () => {
+    const parser = makeValidatedLocalStorageParser(panelLayoutSchema)
+    const validRow = { id: WINDOW_ID, windowLayout: FIRST_LAYOUT }
+
+    expect(
+      parser.parse(
+        JSON.stringify({
+          's:corrupt': {
+            data: { id: 'corrupt', windowLayout: null },
+            versionKey: 'corrupt',
+          },
+          [`s:${WINDOW_ID}`]: {
+            data: validRow,
+            versionKey: 'valid',
+          },
+        })
+      )
+    ).toEqual({
+      [`s:${WINDOW_ID}`]: {
+        data: validRow,
+        versionKey: 'valid',
+      },
+    })
+  })
+
+  it('wires inserts and updates through ordinary collection mutations', () => {
+    setPanelLayoutPreference(WINDOW_ID, FIRST_LAYOUT)
+    expect(panelLayoutCollection.get(WINDOW_ID)?.windowLayout).toEqual(
+      FIRST_LAYOUT
+    )
+
+    setPanelLayoutPreference(WINDOW_ID, SECOND_LAYOUT)
+    expect(panelLayoutCollection.get(WINDOW_ID)?.windowLayout).toEqual(
+      SECOND_LAYOUT
+    )
+  })
+
+  it('leaves the legacy per-window key byte-for-byte untouched', async () => {
+    const legacyValue = '{"windowLayout":{"tabs":[]},"future":true}'
+    localStorage.setItem(LEGACY_KEY, legacyValue)
+
+    setPanelLayoutPreference(WINDOW_ID, FIRST_LAYOUT)
+
+    await waitFor(() => {
+      expect(
+        localStorage.getItem(LOCAL_COLLECTIONS.panelLayouts.storageKey)
+      ).not.toBeNull()
+    })
+    expect(localStorage.getItem(LEGACY_KEY)).toBe(legacyValue)
   })
 })

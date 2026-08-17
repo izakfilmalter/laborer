@@ -1,4 +1,4 @@
-import type { PanelNode, WindowLayout } from '@laborer/shared/types'
+import type { WindowLayout } from '@laborer/shared/types'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { panelLayoutCollection } from '@/db/local-preferences'
@@ -7,17 +7,12 @@ const {
   currentWindowIdRef,
   focusExistingWindowForWorkspaceMock,
   initialLayoutRef,
-  persistedRowsRef,
   reportWindowWorkspacesMock,
   reportWorkspacePresenceMock,
   spawnTerminalMock,
-  storeCommitMock,
-  storeQueryMock,
-  storeUseQueryMock,
   terminalListRef,
   upsertTerminalListItemMock,
   workspaceRowsRef,
-  windowLayoutUpdatedMock,
 } = vi.hoisted(() => ({
   currentWindowIdRef: { current: 'window-a' as string | null },
   focusExistingWindowForWorkspaceMock: vi.fn(
@@ -25,23 +20,13 @@ const {
   ),
   reportWindowWorkspacesMock: vi.fn(async () => undefined),
   reportWorkspacePresenceMock: vi.fn(async () => undefined),
-  initialLayoutRef: { current: undefined as PanelNode | undefined },
-  windowLayoutUpdatedMock: vi.fn((payload) => ({
-    payload,
-    type: 'windowLayoutUpdated',
-  })),
-  persistedRowsRef: {
-    current: [] as Record<string, unknown>[],
-  },
+  initialLayoutRef: { current: undefined as WindowLayout | undefined },
   spawnTerminalMock: vi.fn(async () => ({
     id: 'spawned-terminal',
     command: '/bin/zsh',
     status: 'running' as const,
     workspaceId: 'workspace-a',
   })),
-  storeCommitMock: vi.fn(),
-  storeQueryMock: vi.fn(),
-  storeUseQueryMock: vi.fn(),
   terminalListRef: {
     current: {
       isLoading: false,
@@ -70,18 +55,24 @@ vi.mock('@/db/shared-state', () => ({
 
 vi.mock('@tanstack/react-db', () => ({
   useLiveQuery: (
-    build: (query: { from: (sources: object) => object }) => object
+    build: (query: {
+      from: (sources: object) => { where: (predicate: unknown) => object }
+    }) => object
   ) => {
     let sources: Record<string, unknown> = {}
     build({
       from: (next: object) => {
         sources = next as Record<string, unknown>
-        return next
+        return { where: () => next }
       },
     })
     return {
       data:
-        'layouts' in sources ? Array.from(panelLayoutCollection.values()) : [],
+        'layout' in sources
+          ? Array.from(panelLayoutCollection.values()).filter(
+              ({ id }) => id === currentWindowIdRef.current
+            )
+          : [],
     }
   },
 }))
@@ -136,84 +127,53 @@ vi.mock('../src/routes/-hooks/use-initial-layout', () => ({
 
 import { usePanelLayout } from '../src/routes/-hooks/use-panel-layout'
 
-const WINDOW_A_LAYOUT: PanelNode = {
-  _tag: 'SplitNode',
-  children: [
+const makeWindowLayout = (
+  paneId: string,
+  workspaceId: string
+): WindowLayout => ({
+  activeTabId: `window-tab-${paneId}`,
+  tabs: [
     {
-      _tag: 'LeafNode',
-      id: 'pane-a-left',
-      paneType: 'terminal',
-      terminalId: undefined,
-      workspaceId: 'workspace-a',
-    },
-    {
-      _tag: 'LeafNode',
-      id: 'pane-a-right',
-      paneType: 'terminal',
-      terminalId: undefined,
-      workspaceId: 'workspace-b',
+      id: `window-tab-${paneId}`,
+      label: 'Tab 1',
+      workspaceLayout: {
+        _tag: 'WorkspaceTileLeaf',
+        activePanelTabId: `panel-tab-${paneId}`,
+        id: `workspace-tile-${paneId}`,
+        panelTabs: [
+          {
+            focusedPaneId: paneId,
+            id: `panel-tab-${paneId}`,
+            label: 'Terminal',
+            panelLayout: {
+              _tag: 'LeafNode',
+              id: paneId,
+              paneType: 'terminal',
+              workspaceId,
+            },
+          },
+        ],
+        workspaceId,
+      },
     },
   ],
-  direction: 'horizontal',
-  id: 'split-a',
-  sizes: [50, 50],
-}
-
-const WINDOW_B_LAYOUT: PanelNode = {
-  _tag: 'LeafNode',
-  id: 'pane-b-only',
-  paneType: 'terminal',
-  terminalId: undefined,
-  workspaceId: 'workspace-c',
-}
-
-type PersistedLayoutRow = (typeof persistedRowsRef.current)[number]
-
-interface PersistedLayoutEvent {
-  payload: any
-  type: string
-}
-
-const getPersistedRow = (windowId: string): PersistedLayoutRow | undefined =>
-  persistedRowsRef.current.find((row) => row.windowId === windowId)
+})
 
 const readStoredWindowLayout = (windowId: string): unknown =>
-  panelLayoutCollection.get(windowId)?.layout
+  panelLayoutCollection.get(windowId)?.windowLayout
 
 const writeStoredWindowLayout = (windowId: string, windowLayout: unknown) => {
   if (panelLayoutCollection.has(windowId)) {
     panelLayoutCollection.update(windowId, (draft) => {
-      draft.layout = structuredClone(windowLayout) as typeof draft.layout
+      draft.windowLayout = structuredClone(
+        windowLayout
+      ) as typeof draft.windowLayout
     })
   } else {
     panelLayoutCollection.insert({
       id: windowId,
-      layout: windowLayout as WindowLayout,
+      windowLayout: windowLayout as WindowLayout,
     })
-  }
-}
-
-const upsertPersistedRow = (
-  windowId: string,
-  update: (currentRow?: PersistedLayoutRow) => PersistedLayoutRow
-) => {
-  const currentRow = getPersistedRow(windowId)
-  const nextRow = update(currentRow)
-  const otherRows = persistedRowsRef.current.filter(
-    (row) => row.windowId !== windowId
-  )
-  persistedRowsRef.current = [...otherRows, nextRow]
-}
-
-const applyPersistedLayoutEvent = (event: PersistedLayoutEvent) => {
-  const { payload, type } = event
-
-  // Only windowLayoutUpdated writes to the table.
-  if (type === 'windowLayoutUpdated') {
-    upsertPersistedRow(payload.windowId, () => ({
-      windowId: payload.windowId,
-      windowLayout: payload.windowLayout,
-    }))
   }
 }
 
@@ -242,12 +202,10 @@ describe('usePanelLayout', () => {
       }
     }
     initialLayoutRef.current = undefined
-    persistedRowsRef.current = []
     workspaceRowsRef.current = []
     terminalListRef.current = { isLoading: false, terminals: [] }
     focusExistingWindowForWorkspaceMock.mockReset()
     focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
-    windowLayoutUpdatedMock.mockClear()
     reportWindowWorkspacesMock.mockClear()
     reportWorkspacePresenceMock.mockClear()
     spawnTerminalMock.mockClear()
@@ -258,36 +216,6 @@ describe('usePanelLayout', () => {
       workspaceId: 'workspace-a',
     }))
     upsertTerminalListItemMock.mockClear()
-    storeCommitMock.mockReset()
-    storeQueryMock.mockReset()
-    storeUseQueryMock.mockReset()
-    storeCommitMock.mockImplementation((event: PersistedLayoutEvent) => {
-      applyPersistedLayoutEvent(event)
-    })
-    storeUseQueryMock.mockImplementation(
-      (query: { options?: { label?: string } }) =>
-        query.options?.label === 'homePanelWorkspaces'
-          ? workspaceRowsRef.current
-          : persistedRowsRef.current
-    )
-    storeQueryMock.mockImplementation(
-      (query: { id?: string; options?: { label?: string }; type?: string }) => {
-        if (query.type === 'panelLayoutGet' && query.id) {
-          const row = getPersistedRow(query.id)
-          return {
-            windowLayout:
-              row?.windowLayout ??
-              (query.options as { default?: { windowLayout?: unknown } })
-                ?.default?.windowLayout ??
-              null,
-          }
-        }
-
-        return query.options?.label === 'homePanelWorkspaces'
-          ? workspaceRowsRef.current
-          : persistedRowsRef.current
-      }
-    )
   })
 
   afterEach(() => {
@@ -295,57 +223,70 @@ describe('usePanelLayout', () => {
     window.localStorage.clear()
   })
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo('hydrates only the persisted session for the current window id')
+  it('selects only the current native-window layout', async () => {
+    writeStoredWindowLayout(
+      'window-a',
+      makeWindowLayout('pane-window-a', 'workspace-a')
+    )
+    writeStoredWindowLayout(
+      'window-b',
+      makeWindowLayout('pane-window-b', 'workspace-b')
+    )
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo('derives active pane selection from the current window session only')
+    const { result, rerender } = renderHook(() => usePanelLayout())
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo('repairs stale active-pane pointers during restore')
+    await waitFor(() => {
+      expect(result.current.activePaneId).toBe('pane-window-a')
+    })
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo(
-    'reads a different persisted session when bootstrapped with another window id'
-  )
+    currentWindowIdRef.current = 'window-b'
+    rerender()
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo(
-    'falls back to the default session when the persisted layout is corrupted'
-  )
+    await waitFor(() => {
+      expect(result.current.activePaneId).toBe('pane-window-b')
+    })
+  })
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo(
-    'seeds a new native window with the blank default session instead of cloning existing layout state'
-  )
+  it('repairs and persists stale current-window layout pointers', async () => {
+    const repairableLayout = {
+      ...makeWindowLayout('pane-window-a', 'workspace-a'),
+      activeTabId: 'missing-window-tab',
+    }
+    writeStoredWindowLayout('window-a', repairableLayout)
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo('gives repeated native windows the same default starting session')
+    const { result } = renderHook(() => usePanelLayout())
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo('writes split operations back only to the current window session')
+    await waitFor(() => {
+      expect(result.current.activePaneId).toBe('pane-window-a')
+    })
+    await waitFor(() => {
+      expect(
+        (readStoredWindowLayout('window-a') as WindowLayout).activeTabId
+      ).toBe('window-tab-pane-window-a')
+    })
+  })
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo('writes close operations back only to the current window session')
+  it('seeds only a native window with no stored layout', async () => {
+    const initialLayout = makeWindowLayout('pane-seeded', 'workspace-seeded')
+    const windowBLayout = makeWindowLayout('pane-window-b', 'workspace-b')
+    initialLayoutRef.current = initialLayout
+    writeStoredWindowLayout('window-b', windowBLayout)
 
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo(
-    'scopes terminal assignment and workspace reorder writes to the current window'
-  )
+    renderHook(() => usePanelLayout())
+
+    await waitFor(() => {
+      expect(readStoredWindowLayout('window-a')).toEqual(initialLayout)
+    })
+    expect(readStoredWindowLayout('window-b')).toEqual(windowBLayout)
+  })
 
   it('skips terminal assignment when the workspace is already open in another window', async () => {
-    persistedRowsRef.current = [
-      {
-        activePaneId: 'pane-a-left',
-        layoutTree: WINDOW_A_LAYOUT,
-        windowId: 'window-a',
-      },
-      {
-        activePaneId: 'pane-b-only',
-        layoutTree: WINDOW_B_LAYOUT,
-        windowId: 'window-b',
-      },
-    ]
+    const windowALayout = makeWindowLayout('pane-a', 'workspace-a')
+    writeStoredWindowLayout('window-a', windowALayout)
+    writeStoredWindowLayout(
+      'window-b',
+      makeWindowLayout('pane-b', 'workspace-c')
+    )
 
     // Simulate the desktop main process reporting that workspace-c
     // is already open in another window (window-b)
@@ -365,26 +306,8 @@ describe('usePanelLayout', () => {
     expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledWith(
       'workspace-c'
     )
-    expect(windowLayoutUpdatedMock).not.toHaveBeenCalled()
-    // Window A's layout should be unchanged
-    const windowARow = getPersistedRow('window-a')
-    expect(windowARow?.layoutTree).toEqual(WINDOW_A_LAYOUT)
+    expect(readStoredWindowLayout('window-a')).toEqual(windowALayout)
   })
-
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo(
-    'proceeds with terminal assignment when the workspace is not open elsewhere'
-  )
-
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo(
-    'optimistically updates the terminal list when reconciling stale terminals on startup'
-  )
-
-  // TODO: Rewrite for single windowLayoutUpdated event (Issue 2)
-  it.todo(
-    'reconciles the persisted layout tree with new terminal IDs after respawning'
-  )
 
   it('creates a panel tab when assigning a terminal to a workspace with no panel tabs', async () => {
     // Layout: workspace-new has a tile leaf but zero panel tabs.

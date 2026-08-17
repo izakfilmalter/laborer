@@ -312,6 +312,16 @@ describe('shared collection bundle synchronization', () => {
     })
     await expect(grouped.published).resolves.toBeUndefined()
 
+    const ambiguous = bundle.registerOperationReceipt('ambiguous', ['tasks'])
+    source.emit({
+      tasks: {
+        cursor: 1,
+        rows: [],
+        type: 'snapshot',
+      },
+    })
+    await expect(ambiguous.published).resolves.toBeUndefined()
+
     release()
     await tick()
   })

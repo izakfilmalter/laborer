@@ -81,6 +81,14 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
+vi.mock('@/db/shared-mutations', () => ({
+  confirmWorkspaceCreation: ({
+    send,
+  }: {
+    readonly send: () => Promise<unknown>
+  }) => send(),
+}))
+
 vi.mock('@/lib/toast', () => ({
   toast: {
     error: getCreateWorkspaceFormTestMocks().toastErrorFn,

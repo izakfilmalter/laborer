@@ -18,13 +18,11 @@ import { useAtomSet } from '@effect/atom-react/Hooks'
 import { useLiveQuery } from '@tanstack/react-db'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
-  clearProjectRankOverlaysAtom,
-  installProjectRankOverlaysAtom,
   type ProjectRankAssignment,
-  type ProjectRankOverlays,
   planProjectMove,
   planProjectNudge,
 } from '@/atoms/project-order'
+import { reorderProjects as reorderProjectsOptimistically } from '@/db/shared-mutations'
 import { orderedProjectsFromRows, projectCollection } from '@/db/shared-state'
 import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
@@ -51,8 +49,6 @@ export function useProjectReorder(): ProjectReorder {
   const reorderProjects = useAtomSet(reorderProjectsMutation, {
     mode: 'promise',
   })
-  const installOverlays = useAtomSet(installProjectRankOverlaysAtom)
-  const clearOverlays = useAtomSet(clearProjectRankOverlaysAtom)
 
   const projectIds = projects.map(({ id }) => id)
 
@@ -60,32 +56,11 @@ export function useProjectReorder(): ProjectReorder {
     if (plan.length === 0) {
       return
     }
-    const revisions = new Map(
-      projects.map(({ id, revision }) => [id, revision])
-    )
-    const writes = plan.flatMap((assignment) => {
-      const expectedRevision = revisions.get(assignment.projectId)
-      return expectedRevision === undefined
-        ? []
-        : [{ ...assignment, expectedRevision }]
-    })
-    if (writes.length === 0) {
-      return
-    }
-
-    const dragId = crypto.randomUUID()
-    const overlays: ProjectRankOverlays = new Map(
-      writes.map(({ expectedRevision, projectId, sortOrder }) => [
-        projectId,
-        { dragId, expectedRevision, sortOrder },
-      ])
-    )
-    installOverlays(overlays)
-
-    reorderProjects({
-      payload: { assignments: writes, operationId: crypto.randomUUID() },
+    reorderProjectsOptimistically({
+      assignments: plan,
+      operationId: crypto.randomUUID(),
+      send: (payload) => reorderProjects({ payload }),
     }).catch((error: unknown) => {
-      clearOverlays(dragId)
       toast.error('Could not save the project order', {
         description: extractErrorMessage(error),
       })

@@ -16,9 +16,9 @@ const LABELS: readonly TaskLabelOption[] = [
   { color: 'emerald', id: 'label-worship', name: 'Worship' },
 ]
 
-vi.mock('@/atoms/legacy-shared-state-writes', () => ({
-  clearTaskLabelOverlayAtom: 'clear-overlay',
-  installTaskLabelOverlayAtom: 'install-overlay',
+vi.mock('@/db/shared-mutations', () => ({
+  createLabel: vi.fn(),
+  setTaskLabels: vi.fn(),
 }))
 
 vi.mock('@effect/atom-react/Hooks', () => ({

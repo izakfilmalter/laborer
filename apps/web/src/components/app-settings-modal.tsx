@@ -33,6 +33,7 @@ import { useAppSettings } from '@/components/app-settings-context'
 import { KeyboardShortcutsSection } from '@/components/keyboard-shortcuts-section'
 import { LabelSettingsSection } from '@/components/labels/label-settings-section'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { setSetting as setSettingOptimistically } from '@/db/shared-mutations'
 import { settingCollection } from '@/db/shared-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { extractErrorMessage } from '@/lib/errors'
@@ -153,13 +154,11 @@ export function AppSettingsModal() {
 
         const result = await exchangeCode({ payload: { code } })
 
-        await setAppSetting({
-          payload: {
-            expectedRevision: githubToken?.revision ?? 0,
-            key: 'github_desktop_token',
-            operationId: crypto.randomUUID(),
-            value: result.accessToken,
-          },
+        await setSettingOptimistically({
+          key: 'github_desktop_token',
+          operationId: crypto.randomUUID(),
+          send: (payload) => setAppSetting({ payload }),
+          value: result.accessToken,
         })
 
         setCallbackUrl('')
@@ -171,7 +170,7 @@ export function AppSettingsModal() {
         setIsExchanging(false)
       }
     },
-    [exchangeCode, githubToken?.revision, setAppSetting]
+    [exchangeCode, setAppSetting]
   )
 
   // Listen for the protocol handler callback (Electron only)
@@ -226,13 +225,11 @@ export function AppSettingsModal() {
     }
     setError(null)
     try {
-      await setAppSetting({
-        payload: {
-          expectedRevision: githubToken.revision,
-          key: githubToken.key,
-          operationId: crypto.randomUUID(),
-          value: '',
-        },
+      await setSettingOptimistically({
+        key: githubToken.key,
+        operationId: crypto.randomUUID(),
+        send: (payload) => setAppSetting({ payload }),
+        value: '',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to disconnect.')

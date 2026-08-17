@@ -28,6 +28,7 @@ import { ChevronLeft, Folder, FolderPlus } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { createProject as createProjectOptimistically } from '@/db/shared-mutations'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { extractErrorMessage } from '@/lib/errors'
 import { localApi } from '@/lib/local-api'
@@ -212,12 +213,11 @@ function AddProjectForm() {
   const submitProject = async (path: string) => {
     setIsAdding(true)
     try {
-      const result = await addProject({
-        payload: {
-          id: crypto.randomUUID(),
-          operationId: crypto.randomUUID(),
-          repoPath: path,
-        },
+      const result = await createProjectOptimistically({
+        id: crypto.randomUUID(),
+        operationId: crypto.randomUUID(),
+        repoPath: path,
+        send: (payload) => addProject({ payload }),
       })
       toast.success(`Project "${result.name}" added`)
     } catch (error: unknown) {

@@ -49,10 +49,6 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
-import {
-  clearWorkspaceDestroyOverlayAtom,
-  installWorkspaceDestroyOverlayAtom,
-} from '@/atoms/legacy-shared-state-writes'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
@@ -65,6 +61,7 @@ import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { TaskIdentifier } from '@/components/task-identifier'
 import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
+import { destroyWorkspace as destroyWorkspaceOptimistically } from '@/db/shared-mutations'
 import { taskCollection } from '@/db/shared-state'
 import type { PendingWorkspaceCreationChangeHandler } from '@/hooks/use-create-workspace'
 import {
@@ -540,8 +537,6 @@ function DestroyWorkspaceButton({
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
   })
-  const installDestroyOverlay = useAtomSet(installWorkspaceDestroyOverlayAtom)
-  const clearDestroyOverlay = useAtomSet(clearWorkspaceDestroyOverlayAtom)
   const panelActions = usePanelActions()
   const {
     activeTerminals,
@@ -578,9 +573,8 @@ function DestroyWorkspaceButton({
       resetDestroyChecks()
 
       // Optimistic: the card leaves the sidebar and its panes close now.
-      // The overlay settles when the authoritative row drops its worktree,
-      // and is restored if the server rejects the destroy.
-      installDestroyOverlay(workspaceId)
+      // TanStack settles when the authoritative row disappears, and rolls the
+      // deletion back if the server definitively rejects the destroy.
       // Use forceCloseWorkspace to bypass the running-process confirmation
       // gate — the user already confirmed destruction in this dialog which
       // warned about active terminals.
@@ -588,8 +582,11 @@ function DestroyWorkspaceButton({
 
       const toastId = toast.loading(`Destroying workspace "${branchName}"...`)
 
-      destroyWorkspace({
-        payload: { workspaceId, force, operationId: crypto.randomUUID() },
+      destroyWorkspaceOptimistically({
+        ...(force === undefined ? {} : { force }),
+        operationId: crypto.randomUUID(),
+        send: (payload) => destroyWorkspace({ payload }),
+        workspaceId,
       })
         .then(() => {
           toast.success(`Workspace "${branchName}" destroyed successfully`, {
@@ -597,16 +594,13 @@ function DestroyWorkspaceButton({
           })
         })
         .catch((error: unknown) => {
-          clearDestroyOverlay(workspaceId)
           const message = extractErrorMessage(error)
           toast.error(message, { id: toastId })
         })
     },
     [
       branchName,
-      clearDestroyOverlay,
       destroyWorkspace,
-      installDestroyOverlay,
       panelActions,
       resetDestroyChecks,
       workspaceId,

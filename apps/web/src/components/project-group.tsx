@@ -43,10 +43,6 @@ import type { KeyboardEvent } from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import {
-  clearProjectRemoveOverlayAtom,
-  installProjectRemoveOverlayAtom,
-} from '@/atoms/legacy-shared-state-writes'
-import {
   CreateWorkspaceButton,
   CreateWorkspaceComposer,
 } from '@/components/create-workspace-composer'
@@ -59,6 +55,7 @@ import {
 } from '@/components/project-reorder'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
 import { WorkspaceList } from '@/components/workspace-list'
+import { removeProject as removeProjectOptimistically } from '@/db/shared-mutations'
 import type {
   PendingWorkspaceCreation,
   PendingWorkspaceCreationChangeHandler,
@@ -119,8 +116,6 @@ function ProjectGroup({
   const removeProject = useAtomSet(removeProjectMutation, {
     mode: 'promise',
   })
-  const installRemoveOverlay = useAtomSet(installProjectRemoveOverlayAtom)
-  const clearRemoveOverlay = useAtomSet(clearProjectRemoveOverlayAtom)
 
   const handlePendingCreationChange: PendingWorkspaceCreationChangeHandler =
     useCallback(
@@ -170,18 +165,18 @@ function ProjectGroup({
 
   const handleRemove = () => {
     // Optimistic: the group leaves the sidebar as soon as removal is
-    // confirmed. The overlay settles when the authoritative project row is
-    // deleted, and is restored if the server rejects the removal.
+    // confirmed. TanStack retains the deletion through RPC success and rolls
+    // it back if the server definitively rejects the removal.
     setDialogOpen(false)
-    installRemoveOverlay(project.id)
-    removeProject({
-      payload: { operationId: crypto.randomUUID(), projectId: project.id },
+    removeProjectOptimistically({
+      operationId: crypto.randomUUID(),
+      projectId: project.id,
+      send: (payload) => removeProject({ payload }),
     })
       .then(() => {
         toast.success(`Project "${project.name}" removed`)
       })
       .catch((error: unknown) => {
-        clearRemoveOverlay(project.id)
         toast.error(extractErrorMessage(error))
       })
   }

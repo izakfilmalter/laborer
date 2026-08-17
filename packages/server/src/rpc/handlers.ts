@@ -1081,14 +1081,14 @@ export const handleTaskUpdate = (
     const resolvedTask = yield* resolveTaskReferenceAtPath(taskId, databasePath)
     return yield* Effect.acquireUseRelease(
       Effect.try({
-        try: () => NodeTaskBoardDatabase.open(databasePath),
+        try: () => NativeLaborerDatabase.open(databasePath),
         catch: () =>
           new RpcError({
             code: 'TASK_UPDATE_FAILED',
             message: 'Unable to open the task database',
           }),
       }),
-      (_database) =>
+      (database) =>
         Effect.try({
           try: () => {
             const trimmedTitle = title.trim()
@@ -1102,17 +1102,12 @@ export const handleTaskUpdate = (
                 'Task descriptions must be 100000 characters or fewer'
               )
             }
-            const native = NativeLaborerDatabase.open(databasePath)
-            try {
-              return native.updateTask(
-                resolvedTask.id,
-                expectedRevision,
-                { description, title: trimmedTitle },
-                operationId
-              ).row
-            } finally {
-              native.close()
-            }
+            return database.updateTask(
+              resolvedTask.id,
+              expectedRevision,
+              { description, title: trimmedTitle },
+              operationId
+            ).row
           },
           catch: (cause) =>
             new RpcError({

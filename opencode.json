@@ -50,6 +50,10 @@
     "xterm": {
       "repository": "xtermjs/xterm.js",
       "description": "Use for xterm.js terminal APIs, browser terminal implementation patterns, addons, tests, and examples"
+    },
+    "tanstack-db": {
+      "repository": "TanStack/db",
+      "description": "Use for TanStack DB APIs, architecture, implementation patterns, tests, and examples"
     }
   }
 }

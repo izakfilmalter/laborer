@@ -4,7 +4,7 @@
  *
  * The open/close state is lifted here so that Header can trigger
  * "open settings" while the actual AppSettingsModal renders inside
- * shared-state bridge where it has server data access.
+ * shared-collection coordinator where it has server data access.
  */
 
 import { createContext, useCallback, useContext, useState } from 'react'

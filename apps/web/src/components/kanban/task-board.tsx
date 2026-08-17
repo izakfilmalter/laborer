@@ -1098,10 +1098,14 @@ function TaskBoard({
   // Commits lane drags; the sidebar owns its own monitor.
   useProjectReorderMonitor('board')
   const [searchQuery, setSearchQuery] = useState('')
+  const sharedBoardTasks = useMemo(
+    () => boardTasksFromSharedRows(sharedTaskRows),
+    [sharedTaskRows]
+  )
   const [boardTasks, setBoardTasks] = useState<readonly BoardTask[]>([])
   // Editing a card is the same act here as in the sidebar, so the board only
   // says which card to open and where the dialog goes.
-  const { openTaskEditor, taskEditor } = useTaskEditor(boardTasks)
+  const { openTaskEditor, taskEditor } = useTaskEditor(sharedBoardTasks)
   const [attachingTaskId, setAttachingTaskId] = useState<string | null>(null)
   const attachingTaskIdRef = useRef<string | null>(null)
   const [attachedTerminal, setAttachedTerminal] = useState<{
@@ -1116,8 +1120,8 @@ function TaskBoard({
   })
   const moveTask = useAtomSet(moveTaskMutation, { mode: 'promise' })
   useEffect(() => {
-    setBoardTasks(boardTasksFromSharedRows(sharedTaskRows))
-  }, [sharedTaskRows])
+    setBoardTasks(sharedBoardTasks)
+  }, [sharedBoardTasks])
 
   // Slack cards created directly in In Progress are planned and provisioned
   // by a detached server fiber, so their create response carries no workspace
@@ -1284,7 +1288,7 @@ function TaskBoard({
   const activateTask = (task: BoardTask) => {
     const workspace = workspaceForTask(task, workspaceList)
     if (workspace === undefined) {
-      openTaskEditor(task.id)
+      openTaskEditor(task)
       return
     }
     panelActions?.focusWorkspace(workspace.id)
@@ -1368,7 +1372,7 @@ function TaskBoard({
                     onAttach={handleAttach}
                     onCancelTask={cancelTask}
                     onMoveTask={persistMove}
-                    onOpenTask={(task) => openTaskEditor(task.id)}
+                    onOpenTask={openTaskEditor}
                     onSlackCardQueued={queueSlackAgentOpen}
                     projectId={project.id}
                     projectRootPath={project.rootPath}

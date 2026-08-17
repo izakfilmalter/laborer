@@ -67,7 +67,7 @@ coverage
 # Effect reference
 .reference/
 
-# LiveStore data (SQLite persistence)
+# Local application data
 data/
 
 # Worktree

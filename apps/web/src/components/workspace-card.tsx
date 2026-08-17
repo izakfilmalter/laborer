@@ -510,7 +510,7 @@ function EditTaskCardButton({
           render={
             <Button
               aria-label={`Edit card for ${branchName}`}
-              onClick={() => openTaskEditor(task.id)}
+              onClick={() => openTaskEditor(task)}
               size="icon-xs"
               variant="ghost"
             />

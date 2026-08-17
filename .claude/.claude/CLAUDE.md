@@ -124,7 +124,6 @@ Most formatting and common issues are automatically fixed by Biome. Run `bun run
 The `.reference/` directory contains shallow clones of key dependency repositories. Search these for real implementations, type definitions, API usage examples, and patterns when documentation isn't enough.
 
 - `.reference/effect/` — [Effect](https://github.com/Effect-TS/effect) monorepo (core, platform, cli, schema, sql, etc.)
-- `.reference/livestore/` — [LiveStore](https://github.com/livestorejs/livestore) local-first reactive data store
 - `.reference/opencode/` — [OpenCode](https://github.com/anomalyco/opencode) AI coding agent CLI
 - `.reference/vscode/` — [VS Code](https://github.com/microsoft/vscode) editor (extension API, UI patterns, terminal integration)
 - `.reference/xterm/` — [xterm.js](https://github.com/xtermjs/xterm.js) terminal emulator for the browser
@@ -146,12 +145,3 @@ Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-
 
 The guides and project reference can lag or lead the installed Effect 4 beta APIs. Never guess or copy an example blindly: the target implementation's manifest, installed types, and repository usage are authoritative. `apps/desktop/` and `apps/bot/` pin shared Effect packages in lockstep; do not introduce Effect 3 patterns or independently change shared versions in `apps/desktop/`.
 <!-- effect-solutions:end -->
-
-## LiveStore
-
-When working with LiveStore, search `.reference/livestore/` for schema definitions, store setup patterns, and React integration examples. Key areas to explore:
-
-- `packages/@livestore/livestore/` — core library (schema, store, events)
-- `packages/@livestore/react/` — React bindings and hooks
-- `packages/@livestore/wa-sqlite/` — SQLite adapter for web
-- Look at the examples in the repo for full integration patterns

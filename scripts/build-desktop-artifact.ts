@@ -226,12 +226,12 @@ function validateNoRemovedPersistencePayloads(
 ): void {
   const matches = findRemovedPersistencePayloads(root)
   if (matches.length === 0) {
-    log(`Validated ${label}: no LiveStore/sql.js/wa-sqlite payloads`)
+    log(`Validated ${label}: no removed renderer-persistence payloads`)
     return
   }
 
   throw new Error(
-    `${label} contains removed persistence payloads: ${matches.slice(0, 20).join(', ')}`
+    `${label} contains removed renderer-persistence payloads: ${matches.slice(0, 20).join(', ')}`
   )
 }
 
@@ -644,12 +644,12 @@ function validatePackagedAsar(stageAppDir: string): void {
   )
   if (removedPayloads.length > 0) {
     throw new Error(
-      `Packaged app.asar contains removed persistence payloads: ${removedPayloads.slice(0, 20).join(', ')}`
+      `Packaged app.asar contains removed renderer-persistence payloads: ${removedPayloads.slice(0, 20).join(', ')}`
     )
   }
 
   log(
-    `Validated runtime dependencies and removed payloads in ${relative(stageAppDir, appAsarPath)}`
+    `Validated runtime dependencies and removed renderer-persistence payloads in ${relative(stageAppDir, appAsarPath)}`
   )
 }
 

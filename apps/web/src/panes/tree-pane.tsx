@@ -326,11 +326,10 @@ function TreePaneContent({ workspaceId }: { readonly workspaceId: string }) {
 
   // Fetch git status on mount.
   useEffect(() => {
-    if (connectionGeneration === 0) {
-      return
-    }
     refreshGitStatus()
-    treeStore.refreshLoadedDirs()
+    if (connectionGeneration > 0) {
+      treeStore.refreshLoadedDirs()
+    }
   }, [connectionGeneration, refreshGitStatus, treeStore.refreshLoadedDirs])
 
   // Process watcher events for tree invalidation and status refresh.

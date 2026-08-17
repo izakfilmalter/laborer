@@ -502,14 +502,15 @@ interface TaskEditRecovery {
  * settles the transaction against correlated authoritative publication.
  */
 function useTaskEditor(tasks: readonly BoardTask[]): {
-  readonly openTaskEditor: (taskId: string) => void
+  readonly openTaskEditor: (task: BoardTask) => void
   readonly taskEditor: ReactNode
 } {
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const [openedTask, setOpenedTask] = useState<BoardTask | null>(null)
   const [recovery, setRecovery] = useState<TaskEditRecovery | null>(null)
   const updateTask = useAtomSet(updateTaskMutation, { mode: 'promise' })
 
-  const editingTask = tasks.find((task) => task.id === editingTaskId)
+  const editingTask =
+    tasks.find((task) => task.id === openedTask?.id) ?? openedTask ?? undefined
 
   const save = (
     taskId: string,
@@ -521,6 +522,7 @@ function useTaskEditor(tasks: readonly BoardTask[]): {
   ) => {
     updateTaskOptimistically({
       description: draft.description,
+      expectedRevision: draft.expectedRevision,
       operationId: crypto.randomUUID(),
       send: (payload) => updateTask({ payload }),
       taskId,
@@ -538,7 +540,8 @@ function useTaskEditor(tasks: readonly BoardTask[]): {
         title: draft.title,
         tone: conflict ? 'warning' : 'error',
       }))
-      setEditingTaskId(taskId)
+      const latestTask = tasks.find((task) => task.id === taskId)
+      setOpenedTask(latestTask ?? editingTask ?? null)
       toast.error(conflict ? 'Card changed elsewhere' : 'Could not save card', {
         description: message,
       })
@@ -548,7 +551,7 @@ function useTaskEditor(tasks: readonly BoardTask[]): {
   const recovering = editingTask && recovery?.taskId === editingTask.id
 
   return {
-    openTaskEditor: setEditingTaskId,
+    openTaskEditor: setOpenedTask,
     taskEditor: editingTask ? (
       <TaskDetailDialog
         initialBanner={
@@ -568,7 +571,7 @@ function useTaskEditor(tasks: readonly BoardTask[]): {
         }
         onOpenChange={(open) => {
           if (!open) {
-            setEditingTaskId(null)
+            setOpenedTask(null)
             setRecovery(null)
           }
         }}

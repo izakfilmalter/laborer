@@ -2,6 +2,8 @@
 
 Research for [#477](https://github.com/izakfilmalter/laborer/issues/477), based on the repository tree at `e63cbabc`. The inventory used both the physical directory entries (`find ... -maxdepth 1`) and tracked entries (`git ls-files`), so ignored generated/local entries are included and explicitly marked.
 
+> **Historical snapshot:** This inventory describes the pre-merge trees at the commit above. The merge has been completed, and paths, scripts, dependencies, and persistence architecture named here must not be treated as current repository guidance.
+
 ## Classification
 
 - **Mechanical**: the decided root shape or ordinary relocation determines the result. Textual path edits still need validation.
@@ -107,7 +109,7 @@ These lists record **every directory entry observed**, including ignored local/b
 ## Script and task hazards to put directly in the merge spec
 
 1. **Worktree scripts are not a pure directory move.** `worktree-setup.sh` hardcodes `APP_DIR=$WORKTREE_ROOT/current`, a root-worktree slug path under `apps/desktop/scripts`, `.env.local` under the app dir, `bun install --cwd current`, and a `cd current` instruction. `.gtr-setup.sh` independently hardcodes current's Biome file, env copy path, and setup-hook path.
-2. **Desktop build scripts mostly become correct by promotion.** `build-desktop-artifact.ts` and `cleanup-livestore-files.ts` import `../apps`, `../packages`, and `../package.json`; after `scripts/` reaches root those resolve to the intended merged tree. Release helper scripts assume their process root owns `apps/*` and likewise fit root execution. Preserve the packaging script's relative `scripts/smoke-test-packaged-mcp.mjs` references.
+2. **Desktop build scripts mostly became correct by promotion.** At this snapshot, the artifact builder and the since-removed persistence cleanup script imported `../apps`, `../packages`, and `../package.json`; moving `scripts/` to root made those paths resolve to the intended merged tree. Release helper scripts assumed their process root owned `apps/*` and likewise fit root execution. The packaging script's relative `scripts/smoke-test-packaged-mcp.mjs` reference needed to remain intact.
 3. **Bot checks are not equivalent to current Turbo checks.** Bot `typecheck` covers normal and companion tsconfigs. Generic bot `test` intentionally excludes both OpenCode permission-policy and ACP compatibility tests; `test:acp-compatibility` runs them serially. `check:secrets` and `verify:runtimes` are separate. The merged root check contract must name which are required rather than silently treating `turbo test` as full coverage.
 4. **Long-running tasks need explicit semantics.** Current Turbo marks `dev` and `dev:electron` persistent; bot adds `dev:slack` and `companion:dev`, while `start:slack` is an operator command. If added to Turbo, mark development daemons persistent/cache false; production start commands should generally remain direct filtered scripts.
 5. **Runtime roots can shift with cwd/source relocation.** Bot production defaults `LABORER_ROOT` to `process.cwd()`, while the ACP canary derives a root from `import.meta.url`. The flatten must test that both read root `laborer.json` and clean the intended retired root state.

@@ -116,6 +116,11 @@ test.describe('task board and kanban journeys', () => {
         throw new Error('Created task did not expose its durable identity')
       }
 
+      await page.reload()
+      await expect(page.getByTestId('mission-control')).toBeVisible({
+        timeout: 30_000,
+      })
+      await openBoard(page)
       await created
         .getByRole('button', { name: `Edit ${initialTitle}` })
         .click()
@@ -202,7 +207,9 @@ test.describe('task board and kanban journeys', () => {
       const todo = columnFor(laneFor(board, journey.projectId), 'todo')
       const card = cardFor(todo, taskId)
       await expect(card).toBeVisible({ timeout: 30_000 })
-      await card.getByRole('button', { name: `Edit ${originalTitle}` }).click()
+      await card
+        .getByRole('button', { name: `Card details for ${originalTitle}` })
+        .click()
 
       const detail = page.getByTestId('task-detail-dialog')
       const draftDescription = 'Keep this losing draft intact.'

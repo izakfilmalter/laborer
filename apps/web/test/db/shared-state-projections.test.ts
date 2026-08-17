@@ -86,6 +86,22 @@ describe('shared-record projections', () => {
     expect(orderedProjectsFromRows(rows)[0]).not.toHaveProperty('repoPath')
   })
 
+  it('orders Projects by the same coalesced rank and id as persistence', () => {
+    const unranked = {
+      ...project('/unranked', 'unranked'),
+      createdAt: 10,
+    }
+    const ranked = project('/ranked', 'ranked', 20)
+    const tiedA = project('/tied-a', 'a', 30)
+    const tiedB = project('/tied-b', 'b', 30)
+
+    expect(
+      orderedProjectsFromRows([tiedB, ranked, tiedA, unranked]).map(
+        ({ id }) => id
+      )
+    ).toEqual(['unranked', 'ranked', 'a', 'b'])
+  })
+
   it('resolves the closest registered Project root after re-registration', () => {
     const outer = project('/repo', 'outer')
     const nested = project('/repo/packages/app', 'new-project-id')

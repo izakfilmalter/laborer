@@ -388,16 +388,9 @@ export const orderedProjectsFromRows = (
   projects: readonly SharedProjectRow[]
 ): readonly SharedProjectRow[] =>
   [...projects].sort((left, right) => {
-    if (left.sortOrder !== null && right.sortOrder !== null) {
-      return left.sortOrder - right.sortOrder
-    }
-    if (left.sortOrder !== null) {
-      return -1
-    }
-    if (right.sortOrder !== null) {
-      return 1
-    }
-    return left.createdAt - right.createdAt
+    const leftRank = left.sortOrder ?? left.createdAt
+    const rightRank = right.sortOrder ?? right.createdAt
+    return leftRank - rightRank || left.id.localeCompare(right.id)
   })
 
 /** Labels are app-wide and presented alphabetically wherever they are listed. */

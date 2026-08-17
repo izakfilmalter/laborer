@@ -9,7 +9,7 @@ export const git = (args: readonly string[], cwd: string): string =>
 export const initRepo = (prefix: string, tempRoots: string[]): string => {
   const repoPath = join(
     tmpdir(),
-    `laborer-e2e-${prefix}-${Date.now()}-${crypto.randomUUID()}`
+    `e${crypto.randomUUID().slice(0, 8)}-laborer-e2e-${prefix}-${Date.now()}`
   )
   mkdirSync(repoPath, { recursive: true })
   const canonicalRepoPath = realpathSync(repoPath)

@@ -2,10 +2,12 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DEV_INITIAL_PROJECT_PATH_ENV } from '../packages/server/src/dev-environment'
 import {
   BASE_DAEMON_PORT,
   BASE_WEB_PORT,
   devChildDefinitions,
+  devInitialProjectEnvironment,
   findAvailableDevPorts,
   isCleanDesktopQuit,
   linkedWorktreeStateHome,
@@ -17,6 +19,15 @@ import {
 } from './dev-runner'
 
 describe('dev runner', () => {
+  it('defines a dedicated environment variable for the initial dev project', () => {
+    expect(DEV_INITIAL_PROJECT_PATH_ENV).toBe(
+      'LABORER_DEV_INITIAL_PROJECT_PATH'
+    )
+    expect(devInitialProjectEnvironment('/repo')).toEqual({
+      LABORER_DEV_INITIAL_PROJECT_PATH: '/repo',
+    })
+  })
+
   it('uses a stable bounded hash allocation seed per worktree', () => {
     const first = worktreePortOffset('/tmp/one')
     expect(first).toBe(worktreePortOffset('/tmp/one'))

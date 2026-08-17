@@ -20,6 +20,7 @@ import {
   makeRefDelegatingService,
   serviceInitializingError,
 } from './services/deferred-service.js'
+import { registerInitialDevProject } from './services/dev-project-bootstrap.js'
 import { FileService } from './services/file-service.js'
 import type { FileWatcherClient } from './services/file-watcher-client.js'
 import {
@@ -82,6 +83,7 @@ const makeDeferredServicesProxyLayer = <
   FileWatcherInput,
   TerminalInput,
 >(options: {
+  readonly initialProjectPath?: string | undefined
   readonly fileWatcherClientLayer: Layer.Layer<
     FileWatcherClient,
     never,
@@ -161,6 +163,14 @@ const makeDeferredServicesProxyLayer = <
             workspaceSyncService.ref,
             Context.get(stackCtx, WorkspaceSyncService)
           )
+          if (options.initialProjectPath !== undefined) {
+            yield* registerInitialDevProject(options.initialProjectPath).pipe(
+              Effect.provideService(
+                ProjectRegistry,
+                Context.get(stackCtx, ProjectRegistry)
+              )
+            )
+          }
         }).pipe(Effect.forkScoped)
 
         const terminalFiber = yield* Effect.gen(function* () {
@@ -223,6 +233,7 @@ const provideInfrastructureCore = <ROut, RIn>(
   )
 
 export const makeInfrastructureLayer = (options: {
+  readonly initialProjectPath?: string | undefined
   readonly fileWatcherClientLayer: Layer.Layer<
     FileWatcherClient,
     never,
@@ -233,10 +244,4 @@ export const makeInfrastructureLayer = (options: {
     never,
     TerminalManager | WorkspaceProvider
   >
-}) =>
-  provideInfrastructureCore(
-    makeDeferredServicesProxyLayer({
-      fileWatcherClientLayer: options.fileWatcherClientLayer,
-      terminalClientLayer: options.terminalClientLayer,
-    })
-  )
+}) => provideInfrastructureCore(makeDeferredServicesProxyLayer(options))

@@ -12,6 +12,7 @@ import {
 } from '@laborer/ensure'
 import { config as loadDotEnv } from 'dotenv'
 
+import { DEV_INITIAL_PROJECT_PATH_ENV } from '../packages/server/src/dev-environment'
 import { DEV_TERMINAL_XDG_STATE_HOME } from '../packages/server/src/services/terminal-spawn-environment'
 
 export const BASE_DAEMON_PORT = 2100
@@ -133,6 +134,12 @@ export const resolveDevStateHome = ({
   (explicitStateHome?.trim() || undefined) ??
   worktreeStateHome ??
   (ambientStateHome?.trim() || undefined)
+
+export const devInitialProjectEnvironment = (
+  root: string
+): NodeJS.ProcessEnv => ({
+  [DEV_INITIAL_PROJECT_PATH_ENV]: root,
+})
 
 interface DevRunnerArguments {
   readonly desktop: boolean
@@ -416,6 +423,7 @@ export const runDev = async (arguments_: readonly string[]) => {
 
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
+    ...devInitialProjectEnvironment(root),
     [DEV_TERMINAL_XDG_STATE_HOME]:
       process.env.XDG_STATE_HOME?.trim() || join(homedir(), '.local', 'state'),
     LABORER_DAEMON_PORT: String(ports.daemonPort),

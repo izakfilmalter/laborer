@@ -131,7 +131,11 @@ describe('create workspace composer', () => {
 
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalledWith({
-        payload: { branchName: 'my-feature', projectId: 'project-1' },
+        payload: {
+          branchName: 'my-feature',
+          operationId: expect.any(String),
+          projectId: 'project-1',
+        },
       })
     })
     // The composer clears itself but stays put, like the board's card composer.
@@ -154,7 +158,10 @@ describe('create workspace composer', () => {
 
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalledWith({
-        payload: { projectId: 'project-1' },
+        payload: {
+          operationId: expect.any(String),
+          projectId: 'project-1',
+        },
       })
     })
   })
@@ -187,6 +194,7 @@ describe('create workspace composer', () => {
       expect(createWorkspace).toHaveBeenCalledWith({
         payload: {
           branchName: 'slack/fix-auth-timeout',
+          operationId: expect.any(String),
           projectId: 'project-1',
         },
       })

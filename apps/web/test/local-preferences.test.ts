@@ -67,6 +67,34 @@ describe('local preference persistence boundary', () => {
     })
   })
 
+  it('attaches persisted-row validation to every preference collection', () => {
+    const persisted = (data: unknown) =>
+      JSON.stringify({
+        's:current': { data, versionKey: 'invalid' },
+      })
+
+    expect(
+      sidebarWidthCollection.config.parser?.parse(
+        persisted({ id: 'current', widthPx: 'wide' })
+      )
+    ).toEqual({})
+    expect(
+      boardOverlayHeightCollection.config.parser?.parse(
+        persisted({ fraction: 'tall', id: 'current' })
+      )
+    ).toEqual({})
+    expect(
+      projectExpansionCollection.config.parser?.parse(
+        persisted({ expanded: 'collapsed', id: 'project-1' })
+      )
+    ).toEqual({})
+    expect(
+      workspaceGroupExpansionCollection.config.parser?.parse(
+        persisted({ expanded: 'collapsed', id: 'workspace-1' })
+      )
+    ).toEqual({})
+  })
+
   it('leaves malformed envelopes for the adapter to reject as empty', () => {
     const parser = makeValidatedLocalStorageParser(preferenceSchema)
 

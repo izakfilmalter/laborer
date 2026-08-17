@@ -105,6 +105,7 @@ export const sidebarWidthCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.sidebarWidth,
     getKey: (row: SidebarWidthPreference) => row.id,
+    parser: makeValidatedLocalStorageParser(sidebarWidthSchema),
     schema: sidebarWidthSchema,
   })
 )
@@ -112,6 +113,7 @@ export const boardOverlayHeightCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.boardOverlayHeight,
     getKey: (row: BoardOverlayHeightPreference) => row.id,
+    parser: makeValidatedLocalStorageParser(boardOverlayHeightSchema),
     schema: boardOverlayHeightSchema,
   })
 )
@@ -119,6 +121,7 @@ export const projectExpansionCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.projectExpansion,
     getKey: (row: ExpansionPreference) => row.id,
+    parser: makeValidatedLocalStorageParser(expansionSchema),
     schema: expansionSchema,
   })
 )
@@ -126,6 +129,7 @@ export const workspaceGroupExpansionCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.workspaceGroupExpansion,
     getKey: (row: ExpansionPreference) => row.id,
+    parser: makeValidatedLocalStorageParser(expansionSchema),
     schema: expansionSchema,
   })
 )

@@ -131,8 +131,9 @@ describe('LaborerRpcs workspace management', () => {
           operationId: crypto.randomUUID(),
           repoPath,
         })
+        const createOperationId = crypto.randomUUID()
         const workspace = yield* client['workspace.create']({
-          operationId: crypto.randomUUID(),
+          operationId: createOperationId,
           branchName,
           projectId: project.id,
         })
@@ -224,6 +225,15 @@ describe('LaborerRpcs workspace management', () => {
         assert.strictEqual(workspaceRow?.worktreeStatus, 'ready')
         assert.isNumber(workspaceRow?.setupCompletedAt)
         assert.strictEqual(workspaceRow?.worktreePath, workspace.worktreePath)
+        assert.deepStrictEqual(
+          database
+            .taskChangesAfter(0)
+            .filter(({ taskId }) => taskId === workspace.id)
+            .flatMap(({ operationId }) =>
+              operationId === null ? [] : [operationId]
+            ),
+          [createOperationId, createOperationId, createOperationId]
+        )
       })
     )
   )
@@ -648,8 +658,9 @@ describe('LaborerRpcs workspace management', () => {
             projectId: project.id,
           })
 
+          const destroyOperationId = crypto.randomUUID()
           yield* client['workspace.destroy']({
-            operationId: crypto.randomUUID(),
+            operationId: destroyOperationId,
             workspaceId: workspace.id,
           })
 
@@ -668,6 +679,10 @@ describe('LaborerRpcs workspace management', () => {
             worktreePath: null,
             worktreeStatus: null,
           })
+          assert.strictEqual(
+            database.taskChangesAfter(0).at(-1)?.operationId,
+            destroyOperationId
+          )
         })
       )
   )

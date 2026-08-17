@@ -1234,11 +1234,16 @@ class WorkspaceProvider extends Context.Service<
               baseRef,
             })
 
-            yield* updateServerTaskFacts(laborerDatabase, taskId, {
-              baseSha,
-              worktreeError: null,
-              worktreeStatus: 'ready',
-            })
+            yield* updateServerTaskFacts(
+              laborerDatabase,
+              taskId,
+              {
+                baseSha,
+                worktreeError: null,
+                worktreeStatus: 'ready',
+              },
+              operationId
+            )
 
             // Run the onReady callback (e.g. start diff/PR polling,
             // open agent panels) as soon as the worktree directory is ready.
@@ -1261,9 +1266,12 @@ class WorkspaceProvider extends Context.Service<
               setupScripts: resolvedConfig.setupScripts.value,
               worktreePath,
             })
-            yield* updateServerTaskFacts(laborerDatabase, taskId, {
-              setupCompletedAt: Date.now(),
-            })
+            yield* updateServerTaskFacts(
+              laborerDatabase,
+              taskId,
+              { setupCompletedAt: Date.now() },
+              operationId
+            )
           })
 
           // 5. Fork the worktree setup into a background fiber.
@@ -1285,10 +1293,15 @@ class WorkspaceProvider extends Context.Service<
                 // For defects (thrown exceptions), use the pretty-printed cause.
                 const errorMessage = String(Cause.squash(cause))
 
-                yield* updateServerTaskFacts(laborerDatabase, taskId, {
-                  worktreeError: errorMessage,
-                  worktreeStatus: 'errored',
-                }).pipe(
+                yield* updateServerTaskFacts(
+                  laborerDatabase,
+                  taskId,
+                  {
+                    worktreeError: errorMessage,
+                    worktreeStatus: 'errored',
+                  },
+                  operationId
+                ).pipe(
                   Effect.catch((databaseError) =>
                     Effect.logError(
                       `Could not persist errored worktree state for task ${taskId}: ${databaseError.message}`
@@ -1670,10 +1683,16 @@ class WorkspaceProvider extends Context.Service<
                 operationId
               )
             } else if (workspaceTask !== null) {
-              yield* updateServerTaskFacts(laborerDatabase, workspaceTask.id, {
-                worktreeError: 'Worktree removal did not remove the directory',
-                worktreeStatus: 'errored',
-              })
+              yield* updateServerTaskFacts(
+                laborerDatabase,
+                workspaceTask.id,
+                {
+                  worktreeError:
+                    'Worktree removal did not remove the directory',
+                  worktreeStatus: 'errored',
+                },
+                operationId
+              )
             }
 
             yield* Effect.logInfo(

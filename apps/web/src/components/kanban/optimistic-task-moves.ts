@@ -52,7 +52,7 @@ export interface OptimisticTaskMoveDependencies {
 export class OptimisticTaskMoveQueue {
   readonly #cards = new Map<string, CardQueue>()
   readonly #observedOperationIds = new Set<string>()
-  readonly #observedMutationOrder: string[] = []
+  readonly #observedOperationOrder: string[] = []
   #dependencies: OptimisticTaskMoveDependencies
 
   constructor(dependencies: OptimisticTaskMoveDependencies) {
@@ -95,11 +95,11 @@ export class OptimisticTaskMoveQueue {
     for (const operationId of observed) {
       if (!this.#observedOperationIds.has(operationId)) {
         this.#observedOperationIds.add(operationId)
-        this.#observedMutationOrder.push(operationId)
+        this.#observedOperationOrder.push(operationId)
       }
     }
-    while (this.#observedMutationOrder.length > MAX_OBSERVED_OPERATION_IDS) {
-      const oldest = this.#observedMutationOrder.shift()
+    while (this.#observedOperationOrder.length > MAX_OBSERVED_OPERATION_IDS) {
+      const oldest = this.#observedOperationOrder.shift()
       if (oldest !== undefined) {
         this.#observedOperationIds.delete(oldest)
       }

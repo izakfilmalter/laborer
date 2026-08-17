@@ -299,9 +299,16 @@ describe('LaborerRpcs project management', () => {
           operationId: crypto.randomUUID(),
           repoPath: firstClone,
         })
+        const provisionalId = crypto.randomUUID()
+        const operationId = crypto.randomUUID()
         const second = yield* client['project.add']({
-          id: crypto.randomUUID(),
-          operationId: crypto.randomUUID(),
+          id: provisionalId,
+          operationId,
+          repoPath: secondClone,
+        })
+        const replay = yield* client['project.add']({
+          id: provisionalId,
+          operationId,
           repoPath: secondClone,
         })
         const rePointedConfig = yield* client['config.get']({
@@ -309,6 +316,7 @@ describe('LaborerRpcs project management', () => {
         })
 
         assert.strictEqual(second.id, first.id)
+        assert.strictEqual(replay.id, first.id)
         assert.strictEqual(rePointedConfig.shortName.value, 'SECOND')
         assert.deepStrictEqual(rePointedConfig.shortNameAliases.value, [
           'FIRST',

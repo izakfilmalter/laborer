@@ -64,13 +64,6 @@ A repository managed by mission control can provide `laborer.json`:
 
 Supported agent values are `opencode2`, `claude`, and `codex`. Existing `opencode` values migrate to `opencode2` when read.
 
-## Manual cleanup from older releases
+## Retired execution resources
 
-The application uses the shared `laborer.sqlite` database. Obsolete LiveStore files are never removed during startup, install, update, or build. Preview and explicitly delete only those enumerated files from the repository root:
-
-```sh
-bun run cleanup:livestore --dry-run
-bun run cleanup:livestore --delete
-```
-
-Removed Docker and Daytona execution resources are also left to their owning tools. Delete unneeded containers, images, cloud sandboxes, snapshots, and generated SSH entries directly; cloud resources may continue to incur charges.
+Removed Docker and Daytona execution resources remain owned by their respective tools. Delete unneeded containers, images, cloud sandboxes, snapshots, and generated SSH entries directly; cloud resources may continue to incur charges.

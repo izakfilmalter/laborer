@@ -4,6 +4,8 @@
 **Scope:** Primarily the legacy desktop app in `apps/desktop/`; brief comparison with the Slack-native `apps/bot/`.
 **Method:** Repository source/tests/docs, Git history, and GitHub issue/PR searches for `izakfilmalter/laborer`.
 
+> **Historical snapshot:** This document records the architecture observed on the research date. LiveStore and the two-value agent-attention model described below have since been removed; this is evidence for earlier design work, not current implementation guidance.
+
 ## Executive summary
 
 The legacy app does **not** have a durable Agent, agent session, or agent run model. It has three adjacent layers:
@@ -20,7 +22,7 @@ The strongest evidence that this area is fragile is its repair history: PR #60 a
 
 ---
 
-## 1. Current status model
+## 1. Status model at the research date
 
 ### 1.1 There is no legacy Agent/session/run record
 
@@ -279,7 +281,7 @@ Useful lesson for legacy evolution: `apps/bot/` separates **in progress**, **nee
 
 ---
 
-## Recommended next steps
+## Historical recommendations
 
 1. Define a richer shared agent activity union, at minimum separating `working`, `needs_input`, `completed`, `failed`, and `unknown/stale`, plus `source` and `changedAt`.
 2. Treat hook state as leased evidence: expire to `unknown` or ps-derived state after a bounded period; never kill the terminal (ADR 0003).
@@ -287,4 +289,4 @@ Useful lesson for legacy evolution: `apps/bot/` separates **in progress**, **nee
 4. Move native-notification transition/dedupe ownership to the Electron main process (or a single app-wide coordinator), with workspace/terminal keys and app-wide focus awareness.
 5. Add acknowledgment/unread semantics and click behavior that can actually open a nonvisible workspace.
 6. Add provider contract tests for Claude/OpenCode and either implement Codex/rlph lifecycle sources or explicitly label them heuristic-only.
-7. Preserve legacy LiveStore events and create new versioned events if durable agent/notification history is introduced.
+7. Preserve the then-existing legacy LiveStore events and create new versioned events if durable agent/notification history is introduced. This recommendation was superseded when that persistence architecture was removed.

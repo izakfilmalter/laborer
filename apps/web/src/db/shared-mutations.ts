@@ -289,6 +289,7 @@ export const moveTask = <Result>(input: MoveTaskInput<Result>) => {
 
 export interface UpdateTaskInput<Result> {
   readonly description: string | null
+  readonly expectedRevision?: number
   readonly operationId: string
   readonly send: Send<
     {
@@ -326,7 +327,7 @@ export const updateTask = <Result>(input: UpdateTaskInput<Result>) => {
       }
       return input.send({
         description: input.description,
-        expectedRevision: row.revision,
+        expectedRevision: input.expectedRevision ?? row.revision,
         operationId: input.operationId,
         taskId: input.taskId,
         title: input.title,

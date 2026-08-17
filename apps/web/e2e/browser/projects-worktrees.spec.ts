@@ -101,13 +101,10 @@ test.describe('projects and worktrees journeys', () => {
       )
       await picker.getByTestId('directory-picker-select').click()
 
-      const project = page
-        .getByTestId('project-group')
-        .filter({ has: page.getByText(repo.path, { exact: true }) })
+      const project = page.getByTestId('project-group').filter({
+        has: page.getByRole('button', { name: repo.name, exact: true }),
+      })
       await expect(project).toBeVisible({ timeout: 30_000 })
-      await expect(project.getByTestId('project-repo-path')).toHaveText(
-        repo.path
-      )
       const rootWorkspace = project.getByTestId(
         `workspace-card-${repo.branchName}`
       )
@@ -150,9 +147,9 @@ test.describe('projects and worktrees journeys', () => {
     let workspaceId: string | null = null
 
     try {
-      const group = page
-        .getByTestId('project-group')
-        .filter({ has: page.getByText(repo.path, { exact: true }) })
+      const group = page.getByTestId('project-group').filter({
+        has: page.getByRole('button', { name: repo.name, exact: true }),
+      })
       await expect(group).toBeVisible({ timeout: 30_000 })
       await group
         .getByRole('button', { name: `Create workspace in ${repo.name}` })
@@ -257,9 +254,9 @@ test.describe('projects and worktrees journeys', () => {
         'not a git repository'
       )
       await expect(
-        page
-          .getByTestId('project-group')
-          .filter({ has: page.getByText(path, { exact: true }) })
+        page.getByTestId('project-group').filter({
+          has: page.getByRole('button', { name, exact: true }),
+        })
       ).toHaveCount(0)
     } finally {
       await rm(path, { force: true, recursive: true })

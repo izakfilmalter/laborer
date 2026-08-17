@@ -14,7 +14,7 @@ import { ConnectionReconnectBanner } from '@/components/connection-reconnect-ban
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
 import { ServerGate } from '@/components/server-gate'
-import { SharedStateBridge } from '@/components/shared-state-bridge'
+import { SharedCollectionCoordinator } from '@/components/shared-collection-coordinator'
 import { ThemeProvider } from '@/components/theme-provider'
 import { useBeforeQuit } from '@/hooks/use-before-quit'
 import { useConfirmBeforeUnload } from '@/hooks/use-confirm-before-unload'
@@ -94,7 +94,7 @@ function RootComponent() {
             <TooltipProvider>
               <ServerGate>
                 <AtomRegistryProvider>
-                  <SharedStateBridge />
+                  <SharedCollectionCoordinator />
                   <ConnectionReconnectBanner />
                   <AppSettingsProvider>
                     <div className="h-svh">

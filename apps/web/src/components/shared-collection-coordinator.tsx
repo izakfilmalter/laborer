@@ -8,7 +8,7 @@ import {
 } from '@/db/shared-state'
 
 /** Owns the one app-wide shared database subscription. */
-export function SharedStateBridge(): null {
+export function SharedCollectionCoordinator(): null {
   const registry = useContext(RegistryContext)
   const eventsAtom = useMemo(makeSharedStateEventsAtom, [])
   const source = useMemo<SharedStateSource>(

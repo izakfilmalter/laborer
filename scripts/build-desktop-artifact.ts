@@ -226,7 +226,7 @@ function validateNoRemovedPersistencePayloads(
 ): void {
   const matches = findRemovedPersistencePayloads(root)
   if (matches.length === 0) {
-    log(`Validated ${label}: no LiveStore/sql.js/wa-sqlite payloads`)
+    log(`Validated ${label}: no retired renderer-persistence payloads`)
     return
   }
 

@@ -1,8 +1,9 @@
-import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
 import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { cn } from '@laborer/ui/lib/utils'
+import { useLiveQuery } from '@tanstack/react-db'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { createFileRoute } from '@tanstack/react-router'
 import type { PointerEvent } from 'react'
@@ -12,8 +13,6 @@ import { LaborerClient } from '@/atoms/laborer-client'
 import {
   clearWorkspaceDestroyOverlayAtom,
   installWorkspaceDestroyOverlayAtom,
-  projectViewsAtom,
-  workspaceViewsAtom,
 } from '@/atoms/shared-state'
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
@@ -21,6 +20,12 @@ import { ProjectGroup } from '@/components/project-group'
 import { useProjectReorderMonitor } from '@/components/project-reorder'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
+import {
+  projectCollection,
+  projectViewsFromRows,
+  taskCollection,
+  workspaceViewsFromRows,
+} from '@/db/shared-state'
 import { useActivateWorkspace } from '@/hooks/use-activate-workspace'
 import { useBoardOverlayHeight } from '@/hooks/use-board-overlay-height'
 import { useProjectCollapseState } from '@/hooks/use-project-collapse-state'
@@ -147,8 +152,20 @@ function HomeComponent() {
     (panelActions.windowLayout !== undefined &&
       panelActions.windowLayout.tabs.length === 0)
 
-  const projectList = useAtomValue(projectViewsAtom)
-  const workspaceList = useAtomValue(workspaceViewsAtom)
+  const { data: projectRows } = useLiveQuery((query) =>
+    query.from({ projects: projectCollection })
+  )
+  const { data: taskRows } = useLiveQuery((query) =>
+    query.from({ tasks: taskCollection })
+  )
+  const projectList = useMemo(
+    () => projectViewsFromRows(projectRows),
+    [projectRows]
+  )
+  const workspaceList = useMemo(
+    () => workspaceViewsFromRows(taskRows, projectRows),
+    [projectRows, taskRows]
+  )
   const hasProjects = projectList.length > 0
 
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
@@ -907,14 +924,14 @@ function HomeComponent() {
   // Responsive sizing — adapts sidebar and pane sizes to viewport width
   const responsiveSizes = useResponsiveLayout()
 
-  // Sidebar width persistence — restore from localStorage, debounced writes
+  // Sidebar width persistence — restore from the local preference collection, debounced writes
   const sidebarWidth = useSidebarWidth(
     responsiveSizes.sidebarMinPx,
     responsiveSizes.sidebarMaxPx,
     responsiveSizes.sidebarDefaultPx
   )
 
-  // Project collapse state — persisted to localStorage
+  // Project collapse state — persisted to the local preference collection
   const collapseState = useProjectCollapseState()
 
   // Commits sidebar project drags; the board owns its own monitor.

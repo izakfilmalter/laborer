@@ -5,23 +5,38 @@ import {
   installSharedStateUpdateAtom,
   makeSharedStateEventsAtom,
 } from '@/atoms/shared-state'
+import {
+  preloadSharedStateCollections,
+  sharedStateCoordinator,
+} from '@/db/shared-state'
 
 /** Owns the one app-wide shared database subscription. */
 export function SharedStateBridge(): null {
   const eventsAtom = useMemo(makeSharedStateEventsAtom, [])
   const result = useAtomValue(eventsAtom)
   const pullNext = useAtomSet(eventsAtom)
-  const install = useAtomSet(installSharedStateUpdateAtom)
+  const installLegacyProjection = useAtomSet(installSharedStateUpdateAtom)
 
   useEffect(() => {
     if (Result.isSuccess(result) && !result.waiting) {
-      for (const update of result.value.items) {
-        install(update)
+      let active = true
+      preloadSharedStateCollections().then(() => {
+        if (!active) {
+          return
+        }
+        for (const update of result.value.items) {
+          sharedStateCoordinator.apply(update)
+          installLegacyProjection(update)
+        }
+        // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
+        pullNext(undefined as void)
+      })
+      return () => {
+        active = false
       }
-      // biome-ignore lint/suspicious/noConfusingVoidType: pull atom write type is void
-      pullNext(undefined as void)
     }
-  }, [install, pullNext, result])
+    return undefined
+  }, [installLegacyProjection, pullNext, result])
 
   return null
 }

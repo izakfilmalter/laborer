@@ -6,11 +6,13 @@
  */
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
+import { useLiveQuery } from '@tanstack/react-db'
 import type { ReactElement } from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { LaborerClient } from '@/atoms/laborer-client'
-import { labelRowsAtom, taskRowsAtom } from '@/atoms/shared-state'
+import { taskRowsAtom } from '@/atoms/shared-state'
+import { labelCollection } from '@/db/shared-state'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
 
 import { LabelSettings, type LabelSettingsRow } from './label-settings'
@@ -30,7 +32,14 @@ const writeFailureMessage = (error: unknown): string =>
     : extractErrorMessage(error)
 
 export function LabelSettingsSection(): ReactElement {
-  const stored = useAtomValue(labelRowsAtom)
+  const { data: labelRows } = useLiveQuery((query) =>
+    query.from({ labels: labelCollection })
+  )
+  const stored = useMemo(
+    () =>
+      [...labelRows].sort((left, right) => left.name.localeCompare(right.name)),
+    [labelRows]
+  )
   const tasks = useAtomValue(taskRowsAtom)
   const createLabel = useAtomSet(createLabelMutation, { mode: 'promise' })
   const updateLabel = useAtomSet(updateLabelMutation, { mode: 'promise' })

@@ -1,6 +1,7 @@
-import type { PanelNode } from '@laborer/shared/types'
+import type { PanelNode, WindowLayout } from '@laborer/shared/types'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { panelLayoutCollection } from '@/db/local-preferences'
 
 const {
   currentWindowIdRef,
@@ -156,19 +157,20 @@ interface PersistedLayoutEvent {
 const getPersistedRow = (windowId: string): PersistedLayoutRow | undefined =>
   persistedRowsRef.current.find((row) => row.windowId === windowId)
 
-const panelLayoutStorageKey = (windowId: string) =>
-  `laborer:panel-layout:v1:${windowId}`
-
-const readStoredWindowLayout = (windowId: string): unknown => {
-  const raw = window.localStorage.getItem(panelLayoutStorageKey(windowId))
-  return raw ? JSON.parse(raw).windowLayout : undefined
-}
+const readStoredWindowLayout = (windowId: string): unknown =>
+  panelLayoutCollection.get(windowId)?.layout
 
 const writeStoredWindowLayout = (windowId: string, windowLayout: unknown) => {
-  window.localStorage.setItem(
-    panelLayoutStorageKey(windowId),
-    JSON.stringify({ windowLayout })
-  )
+  if (panelLayoutCollection.has(windowId)) {
+    panelLayoutCollection.update(windowId, (draft) => {
+      draft.layout = structuredClone(windowLayout) as typeof draft.layout
+    })
+  } else {
+    panelLayoutCollection.insert({
+      id: windowId,
+      layout: windowLayout as WindowLayout,
+    })
+  }
 }
 
 const upsertPersistedRow = (
@@ -214,6 +216,11 @@ describe('usePanelLayout', () => {
   beforeEach(() => {
     currentWindowIdRef.current = 'window-a'
     window.localStorage.clear()
+    for (const windowId of ['window-a', 'window-b', 'default']) {
+      if (panelLayoutCollection.has(windowId)) {
+        panelLayoutCollection.delete(windowId)
+      }
+    }
     initialLayoutRef.current = undefined
     persistedRowsRef.current = []
     workspaceRowsRef.current = []

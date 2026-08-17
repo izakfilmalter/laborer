@@ -1,6 +1,9 @@
-import { useCallback, useState } from 'react'
-
-const STORAGE_KEY = 'laborer:board-overlay-height'
+import { useLiveQuery } from '@tanstack/react-db'
+import { useCallback } from 'react'
+import {
+  boardOverlayHeightCollection,
+  setSingletonPreference,
+} from '@/db/local-preferences'
 
 /** Minimum overlay height as a fraction of the main content area. */
 const MIN_FRACTION = 0.2
@@ -11,28 +14,6 @@ const DEFAULT_FRACTION = 0.7
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max))
-}
-
-function readStoredFraction(): number | undefined {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) {
-      return undefined
-    }
-
-    const parsed = Number.parseFloat(raw)
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function writeStoredFraction(fraction: number): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, String(fraction))
-  } catch {
-    // Ignore storage failures; resizing should keep working for the session.
-  }
 }
 
 interface BoardOverlayHeightState {
@@ -46,17 +27,21 @@ interface BoardOverlayHeightState {
  * Persisted height for the kanban board overlay, stored as a fraction of
  * the main content area so window resizes keep the same relative coverage.
  *
- * Mirrors the `useSidebarWidth` localStorage pattern.
+ * Mirrors the `useSidebarWidth` the local preference collection pattern.
  */
 function useBoardOverlayHeight(): BoardOverlayHeightState {
-  const [fraction, setFractionState] = useState(() =>
-    clamp(readStoredFraction() ?? DEFAULT_FRACTION, MIN_FRACTION, MAX_FRACTION)
+  const { data } = useLiveQuery((query) =>
+    query.from({ boardHeight: boardOverlayHeightCollection })
+  )
+  const fraction = clamp(
+    data[0]?.value ?? DEFAULT_FRACTION,
+    MIN_FRACTION,
+    MAX_FRACTION
   )
 
   const setFraction = useCallback((nextFraction: number) => {
     const clamped = clamp(nextFraction, MIN_FRACTION, MAX_FRACTION)
-    setFractionState(clamped)
-    writeStoredFraction(clamped)
+    setSingletonPreference(boardOverlayHeightCollection, clamped)
   }, [])
 
   return { fraction, setFraction }

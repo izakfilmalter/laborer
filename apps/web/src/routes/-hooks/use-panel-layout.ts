@@ -5,12 +5,16 @@ import type {
   PaneType,
   WindowLayout,
 } from '@laborer/shared/types'
+import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { workspaceViewsAtom } from '@/atoms/shared-state'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
-import { panelLayoutCollection } from '@/db/local-preferences'
+import {
+  panelLayoutCollection,
+  setPanelLayoutPreference,
+} from '@/db/local-preferences'
 import { useSpawnTerminal } from '@/hooks/use-spawn-terminal'
 import {
   removeTerminalListItem,
@@ -416,48 +420,6 @@ function assignTerminalInWorkspace(
  */
 const paneSpawnGuard = createSpawnGuard()
 
-interface StoredPanelLayout {
-  /** Untrusted persisted input; decode before treating it as a layout. */
-  readonly windowLayout: unknown | null
-}
-
-/** Decode an untrusted legacy localStorage envelope without blocking startup. */
-export const decodeStoredPanelLayout = (
-  raw: string | null
-): StoredPanelLayout => {
-  if (!raw) {
-    return { windowLayout: null }
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object' && 'windowLayout' in parsed) {
-      return { windowLayout: Reflect.get(parsed, 'windowLayout') ?? null }
-    }
-  } catch {
-    // A malformed persisted value is equivalent to no saved layout.
-  }
-
-  return { windowLayout: null }
-}
-
-export const readStoredPanelLayout = (windowId: string): StoredPanelLayout => {
-  return { windowLayout: panelLayoutCollection.get(windowId)?.layout ?? null }
-}
-
-const writeStoredPanelLayout = (
-  windowId: string,
-  windowLayout: WindowLayout
-) => {
-  if (panelLayoutCollection.has(windowId)) {
-    panelLayoutCollection.update(windowId, (draft) => {
-      draft.layout = structuredClone(windowLayout) as typeof draft.layout
-    })
-  } else {
-    panelLayoutCollection.insert({ id: windowId, layout: windowLayout })
-  }
-}
-
 /** Mutation atom for fetching the project config (used imperatively to resolve the agent provider). */
 const configGetMutation = LaborerClient.mutation('config.get')
 
@@ -484,34 +446,31 @@ export function usePanelLayout() {
   const registry = usePanelGroupRegistry()
   const nativeWindowId = getCurrentWindowId()
   const panelWindowId = nativeWindowId ?? DEFAULT_PANEL_WINDOW_ID
-  const { data: panelLayouts } = useLiveQuery((query) =>
-    query.from({ layouts: panelLayoutCollection })
+  const { data: panelLayouts } = useLiveQuery(
+    (query) =>
+      query
+        .from({ layout: panelLayoutCollection })
+        .where(({ layout }) => eq(layout.id, panelWindowId)),
+    [panelWindowId]
   )
-  const storedPanelLayout = useMemo<StoredPanelLayout>(
-    () => ({
-      windowLayout:
-        panelLayouts.find(({ id }) => id === panelWindowId)?.layout ?? null,
-    }),
-    [panelLayouts, panelWindowId]
-  )
+  const storedWindowLayout = panelLayouts[0]?.windowLayout ?? null
 
   const persistWindowLayout = useCallback(
     (_reason: string, windowLayout: WindowLayout) => {
-      writeStoredPanelLayout(panelWindowId, windowLayout)
+      setPanelLayoutPreference(panelWindowId, windowLayout)
     },
     [panelWindowId]
   )
 
   const getCurrentWindowLayout = useCallback((): WindowLayout | undefined => {
-    return decodeWindowLayout(readStoredPanelLayout(panelWindowId).windowLayout)
-      .windowLayout
-  }, [panelWindowId])
+    return decodeWindowLayout(storedWindowLayout).windowLayout
+  }, [storedWindowLayout])
 
   // Read and decode the hierarchical window layout from the local preference collection.
   // Uses Effect Schema decode with repair transforms. If the layout was
   // repaired, we'll re-persist it.
   const windowLayoutRepair = useMemo(() => {
-    const raw = storedPanelLayout.windowLayout
+    const raw = storedWindowLayout
     if (!raw) {
       return {
         windowLayout: undefined as WindowLayout | undefined,
@@ -519,7 +478,7 @@ export function usePanelLayout() {
       }
     }
     return decodeWindowLayout(raw)
-  }, [storedPanelLayout.windowLayout])
+  }, [storedWindowLayout])
 
   // The hierarchical WindowLayout is the single source of truth.
   const persistedWindowLayout = windowLayoutRepair.windowLayout
@@ -532,7 +491,7 @@ export function usePanelLayout() {
   const pendingAgentSpawnsRef = useRef<Map<string, PendingAgentSpawn>>(
     new Map()
   )
-  const hasPersistedLayout = storedPanelLayout.windowLayout !== null
+  const hasPersistedLayout = storedWindowLayout !== null
 
   // Derive the active pane ID exclusively from the hierarchical layout.
   // Walks: active window tab > active workspace tile > active panel tab >

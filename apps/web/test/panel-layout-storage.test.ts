@@ -3,6 +3,7 @@ import { waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   LOCAL_COLLECTIONS,
+  makeValidatedLocalStorageParser,
   panelLayoutCollection,
   panelLayoutSchema,
   setPanelLayoutPreference,
@@ -43,6 +44,31 @@ describe('panel layout collection', () => {
     expect(() =>
       panelLayoutSchema.parse({ id: WINDOW_ID, windowLayout: null })
     ).toThrow()
+  })
+
+  it('drops corrupt persisted rows before collection hydration', () => {
+    const parser = makeValidatedLocalStorageParser(panelLayoutSchema)
+    const validRow = { id: WINDOW_ID, windowLayout: FIRST_LAYOUT }
+
+    expect(
+      parser.parse(
+        JSON.stringify({
+          's:corrupt': {
+            data: { id: 'corrupt', windowLayout: null },
+            versionKey: 'corrupt',
+          },
+          [`s:${WINDOW_ID}`]: {
+            data: validRow,
+            versionKey: 'valid',
+          },
+        })
+      )
+    ).toEqual({
+      [`s:${WINDOW_ID}`]: {
+        data: validRow,
+        versionKey: 'valid',
+      },
+    })
   })
 
   it('wires inserts and updates through ordinary collection mutations', () => {

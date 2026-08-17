@@ -89,6 +89,7 @@ export const panelLayoutCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.panelLayouts,
     getKey: (row: PanelLayoutPreference) => row.id,
+    parser: makeValidatedLocalStorageParser(panelLayoutSchema),
     schema: panelLayoutSchema,
   })
 )

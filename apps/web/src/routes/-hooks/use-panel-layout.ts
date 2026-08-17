@@ -463,8 +463,9 @@ export function usePanelLayout() {
   )
 
   const getCurrentWindowLayout = useCallback((): WindowLayout | undefined => {
-    return decodeWindowLayout(storedWindowLayout).windowLayout
-  }, [storedWindowLayout])
+    const current = panelLayoutCollection.get(panelWindowId)?.windowLayout
+    return decodeWindowLayout(current).windowLayout
+  }, [panelWindowId])
 
   // Read and decode the hierarchical window layout from the local preference collection.
   // Uses Effect Schema decode with repair transforms. If the layout was

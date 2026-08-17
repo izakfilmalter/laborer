@@ -61,6 +61,7 @@ import {
   Layer,
   pipe,
   Ref,
+  Semaphore,
 } from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
@@ -677,6 +678,7 @@ class WorkspaceProvider extends Context.Service<
       const destroyFibers = yield* Ref.make(
         new Map<string, Fiber.Fiber<void, never>>()
       )
+      const createSemaphore = Semaphore.makeUnsafe(1)
       const laborerDatabase = yield* LaborerDatabase
       const registry = yield* ProjectRegistry
       const configService = yield* ConfigService
@@ -1040,6 +1042,86 @@ class WorkspaceProvider extends Context.Service<
           Effect.andThen(resolveWorktreeHead(base.worktreePath))
         )
 
+      const resolveBaseWorkspace = Effect.fn(
+        'WorkspaceProvider.resolveBaseWorkspace'
+      )(function* (projectId: string, baseWorkspaceId?: string) {
+        if (baseWorkspaceId === undefined) {
+          return undefined
+        }
+        const baseWorkspace =
+          (yield* laborerDatabase.read('find base workspace', (database) =>
+            findWorkspaceRecord(database, baseWorkspaceId)
+          )) ?? undefined
+        if (baseWorkspace === undefined) {
+          return yield* new RpcError({
+            message: `Base workspace not found: ${baseWorkspaceId}`,
+            code: 'NOT_FOUND',
+          })
+        }
+        if (baseWorkspace.projectId !== projectId) {
+          return yield* new RpcError({
+            message: `Base workspace ${baseWorkspaceId} belongs to a different project`,
+            code: 'BASE_WORKSPACE_INVALID',
+          })
+        }
+        if (baseWorkspace.worktreePath === '') {
+          return yield* new RpcError({
+            message: `Base workspace ${baseWorkspaceId} has no local worktree to branch from`,
+            code: 'BASE_WORKSPACE_INVALID',
+          })
+        }
+        return baseWorkspace
+      })
+
+      const claimWorkspace = Effect.fn('WorkspaceProvider.claimWorkspace')(
+        function* (input: {
+          readonly baseWorkspace: WorkspaceRecord | undefined
+          readonly rootPath: string
+          readonly taskSource: string | undefined
+          readonly workspace: WorkspaceRecord
+        }) {
+          const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
+            input.workspace.worktreePath
+          )
+          if (inFlightDestroy !== undefined) {
+            yield* Effect.logInfo(
+              `Waiting for in-flight destroy cleanup at ${input.workspace.worktreePath} before creating a workspace`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            yield* Fiber.join(inFlightDestroy)
+          }
+
+          const existingWorkspace = yield* laborerDatabase.read(
+            'find workspace by claimed path',
+            (database) => {
+              const task = database.findTaskByWorktreePath(
+                input.workspace.worktreePath
+              )
+              return task === null
+                ? null
+                : findWorkspaceRecord(database, task.id)
+            }
+          )
+          if (existingWorkspace !== null) {
+            if (
+              input.taskSource !== undefined &&
+              existingWorkspace.id !== input.taskSource
+            ) {
+              return yield* new RpcError({
+                code: 'INVALID_STATE',
+                message: `Workspace path is already owned by task ${existingWorkspace.id}: ${input.workspace.worktreePath}`,
+              })
+            }
+            yield* Effect.logInfo(
+              `Reusing workspace ${existingWorkspace.id} for branch ${input.workspace.branchName} at ${input.workspace.worktreePath}`
+            ).pipe(Effect.annotateLogs('module', logPrefix))
+            return { _tag: 'Existing' as const, workspace: existingWorkspace }
+          }
+
+          const taskId = yield* beginTaskProvisioning(input)
+          return { _tag: 'Claimed' as const, taskId }
+        }
+      )
+
       const createWorktree = Effect.fn('WorkspaceProvider.createWorktree')(
         function* (
           projectId: string,
@@ -1059,31 +1141,10 @@ class WorkspaceProvider extends Context.Service<
           // The sub-workspace branches from this workspace's HEAD and its
           // PR targets this workspace's branch (see
           // docs/adr/0001-branch-keyed-workspace-lineage.md).
-          const baseWorkspace = baseWorkspaceId
-            ? ((yield* laborerDatabase.read('find base workspace', (database) =>
-                findWorkspaceRecord(database, baseWorkspaceId)
-              )) ?? undefined)
-            : undefined
-          if (baseWorkspaceId !== undefined) {
-            if (baseWorkspace === undefined) {
-              return yield* new RpcError({
-                message: `Base workspace not found: ${baseWorkspaceId}`,
-                code: 'NOT_FOUND',
-              })
-            }
-            if (baseWorkspace.projectId !== projectId) {
-              return yield* new RpcError({
-                message: `Base workspace ${baseWorkspaceId} belongs to a different project`,
-                code: 'BASE_WORKSPACE_INVALID',
-              })
-            }
-            if (baseWorkspace.worktreePath === '') {
-              return yield* new RpcError({
-                message: `Base workspace ${baseWorkspaceId} has no local worktree to branch from`,
-                code: 'BASE_WORKSPACE_INVALID',
-              })
-            }
-          }
+          const baseWorkspace = yield* resolveBaseWorkspace(
+            projectId,
+            baseWorkspaceId
+          )
 
           // 1b. Resolve config for worktree location + setup scripts
           const resolvedConfig = yield* configService
@@ -1124,26 +1185,20 @@ class WorkspaceProvider extends Context.Service<
             baseBranch: baseWorkspace?.branchName ?? null,
           }
 
-          // A destroyed task retains its identity but releases the unique
-          // worktree path only when physical cleanup finishes. Wait for that
-          // exact cleanup fiber before trying to claim the path again.
-          const inFlightDestroy = (yield* Ref.get(destroyFibers)).get(
-            worktreePath
+          // Claiming is serialized so concurrent create requests for one
+          // deterministic branch path converge on a single durable task.
+          const claim = yield* createSemaphore.withPermits(1)(
+            claimWorkspace({
+              baseWorkspace,
+              rootPath: project.repoPath,
+              taskSource,
+              workspace,
+            })
           )
-          if (inFlightDestroy !== undefined) {
-            yield* Effect.logInfo(
-              `Waiting for in-flight destroy cleanup at ${worktreePath} before creating workspace ${id}`
-            ).pipe(Effect.annotateLogs('module', logPrefix))
-            yield* Fiber.join(inFlightDestroy)
+          if (claim._tag === 'Existing') {
+            return claim.workspace
           }
-
-          // The durable task owns the worktree lifecycle.
-          const taskId = yield* beginTaskProvisioning({
-            baseWorkspace,
-            rootPath: project.repoPath,
-            taskSource,
-            workspace,
-          })
+          const taskId = claim.taskId
 
           const localWorktreeSetup = Effect.gen(function* () {
             // Phase 0b: Sub-workspaces branch from the base workspace's

@@ -224,6 +224,74 @@ describe('LaborerRpcs workspace management', () => {
   )
 
   it.live(
+    'workspace.create reuses the workspace that already owns the branch path',
+    () =>
+      runWithRpcTestContext(({ client, database }) =>
+        Effect.gen(function* () {
+          const tempRoots: string[] = []
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => cleanupTempRoots(tempRoots))
+          )
+
+          const repoPath = initRepo(
+            'rpc-workspace-create-idempotent',
+            tempRoots
+          )
+          const worktreeRoot = createTempDir(
+            'rpc-workspace-create-idempotent-root',
+            tempRoots
+          )
+          const branchName = 'feature/rpc-create-idempotent'
+
+          writeLaborerConfig(repoPath, {
+            setupScripts: [],
+            worktreeDir: worktreeRoot,
+          })
+          git('add laborer.json', repoPath)
+          git('commit -m "add laborer config"', repoPath)
+
+          const project = yield* client['project.add']({ repoPath })
+          const [first, second] = yield* Effect.all(
+            [
+              client['workspace.create']({ branchName, projectId: project.id }),
+              client['workspace.create']({ branchName, projectId: project.id }),
+            ],
+            { concurrency: 'unbounded' }
+          )
+
+          assert.strictEqual(second.id, first.id)
+          assert.lengthOf(
+            database
+              .listTasks()
+              .filter(
+                (task) =>
+                  task.rootPath === project.repoPath &&
+                  task.branchName === branchName &&
+                  task.worktreePath !== null
+              ),
+            1
+          )
+
+          yield* Effect.gen(function* () {
+            for (let attempt = 0; attempt < 200; attempt++) {
+              const task = database.findTask(first.id)
+              if (task?.worktreeStatus === 'errored') {
+                return assert.fail(
+                  task.worktreeError ?? 'Workspace setup failed'
+                )
+              }
+              if (task?.worktreeStatus === 'ready') {
+                return
+              }
+              yield* Effect.sleep('100 millis')
+            }
+            assert.fail('Timed out waiting for workspace setup')
+          })
+        })
+      )
+  )
+
+  it.live(
     'workspace.create checks out a remote-only branch when it exists on origin',
     () =>
       runWithRpcTestContext(({ client, database }) =>

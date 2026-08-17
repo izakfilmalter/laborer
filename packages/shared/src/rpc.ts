@@ -1706,11 +1706,50 @@ export class TerminalRpcs extends RpcGroup.make(
   })
 ) {}
 
+/** Public status of the source Slack daemon managed from mission control. */
+export const SlackDaemonStatus = Schema.Struct({
+  status: Schema.Literals(['running', 'stopped', 'error']),
+})
+
+export type SlackDaemonStatus = typeof SlackDaemonStatus.Type
+
+export class SlackDaemonStartError extends Schema.TaggedError<SlackDaemonStartError>()(
+  'SlackDaemonStartError',
+  {
+    code: Schema.Literal('SLACK_DAEMON_START_FAILED'),
+    message: Schema.String,
+  }
+) {}
+
+export class SlackDaemonStopError extends Schema.TaggedError<SlackDaemonStopError>()(
+  'SlackDaemonStopError',
+  {
+    code: Schema.Literal('SLACK_DAEMON_STOP_FAILED'),
+    message: Schema.String,
+  }
+) {}
+
+/** Machine-local source Slack daemon capabilities. */
+export class SlackDaemonRpcs extends RpcGroup.make(
+  Rpc.make('slackDaemon.status', {
+    success: SlackDaemonStatus,
+  }),
+  Rpc.make('slackDaemon.start', {
+    error: SlackDaemonStartError,
+    success: SlackDaemonStatus,
+  }),
+  Rpc.make('slackDaemon.stop', {
+    error: SlackDaemonStopError,
+    success: SlackDaemonStatus,
+  })
+) {}
+
 /** All mission-control capabilities carried by the daemon's single socket. */
 export const DaemonRpcs = LaborerRpcs.merge(
   // Both legacy groups contain `terminal.spawn`. The public daemon keeps the
   // orchestration-aware Laborer contract; all other terminal manager methods
   // come from TerminalRpcs.
   TerminalRpcs.omit('terminal.spawn'),
-  FileWatcherRpcs
+  FileWatcherRpcs,
+  SlackDaemonRpcs
 )

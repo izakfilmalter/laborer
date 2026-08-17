@@ -126,8 +126,14 @@ describe('LaborerRpcs workspace management', () => {
         git('add laborer.json', repoPath)
         git('commit -m "add laborer config"', repoPath)
 
-        const project = yield* client['project.add']({ repoPath })
+        const project = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath,
+        })
+        const createOperationId = crypto.randomUUID()
         const workspace = yield* client['workspace.create']({
+          operationId: createOperationId,
           branchName,
           projectId: project.id,
         })
@@ -219,6 +225,15 @@ describe('LaborerRpcs workspace management', () => {
         assert.strictEqual(workspaceRow?.worktreeStatus, 'ready')
         assert.isNumber(workspaceRow?.setupCompletedAt)
         assert.strictEqual(workspaceRow?.worktreePath, workspace.worktreePath)
+        assert.deepStrictEqual(
+          database
+            .taskChangesAfter(0)
+            .filter(({ taskId }) => taskId === workspace.id)
+            .flatMap(({ operationId }) =>
+              operationId === null ? [] : [operationId]
+            ),
+          [createOperationId, createOperationId, createOperationId]
+        )
       })
     )
   )
@@ -250,11 +265,23 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const [first, second] = yield* Effect.all(
             [
-              client['workspace.create']({ branchName, projectId: project.id }),
-              client['workspace.create']({ branchName, projectId: project.id }),
+              client['workspace.create']({
+                operationId: crypto.randomUUID(),
+                branchName,
+                projectId: project.id,
+              }),
+              client['workspace.create']({
+                operationId: crypto.randomUUID(),
+                branchName,
+                projectId: project.id,
+              }),
             ],
             { concurrency: 'unbounded' }
           )
@@ -327,8 +354,13 @@ describe('LaborerRpcs workspace management', () => {
           commitFile(colleaguePath, 'colleague.txt', 'from remote branch')
           git(`push -u origin ${branchName}`, colleaguePath)
 
-          const project = yield* client['project.add']({ repoPath: localPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath: localPath,
+          })
           const workspace = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName,
             projectId: project.id,
           })
@@ -399,8 +431,13 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add local config"', repoPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const workspace = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName,
             projectId: project.id,
           })
@@ -497,8 +534,13 @@ describe('LaborerRpcs workspace management', () => {
               assert.fail('Timed out waiting for workspace to run')
             })
 
-          const project = yield* client['project.add']({ repoPath: localPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath: localPath,
+          })
           const parent = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName: 'feat/big-thing',
             projectId: project.id,
           })
@@ -512,6 +554,7 @@ describe('LaborerRpcs workspace management', () => {
           const parentHeadSha = git('rev-parse HEAD', parent.worktreePath)
 
           const child = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName: 'fix/auth',
             projectId: project.id,
             baseWorkspaceId: parent.id,
@@ -561,6 +604,7 @@ describe('LaborerRpcs workspace management', () => {
     runWithRpcTestContext(({ client, database }) =>
       Effect.gen(function* () {
         const result = yield* client['workspace.create']({
+          operationId: crypto.randomUUID(),
           branchName: 'feature/missing-project',
           projectId: 'missing-project',
         }).pipe(Effect.result)
@@ -603,13 +647,22 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const workspace = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName,
             projectId: project.id,
           })
 
-          yield* client['workspace.destroy']({ workspaceId: workspace.id })
+          const destroyOperationId = crypto.randomUUID()
+          yield* client['workspace.destroy']({
+            operationId: destroyOperationId,
+            workspaceId: workspace.id,
+          })
 
           // destroyWorktree forks cleanup into a background daemon fiber.
           // Poll until the task releases its worktree (last cleanup step).
@@ -626,6 +679,10 @@ describe('LaborerRpcs workspace management', () => {
             worktreePath: null,
             worktreeStatus: null,
           })
+          assert.strictEqual(
+            database.taskChangesAfter(0).at(-1)?.operationId,
+            destroyOperationId
+          )
         })
       )
   )
@@ -649,7 +706,11 @@ describe('LaborerRpcs workspace management', () => {
           )
           git(`worktree add -b ${branchName} ${externalWorktreePath}`, repoPath)
 
-          yield* client['project.add']({ repoPath })
+          yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const externalWorkspace = database.findTaskByWorktreePath(
             realpathSync(externalWorktreePath)
           )
@@ -660,6 +721,7 @@ describe('LaborerRpcs workspace management', () => {
           }
 
           yield* client['workspace.destroy']({
+            operationId: crypto.randomUUID(),
             workspaceId: externalWorkspace.id,
           })
 
@@ -703,17 +765,28 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const workspace = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName,
             projectId: project.id,
           })
 
-          yield* client['workspace.destroy']({ workspaceId: workspace.id })
+          yield* client['workspace.destroy']({
+            operationId: crypto.randomUUID(),
+            workspaceId: workspace.id,
+          })
           yield* waitForWorkspaceRemoval(database, workspace.id)
           const changesAfterFirstDestroy = database.taskChangesAfter(0).length
 
-          yield* client['workspace.destroy']({ workspaceId: workspace.id })
+          yield* client['workspace.destroy']({
+            operationId: crypto.randomUUID(),
+            workspaceId: workspace.id,
+          })
 
           assert.strictEqual(
             database.taskChangesAfter(0).length,
@@ -746,10 +819,15 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config"', repoPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
 
           // 1. Create the first workspace and wait for it to be running
           const first = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName,
             projectId: project.id,
           })
@@ -783,6 +861,7 @@ describe('LaborerRpcs workspace management', () => {
           //    user destroys a workspace and immediately creates a new one
           //    for the same branch.
           yield* client['workspace.destroy']({
+            operationId: crypto.randomUUID(),
             workspaceId: first.id,
             force: true,
           })
@@ -792,6 +871,7 @@ describe('LaborerRpcs workspace management', () => {
           //    (git worktree remove, git branch -D, etc.) — the create
           //    must not race with it.
           const second = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName,
             projectId: project.id,
           })
@@ -859,8 +939,13 @@ describe('LaborerRpcs workspace management', () => {
           git('add laborer.json', repoPath)
           git('commit -m "add laborer config with failing script"', repoPath)
 
-          const project = yield* client['project.add']({ repoPath })
+          const project = yield* client['project.add']({
+            id: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
+            repoPath,
+          })
           const workspace = yield* client['workspace.create']({
+            operationId: crypto.randomUUID(),
             branchName,
             projectId: project.id,
           })
@@ -926,7 +1011,11 @@ describe('LaborerRpcs workspace management', () => {
         git('push origin main', remoteClonePath)
         git('fetch origin', localPath)
 
-        const project = yield* client['project.add']({ repoPath: localPath })
+        const project = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath: localPath,
+        })
         const workspaceId = crypto.randomUUID()
         database.insertTask({
           branchName: 'main',
@@ -966,7 +1055,11 @@ describe('LaborerRpcs workspace management', () => {
 
         commitFile(localPath, 'push.txt', 'push me\n')
 
-        const project = yield* client['project.add']({ repoPath: localPath })
+        const project = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath: localPath,
+        })
         const workspaceId = crypto.randomUUID()
         database.insertTask({
           branchName: 'main',
@@ -1012,7 +1105,11 @@ describe('LaborerRpcs workspace management', () => {
         git('push origin main', remoteClonePath)
         git('fetch origin', localPath)
 
-        const project = yield* client['project.add']({ repoPath: localPath })
+        const project = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath: localPath,
+        })
         const workspaceId = crypto.randomUUID()
         database.insertTask({
           branchName: 'main',

@@ -110,7 +110,7 @@ describe('applySharedStateUpdate', () => {
       tasks: {
         cursor: 2,
         deletedRowIds: ['one'],
-        mutationIds: ['move-1'],
+        operationIds: ['move-1'],
         rows: [task('two', 2)],
         type: 'delta',
       },
@@ -301,7 +301,7 @@ describe('optimistic overlay ownership', () => {
         'task-1',
         {
           expectedRevision: 1,
-          mutationId: 'move-b',
+          operationId: 'move-b',
           patch: { sortOrder: 2, status: 'in_review' as const },
         },
       ],

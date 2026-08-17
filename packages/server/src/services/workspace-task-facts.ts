@@ -29,6 +29,7 @@ export const updateServerTaskFacts = (
   service: LaborerDatabaseService,
   taskId: string,
   patch: LaborerTaskPatch,
+  operationId: string | null = null,
   attempt = 1
 ): Effect.Effect<LaborerTask | null, LaborerDatabaseFailure> =>
   service
@@ -37,14 +38,21 @@ export const updateServerTaskFacts = (
       if (task === null || !patchChangesTask(task, patch)) {
         return task
       }
-      return database.updateTask(taskId, task.revision, patch).row
+      return database.updateTask(taskId, task.revision, patch, operationId).row
     })
     .pipe(
       Effect.catchIf(
         (error) =>
           error instanceof LaborerDatabaseStaleRevisionError &&
           attempt < MAX_SERVER_CAS_ATTEMPTS,
-        () => updateServerTaskFacts(service, taskId, patch, attempt + 1)
+        () =>
+          updateServerTaskFacts(
+            service,
+            taskId,
+            patch,
+            operationId,
+            attempt + 1
+          )
       )
     )
 

@@ -43,7 +43,7 @@ describe('label RPC handlers', () => {
       const applied = yield* handleTaskLabelsSet({
         expectedRevision: task.revision,
         labelIds: ['label-1', 'label-1'],
-        mutationId: 'mutation-1',
+        operationId: 'mutation-1',
         taskId: 'task-1',
       })
       assert.deepStrictEqual(applied.row.labelIds, ['label-1'])
@@ -78,13 +78,13 @@ describe('label RPC handlers', () => {
       const here = yield* handleTaskLabelsSet({
         expectedRevision: task.revision,
         labelIds: ['label-1'],
-        mutationId: 'mutation-1',
+        operationId: 'mutation-1',
         taskId: task.id,
       })
       const there = yield* handleTaskLabelsSet({
         expectedRevision: elsewhere.revision,
         labelIds: ['label-1'],
-        mutationId: 'mutation-2',
+        operationId: 'mutation-2',
         taskId: elsewhere.id,
       })
 
@@ -128,7 +128,7 @@ describe('label RPC handlers', () => {
       const failure = yield* handleTaskLabelsSet({
         expectedRevision: task.revision,
         labelIds: ['missing'],
-        mutationId: 'mutation-1',
+        operationId: 'mutation-1',
         taskId: 'task-1',
       }).pipe(Effect.flip)
       assert.strictEqual(failure.code, 'TASK_LABELS_WRITE_FAILED')

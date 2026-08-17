@@ -153,7 +153,7 @@ describe('label persistence', () => {
     database.setTaskLabels(other.id, other.revision, ['label-2'])
 
     const labelled = database.findTask('task-1')
-    const deleted = database.deleteLabel('label-1', 1)
+    const deleted = database.deleteLabel('label-1', 1, 'delete-label')
 
     expect(deleted.row.id).toBe('label-1')
     expect(database.findLabel('label-1')).toBeNull()
@@ -166,6 +166,12 @@ describe('label persistence', () => {
     expect(
       database.taskChangesAfter(0).filter(({ taskId }) => taskId === 'task-1')
     ).toHaveLength(3)
+    expect(database.taskChangesAfter(0).at(-1)?.operationId).toBe(
+      'delete-label'
+    )
+    expect(database.stateChangesAfter(0).at(-1)?.operationId).toBe(
+      'delete-label'
+    )
     database.close()
   })
 
@@ -248,7 +254,7 @@ describe('setTaskLabels', () => {
       'mutation-1'
     )
     expect(database.taskUpdateAfter(cursor - 1)).toMatchObject({
-      mutationIds: ['mutation-1'],
+      operationIds: ['mutation-1'],
     })
     database.close()
   })

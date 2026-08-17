@@ -535,6 +535,7 @@ function useTaskEditor(tasks: readonly BoardTask[]): {
       payload: {
         description: draft.description,
         expectedRevision: draft.expectedRevision,
+        operationId: crypto.randomUUID(),
         taskId,
         title: draft.title,
       },

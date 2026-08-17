@@ -45,7 +45,7 @@ const collectAfterSnapshot = (
   )
 
 describe('subscribeToSharedState', () => {
-  it('emits own writes immediately with both cursors and mutation ids', async () => {
+  it('emits own writes immediately with both cursors and operation ids', async () => {
     const path = databasePath()
     const events = await collectAfterSnapshot(path, 5, () => {
       const writer = NativeLaborerDatabase.open(path)
@@ -81,23 +81,23 @@ describe('subscribeToSharedState', () => {
     expect(events[0]?.projects?.cursor).toBe(0)
     expect(events[1]?.tasks).toMatchObject({
       cursor: 1,
-      mutationIds: ['task-mutation'],
+      operationIds: ['task-mutation'],
       type: 'delta',
     })
     expect(events[2]?.projects).toMatchObject({
       cursor: 1,
-      mutationIds: ['project-mutation'],
+      operationIds: ['project-mutation'],
       type: 'delta',
     })
     expect(events[3]?.settings).toMatchObject({
       cursor: 2,
-      mutationIds: ['setting-mutation'],
+      operationIds: ['setting-mutation'],
       type: 'delta',
     })
     expect(events[4]?.tasks).toMatchObject({
       cursor: 2,
       deletedRowIds: ['task-1'],
-      mutationIds: ['delete-mutation'],
+      operationIds: ['delete-mutation'],
       type: 'delta',
     })
   })
@@ -113,7 +113,7 @@ describe('subscribeToSharedState', () => {
         writer.exec(`BEGIN IMMEDIATE;
           INSERT INTO tasks (id, root_path, title, status, source, created_at, updated_at)
           VALUES ('external-task', '/repo', 'External', 'todo', 'manual', 1, 1);
-          INSERT INTO task_changes (task_id, changed_at, mutation_id)
+          INSERT INTO task_changes (task_id, changed_at, operation_id)
           VALUES ('external-task', 1, NULL);
           COMMIT;`)
         writer.close()
@@ -211,7 +211,7 @@ describe('subscribeToSharedState', () => {
       () => {
         const writer = new DatabaseSync(path)
         writer.exec(`INSERT INTO state_changes
-          (table_name, row_id, changed_at, mutation_id)
+          (table_name, row_id, changed_at, operation_id)
           VALUES ('corrupt_table', 'row-1', 1, NULL)`)
         writer.close()
       },

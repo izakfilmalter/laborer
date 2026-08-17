@@ -110,4 +110,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       'utf8'
     ),
   },
+  {
+    name: '0013_correlated_operations',
+    sql: readFileSync(
+      new URL('./migrations/0013_correlated_operations.sql', import.meta.url),
+      'utf8'
+    ),
+  },
 ]

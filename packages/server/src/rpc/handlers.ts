@@ -344,9 +344,9 @@ const isLegacyProvisioningReplay = (
   task: Task,
   status: TaskStatus,
   sortOrder: number | null | undefined,
-  mutationId: string | null
+  operationId: string | null
 ): boolean =>
-  mutationId === null && sortOrder === undefined && task.status === status
+  operationId === null && sortOrder === undefined && task.status === status
 
 const sharedTaskRow = (task: LaborerTask) => {
   const worktree = inspectTaskWorktree(task.worktreePath, task.executionId)
@@ -363,7 +363,7 @@ const commitTaskMove = (
   expectedRevision: number,
   status: TaskStatus,
   sortOrder: number | null | undefined,
-  mutationId: string | null
+  operationId: string | null
 ) =>
   Effect.try({
     try: () => {
@@ -373,7 +373,7 @@ const commitTaskMove = (
           taskId,
           expectedRevision,
           sortOrder === undefined ? { status } : { sortOrder, status },
-          mutationId
+          operationId
         )
       } finally {
         database.close()
@@ -410,7 +410,7 @@ const readCommittedTask = (path: string, taskId: string) =>
 const commitOrReplayTaskMove = (input: {
   readonly expectedRevision: number
   readonly legacyProvisioningReplay: boolean
-  readonly mutationId: string | null
+  readonly operationId: string | null
   readonly path: string
   readonly sortOrder: number | null | undefined
   readonly status: TaskStatus
@@ -424,7 +424,7 @@ const commitOrReplayTaskMove = (input: {
         input.expectedRevision,
         input.status,
         input.sortOrder,
-        input.mutationId
+        input.operationId
       )
 
 interface TaskMoveLock {
@@ -492,34 +492,49 @@ const withTaskDatabase = <A>(
 const bindTaskWorkspace = (
   path: string,
   taskId: string,
-  workspace: { readonly branchName: string; readonly worktreePath: string }
+  workspace: { readonly branchName: string; readonly worktreePath: string },
+  operationId: string | null
 ): Effect.Effect<Task, RpcError> =>
-  withTaskDatabase(path, (database) => {
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
-      const current = database.findTask(taskId)
-      if (current === null) {
-        throw new Error(`Task not found: ${taskId}`)
-      }
-      // The background setup can fail before this binding write wins its
-      // race. Its failure callback has already returned the task to Todo;
-      // do not resurrect provisioning fields in that case.
-      if (current.status !== 'in_progress' || current.worktreePath !== null) {
-        return current
-      }
+  Effect.try({
+    try: () => {
+      const database = NativeLaborerDatabase.open(path)
       try {
-        return database.update(taskId, current.revision, {
-          branchName: workspace.branchName,
-          worktreePath: workspace.worktreePath,
-        })
-      } catch (error) {
-        const stale =
-          error instanceof Error && error.message.includes('stale revision')
-        if (attempt === 5 || !stale) {
-          throw error
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+          const current = database.findTask(taskId)
+          if (current === null) {
+            throw new Error(`Task not found: ${taskId}`)
+          }
+          if (
+            current.status !== 'in_progress' ||
+            current.worktreePath !== null
+          ) {
+            return current
+          }
+          try {
+            return database.updateTask(
+              taskId,
+              current.revision,
+              {
+                branchName: workspace.branchName,
+                worktreePath: workspace.worktreePath,
+              },
+              operationId
+            ).row
+          } catch (error) {
+            if (
+              attempt === 5 ||
+              !(error instanceof LaborerDatabaseStaleRevisionError)
+            ) {
+              throw error
+            }
+          }
         }
+        throw new Error(`Could not bind task ${taskId} to its workspace`)
+      } finally {
+        database.close()
       }
-    }
-    throw new Error(`Could not bind task ${taskId} to its workspace`)
+    },
+    catch: taskMoveError,
   })
 
 /**
@@ -541,19 +556,20 @@ const taskWorkspaceBranchName = (task: Task): string | undefined => {
 const handleTaskMoveAtPathUnlocked = (
   {
     expectedRevision,
-    mutationId = null,
+    operationId = null,
     sortOrder,
     status,
     taskId,
   }: {
     readonly expectedRevision: number
-    readonly mutationId?: string | null
+    readonly operationId?: string | null
     readonly sortOrder?: number | null
     readonly status: TaskStatus
     readonly taskId: string
   },
   databasePath = taskDatabasePath()
 ) =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provisioning keeps its durable CAS, filesystem side effects, and compensating write in one linear flow.
   Effect.gen(function* () {
     const path = databasePath
     const withDatabase = <A>(
@@ -574,7 +590,7 @@ const handleTaskMoveAtPathUnlocked = (
       task,
       status,
       sortOrder,
-      mutationId
+      operationId
     )
     if (task.revision !== expectedRevision && !legacyProvisioningReplay) {
       return yield* new RpcError({
@@ -627,7 +643,7 @@ const handleTaskMoveAtPathUnlocked = (
     const committed = yield* commitOrReplayTaskMove({
       expectedRevision: task.revision,
       legacyProvisioningReplay,
-      mutationId,
+      operationId,
       path,
       sortOrder,
       status,
@@ -705,21 +721,31 @@ const handleTaskMoveAtPathUnlocked = (
     const requestedBranchName = taskWorkspaceBranchName(task)
     const workspace =
       publishedWorkspace ??
-      (yield* provider
-        .createWorktree(
-          project.id,
-          requestedBranchName,
-          onReady,
-          undefined,
-          bounceToTodo,
-          taskId
-        )
-        .pipe(Effect.tapError((error) => bounceToTodo('', error))))
+      (yield* (
+        operationId === null
+          ? provider.createWorktree(
+              project.id,
+              requestedBranchName,
+              onReady,
+              undefined,
+              bounceToTodo,
+              taskId
+            )
+          : provider.createWorktree(
+              project.id,
+              requestedBranchName,
+              onReady,
+              undefined,
+              bounceToTodo,
+              taskId,
+              operationId
+            )
+      ).pipe(Effect.tapError((error) => bounceToTodo('', error))))
 
     // Bind the workspace's final branch/path via CAS before returning it to the
     // renderer. The provider may still generate a random branch for a manual
     // title that cannot produce a usable slug.
-    task = yield* bindTaskWorkspace(path, taskId, workspace)
+    task = yield* bindTaskWorkspace(path, taskId, workspace, operationId)
 
     const authoritative = yield* readCommittedTask(path, taskId)
     return {
@@ -736,7 +762,7 @@ const handleTaskMoveAtPathUnlocked = (
 export const handleTaskMoveAtPath = (
   payload: {
     readonly expectedRevision: number
-    readonly mutationId?: string | null
+    readonly operationId?: string | null
     readonly sortOrder?: number | null
     readonly status: TaskStatus
     readonly taskId: string
@@ -785,6 +811,7 @@ const analyzeAndProvisionSlackCard = (taskId: string, databasePath: string) =>
 export const handleTaskCreateAtPath = (
   input: {
     readonly id?: string | null
+    readonly operationId?: string | null
     readonly rootPath: string
     readonly status: Exclude<TaskStatus, 'cancelled'>
     readonly text: string
@@ -815,6 +842,7 @@ export const handleTaskCreateAtPath = (
     const moved = yield* handleTaskMoveAtPath(
       {
         expectedRevision: 1,
+        operationId: input.operationId ?? null,
         status: 'in_progress',
         taskId: created.id,
       },
@@ -830,28 +858,25 @@ export const handleTaskCreateAtPath = (
 
 export const handleTaskMove = (payload: {
   readonly expectedRevision: number
-  readonly mutationId: string
+  readonly operationId?: string
   readonly sortOrder: number | null
   readonly status: TaskStatus
   readonly taskId: string
 }) => handleTaskMoveAtPath(payload)
 
-export const handleProjectMove = (payload: {
-  readonly expectedRevision: number
-  readonly mutationId: string
-  readonly projectId: string
-  readonly sortOrder: number | null
+export const handleProjectReorder = (payload: {
+  readonly assignments: readonly {
+    readonly expectedRevision: number
+    readonly projectId: string
+    readonly sortOrder: number | null
+  }[]
+  readonly operationId: string
 }) =>
   Effect.gen(function* () {
     const database = yield* LaborerDatabase
     return yield* database
       .run('move project', (native) =>
-        native.moveProject(
-          payload.projectId,
-          payload.expectedRevision,
-          payload.sortOrder,
-          payload.mutationId
-        )
+        native.reorderProjects(payload.assignments, payload.operationId)
       )
       .pipe(
         Effect.mapError(
@@ -863,8 +888,8 @@ export const handleProjectMove = (payload: {
                   : 'PROJECT_MOVE_FAILED',
               message:
                 cause instanceof LaborerDatabaseStaleRevisionError
-                  ? `Project changed while reordering: ${payload.projectId}`
-                  : `Unable to reorder project: ${payload.projectId}`,
+                  ? 'A project changed while reordering'
+                  : 'Unable to reorder projects',
             })
         )
       )
@@ -873,7 +898,7 @@ export const handleProjectMove = (payload: {
 export const handleAppSettingSet = (payload: {
   readonly expectedRevision: number
   readonly key: string
-  readonly mutationId: string
+  readonly operationId: string
   readonly value: string
 }) =>
   Effect.gen(function* () {
@@ -884,7 +909,7 @@ export const handleAppSettingSet = (payload: {
           payload.key,
           payload.expectedRevision,
           payload.value,
-          payload.mutationId
+          payload.operationId ?? null
         )
       )
       .pipe(
@@ -925,16 +950,20 @@ export const handleLabelCreate = (payload: {
   readonly color?: LabelColor | undefined
   readonly id?: string | undefined
   readonly name: string
+  readonly operationId?: string
 }) =>
   Effect.gen(function* () {
     const database = yield* LaborerDatabase
     return yield* database
       .run('create label', (native) =>
-        native.createLabel({
-          ...(payload.color === undefined ? {} : { color: payload.color }),
-          ...(payload.id === undefined ? {} : { id: payload.id }),
-          name: payload.name,
-        })
+        native.createLabel(
+          {
+            ...(payload.color === undefined ? {} : { color: payload.color }),
+            ...(payload.id === undefined ? {} : { id: payload.id }),
+            name: payload.name,
+          },
+          payload.operationId ?? null
+        )
       )
       .pipe(
         Effect.mapError((cause) =>
@@ -948,15 +977,21 @@ export const handleLabelUpdate = (payload: {
   readonly expectedRevision: number
   readonly labelId: string
   readonly name?: string | undefined
+  readonly operationId?: string
 }) =>
   Effect.gen(function* () {
     const database = yield* LaborerDatabase
     return yield* database
       .run('update label', (native) =>
-        native.updateLabel(payload.labelId, payload.expectedRevision, {
-          ...(payload.color === undefined ? {} : { color: payload.color }),
-          ...(payload.name === undefined ? {} : { name: payload.name }),
-        })
+        native.updateLabel(
+          payload.labelId,
+          payload.expectedRevision,
+          {
+            ...(payload.color === undefined ? {} : { color: payload.color }),
+            ...(payload.name === undefined ? {} : { name: payload.name }),
+          },
+          payload.operationId ?? null
+        )
       )
       .pipe(
         Effect.mapError((cause) =>
@@ -968,12 +1003,17 @@ export const handleLabelUpdate = (payload: {
 export const handleLabelDelete = (payload: {
   readonly expectedRevision: number
   readonly labelId: string
+  readonly operationId?: string
 }) =>
   Effect.gen(function* () {
     const database = yield* LaborerDatabase
     const result = yield* database
       .run('delete label', (native) =>
-        native.deleteLabel(payload.labelId, payload.expectedRevision)
+        native.deleteLabel(
+          payload.labelId,
+          payload.expectedRevision,
+          payload.operationId ?? null
+        )
       )
       .pipe(
         Effect.mapError((cause) =>
@@ -990,7 +1030,7 @@ export const handleLabelDelete = (payload: {
 export const handleTaskLabelsSet = (payload: {
   readonly expectedRevision: number
   readonly labelIds: readonly string[]
-  readonly mutationId: string
+  readonly operationId: string
   readonly taskId: string
 }) =>
   Effect.gen(function* () {
@@ -1001,7 +1041,7 @@ export const handleTaskLabelsSet = (payload: {
           payload.taskId,
           payload.expectedRevision,
           payload.labelIds,
-          payload.mutationId
+          payload.operationId
         )
       )
       .pipe(
@@ -1027,11 +1067,13 @@ export const handleTaskUpdate = (
     expectedRevision,
     taskId,
     title,
+    operationId = null,
   }: {
     readonly description: string | null
     readonly expectedRevision: number
     readonly taskId: string
     readonly title: string
+    readonly operationId?: string | null
   },
   databasePath = taskDatabasePath()
 ) =>
@@ -1046,7 +1088,7 @@ export const handleTaskUpdate = (
             message: 'Unable to open the task database',
           }),
       }),
-      (database) =>
+      (_database) =>
         Effect.try({
           try: () => {
             const trimmedTitle = title.trim()
@@ -1060,16 +1102,22 @@ export const handleTaskUpdate = (
                 'Task descriptions must be 100000 characters or fewer'
               )
             }
-            return database.update(resolvedTask.id, expectedRevision, {
-              description,
-              title: trimmedTitle,
-            })
+            const native = NativeLaborerDatabase.open(databasePath)
+            try {
+              return native.updateTask(
+                resolvedTask.id,
+                expectedRevision,
+                { description, title: trimmedTitle },
+                operationId
+              ).row
+            } finally {
+              native.close()
+            }
           },
           catch: (cause) =>
             new RpcError({
               code:
-                cause instanceof Error &&
-                cause.message.includes('stale revision')
+                cause instanceof LaborerDatabaseStaleRevisionError
                   ? 'CAS_CONFLICT'
                   : 'TASK_UPDATE_FAILED',
               message:
@@ -1178,24 +1226,29 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     // Project RPCs (Issue #21-25)
     // -------------------------------------------------------------------
-    'project.add': ({ repoPath }) =>
+    'project.add': ({ id, operationId, repoPath }) =>
       Effect.gen(function* () {
         const registry = yield* ProjectRegistry
-        const project = yield* registry.addProject(repoPath)
+        const project = yield* registry.addProject(
+          repoPath,
+          true,
+          operationId,
+          id
+        )
         return {
           id: project.id,
           repoPath: project.repoPath,
           name: project.name,
         }
       }),
-    'project.remove': ({ projectId }) =>
+    'project.remove': ({ operationId, projectId }) =>
       Effect.gen(function* () {
         const registry = yield* ProjectRegistry
-        yield* registry.removeProject(projectId)
+        yield* registry.removeProject(projectId, operationId)
       }),
     'project.list': handleProjectList,
     'local.directory.list': ({ path }) => listLocalDirectories(path),
-    'project.move': handleProjectMove,
+    'project.reorder': handleProjectReorder,
 
     'task.board.subscribe': () =>
       subscribeToTaskBoard().pipe(
@@ -1210,11 +1263,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         )
       ),
     'appSetting.set': handleAppSettingSet,
-    'task.create': ({ id, projectId, status, text }) =>
+    'task.create': ({ id, operationId, projectId, status, text }) =>
       Effect.gen(function* () {
         const project = yield* getProject(projectId)
         return yield* handleTaskCreateAtPath({
           id: id ?? null,
+          operationId,
           rootPath: project.repoPath,
           status,
           text,
@@ -1250,7 +1304,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     // Workspace RPCs (Issue #33-47)
     // -------------------------------------------------------------------
-    'workspace.create': ({ projectId, branchName, baseWorkspaceId }) =>
+    'workspace.create': ({
+      projectId,
+      branchName,
+      baseWorkspaceId,
+      operationId,
+    }) =>
       Effect.gen(function* () {
         const provider = yield* WorkspaceProvider
         // Pass an onReady callback that starts PR polling once the
@@ -1266,7 +1325,10 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           projectId,
           branchName,
           onReady,
-          baseWorkspaceId
+          baseWorkspaceId,
+          undefined,
+          undefined,
+          operationId
         )
 
         return {
@@ -1283,7 +1345,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         }
       }),
     'workspace.planFromSlack': ({ slackUrl }) => planSlackWorkspace(slackUrl),
-    'workspace.destroy': ({ workspaceId, force }) =>
+    'workspace.destroy': ({ workspaceId, force, operationId }) =>
       Effect.gen(function* () {
         // Stop PR polling before destroying the workspace.
         const prWatcher = yield* PrWatcher
@@ -1297,7 +1359,7 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         yield* tc.killAllForWorkspace(workspaceId)
 
         const provider = yield* WorkspaceProvider
-        yield* provider.destroyWorktree(workspaceId, force)
+        yield* provider.destroyWorktree(workspaceId, force, operationId)
       }),
     'workspace.checkDirty': ({ workspaceId }) =>
       Effect.gen(function* () {

@@ -5,7 +5,7 @@ export type TaskMovePatch = Pick<SharedTaskRow, 'sortOrder' | 'status'>
 
 export interface TaskMoveCommand extends TaskMovePatch {
   readonly expectedRevision: number
-  readonly mutationId: string
+  readonly operationId: string
   readonly taskId: string
 }
 
@@ -15,7 +15,7 @@ export interface TaskMoveConfirmation {
 }
 
 interface PendingMove {
-  readonly mutationId: string
+  readonly operationId: string
   readonly patch: TaskMovePatch
 }
 
@@ -28,20 +28,20 @@ interface CardQueue {
 // One shared-state delta contains at most 1,000 ledger entries. Keep one full
 // batch so a response rejection queued just after its receipt can still be
 // recognized as an already-committed move.
-const MAX_OBSERVED_MUTATION_IDS = 1024
+const MAX_OBSERVED_OPERATION_IDS = 1024
 
 export interface OptimisticTaskMoveDependencies {
-  readonly clear: (taskId: string, mutationId: string) => void
+  readonly clear: (taskId: string, operationId: string) => void
   readonly confirm: (
     confirmation: TaskMoveConfirmation,
-    mutationId: string
+    operationId: string
   ) => void
   readonly getAuthoritativeTask: (taskId: string) => SharedTaskRow | undefined
   readonly install: (taskId: string, overlay: TaskOptimisticOverlay) => void
   readonly isConflict: (error: unknown) => boolean
   /** True when the server replied and therefore definitely rejected the write. */
   readonly isDefinitiveFailure: (error: unknown) => boolean
-  readonly mutationId: () => string
+  readonly operationId: () => string
   readonly send: (command: TaskMoveCommand) => Promise<TaskMoveConfirmation>
 }
 
@@ -51,8 +51,8 @@ export interface OptimisticTaskMoveDependencies {
  */
 export class OptimisticTaskMoveQueue {
   readonly #cards = new Map<string, CardQueue>()
-  readonly #observedMutationIds = new Set<string>()
-  readonly #observedMutationOrder: string[] = []
+  readonly #observedOperationIds = new Set<string>()
+  readonly #observedOperationOrder: string[] = []
   #dependencies: OptimisticTaskMoveDependencies
 
   constructor(dependencies: OptimisticTaskMoveDependencies) {
@@ -64,7 +64,7 @@ export class OptimisticTaskMoveQueue {
   }
 
   move(taskId: string, patch: TaskMovePatch): void {
-    const pending = { mutationId: this.#dependencies.mutationId(), patch }
+    const pending = { operationId: this.#dependencies.operationId(), patch }
     const revision = this.#dependencies.getAuthoritativeTask(taskId)?.revision
     if (revision === undefined) {
       return
@@ -77,7 +77,7 @@ export class OptimisticTaskMoveQueue {
     this.#cards.set(taskId, card)
     this.#dependencies.install(taskId, {
       expectedRevision: revision,
-      mutationId: pending.mutationId,
+      operationId: pending.operationId,
       patch,
     })
     if (card.inFlight === null) {
@@ -87,28 +87,28 @@ export class OptimisticTaskMoveQueue {
     }
   }
 
-  observeMutationIds(mutationIds: readonly string[]): void {
-    if (mutationIds.length === 0) {
+  observeOperationIds(operationIds: readonly string[]): void {
+    if (operationIds.length === 0) {
       return
     }
-    const observed = new Set(mutationIds)
-    for (const mutationId of observed) {
-      if (!this.#observedMutationIds.has(mutationId)) {
-        this.#observedMutationIds.add(mutationId)
-        this.#observedMutationOrder.push(mutationId)
+    const observed = new Set(operationIds)
+    for (const operationId of observed) {
+      if (!this.#observedOperationIds.has(operationId)) {
+        this.#observedOperationIds.add(operationId)
+        this.#observedOperationOrder.push(operationId)
       }
     }
-    while (this.#observedMutationOrder.length > MAX_OBSERVED_MUTATION_IDS) {
-      const oldest = this.#observedMutationOrder.shift()
+    while (this.#observedOperationOrder.length > MAX_OBSERVED_OPERATION_IDS) {
+      const oldest = this.#observedOperationOrder.shift()
       if (oldest !== undefined) {
-        this.#observedMutationIds.delete(oldest)
+        this.#observedOperationIds.delete(oldest)
       }
     }
     for (const [taskId, card] of this.#cards) {
       if (
         card.ambiguous &&
         card.inFlight &&
-        observed.has(card.inFlight.mutationId)
+        observed.has(card.inFlight.operationId)
       ) {
         card.inFlight = null
         card.ambiguous = false
@@ -127,26 +127,26 @@ export class OptimisticTaskMoveQueue {
       confirmedRevision ??
       this.#dependencies.getAuthoritativeTask(taskId)?.revision
     if (expectedRevision === undefined) {
-      this.#dependencies.clear(taskId, pending.mutationId)
+      this.#dependencies.clear(taskId, pending.operationId)
       return
     }
     card.inFlight = pending
     card.ambiguous = false
     this.#dependencies.install(taskId, {
       expectedRevision,
-      mutationId: pending.mutationId,
+      operationId: pending.operationId,
       patch: pending.patch,
     })
     this.#dependencies
       .send({
         ...pending.patch,
         expectedRevision,
-        mutationId: pending.mutationId,
+        operationId: pending.operationId,
         taskId,
       })
       .then((confirmation) => {
-        this.#dependencies.confirm(confirmation, pending.mutationId)
-        if (card.inFlight?.mutationId === pending.mutationId) {
+        this.#dependencies.confirm(confirmation, pending.operationId)
+        if (card.inFlight?.operationId === pending.operationId) {
           card.inFlight = null
           const latestKnownRevision = Math.max(
             confirmation.row.revision,
@@ -163,9 +163,9 @@ export class OptimisticTaskMoveQueue {
           )
         ) {
           // The command may have committed. Its ledger token is authoritative.
-          if (card.inFlight?.mutationId === pending.mutationId) {
+          if (card.inFlight?.operationId === pending.operationId) {
             card.ambiguous = true
-            if (this.#observedMutationIds.has(pending.mutationId)) {
+            if (this.#observedOperationIds.has(pending.operationId)) {
               card.inFlight = null
               card.ambiguous = false
               this.#startQueued(taskId, card)
@@ -175,8 +175,8 @@ export class OptimisticTaskMoveQueue {
         }
         // CAS conflicts and other application-level rejections definitely did
         // not commit. Only transport failures retain the overlay for polling.
-        this.#dependencies.clear(taskId, pending.mutationId)
-        if (card.inFlight?.mutationId === pending.mutationId) {
+        this.#dependencies.clear(taskId, pending.operationId)
+        if (card.inFlight?.operationId === pending.operationId) {
           card.inFlight = null
           card.ambiguous = false
           this.#startQueued(taskId, card)

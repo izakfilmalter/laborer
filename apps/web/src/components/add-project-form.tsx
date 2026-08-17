@@ -213,7 +213,11 @@ function AddProjectForm() {
     setIsAdding(true)
     try {
       const result = await addProject({
-        payload: { repoPath: path },
+        payload: {
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath: path,
+        },
       })
       toast.success(`Project "${result.name}" added`)
     } catch (error: unknown) {

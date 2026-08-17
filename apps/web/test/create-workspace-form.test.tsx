@@ -323,6 +323,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     await waitFor(() => {
       expect(createWorkspaceFn).toHaveBeenCalledWith({
         payload: {
+          operationId: expect.any(String),
           projectId: 'project-1',
         },
       })
@@ -363,8 +364,9 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     await waitFor(() => {
       expect(createWorkspaceFn).toHaveBeenCalledWith({
         payload: {
-          projectId: 'project-1',
           branchName: 'my-feature-branch',
+          operationId: expect.any(String),
+          projectId: 'project-1',
         },
       })
     })
@@ -459,8 +461,9 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       })
       expect(createWorkspaceFn).toHaveBeenCalledWith({
         payload: {
-          projectId: 'project-1',
           branchName: 'slack/fix-auth-timeout',
+          operationId: expect.any(String),
+          projectId: 'project-1',
         },
       })
       expect(
@@ -643,8 +646,9 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     await waitFor(() => {
       expect(createWorkspaceFn).toHaveBeenCalledWith({
         payload: {
-          projectId: 'project-1',
           branchName: 'if/batch-column-variant-prd',
+          operationId: expect.any(String),
+          projectId: 'project-1',
         },
       })
     })

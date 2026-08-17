@@ -75,6 +75,7 @@ describe('add card composer', () => {
           // The composer mints the card's ULID so its optimistic row and the
           // stored row share one identity.
           id: expect.stringMatching(ULID_PATTERN),
+          operationId: expect.any(String),
           projectId: 'project-1',
           status: 'in_progress',
           text: slackUrl,

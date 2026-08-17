@@ -39,9 +39,14 @@ class ProjectRegistry extends Context.Service<
   {
     readonly addProject: (
       repoPath: string,
-      rePointExisting?: boolean
+      rePointExisting?: boolean,
+      operationId?: string | null,
+      provisionalId?: string
     ) => Effect.Effect<ProjectRecord, RpcError>
-    readonly removeProject: (projectId: string) => Effect.Effect<void, RpcError>
+    readonly removeProject: (
+      projectId: string,
+      operationId?: string | null
+    ) => Effect.Effect<void, RpcError>
     readonly listProjects: () => Effect.Effect<
       readonly ProjectRecord[],
       RpcError
@@ -91,7 +96,12 @@ class ProjectRegistry extends Context.Service<
         })
 
       const addProjectUnlocked = Effect.fn('ProjectRegistry.addProject')(
-        function* (repoPath: string, rePointExisting = true) {
+        function* (
+          repoPath: string,
+          rePointExisting = true,
+          operationId: string | null = null,
+          provisionalId?: string
+        ) {
           const identity = yield* repoIdentity.resolve(repoPath).pipe(
             Effect.mapError((error) => {
               const isPathError =
@@ -114,7 +124,21 @@ class ProjectRegistry extends Context.Service<
                 databaseRpcError('read projects', cause)
               )
             )
-
+          const replay =
+            operationId === null
+              ? null
+              : yield* database
+                  .run('find project operation', (db) =>
+                    db.findProjectByOperationId(operationId)
+                  )
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      databaseRpcError('read project operation', cause)
+                    )
+                  )
+          if (replay !== null) {
+            return yield* prepareProject(projectRecord(replay))
+          }
           if (existing && !rePointExisting) {
             return projectRecord(existing)
           }
@@ -217,12 +241,17 @@ class ProjectRegistry extends Context.Service<
                 .run(
                   're-point project',
                   (db) =>
-                    db.updateProject(existing.id, existing.revision, {
-                      canonicalGitCommonDir: identity.canonicalGitCommonDir,
-                      branchName,
-                      name,
-                      rootPath: identity.canonicalRoot,
-                    }).row
+                    db.updateProject(
+                      existing.id,
+                      existing.revision,
+                      {
+                        canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                        branchName,
+                        name,
+                        rootPath: identity.canonicalRoot,
+                      },
+                      operationId
+                    ).row
                 )
                 .pipe(
                   Effect.mapError((cause) =>
@@ -233,14 +262,17 @@ class ProjectRegistry extends Context.Service<
                 .run(
                   'register project',
                   (db) =>
-                    db.insertProject({
-                      id: crypto.randomUUID(),
-                      name,
-                      rootPath: identity.canonicalRoot,
-                      repoId: identity.repoId,
-                      canonicalGitCommonDir: identity.canonicalGitCommonDir,
-                      branchName,
-                    }).row
+                    db.insertProject(
+                      {
+                        id: provisionalId ?? crypto.randomUUID(),
+                        name,
+                        rootPath: identity.canonicalRoot,
+                        repoId: identity.repoId,
+                        canonicalGitCommonDir: identity.canonicalGitCommonDir,
+                        branchName,
+                      },
+                      operationId
+                    ).row
                 )
                 .pipe(
                   Effect.mapError((cause) =>
@@ -252,13 +284,23 @@ class ProjectRegistry extends Context.Service<
         }
       )
 
-      const addProject = (repoPath: string, rePointExisting = true) =>
+      const addProject = (
+        repoPath: string,
+        rePointExisting = true,
+        operationId: string | null = null,
+        provisionalId?: string
+      ) =>
         withProjectIdentifierNamespaceLock(
-          addProjectUnlocked(repoPath, rePointExisting)
+          addProjectUnlocked(
+            repoPath,
+            rePointExisting,
+            operationId,
+            provisionalId
+          )
         )
 
       const removeProject = Effect.fn('ProjectRegistry.removeProject')(
-        function* (projectId: string) {
+        function* (projectId: string, operationId: string | null = null) {
           const existing = yield* database
             .run('find project', (db) => db.findProject(projectId))
             .pipe(
@@ -275,7 +317,7 @@ class ProjectRegistry extends Context.Service<
           yield* watchCoordinator.unwatchProject(projectId)
           yield* database
             .run('remove project', (db) =>
-              db.deleteProject(projectId, existing.revision)
+              db.deleteProject(projectId, existing.revision, operationId)
             )
             .pipe(
               Effect.mapError((cause) =>

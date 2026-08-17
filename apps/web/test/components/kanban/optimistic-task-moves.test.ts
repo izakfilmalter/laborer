@@ -59,14 +59,14 @@ const setup = () => {
     command: TaskMoveCommand
     response: ReturnType<typeof deferred<TaskMoveConfirmation>>
   }> = []
-  const clear = vi.fn((taskId: string, mutationId: string) => {
-    if (overlays.get(taskId) === mutationId) {
+  const clear = vi.fn((taskId: string, operationId: string) => {
+    if (overlays.get(taskId) === operationId) {
       overlays.delete(taskId)
     }
   })
   const confirm = vi.fn(
-    (confirmation: TaskMoveConfirmation, mutationId: string) => {
-      if (overlays.get(confirmation.row.id) === mutationId) {
+    (confirmation: TaskMoveConfirmation, operationId: string) => {
+      if (overlays.get(confirmation.row.id) === operationId) {
         overlays.delete(confirmation.row.id)
       }
     }
@@ -75,10 +75,10 @@ const setup = () => {
     clear,
     confirm,
     getAuthoritativeTask: () => authoritative,
-    install: (taskId, overlay) => overlays.set(taskId, overlay.mutationId),
+    install: (taskId, overlay) => overlays.set(taskId, overlay.operationId),
     isConflict: (error) => error === 'conflict',
     isDefinitiveFailure: (error) => error === 'rejected',
-    mutationId: () => `move-${++nextId}`,
+    operationId: () => `move-${++nextId}`,
     send: (command) => {
       const response = deferred<TaskMoveConfirmation>()
       sends.push({ command, response })
@@ -118,7 +118,7 @@ describe('OptimisticTaskMoveQueue', () => {
     // The shared-state atom applies this authoritative row and clears its
     // matching overlay before notifying the command queue.
     state.overlays.delete('task-1')
-    state.queue.observeMutationIds(['move-1'])
+    state.queue.observeOperationIds(['move-1'])
     expect(state.overlays.get('task-1')).toBeUndefined()
   })
 
@@ -134,7 +134,7 @@ describe('OptimisticTaskMoveQueue', () => {
   it('recognizes an early receipt from a full ledger batch', async () => {
     const state = setup()
     state.queue.move('task-1', { sortOrder: 2, status: 'in_review' })
-    state.queue.observeMutationIds([
+    state.queue.observeOperationIds([
       'move-1',
       ...Array.from({ length: 999 }, (_, index) => `other-${String(index)}`),
     ])
@@ -154,7 +154,7 @@ describe('OptimisticTaskMoveQueue', () => {
 
     expect(state.sends).toHaveLength(1)
     expect(state.overlays.get('task-1')).toBe('move-3')
-    state.queue.observeMutationIds(['move-1'])
+    state.queue.observeOperationIds(['move-1'])
     expect(state.sends).toHaveLength(1)
     state.sends[0]?.response.resolve({ cursor: 1, row: task(2) })
     await Promise.resolve()
@@ -162,7 +162,7 @@ describe('OptimisticTaskMoveQueue', () => {
     expect(state.sends).toHaveLength(2)
     expect(state.sends[1]?.command).toMatchObject({
       expectedRevision: 2,
-      mutationId: 'move-3',
+      operationId: 'move-3',
       sortOrder: 3,
       status: 'done',
     })

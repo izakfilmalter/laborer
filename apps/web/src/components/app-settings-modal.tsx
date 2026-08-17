@@ -154,7 +154,7 @@ export function AppSettingsModal() {
           payload: {
             expectedRevision: githubToken?.revision ?? 0,
             key: 'github_desktop_token',
-            mutationId: crypto.randomUUID(),
+            operationId: crypto.randomUUID(),
             value: result.accessToken,
           },
         })
@@ -227,7 +227,7 @@ export function AppSettingsModal() {
         payload: {
           expectedRevision: githubToken.revision,
           key: githubToken.key,
-          mutationId: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
           value: '',
         },
       })

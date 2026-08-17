@@ -239,16 +239,27 @@ export interface MutationResult<Row> {
   readonly row: Row
 }
 
+export interface ProjectReorderAssignment {
+  readonly expectedRevision: number
+  readonly projectId: string
+  readonly sortOrder: number | null
+}
+
+export interface ProjectReorderResult {
+  readonly cursor: number
+  readonly rows: readonly Project[]
+}
+
 export interface TaskChange {
   readonly changedAt: number
-  readonly mutationId: string | null
+  readonly operationId: string | null
   readonly sequence: number
   readonly taskId: string
 }
 
 export interface StateChange {
   readonly changedAt: number
-  readonly mutationId: string | null
+  readonly operationId: string | null
   readonly rowId: string
   readonly sequence: number
   readonly tableName: StateChangeTable
@@ -274,7 +285,7 @@ export interface LaborerDatabaseSnapshot {
 export interface NativeTableUpdate<Row> {
   readonly cursor: number
   readonly deletedRowIds: readonly string[]
-  readonly mutationIds: readonly string[]
+  readonly operationIds: readonly string[]
   readonly rows: readonly Row[]
   readonly type: 'delta'
 }
@@ -895,7 +906,7 @@ export class NativeLaborerDatabase {
 
   insertTask(
     input: NewLaborerTask,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
     const createdAt = input.createdAt ?? changedAt
@@ -947,7 +958,7 @@ export class NativeLaborerDatabase {
           prCheckStatus,
           serializeCheckRuns(input.prChecks)
         )
-      const cursor = this.#appendTaskChange(input.id, changedAt, mutationId)
+      const cursor = this.#appendTaskChange(input.id, changedAt, operationId)
       return { row: this.#requireTask(input.id), cursor }
     })
   }
@@ -1026,7 +1037,7 @@ export class NativeLaborerDatabase {
     id: string,
     expectedRevision: number,
     patch: LaborerTaskPatch,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
     const entries = TASK_PATCH_FIELDS.filter((field) =>
@@ -1055,7 +1066,7 @@ export class NativeLaborerDatabase {
           this.findTask(id)
         )
       }
-      const cursor = this.#appendTaskChange(id, changedAt, mutationId)
+      const cursor = this.#appendTaskChange(id, changedAt, operationId)
       return { row: this.#requireTask(id), cursor }
     })
   }
@@ -1063,7 +1074,7 @@ export class NativeLaborerDatabase {
   deleteTask(
     id: string,
     expectedRevision: number,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
     return this.#writeTransaction(() => {
@@ -1079,7 +1090,7 @@ export class NativeLaborerDatabase {
           this.findTask(id)
         )
       }
-      const cursor = this.#appendTaskChange(id, changedAt, mutationId)
+      const cursor = this.#appendTaskChange(id, changedAt, operationId)
       return { row, cursor }
     })
   }
@@ -1090,16 +1101,16 @@ export class NativeLaborerDatabase {
   ): readonly TaskChange[] {
     validateCursorRead(sequence, limit)
     return this.#database
-      .prepare(`SELECT sequence, task_id, changed_at, mutation_id
+      .prepare(`SELECT sequence, task_id, changed_at, operation_id
         FROM task_changes WHERE sequence > ? ORDER BY sequence LIMIT ?`)
       .all(sequence, limit)
       .map((value) => {
         const row = sqliteRow(value)
         return {
           changedAt: integer(row.changed_at, 'task_changes.changed_at'),
-          mutationId: nullableString(
-            row.mutation_id,
-            'task_changes.mutation_id'
+          operationId: nullableString(
+            row.operation_id,
+            'task_changes.operation_id'
           ),
           sequence: integer(row.sequence, 'task_changes.sequence'),
           taskId: string(row.task_id, 'task_changes.task_id'),
@@ -1121,6 +1132,19 @@ export class NativeLaborerDatabase {
     return row === undefined || row === null ? null : rowToProject(row)
   }
 
+  /** Current authoritative project previously published for an operation. */
+  findProjectByOperationId(operationId: string): Project | null {
+    const row = this.#database
+      .prepare(`SELECT ${PROJECT_COLUMNS.split(', ')
+        .map((column) => `p.${column.trim()}`)
+        .join(', ')} FROM state_changes c
+        JOIN projects p ON p.id = c.row_id
+        WHERE c.table_name = 'projects' AND c.operation_id = ?
+        ORDER BY c.sequence DESC LIMIT 1`)
+      .get(operationId)
+    return row === undefined || row === null ? null : rowToProject(row)
+  }
+
   listProjects(): readonly Project[] {
     const rows = this.#database
       .prepare(
@@ -1133,11 +1157,16 @@ export class NativeLaborerDatabase {
 
   insertProject(
     input: NewProject,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Project> {
     const createdAt = input.createdAt ?? changedAt
     return this.#writeTransaction(() => {
+      const replay =
+        operationId === null ? null : this.findProjectByOperationId(operationId)
+      if (replay !== null) {
+        return { cursor: this.#stateCursor(), row: replay }
+      }
       this.#database
         .prepare(`INSERT INTO projects (
           id, name, root_path, repo_id, canonical_git_common_dir,
@@ -1157,7 +1186,7 @@ export class NativeLaborerDatabase {
         'projects',
         input.id,
         changedAt,
-        mutationId
+        operationId
       )
       return { row: this.#requireProject(input.id), cursor }
     })
@@ -1167,7 +1196,7 @@ export class NativeLaborerDatabase {
     id: string,
     expectedRevision: number,
     patch: ProjectPatch,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Project> {
     const entries = PROJECT_PATCH_FIELDS.filter((field) =>
@@ -1200,7 +1229,7 @@ export class NativeLaborerDatabase {
         'projects',
         id,
         changedAt,
-        mutationId
+        operationId
       )
       return { row: this.#requireProject(id), cursor }
     })
@@ -1215,22 +1244,85 @@ export class NativeLaborerDatabase {
     id: string,
     expectedRevision: number,
     sortOrder: number | null,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Project> {
     return this.updateProject(
       id,
       expectedRevision,
       { sortOrder },
-      mutationId,
+      operationId,
       changedAt
     )
+  }
+
+  /** Validate and apply every rank assignment at one SQLite linearization point. */
+  reorderProjects(
+    assignments: readonly ProjectReorderAssignment[],
+    operationId: string,
+    changedAt = Date.now()
+  ): ProjectReorderResult {
+    if (assignments.length === 0) {
+      throw new Error('A project reorder requires at least one assignment')
+    }
+    const ids = new Set(assignments.map(({ projectId }) => projectId))
+    if (ids.size !== assignments.length) {
+      throw new Error('A project reorder cannot assign one project twice')
+    }
+    return this.#writeTransaction(() => {
+      for (const assignment of assignments) {
+        const current = this.findProject(assignment.projectId)
+        if (
+          current === null ||
+          current.revision !== assignment.expectedRevision
+        ) {
+          throw new LaborerDatabaseStaleRevisionError(
+            'projects',
+            assignment.projectId,
+            assignment.expectedRevision,
+            current
+          )
+        }
+      }
+      const update = this.#database.prepare(`UPDATE projects
+        SET sort_order = ?, updated_at = ?, revision = revision + 1
+        WHERE id = ? AND revision = ?`)
+      let cursor = this.#stateCursor()
+      for (const assignment of assignments) {
+        const result = update.run(
+          assignment.sortOrder,
+          changedAt,
+          assignment.projectId,
+          assignment.expectedRevision
+        )
+        if (result.changes !== 1) {
+          throw new LaborerDatabaseStaleRevisionError(
+            'projects',
+            assignment.projectId,
+            assignment.expectedRevision,
+            this.findProject(assignment.projectId)
+          )
+        }
+        cursor = this.#appendStateChange(
+          'projects',
+          assignment.projectId,
+          changedAt,
+          operationId
+        )
+      }
+      return {
+        cursor,
+        rows: assignments.map(({ projectId }) =>
+          this.#requireProject(projectId)
+        ),
+      }
+    })
   }
 
   deleteProject(
     id: string,
     expectedRevision: number,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Project> {
     return this.#writeTransaction(() => {
@@ -1250,7 +1342,7 @@ export class NativeLaborerDatabase {
         'projects',
         id,
         changedAt,
-        mutationId
+        operationId
       )
       return { row, cursor }
     })
@@ -1304,7 +1396,7 @@ export class NativeLaborerDatabase {
    */
   createLabel(
     input: NewLabel,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Label> {
     const id = input.id ?? createTaskUlid()
@@ -1329,7 +1421,7 @@ export class NativeLaborerDatabase {
         'labels',
         id,
         changedAt,
-        mutationId
+        operationId
       )
       return { cursor, row: this.#requireLabel(id) }
     })
@@ -1339,7 +1431,7 @@ export class NativeLaborerDatabase {
     id: string,
     expectedRevision: number,
     patch: LabelPatch,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Label> {
     if (patch.name === undefined && patch.color === undefined) {
@@ -1385,7 +1477,7 @@ export class NativeLaborerDatabase {
         'labels',
         id,
         changedAt,
-        mutationId
+        operationId
       )
       return { cursor, row: this.#requireLabel(id) }
     })
@@ -1399,7 +1491,7 @@ export class NativeLaborerDatabase {
   deleteLabel(
     id: string,
     expectedRevision: number,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Label> {
     return this.#writeTransaction(() => {
@@ -1415,12 +1507,12 @@ export class NativeLaborerDatabase {
           this.findLabel(id)
         )
       }
-      this.#stripLabelFromTasks(id, changedAt)
+      this.#stripLabelFromTasks(id, changedAt, operationId)
       const cursor = this.#appendStateChange(
         'labels',
         id,
         changedAt,
-        mutationId
+        operationId
       )
       return { cursor, row }
     })
@@ -1436,7 +1528,7 @@ export class NativeLaborerDatabase {
     taskId: string,
     expectedRevision: number,
     labelIds: readonly string[],
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
     const requested = [...new Set(labelIds)]
@@ -1470,7 +1562,7 @@ export class NativeLaborerDatabase {
           this.findTask(taskId)
         )
       }
-      const cursor = this.#appendTaskChange(taskId, changedAt, mutationId)
+      const cursor = this.#appendTaskChange(taskId, changedAt, operationId)
       return { cursor, row: this.#requireTask(taskId) }
     })
   }
@@ -1510,8 +1602,8 @@ export class NativeLaborerDatabase {
       return {
         cursor: changes.at(-1)?.sequence ?? sequence,
         deletedRowIds: ids.filter((id) => !present.has(id)),
-        mutationIds: changes.flatMap(({ mutationId }) =>
-          mutationId === null ? [] : [mutationId]
+        operationIds: changes.flatMap(({ operationId }) =>
+          operationId === null ? [] : [operationId]
         ),
         rows,
         type: 'delta' as const,
@@ -1550,8 +1642,8 @@ export class NativeLaborerDatabase {
         return {
           cursor,
           deletedRowIds: ids.filter((id) => !present.has(id)),
-          mutationIds: tableChanges.flatMap(({ mutationId }) =>
-            mutationId === null ? [] : [mutationId]
+          operationIds: tableChanges.flatMap(({ operationId }) =>
+            operationId === null ? [] : [operationId]
           ),
           rows,
           type: 'delta',
@@ -1568,7 +1660,7 @@ export class NativeLaborerDatabase {
   insertSetting(
     key: string,
     value: string,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<AppSetting> {
     return this.#writeTransaction(() => {
@@ -1581,7 +1673,7 @@ export class NativeLaborerDatabase {
         'app_settings',
         key,
         changedAt,
-        mutationId
+        operationId
       )
       return { row: this.#requireSetting(key), cursor }
     })
@@ -1595,7 +1687,7 @@ export class NativeLaborerDatabase {
     key: string,
     expectedRevision: number,
     value: string,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<AppSetting> {
     if (expectedRevision !== 0) {
@@ -1603,12 +1695,12 @@ export class NativeLaborerDatabase {
         key,
         expectedRevision,
         value,
-        mutationId,
+        operationId,
         changedAt
       )
     }
     try {
-      return this.insertSetting(key, value, mutationId, changedAt)
+      return this.insertSetting(key, value, operationId, changedAt)
     } catch (cause) {
       const current = this.findSetting(key)
       if (current !== null) {
@@ -1627,7 +1719,7 @@ export class NativeLaborerDatabase {
     key: string,
     expectedRevision: number,
     value: string,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<AppSetting> {
     return this.#writeTransaction(() => {
@@ -1648,7 +1740,7 @@ export class NativeLaborerDatabase {
         'app_settings',
         key,
         changedAt,
-        mutationId
+        operationId
       )
       return { row: this.#requireSetting(key), cursor }
     })
@@ -1657,7 +1749,7 @@ export class NativeLaborerDatabase {
   deleteSetting(
     key: string,
     expectedRevision: number,
-    mutationId: string | null = null,
+    operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<AppSetting> {
     return this.#writeTransaction(() => {
@@ -1677,7 +1769,7 @@ export class NativeLaborerDatabase {
         'app_settings',
         key,
         changedAt,
-        mutationId
+        operationId
       )
       return { row, cursor }
     })
@@ -1689,16 +1781,16 @@ export class NativeLaborerDatabase {
   ): readonly StateChange[] {
     validateCursorRead(sequence, limit)
     return this.#database
-      .prepare(`SELECT sequence, table_name, row_id, changed_at, mutation_id
+      .prepare(`SELECT sequence, table_name, row_id, changed_at, operation_id
         FROM state_changes WHERE sequence > ? ORDER BY sequence LIMIT ?`)
       .all(sequence, limit)
       .map((value) => {
         const row = sqliteRow(value)
         return {
           changedAt: integer(row.changed_at, 'state_changes.changed_at'),
-          mutationId: nullableString(
-            row.mutation_id,
-            'state_changes.mutation_id'
+          operationId: nullableString(
+            row.operation_id,
+            'state_changes.operation_id'
           ),
           rowId: string(row.row_id, 'state_changes.row_id'),
           sequence: integer(row.sequence, 'state_changes.sequence'),
@@ -1756,7 +1848,11 @@ export class NativeLaborerDatabase {
     return labelIds.filter((id) => !known.has(id))
   }
 
-  #stripLabelFromTasks(labelId: string, changedAt: number): void {
+  #stripLabelFromTasks(
+    labelId: string,
+    changedAt: number,
+    operationId: string | null
+  ): void {
     const rows = this.#database
       .prepare('SELECT id, label_ids FROM tasks WHERE label_ids LIKE ? LIMIT ?')
       .all(`%${JSON.stringify(labelId)}%`, MAX_TABLE_ROWS + 1)
@@ -1775,7 +1871,7 @@ export class NativeLaborerDatabase {
         changedAt,
         taskId
       )
-      this.#appendTaskChange(taskId, changedAt, null)
+      this.#appendTaskChange(taskId, changedAt, operationId)
     }
   }
 
@@ -1790,12 +1886,12 @@ export class NativeLaborerDatabase {
   #appendTaskChange(
     taskId: string,
     changedAt: number,
-    mutationId: string | null
+    operationId: string | null
   ): number {
     const result = this.#database
-      .prepare(`INSERT INTO task_changes (task_id, changed_at, mutation_id)
+      .prepare(`INSERT INTO task_changes (task_id, changed_at, operation_id)
         VALUES (?, ?, ?)`)
-      .run(taskId, changedAt, mutationId)
+      .run(taskId, changedAt, operationId)
     return Number(result.lastInsertRowid)
   }
 
@@ -1803,12 +1899,12 @@ export class NativeLaborerDatabase {
     tableName: StateChangeTable,
     rowId: string,
     changedAt: number,
-    mutationId: string | null
+    operationId: string | null
   ): number {
     const result = this.#database
       .prepare(`INSERT INTO state_changes
-        (table_name, row_id, changed_at, mutation_id) VALUES (?, ?, ?, ?)`)
-      .run(tableName, rowId, changedAt, mutationId)
+        (table_name, row_id, changed_at, operation_id) VALUES (?, ?, ?, ?)`)
+      .run(tableName, rowId, changedAt, operationId)
     return Number(result.lastInsertRowid)
   }
 

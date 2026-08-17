@@ -2,11 +2,9 @@
  * Commits a manual project order from the sidebar tree or the kanban lanes.
  *
  * A move installs the optimistic ranks first — the list settles under the
- * pointer immediately — and then writes each one with the narrow revision-CAS
- * `project.move`. Because the rank lives on the project row, two windows
- * dragging different projects no longer collide at all; only a genuine
- * conflict on the same project fails, and that reverts with a toast rather
- * than leaving the list lying about where the project sits.
+ * pointer immediately — and then writes all assignments with one atomic
+ * revision-CAS `project.reorder`. A genuine conflict rolls the whole plan back
+ * with a toast rather than leaving a partially durable order.
  *
  * Almost every drag plans a single write. A plan only grows when the
  * neighbours a project lands between hold the same rank and the whole list has
@@ -30,7 +28,7 @@ import { projectRowsAtom } from '@/atoms/shared-state'
 import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
 
-const moveProjectMutation = LaborerClient.mutation('project.move')
+const reorderProjectsMutation = LaborerClient.mutation('project.reorder')
 
 export interface ProjectReorder {
   /** Drops `movedProjectId` onto the slot held by `targetProjectId`. */
@@ -46,7 +44,9 @@ export interface ProjectReorder {
 
 export function useProjectReorder(): ProjectReorder {
   const projects = useAtomValue(projectRowsAtom)
-  const moveProjectRank = useAtomSet(moveProjectMutation, { mode: 'promise' })
+  const reorderProjects = useAtomSet(reorderProjectsMutation, {
+    mode: 'promise',
+  })
   const installOverlays = useAtomSet(installProjectRankOverlaysAtom)
   const clearOverlays = useAtomSet(clearProjectRankOverlaysAtom)
 
@@ -78,18 +78,9 @@ export function useProjectReorder(): ProjectReorder {
     )
     installOverlays(overlays)
 
-    Promise.all(
-      writes.map(({ expectedRevision, projectId, sortOrder }) =>
-        moveProjectRank({
-          payload: {
-            expectedRevision,
-            mutationId: crypto.randomUUID(),
-            projectId,
-            sortOrder,
-          },
-        })
-      )
-    ).catch((error: unknown) => {
+    reorderProjects({
+      payload: { assignments: writes, operationId: crypto.randomUUID() },
+    }).catch((error: unknown) => {
       clearOverlays(dragId)
       toast.error('Could not save the project order', {
         description: extractErrorMessage(error),

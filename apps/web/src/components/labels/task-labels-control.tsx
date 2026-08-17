@@ -74,7 +74,7 @@ export function TaskLabelsControl({
       payload: {
         expectedRevision: task.revision,
         labelIds,
-        mutationId: crypto.randomUUID(),
+        operationId: crypto.randomUUID(),
         taskId: task.id,
       },
     }).catch((error: unknown) => {
@@ -98,7 +98,9 @@ export function TaskLabelsControl({
         // The id is minted here so the new label joins the selection in the
         // same gesture that created it, rather than after a round trip.
         const id = createTaskUlid()
-        createLabel({ payload: { id, name } })
+        createLabel({
+          payload: { id, name, operationId: crypto.randomUUID() },
+        })
           .then(() => applyLabelIds([...task.labelIds, id]))
           .catch((error: unknown) => {
             toast.error('Could not create label', {

@@ -31,6 +31,7 @@ import {
   resolveDaemonRegistrationPath,
   resolveDaemonVersion,
 } from './daemon-registration.js'
+import { DEV_INITIAL_PROJECT_PATH_ENV } from './dev-environment.js'
 import { makeInfrastructureLayer } from './infrastructure.js'
 import { LaborerRpcsLive } from './rpc/handlers.js'
 import { DeferredServicesReady } from './services/deferred-service.js'
@@ -72,6 +73,7 @@ const NativeServices = Layer.merge(TerminalServices, FileWatcherServices)
 
 const Infrastructure = makeInfrastructureLayer({
   fileWatcherClientLayer: FileWatcherClient.inProcessLayer,
+  initialProjectPath: process.env[DEV_INITIAL_PROJECT_PATH_ENV],
   terminalClientLayer: TerminalClient.inProcessLayer,
 })
 

@@ -1,7 +1,7 @@
 import { useLiveQuery } from '@tanstack/react-db'
 import { useCallback } from 'react'
 import {
-  setSingletonPreference,
+  setSidebarWidthPreference,
   sidebarWidthCollection,
 } from '@/db/local-preferences'
 
@@ -24,13 +24,17 @@ function useSidebarWidth(
   const { data } = useLiveQuery((query) =>
     query.from({ sidebarWidth: sidebarWidthCollection })
   )
-  const preferredWidth = data[0]?.value ?? defaultPx
+  const storedWidth = data.find((row) => row.id === 'current')?.widthPx
+  const preferredWidth =
+    typeof storedWidth === 'number' && Number.isFinite(storedWidth)
+      ? storedWidth
+      : defaultPx
   const widthPx = clamp(preferredWidth, minPx, maxPx)
 
   const setWidthPx = useCallback(
     (nextWidthPx: number) => {
       const clampedWidth = clamp(nextWidthPx, minPx, maxPx)
-      setSingletonPreference(sidebarWidthCollection, Math.round(clampedWidth))
+      setSidebarWidthPreference(Math.round(clampedWidth))
     },
     [maxPx, minPx]
   )

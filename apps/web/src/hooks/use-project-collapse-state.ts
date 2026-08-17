@@ -15,7 +15,7 @@ import { useCallback, useMemo } from 'react'
 import {
   projectExpansionCollection,
   setExpansionPreference,
-  workspaceExpansionCollection,
+  workspaceGroupExpansionCollection,
 } from '@/db/local-preferences'
 
 interface CollapseState {
@@ -28,7 +28,7 @@ interface CollapseState {
 function useCollapseState(
   collection:
     | typeof projectExpansionCollection
-    | typeof workspaceExpansionCollection
+    | typeof workspaceGroupExpansionCollection
 ): CollapseState {
   const { data } = useLiveQuery(
     (query) => query.from({ expansion: collection }),
@@ -67,7 +67,7 @@ function useProjectCollapseState(): CollapseState {
  * sub-workspaces), keyed by Workspace ID.
  */
 function useWorkspaceGroupCollapseState(): CollapseState {
-  return useCollapseState(workspaceExpansionCollection)
+  return useCollapseState(workspaceGroupExpansionCollection)
 }
 
 export { useProjectCollapseState, useWorkspaceGroupCollapseState }

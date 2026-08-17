@@ -21,10 +21,14 @@ describe('useBoardOverlayHeight', () => {
 
     act(() => result.current.setFraction(0.05))
     expect(result.current.fraction).toBe(0.2)
+    expect(boardOverlayHeightCollection.get('current')).toMatchObject({
+      fraction: 0.2,
+      id: 'current',
+    })
 
     await waitFor(() =>
       expect(
-        localStorage.getItem(LOCAL_COLLECTIONS.boardHeight.storageKey)
+        localStorage.getItem(LOCAL_COLLECTIONS.boardOverlayHeight.storageKey)
       ).not.toBeNull()
     )
     expect(localStorage.getItem('laborer:board-overlay-height')).toBe('0.45')

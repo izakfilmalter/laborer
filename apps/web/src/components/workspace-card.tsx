@@ -491,10 +491,12 @@ function EditTaskCardButton({
   readonly branchName: string
   readonly workspaceId: string
 }) {
-  const { data: taskRows } = useLiveQuery((query) =>
-    query
-      .from({ tasks: taskCollection })
-      .where(({ tasks }) => eq(tasks.id, workspaceId))
+  const { data: taskRows } = useLiveQuery(
+    (query) =>
+      query
+        .from({ tasks: taskCollection })
+        .where(({ tasks }) => eq(tasks.id, workspaceId)),
+    [workspaceId]
   )
   const taskRow = taskRows[0]
   const task = taskRow === undefined ? null : boardTaskFromSharedRow(taskRow)

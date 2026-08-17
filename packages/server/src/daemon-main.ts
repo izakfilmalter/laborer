@@ -33,8 +33,12 @@ import {
 } from './daemon-registration.js'
 import { makeInfrastructureLayer } from './infrastructure.js'
 import { LaborerRpcsLive } from './rpc/handlers.js'
+import { SlackDaemonRpcsLive } from './rpc/slack-daemon-handlers.js'
 import { DeferredServicesReady } from './services/deferred-service.js'
 import { FileWatcherClient } from './services/file-watcher-client.js'
+import { ProcessInspector } from './services/process-inspector.js'
+import { ProcessLauncher } from './services/process-launcher.js'
+import { SlackDaemonProcessControl } from './services/slack-daemon-process-control.js'
 import { TerminalClient } from './services/terminal-client.js'
 import { staticAssetResponse, WEB_DIST_ENV } from './static-assets.js'
 
@@ -87,7 +91,16 @@ const RpcHandlers = Layer.mergeAll(
   FileWatcherRpcsLive,
   // Laborer owns the public terminal.spawn handler when the legacy groups
   // overlap. It resolves workspaces before calling the in-process client.
-  LaborerRpcsLive
+  LaborerRpcsLive,
+  SlackDaemonRpcsLive.pipe(
+    Layer.provide(
+      SlackDaemonProcessControl.layer.pipe(
+        Layer.provide(
+          Layer.merge(ProcessInspector.layer, ProcessLauncher.layer)
+        )
+      )
+    )
+  )
 )
 
 const RpcRoute = RpcServer.layer(DaemonRpcs).pipe(

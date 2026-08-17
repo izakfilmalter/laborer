@@ -11,6 +11,7 @@ import { DesktopUpdatePill } from '@/components/desktop-update-pill'
 
 import { ModeToggle } from './mode-toggle'
 import { ServiceStatusDots } from './service-status-dots'
+import { ConnectedSlackDaemonStatusButton } from './slack-daemon-status-button'
 
 function ResetButton() {
   const handleReset = useCallback(() => {
@@ -64,6 +65,7 @@ export function SidebarFooter() {
           <ServiceStatusDots />
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <ConnectedSlackDaemonStatusButton />
           <ResetButton />
           <SettingsButton />
           <ModeToggle />

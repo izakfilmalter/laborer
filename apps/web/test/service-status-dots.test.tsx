@@ -151,6 +151,113 @@ describe('ServiceStatusDots', () => {
     expect(fileWatcherDot.dataset.state).toBe('starting')
   })
 
+  it('summarizes every service in one non-interactive line', async () => {
+    mockFetch((url) => {
+      if (
+        url === '/server-health' ||
+        url === '/terminal-health' ||
+        url === '/file-watcher-health'
+      ) {
+        return Promise.resolve({ ok: true })
+      }
+      return Promise.reject(new Error('not ready'))
+    })
+
+    render(
+      <LifecyclePhaseProvider>
+        <ServiceStatusDots />
+      </LifecyclePhaseProvider>
+    )
+
+    await act(async () => {
+      vi.advanceTimersByTime(600)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const summary = screen.getByTestId('service-status-summary')
+    expect(summary.textContent).toContain('All services running')
+    // A readout, not a control: no button role and nothing to expand.
+    expect(summary.tagName.toLowerCase()).toBe('span')
+    expect(summary.getAttribute('aria-expanded')).toBeNull()
+    // The hover card only repeats what the always-present list already says,
+    // so it stays out of the accessibility tree.
+    expect(summary.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.getByTestId('service-dot-sync').textContent).toContain(
+      'Connection'
+    )
+  })
+
+  it('gives an unacknowledged crash its own actionable row', async () => {
+    let serverOk = true
+    mockFetch((url) => {
+      if (url === '/server-health') {
+        return Promise.resolve({ ok: serverOk })
+      }
+      if (url === '/terminal-health' || url === '/file-watcher-health') {
+        return Promise.resolve({ ok: true })
+      }
+      return Promise.reject(new Error('not ready'))
+    })
+
+    render(
+      <LifecyclePhaseProvider>
+        <ServiceStatusDots />
+      </LifecyclePhaseProvider>
+    )
+
+    await act(async () => {
+      vi.advanceTimersByTime(600)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('service-error-server')).toBeNull()
+
+    serverOk = false
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // The row is visible without hovering anything, and so are its actions.
+    expect(screen.getByTestId('service-error-server')).toBeTruthy()
+    expect(screen.getByTestId('retry-error-server')).toBeTruthy()
+
+    await act(async () => {
+      screen.getByTestId('dismiss-error-server').click()
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('service-error-server')).toBeNull()
+  })
+
+  it('names the single affected service in the summary', async () => {
+    mockFetch((url) => {
+      if (url === '/server-health' || url === '/terminal-health') {
+        return Promise.resolve({ ok: true })
+      }
+      return Promise.reject(new Error('not ready'))
+    })
+
+    render(
+      <LifecyclePhaseProvider>
+        <ServiceStatusDots />
+      </LifecyclePhaseProvider>
+    )
+
+    await act(async () => {
+      vi.advanceTimersByTime(600)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('service-status-summary').textContent).toContain(
+      'File Watcher starting'
+    )
+  })
+
   it('renders within an output element with accessible label', () => {
     mockFetch(() => pendingPromise())
 

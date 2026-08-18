@@ -1,17 +1,25 @@
 /**
- * ServiceStatusDots — renders Badge-based status indicators in the header,
- * one per core service (Server, Terminal, File Watcher), each showing the
- * service name and a colored dot indicating the live status.
+ * ServiceStatusDots — one unified status readout for every core service.
  *
- * Badges are always visible — no collapse behavior. Each badge shows its
- * service name with a colored status dot that reflects the current state.
+ * The whole system reads as a single line: a fixed cluster of four dots
+ * (Server, Terminal, File Watcher, Connection, always in that order) and one
+ * line of copy describing the most notable state. Position in the cluster
+ * identifies the service, so a glance is enough to tell which subsystem is off
+ * before any text is read.
  *
- * Error states persist until the user explicitly dismisses them or clicks
- * retry. Even after a service recovers, the error indicator remains visible
- * until dismissed so the user doesn't miss failures.
+ * Hovering the line reveals the per-service breakdown. It is a readout, not a
+ * control: nothing here is clickable, so it carries no button or dropdown
+ * affordance. The hover card is decoration over the same facts a screen
+ * reader already gets from the always-mounted list, so the card is hidden
+ * from assistive technology rather than duplicated into it.
  *
- * State transitions use CSS transitions for smooth color/opacity changes.
- * A minimum 300ms display duration prevents flickering on fast transitions.
+ * Anything the user must act on is escalated out of the hover card and onto
+ * its own always-visible row, because an action you can only reach by keeping
+ * a pointer still is not an action. Error states persist until the user
+ * explicitly dismisses them or clicks retry, so a crash is never missed.
+ *
+ * State transitions use CSS transitions for smooth color changes, and a
+ * minimum 300ms display duration prevents flickering on fast transitions.
  *
  * Consumes `useServiceStatus()` for reactive per-service health states.
  *
@@ -22,8 +30,12 @@
  */
 
 import type { TerminalHostStatus } from '@laborer/shared/rpc'
-import { Badge } from '@laborer/ui/components/badge'
 import { Button } from '@laborer/ui/components/button'
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '@laborer/ui/components/hover-card'
 import { Spinner } from '@laborer/ui/components/spinner'
 import {
   Tooltip,
@@ -42,19 +54,40 @@ import {
   type StatusColor,
 } from '@/lib/sidecar-statuses'
 
-/** Core services shown as status badges (excludes sync). */
+/** Supervised sidecars that can crash and be retried (excludes sync). */
 const STATUS_DOT_SERVICES: readonly ServiceName[] = [
   'server',
   'terminal',
   'file-watcher',
 ] as const
 
-/** Human-readable display names for service status badges. */
+/**
+ * Every service in the unified cluster, in fixed reading order. The order is
+ * load-bearing: the dot in slot three is always File Watcher.
+ */
+const UNIFIED_SERVICES: readonly ServiceName[] = [
+  ...STATUS_DOT_SERVICES,
+  'sync',
+] as const
+
+/** Human-readable display names for service status rows. */
 const DOT_DISPLAY_NAMES: Record<ServiceName, string> = {
   server: 'Server',
   terminal: 'Terminal',
   'file-watcher': 'File Watcher',
   sync: 'Connection',
+}
+
+/** One-word state used in the collapsed summary line. */
+const SUMMARY_STATE_WORDS: Record<ServiceState['state'], string> = {
+  unknown: 'not reporting',
+  starting: 'starting',
+  healthy: 'running',
+  reconnecting: 'reconnecting',
+  down: 'down',
+  unresponsive: 'unresponsive',
+  crashed: 'crashed',
+  restarting: 'restarting',
 }
 
 /** Map semantic colors to Tailwind utility classes for the status dot. */
@@ -65,15 +98,20 @@ const DOT_COLOR_CLASSES: Record<StatusColor, string> = {
   gray: 'bg-muted-foreground',
 }
 
-/** Map semantic colors to Badge variants. */
-const BADGE_VARIANT_MAP: Record<
-  StatusColor,
-  'default' | 'destructive' | 'outline' | 'secondary'
-> = {
-  green: 'secondary',
-  yellow: 'outline',
-  red: 'destructive',
-  gray: 'outline',
+/** Text color for the summary line, tuned so a healthy system stays quiet. */
+const SUMMARY_TEXT_CLASSES: Record<StatusColor, string> = {
+  green: 'text-muted-foreground',
+  yellow: 'text-warning',
+  red: 'text-destructive',
+  gray: 'text-muted-foreground',
+}
+
+/** Severity ordering used to pick which service the summary speaks for. */
+const COLOR_SEVERITY: Record<StatusColor, number> = {
+  green: 0,
+  gray: 1,
+  yellow: 2,
+  red: 3,
 }
 
 /** Minimum display duration (ms) for a state before transitioning. Prevents flickering. */
@@ -197,162 +235,215 @@ function useMinDisplayDuration(liveState: ServiceState): ServiceState {
   return displayState
 }
 
-/** Shared badge+dot+tooltip rendering used by both service and sync indicators. */
-function StatusBadgeCore({
+/** The single dot shared by the cluster and the per-service rows. */
+function StatusDot({
   color,
-  displayName,
-  label,
-  onActivate,
   pulsing,
-  state,
-  testId,
-  variant,
+  size = 'sm',
 }: {
   readonly color: StatusColor
-  readonly displayName: string
-  readonly label: string
-  /**
-   * When provided, the badge renders as a button and clicking it invokes
-   * this callback. Used for the unresponsive → manual restart affordance
-   * (ADR 0003), mirroring VS Code's pty host status bar entry.
-   */
-  readonly onActivate?: (() => void) | undefined
   readonly pulsing: boolean
-  readonly state?: ServiceState['state']
-  readonly testId?: string
-  readonly variant: 'default' | 'destructive' | 'outline' | 'secondary'
+  readonly size?: 'sm' | 'xs'
 }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Badge
-            className={cn(
-              onActivate ? 'cursor-pointer' : 'cursor-default',
-              'gap-1.5 transition-colors duration-300',
-              color === 'green' && 'border-success/40 text-success',
-              color === 'yellow' && 'border-warning/40 text-warning',
-              color === 'red' && 'border-destructive text-destructive',
-              color === 'gray' && 'border-border text-muted-foreground'
-            )}
-            data-state={state}
-            data-testid={testId}
-            render={
-              onActivate ? (
-                <button onClick={onActivate} type="button" />
-              ) : undefined
-            }
-            variant={variant}
-          />
-        }
-      >
-        <span aria-hidden="true" className="relative inline-flex size-2">
-          {pulsing && (
-            <span
-              className={cn(
-                'absolute inline-flex size-full animate-ping rounded-full opacity-75',
-                DOT_COLOR_CLASSES[color]
-              )}
-            />
-          )}
-          <span
-            className={cn(
-              'relative inline-flex size-2 rounded-full transition-colors duration-300',
-              DOT_COLOR_CLASSES[color]
-            )}
-          />
-        </span>
-        {displayName}
-      </TooltipTrigger>
-      <TooltipContent>
-        {displayName} — {label}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
-
-/** A single service status badge showing the name and a colored status dot. */
-function ServiceStatusBadge({
-  name,
-  serviceState,
-  errorPersisted,
-  onDismissError,
-  onRetryError,
-}: {
-  readonly name: ServiceName
-  readonly serviceState: ServiceState
-  readonly errorPersisted: boolean
-  readonly onDismissError: () => void
-  readonly onRetryError: () => void
-}) {
-  const displayState = useMinDisplayDuration(serviceState)
-  const color = getStatusColor(displayState)
-  const displayName = DOT_DISPLAY_NAMES[name]
-  const label = getStatusLabel(displayState)
-  const pulsing = shouldPulse(displayState)
-  const variant = BADGE_VARIANT_MAP[color]
-  // Unresponsive is advisory (ADR 0003): offer click-to-restart, the same
-  // path as the crash retry action.
-  const onActivate =
-    displayState.state === 'unresponsive' ? onRetryError : undefined
-
+  const sizeClass = size === 'xs' ? 'size-1.5' : 'size-2'
   return (
     <span
-      className="inline-flex items-center gap-0.5"
-      data-display-state={displayState.state}
-      data-error-persisted={errorPersisted ? 'true' : undefined}
-      data-state={serviceState.state}
-      data-testid={`service-dot-${name}`}
+      aria-hidden="true"
+      className={cn('relative inline-flex shrink-0', sizeClass)}
     >
-      <StatusBadgeCore
-        color={color}
-        displayName={displayName}
-        label={label}
-        onActivate={onActivate}
-        pulsing={pulsing}
-        variant={variant}
-      />
-      {errorPersisted && (
-        <span className="inline-flex gap-0.5">
-          <button
-            className="rounded px-0.5 text-muted-foreground text-xs hover:text-foreground"
-            data-testid={`dismiss-error-${name}`}
-            onClick={onDismissError}
-            type="button"
-          >
-            <X className="size-3" />
-          </button>
-          <button
-            className="rounded px-0.5 text-muted-foreground text-xs hover:text-foreground"
-            data-testid={`retry-error-${name}`}
-            onClick={onRetryError}
-            type="button"
-          >
-            <RotateCcw className="size-3" />
-          </button>
-        </span>
+      {pulsing && (
+        <span
+          className={cn(
+            'absolute inline-flex size-full animate-ping rounded-full opacity-75 motion-reduce:animate-none',
+            DOT_COLOR_CLASSES[color]
+          )}
+        />
       )}
+      <span
+        className={cn(
+          'relative inline-flex rounded-full transition-colors duration-300',
+          sizeClass,
+          DOT_COLOR_CLASSES[color]
+        )}
+      />
     </span>
   )
 }
 
-/** Server connection badge — always visible in the former sync-status slot. */
-function SyncIndicator({ syncState }: { readonly syncState: ServiceState }) {
-  const color = getStatusColor(syncState)
-  const label = getStatusLabel(syncState)
-  const pulsing = shouldPulse(syncState)
-  const variant = BADGE_VARIANT_MAP[color]
+/** Summary copy and tone derived from every service at once. */
+interface UnifiedSummary {
+  readonly color: StatusColor
+  readonly text: string
+}
+
+/**
+ * Pick the one thing worth saying about the whole system.
+ *
+ * A single affected service is named outright, because naming it saves the
+ * user from expanding the list. Several at once collapse to a count, because
+ * a list of names in one line stops being scannable.
+ */
+function summarizeStatuses(
+  displayStates: Record<ServiceName, ServiceState>,
+  persistedErrors: ReadonlySet<ServiceName>
+): UnifiedSummary {
+  const affected = UNIFIED_SERVICES.filter(
+    (name) => getStatusColor(displayStates[name]) !== 'green'
+  ).sort(
+    (a, b) =>
+      COLOR_SEVERITY[getStatusColor(displayStates[b])] -
+      COLOR_SEVERITY[getStatusColor(displayStates[a])]
+  )
+
+  const worst = affected[0]
+  if (worst !== undefined) {
+    const color = getStatusColor(displayStates[worst])
+    if (affected.length === 1) {
+      return {
+        color,
+        text: `${DOT_DISPLAY_NAMES[worst]} ${SUMMARY_STATE_WORDS[displayStates[worst].state]}`,
+      }
+    }
+    return { color, text: `${affected.length} services need attention` }
+  }
+
+  // Everything is healthy now, but a past crash is still unacknowledged.
+  const [firstError] = [...persistedErrors]
+  if (firstError !== undefined) {
+    return {
+      color: 'red',
+      text:
+        persistedErrors.size === 1
+          ? `${DOT_DISPLAY_NAMES[firstError]} crashed earlier`
+          : `${persistedErrors.size} services crashed earlier`,
+    }
+  }
+
+  return { color: 'green', text: 'All services running' }
+}
+
+/**
+ * The per-service facts, always in the DOM.
+ *
+ * This list is the accessible form of the readout and the anchor for every
+ * service's live state. It is visually hidden because the same information is
+ * shown in the hover card, which assistive technology never reaches.
+ */
+function ServiceStatusList({
+  displayStates,
+  persistedErrors,
+  statuses,
+}: {
+  readonly displayStates: Record<ServiceName, ServiceState>
+  readonly persistedErrors: ReadonlySet<ServiceName>
+  readonly statuses: Record<ServiceName, ServiceState>
+}) {
+  return (
+    <ul className="sr-only">
+      {UNIFIED_SERVICES.map((name) => (
+        <li
+          data-display-state={displayStates[name].state}
+          data-error-persisted={persistedErrors.has(name) ? 'true' : undefined}
+          data-state={statuses[name].state}
+          data-testid={`service-dot-${name}`}
+          key={name}
+        >
+          {DOT_DISPLAY_NAMES[name]}: {getStatusLabel(displayStates[name])}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** One line of the hover breakdown: name on the left, state on the right. */
+function ServiceHoverRow({
+  displayState,
+  name,
+}: {
+  readonly displayState: ServiceState
+  readonly name: ServiceName
+}) {
+  const color = getStatusColor(displayState)
 
   return (
-    <StatusBadgeCore
-      color={color}
-      displayName="Connection"
-      label={label}
-      pulsing={pulsing}
-      state={syncState.state}
-      testId="sync-indicator"
-      variant={variant}
-    />
+    <li className="flex items-center gap-2 text-xs">
+      <StatusDot color={color} pulsing={shouldPulse(displayState)} size="xs" />
+      <span className="shrink-0">{DOT_DISPLAY_NAMES[name]}</span>
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate text-right',
+          SUMMARY_TEXT_CLASSES[color]
+        )}
+      >
+        {getStatusLabel(displayState)}
+      </span>
+    </li>
+  )
+}
+
+/**
+ * What the error row says, which is not always the current state: a crash the
+ * user never acknowledged still gets reported after the service recovers,
+ * because the recovery does not explain the outage.
+ */
+function errorRowLabel(
+  displayState: ServiceState,
+  liveState: ServiceState
+): string {
+  if (displayState.state === 'unresponsive') {
+    return 'Unresponsive'
+  }
+  if (liveState.state === 'healthy') {
+    return 'Crashed earlier, running again'
+  }
+  return getStatusLabel(displayState)
+}
+
+/**
+ * A failure the user still has to answer for, on its own row.
+ *
+ * Retry and dismiss live here rather than in the hover card so they can be
+ * clicked and tabbed to like anything else in the footer.
+ */
+function ServiceErrorRow({
+  label,
+  name,
+  onDismissError,
+  onRetryError,
+}: {
+  readonly label: string
+  readonly name: ServiceName
+  readonly onDismissError: () => void
+  readonly onRetryError: () => void
+}) {
+  return (
+    <div
+      className="flex w-full items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1 text-destructive text-xs"
+      data-testid={`service-error-${name}`}
+    >
+      <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">
+        {DOT_DISPLAY_NAMES[name]} — {label}
+      </span>
+      <button
+        aria-label={`Retry ${DOT_DISPLAY_NAMES[name]}`}
+        className="rounded-sm p-0.5 hover:bg-destructive/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        data-testid={`retry-error-${name}`}
+        onClick={onRetryError}
+        type="button"
+      >
+        <RotateCcw aria-hidden="true" className="size-3.5" />
+      </button>
+      <button
+        aria-label={`Dismiss ${DOT_DISPLAY_NAMES[name]} error`}
+        className="rounded-sm p-0.5 hover:bg-destructive/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        data-testid={`dismiss-error-${name}`}
+        onClick={onDismissError}
+        type="button"
+      >
+        <X aria-hidden="true" className="size-3.5" />
+      </button>
+    </div>
   )
 }
 
@@ -486,10 +577,10 @@ function HostStateIcon({
 }
 
 /**
- * Terminal host health, shown above the service badges because it can make
- * every terminal unusable while the rest of the app stays healthy. Healthy
- * hosts render nothing: this row exists only when there is something to know
- * or something to do.
+ * Terminal host health, shown above the unified status row because it can
+ * make every terminal unusable while the rest of the app stays healthy.
+ * Healthy hosts render nothing: this row exists only when there is something
+ * to know or something to do.
  */
 function TerminalHostStatusPill({
   onRestart,
@@ -509,7 +600,7 @@ function TerminalHostStatusPill({
   return (
     <span
       className={cn(
-        'flex basis-full items-center gap-2 rounded-lg border px-2 py-1 text-xs transition-colors duration-300',
+        'flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-xs transition-colors duration-300',
         HOST_TONE_CLASSES[presentation.tone]
       )}
       data-state={status.state}
@@ -552,11 +643,28 @@ function TerminalHostStatusPill({
   )
 }
 
-/** Row of status badges for core services — always visible. */
+/** A single line summarizing every service, with the breakdown on hover. */
 function ServiceStatusDots() {
   const statuses = useServiceStatus()
   const host = useTerminalHostStatus()
   const { persistedErrors, dismissError } = usePersistedErrors(statuses)
+
+  // Called once per service in a fixed order, so hook order stays stable.
+  const displayStates: Record<ServiceName, ServiceState> = {
+    server: useMinDisplayDuration(statuses.server),
+    terminal: useMinDisplayDuration(statuses.terminal),
+    'file-watcher': useMinDisplayDuration(statuses['file-watcher']),
+    sync: useMinDisplayDuration(statuses.sync),
+  }
+
+  const summary = summarizeStatuses(displayStates, persistedErrors)
+
+  // A service earns its own row when there is something to do about it: an
+  // unacknowledged crash, or a host that stopped answering (ADR 0003).
+  const actionableServices = UNIFIED_SERVICES.filter(
+    (name) =>
+      persistedErrors.has(name) || displayStates[name].state === 'unresponsive'
+  )
 
   const handleRetry = useCallback(
     (name: ServiceName) => {
@@ -569,7 +677,7 @@ function ServiceStatusDots() {
   return (
     <output
       aria-label="Service statuses"
-      className="flex flex-wrap items-center gap-1 transition-all duration-300"
+      className="grid gap-1 transition-all duration-300"
     >
       {/* This row is already a polite live region, so the spoken host summary
           lives here rather than on the pill: a live region that mounts with
@@ -584,17 +692,61 @@ function ServiceStatusDots() {
         }}
         status={host.status}
       />
-      {STATUS_DOT_SERVICES.map((name) => (
-        <ServiceStatusBadge
-          errorPersisted={persistedErrors.has(name)}
+      <HoverCard>
+        <HoverCardTrigger
+          render={
+            <span
+              aria-hidden="true"
+              className="flex w-full cursor-default items-center gap-2 px-0.5 text-xs"
+              data-testid="service-status-summary"
+            />
+          }
+        >
+          <span className="flex shrink-0 items-center gap-1">
+            {UNIFIED_SERVICES.map((name) => (
+              <StatusDot
+                color={getStatusColor(displayStates[name])}
+                key={name}
+                pulsing={shouldPulse(displayStates[name])}
+                size="xs"
+              />
+            ))}
+          </span>
+          <span
+            className={cn(
+              'min-w-0 flex-1 truncate text-left transition-colors duration-300',
+              SUMMARY_TEXT_CLASSES[summary.color]
+            )}
+          >
+            {summary.text}
+          </span>
+        </HoverCardTrigger>
+        <HoverCardContent align="start" className="w-56" side="top">
+          <ul className="grid gap-1.5">
+            {UNIFIED_SERVICES.map((name) => (
+              <ServiceHoverRow
+                displayState={displayStates[name]}
+                key={name}
+                name={name}
+              />
+            ))}
+          </ul>
+        </HoverCardContent>
+      </HoverCard>
+      <ServiceStatusList
+        displayStates={displayStates}
+        persistedErrors={persistedErrors}
+        statuses={statuses}
+      />
+      {actionableServices.map((name) => (
+        <ServiceErrorRow
           key={name}
+          label={errorRowLabel(displayStates[name], statuses[name])}
           name={name}
           onDismissError={() => dismissError(name)}
           onRetryError={() => handleRetry(name)}
-          serviceState={statuses[name]}
         />
       ))}
-      <SyncIndicator syncState={statuses.sync} />
     </output>
   )
 }

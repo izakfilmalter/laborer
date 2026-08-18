@@ -139,7 +139,9 @@ function getStatusLabel(state: ServiceState): string {
       return `Down: ${state.error}`
     }
     case 'unresponsive': {
-      return 'Unresponsive — click to restart'
+      // The restart affordance is a real button beside the status now, so the
+      // label states the fact and lets the control describe the action.
+      return 'Unresponsive'
     }
     case 'crashed': {
       return `Crashed: ${state.error}`

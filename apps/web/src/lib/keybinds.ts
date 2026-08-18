@@ -4,8 +4,8 @@
  * This file is the single source of truth for all keyboard shortcuts in the
  * application. When adding or modifying keybinds:
  * 1. Add the definition to the `KEYBINDS` constant below
- * 2. The terminal bypass logic in terminal-pane.tsx will automatically
- *    intercept matching keys so they bubble to the global hotkey layer
+ * 2. The terminal bypass logic in terminal-pane.tsx intercepts matching keys
+ *    after giving terminal-native input overrides priority.
  *
  * Design follows the Mux pattern:
  * - `Keybind` type describes a shortcut declaratively
@@ -227,9 +227,9 @@ function matchesKeybind(event: KeyboardEvent, keybind: Keybind): boolean {
  * Hotkeys. The terminal key handler uses this list to decide which keys
  * should bypass xterm.js and bubble to the global hotkey layer.
  *
- * Prefix-key sequences (Ctrl+B then action) are not listed here because
- * only the prefix key (Ctrl+B) needs to bypass the terminal — the action
- * key is consumed during prefix mode regardless of what it is.
+ * Prefix-key sequences (Ctrl+B then action) are registered at the app level.
+ * A focused terminal gives Ctrl+B to the PTY for Emacs/readline navigation;
+ * the prefix remains available when focus is outside terminal input.
  */
 const KEYBINDS = {
   // -- Panel splits --

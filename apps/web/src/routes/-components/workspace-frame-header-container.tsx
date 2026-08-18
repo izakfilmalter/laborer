@@ -4,17 +4,37 @@ import { buildWorkspacePath } from '@laborer/shared/workspace-tree'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useEffect, useMemo } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { WorkspaceFrameHeader } from '@/components/workspace-frame-header'
+import {
+  WorkspaceFrameHeader,
+  type WorkspaceFrameHeaderProps,
+} from '@/components/workspace-frame-header'
 import {
   projectCollection,
   taskCollection,
   workspaceViewsFromRows,
 } from '@/db/shared-state'
+import { useProjectShortName } from '@/hooks/use-project-short-name'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 import { getScopedActivePaneId } from '@/panels/window-layout-utils'
 
 const refreshPrMutation = LaborerClient.mutation('workspace.refreshPr')
+
+function WorkspaceFrameHeaderWithProjectShortName({
+  projectId,
+  ...props
+}: Omit<WorkspaceFrameHeaderProps, 'projectShortName'> & {
+  readonly projectId: string
+}) {
+  const projectShortName = useProjectShortName(projectId)
+  return (
+    <WorkspaceFrameHeader
+      {...props}
+      projectId={projectId}
+      projectShortName={projectShortName}
+    />
+  )
+}
 
 /**
  * Data-fetching wrapper for WorkspaceFrameHeader. Reads project and task-backed
@@ -77,6 +97,8 @@ export function WorkspaceFrameHeaderContainer({
     if (!workspaceId) {
       return {
         projectName: undefined,
+        projectId: undefined,
+        taskNumber: null,
         workspacePath: [],
         branchName: undefined,
         prNumber: null,
@@ -91,6 +113,8 @@ export function WorkspaceFrameHeaderContainer({
     if (!workspace) {
       return {
         projectName: undefined,
+        projectId: undefined,
+        taskNumber: null,
         workspacePath: [],
         branchName: undefined,
         prNumber: null,
@@ -118,6 +142,8 @@ export function WorkspaceFrameHeaderContainer({
     ).map((ws) => ws.branchName)
     return {
       projectName: project?.name,
+      projectId: workspace.projectId,
+      taskNumber: workspace.taskNumber,
       workspacePath,
       branchName: workspace.branchName,
       prNumber: workspace.prNumber ?? null,
@@ -128,7 +154,6 @@ export function WorkspaceFrameHeaderContainer({
       behindCount: workspace.behindCount ?? null,
     }
   }, [workspaceId, workspaceList, projectList])
-
   useEffect(() => {
     if (!(workspaceId && scopedActivePaneId)) {
       return
@@ -139,28 +164,37 @@ export function WorkspaceFrameHeaderContainer({
     })
   }, [refreshPr, scopedActivePaneId, workspaceId])
 
-  return (
-    <WorkspaceFrameHeader
-      actions={actions}
-      activePaneId={scopedActivePaneId}
-      agentStatus={workspaceAgentStatus}
-      aheadCount={workspaceData.aheadCount}
-      behindCount={workspaceData.behindCount}
-      branchName={workspaceData.branchName}
-      diffIsOpen={diffIsOpen ?? false}
-      dragHandleRef={dragHandleRef}
-      isActiveFrame={isActiveFrame}
-      isMinimized={isMinimized}
-      onHeaderClick={onHeaderClick}
-      onMinimize={onMinimize}
-      prNumber={workspaceData.prNumber}
-      projectName={workspaceData.projectName}
-      prState={workspaceData.prState}
-      prTitle={workspaceData.prTitle}
-      prUrl={workspaceData.prUrl}
-      treeIsOpen={treeIsOpen ?? false}
-      workspaceId={workspaceId}
-      workspacePath={workspaceData.workspacePath}
+  const headerProps = {
+    actions,
+    activePaneId: scopedActivePaneId,
+    agentStatus: workspaceAgentStatus,
+    aheadCount: workspaceData.aheadCount,
+    behindCount: workspaceData.behindCount,
+    branchName: workspaceData.branchName,
+    diffIsOpen: diffIsOpen ?? false,
+    dragHandleRef,
+    isActiveFrame,
+    isMinimized,
+    onHeaderClick,
+    onMinimize,
+    prNumber: workspaceData.prNumber,
+    projectId: workspaceData.projectId,
+    projectName: workspaceData.projectName,
+    prState: workspaceData.prState,
+    prTitle: workspaceData.prTitle,
+    prUrl: workspaceData.prUrl,
+    taskNumber: workspaceData.taskNumber,
+    treeIsOpen: treeIsOpen ?? false,
+    workspaceId,
+    workspacePath: workspaceData.workspacePath,
+  } satisfies Omit<WorkspaceFrameHeaderProps, 'projectShortName'>
+
+  return workspaceData.projectId && workspaceData.taskNumber ? (
+    <WorkspaceFrameHeaderWithProjectShortName
+      {...headerProps}
+      projectId={workspaceData.projectId}
     />
+  ) : (
+    <WorkspaceFrameHeader {...headerProps} projectShortName={null} />
   )
 }

@@ -27,6 +27,7 @@ import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
 import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
+import { TaskIdentifier } from '@/components/task-identifier'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
 import {
@@ -64,14 +65,20 @@ interface WorkspaceFrameHeaderProps {
   readonly onMinimize?: (() => void) | undefined
   /** PR number, if the workspace has an associated pull request. */
   readonly prNumber: number | null
+  /** The project ID used to associate the task identifier with its project. */
+  readonly projectId: string | undefined
   /** The project name for the workspace (shown in the header). */
   readonly projectName: string | undefined
+  /** The project prefix used in the task identifier. */
+  readonly projectShortName: string | null
   /** PR state: 'OPEN', 'CLOSED', or 'MERGED'. */
   readonly prState: string | null
   /** PR title for tooltip. */
   readonly prTitle: string | null
   /** PR URL for linking. */
   readonly prUrl: string | null
+  /** Project-scoped task number, absent for the root workspace. */
+  readonly taskNumber: number | null
   /** Whether the file tree pane is currently open for the active workspace. */
   readonly treeIsOpen?: boolean | undefined
   /** The workspace ID, used for the close-workspace action. */
@@ -166,7 +173,10 @@ function WorkspaceFrameHeader({
   prState,
   prTitle,
   prUrl,
+  projectId,
   projectName,
+  projectShortName,
+  taskNumber,
   treeIsOpen = false,
   workspaceId,
   workspacePath,
@@ -246,6 +256,13 @@ function WorkspaceFrameHeader({
             />
           </div>
         </button>
+        {projectId && taskNumber ? (
+          <TaskIdentifier
+            projectId={projectId}
+            projectShortName={projectShortName}
+            taskNumber={taskNumber}
+          />
+        ) : null}
         <GitHubPrStatusBadge
           className="shrink-0"
           prNumber={prNumber}

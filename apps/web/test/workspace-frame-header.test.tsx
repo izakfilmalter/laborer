@@ -102,7 +102,10 @@ const BASE_PROPS = {
   prState: null,
   prTitle: null,
   prUrl: null,
+  projectId: 'project-1',
   projectName: 'my-project',
+  projectShortName: 'LAB',
+  taskNumber: 7,
   workspaceId: 'ws-1',
   workspacePath: [] as readonly string[],
 } as const
@@ -115,6 +118,26 @@ describe('WorkspaceFrameHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     isElectronMock.mockReturnValue(false)
+  })
+
+  it('shows the task identifier in the workspace header', () => {
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={mockActions()} />)
+
+    expect(screen.getByText('LAB-7').getAttribute('data-task-identifier')).toBe(
+      'LAB-7'
+    )
+  })
+
+  it('does not show a task identifier for a root workspace', () => {
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={mockActions()}
+        taskNumber={null}
+      />
+    )
+
+    expect(screen.queryByText('LAB-7')).toBeNull()
   })
 
   // --- Diff viewer toggle ---

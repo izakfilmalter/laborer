@@ -1,17 +1,47 @@
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { refreshPrMock, mutationMap, activePaneIdMock, projectRowsMock } =
-  vi.hoisted(() => ({
-    refreshPrMock: vi.fn().mockResolvedValue(undefined),
-    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-    activePaneIdMock: vi.fn(),
-    projectRowsMock: vi.fn(),
-  }))
+const {
+  activePaneIdMock,
+  headerPropsMock,
+  mutationMap,
+  projectRowsMock,
+  refreshPrMock,
+  workspaceRowsMock,
+} = vi.hoisted(() => ({
+  activePaneIdMock: vi.fn(),
+  headerPropsMock: vi.fn(),
+  refreshPrMock: vi.fn().mockResolvedValue(undefined),
+  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  projectRowsMock: vi.fn(),
+  workspaceRowsMock: vi.fn(() => []),
+}))
 
 vi.mock('@effect/atom-react/Hooks', () => ({
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
-  useAtomValue: projectRowsMock,
+}))
+
+vi.mock('@tanstack/react-db', () => ({
+  useLiveQuery: (
+    buildQuery: (query: {
+      from: (collections: Record<string, unknown>) => unknown
+    }) => unknown
+  ) =>
+    buildQuery({
+      from: (collections) => ({
+        data: 'projects' in collections ? projectRowsMock() : [],
+      }),
+    }),
+}))
+
+vi.mock('@/db/shared-state', () => ({
+  projectCollection: Symbol('projects'),
+  taskCollection: Symbol('tasks'),
+  workspaceViewsFromRows: () => workspaceRowsMock(),
+}))
+
+vi.mock('@/hooks/use-project-short-name', () => ({
+  useProjectShortName: () => 'LAB',
 }))
 
 vi.mock('@/atoms/laborer-client', () => ({
@@ -49,7 +79,10 @@ vi.mock('@/panels/panel-context', () => ({
 }))
 
 vi.mock('@/components/workspace-frame-header', () => ({
-  WorkspaceFrameHeader: () => <div data-testid="workspace-frame-header" />,
+  WorkspaceFrameHeader: (props: unknown) => {
+    headerPropsMock(props)
+    return <div data-testid="workspace-frame-header" />
+  },
 }))
 
 import { WorkspaceFrameHeaderContainer } from '../src/routes/-components/workspace-frame-header-container'
@@ -68,6 +101,9 @@ describe('WorkspaceFrameHeaderContainer', () => {
     refreshPrMock.mockClear()
     activePaneIdMock.mockReset()
     projectRowsMock.mockReset()
+    workspaceRowsMock.mockReset()
+    workspaceRowsMock.mockReturnValue([])
+    headerPropsMock.mockClear()
   })
 
   it('refreshes PR status when a pane in the workspace becomes focused', async () => {
@@ -108,5 +144,39 @@ describe('WorkspaceFrameHeaderContainer', () => {
     )
 
     expect(refreshPrMock).not.toHaveBeenCalled()
+  })
+
+  it('forwards the task identifier data to the workspace header', () => {
+    activePaneIdMock.mockReturnValue('pane-1')
+    projectRowsMock.mockReturnValue([{ id: 'project-1', name: 'Demo' }])
+    workspaceRowsMock.mockReturnValue([
+      {
+        branchName: 'feature/ticket-header',
+        id: 'ws-1',
+        parentTaskId: null,
+        projectId: 'project-1',
+        status: 'ready',
+        taskNumber: 7,
+      },
+    ])
+
+    render(
+      <WorkspaceFrameHeaderContainer
+        isActiveFrame
+        isMinimized={false}
+        onHeaderClick={() => undefined}
+        onMinimize={() => undefined}
+        subLayout={subLayout}
+        workspaceId="ws-1"
+      />
+    )
+
+    expect(headerPropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        projectShortName: 'LAB',
+        taskNumber: 7,
+      })
+    )
   })
 })

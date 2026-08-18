@@ -28,7 +28,7 @@
  * - `attachCustomKeyEventHandler` intercepts keyboard events before
  *   xterm.js processes them. Keys matching app-level keybinds are
  *   returned as `false` so they bubble to TanStack Hotkeys on document.
- * - Ctrl+B enters prefix mode for tmux-style sequences.
+ * - Terminal-native navigation keys are sent directly to the PTY.
  *
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
  * @see apps/web/src/hooks/use-terminal-rpc.ts — daemon WebSocket hook
@@ -41,10 +41,15 @@ import { FitAddon } from '@xterm/addon-fit'
 import { ImageAddon } from '@xterm/addon-image'
 import { type ISearchResultChangeEvent, SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@laborer/ui/components/context-menu'
 import {
   InputGroup,
   InputGroupAddon,
@@ -52,7 +57,6 @@ import {
   InputGroupInput,
   InputGroupText,
 } from '@laborer/ui/components/input-group'
-import { Kbd } from '@laborer/ui/components/kbd'
 import { Spinner } from '@laborer/ui/components/spinner'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import {
@@ -71,18 +75,26 @@ import {
 import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import {
-  isPrefixKey,
   isTerminalFindNextShortcut,
   isTerminalFindPreviousShortcut,
   isTerminalFindShortcut,
   shouldBypassTerminal,
 } from '@/lib/keybinds'
-import { openTerminalLink, terminalOscLinkHandler } from '@/lib/terminal-links'
+import { localApi } from '@/lib/local-api'
+import { handleTerminalKeyEvent } from '@/lib/terminal-keyboard'
+import {
+  createTerminalLinkProvider,
+  openTerminalLink,
+  type TerminalContextMenuAction,
+  terminalContextMenuItems,
+  terminalOscLinkHandler,
+} from '@/lib/terminal-links'
 import {
   createTerminalScreen,
   type TerminalScreen,
   type TerminalScreenCanvas,
 } from '@/lib/terminal-screen'
+import { toast } from '@/lib/toast'
 import {
   showTerminalRevivalMarker,
   terminalLoadingMessage,
@@ -91,13 +103,6 @@ import {
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
 type ReplayStatus = 'idle' | 'replaying' | 'complete'
 type TerminalStatus = 'running' | 'stopped' | 'restarted'
-
-/**
- * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
- * so that if the user presses Ctrl+B but doesn't follow up with an action key
- * within this window, prefix mode exits and the terminal resumes normal input.
- */
-const PREFIX_MODE_TIMEOUT = 1500
 
 /** Search highlight limit. Matches VS Code's higher-than-default threshold. */
 const TERMINAL_FIND_HIGHLIGHT_LIMIT = 20_000
@@ -127,6 +132,50 @@ const TERMINAL_FIND_DECORATIONS = {
  * @see .reference/vscode/src/vs/workbench/contrib/terminal/browser/terminalResizeDebouncer.ts
  */
 const RESIZE_COLS_DEBOUNCE_MS = 100
+
+/**
+ * What the right-click menu was opened over. Captured at open time because the
+ * hovered link and the selection can both change while the menu is up.
+ */
+interface TerminalContextMenuTarget {
+  readonly link: string | null
+  readonly selection: string
+}
+
+type TerminalContextMenuState = TerminalContextMenuTarget | null
+
+/**
+ * Run a terminal right-click action against the live terminal. Paste goes
+ * through `terminal.paste` so bracketed-paste mode is honored.
+ */
+const runTerminalContextAction = async (
+  action: TerminalContextMenuAction,
+  context: TerminalContextMenuTarget,
+  terminal: Terminal | null
+): Promise<void> => {
+  if (action === 'open-link') {
+    if (context.link) {
+      openTerminalLink(context.link)
+    }
+    return
+  }
+  if (action === 'copy-link') {
+    if (context.link) {
+      await navigator.clipboard.writeText(context.link)
+    }
+    return
+  }
+  if (action === 'copy') {
+    if (context.selection.length > 0) {
+      await navigator.clipboard.writeText(context.selection)
+    }
+    return
+  }
+  const text = await navigator.clipboard.readText()
+  if (text.length > 0) {
+    terminal?.paste(text)
+  }
+}
 
 /**
  * Normal buffer length threshold at which resize debouncing activates.
@@ -478,6 +527,14 @@ function TerminalPaneRenderer({
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
 
+  /**
+   * URL under the pointer, published by the link provider's hover callbacks.
+   * A right-click lands on the hovered link, so this is what the context menu
+   * offers to copy or open without re-deriving cell coordinates from the event.
+   */
+  const hoveredLinkRef = useRef<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>(null)
+
   const [isFindVisible, setIsFindVisible] = useState(false)
   const isFindVisibleRef = useRef(isFindVisible)
   isFindVisibleRef.current = isFindVisible
@@ -497,19 +554,6 @@ function TerminalPaneRenderer({
    */
   const resizeTerminalRef = useRef(resizeTerminal)
   resizeTerminalRef.current = resizeTerminal
-
-  /**
-   * Prefix mode state for keyboard shortcut scope isolation (Issue #80).
-   *
-   * When Ctrl+B is pressed inside the terminal, prefix mode activates.
-   * The next keypress is suppressed from the terminal and bubbles to
-   * document where TanStack Hotkeys catches it as the action key.
-   * Prefix mode auto-exits after PREFIX_MODE_TIMEOUT or after the
-   * action key is consumed.
-   */
-  const [prefixMode, setPrefixMode] = useState(false)
-  const prefixModeRef = useRef(false)
-  const prefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
    * Loading state tracking.
@@ -618,6 +662,53 @@ function TerminalPaneRenderer({
       return didMatch
     },
     []
+  )
+
+  const executeTerminalContextAction = useCallback(
+    (action: TerminalContextMenuAction, context: TerminalContextMenuTarget) => {
+      runTerminalContextAction(action, context, terminalRef.current).catch(
+        () => {
+          toast.error('Clipboard is unavailable.')
+        }
+      )
+    },
+    [terminalRef]
+  )
+
+  /**
+   * Capture what the pointer is over, then hand off: Electron shows the native
+   * menu, the browser falls through to the Base UI menu on the trigger.
+   */
+  const handleTerminalContextMenu = useCallback(
+    (event: Pick<MouseEvent, 'clientX' | 'clientY' | 'preventDefault'>) => {
+      const context = {
+        link: hoveredLinkRef.current,
+        selection: terminalRef.current?.getSelection() ?? '',
+      }
+      setContextMenu(context)
+
+      if (localApi.contextMenuKind !== 'native') {
+        return
+      }
+
+      event.preventDefault()
+      localApi
+        .showContextMenu<TerminalContextMenuAction>(
+          terminalContextMenuItems({
+            link: context.link,
+            hasSelection: context.selection.length > 0,
+          }),
+          { x: event.clientX, y: event.clientY },
+          async () => null
+        )
+        .then((action) =>
+          action ? executeTerminalContextAction(action, context) : undefined
+        )
+        .catch(() => {
+          toast.error('Could not open the terminal menu.')
+        })
+    },
+    [executeTerminalContextAction, terminalRef]
   )
 
   const closeTerminalFind = useCallback(
@@ -937,18 +1028,19 @@ function TerminalPaneRenderer({
       // Unicode11 addon failed to load — default width calculation used
     }
 
-    // Load Web Links addon for clickable URL detection.
-    // Agent TUIs frequently output URLs — file paths, PR URLs, docs links.
-    // Custom handler routes link clicks through localApi.openExternal() which
-    // delegates to shell.openExternal via the Electron IPC bridge.
-    try {
-      const webLinksAddon = new WebLinksAddon((_event, url) => {
-        openTerminalLink(url)
+    // Clickable URL detection. Agent TUIs frequently output URLs — PR URLs,
+    // docs links — and they routinely wrap across rows, so this provider
+    // rejoins wrapped rows before matching rather than linkifying the fragment
+    // that fit on one row. Clicks route through localApi.openExternal(), which
+    // delegates to shell.openExternal via the Electron IPC bridge. Hovered
+    // URLs are remembered so the right-click menu can offer them.
+    const linkProviderDisposable = terminal.registerLinkProvider(
+      createTerminalLinkProvider(terminal, {
+        onHoverChange: (url) => {
+          hoveredLinkRef.current = url
+        },
       })
-      terminal.loadAddon(webLinksAddon)
-    } catch {
-      // Web Links addon failed to load — URLs remain plain text
-    }
+    )
 
     // Initial fit — also send dimensions to server PTY so it starts
     // with the correct size (or re-syncs on reconnection).
@@ -973,28 +1065,6 @@ function TerminalPaneRenderer({
     //
     // Uses the centralized keybind definitions from `@/lib/keybinds` to
     // determine which keys should bypass the terminal.
-    const enterPrefixMode = () => {
-      prefixModeRef.current = true
-      setPrefixMode(true)
-      if (prefixTimeoutRef.current !== null) {
-        clearTimeout(prefixTimeoutRef.current)
-      }
-      prefixTimeoutRef.current = setTimeout(() => {
-        prefixModeRef.current = false
-        setPrefixMode(false)
-        prefixTimeoutRef.current = null
-      }, PREFIX_MODE_TIMEOUT)
-    }
-
-    const exitPrefixMode = () => {
-      prefixModeRef.current = false
-      setPrefixMode(false)
-      if (prefixTimeoutRef.current !== null) {
-        clearTimeout(prefixTimeoutRef.current)
-        prefixTimeoutRef.current = null
-      }
-    }
-
     const handleTerminalFindShortcut = (event: KeyboardEvent) => {
       if (isTerminalFindShortcut(event)) {
         event.preventDefault()
@@ -1021,35 +1091,15 @@ function TerminalPaneRenderer({
     }
 
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-      // Only intercept keydown events — keyup should pass through
-      // to avoid breaking key state tracking in the browser.
-      if (event.type !== 'keydown') {
-        return true
-      }
-
-      // Let app-level shortcuts bubble to TanStack Hotkeys on document.
-      // xterm.js convention: return `false` to bypass (let event bubble).
-      if (shouldBypassTerminal(event)) {
-        // Ctrl+B additionally enters prefix mode for tmux-style sequences.
-        if (isPrefixKey(event)) {
-          enterPrefixMode()
-        }
-        return false
-      }
-
-      // In prefix mode: pass the action key through to TanStack Hotkeys.
-      // This is the second key in the Ctrl+B -> action sequence.
-      if (prefixModeRef.current) {
-        exitPrefixMode()
-        return false
-      }
-
-      if (handleTerminalFindShortcut(event)) {
-        return false
-      }
-
-      // Normal key — let xterm.js handle it
-      return true
+      // Match native macOS terminals and VS Code: readline/Emacs navigation
+      // belongs to the focused terminal. In particular, xterm's default
+      // Option+Arrow CSI sequences are not understood by every shell/TUI.
+      return handleTerminalKeyEvent(event, {
+        handleTerminalLocalShortcut: handleTerminalFindShortcut,
+        isRunning: isRunningRef.current,
+        send: connectionSendRef.current,
+        shouldBypass: shouldBypassTerminal,
+      })
     })
 
     // Wire keyboard input to server PTY via the data channel.
@@ -1080,6 +1130,8 @@ function TerminalPaneRenderer({
       // to a terminal that is being torn down.
       screen.unmount(canvas)
       onDidChangeSearchResultsDisposable.dispose()
+      linkProviderDisposable.dispose()
+      hoveredLinkRef.current = null
       onWriteParsedDisposable.dispose()
       onDataDisposable.dispose()
       onTitleChangeDisposable.dispose()
@@ -1090,14 +1142,25 @@ function TerminalPaneRenderer({
       searchAddonRef.current = null
       terminalRef.current = null
       fitAddonRef.current = null
-      // Clear prefix mode timeout to prevent stale state updates
-      if (prefixTimeoutRef.current !== null) {
-        clearTimeout(prefixTimeoutRef.current)
-        prefixTimeoutRef.current = null
-      }
-      prefixModeRef.current = false
     }
   }, [screen, terminalId, terminalRef])
+
+  /**
+   * Electron replaces the DOM menu with the OS one, and xterm owns the markup
+   * inside the container, so the listener is attached here rather than through
+   * a JSX handler on an element that has no interactive role of its own.
+   */
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || localApi.contextMenuKind !== 'native') {
+      return
+    }
+
+    container.addEventListener('contextmenu', handleTerminalContextMenu)
+    return () => {
+      container.removeEventListener('contextmenu', handleTerminalContextMenu)
+    }
+  }, [handleTerminalContextMenu])
 
   /**
    * Observe the container element for size changes using ResizeObserver.
@@ -1146,8 +1209,44 @@ function TerminalPaneRenderer({
       data-testid="terminal-emulator"
       ref={terminalElementRef}
     >
-      {/* xterm.js container */}
-      <div className="h-full w-full" ref={containerRef} />
+      {/* xterm.js container — right-click offers link, copy, and paste
+          actions for whatever the pointer is over. Electron shows the OS menu
+          directly; the browser needs the DOM menu around the canvas. */}
+      {localApi.contextMenuKind === 'native' ? (
+        <div className="h-full w-full" ref={containerRef} />
+      ) : (
+        <ContextMenu
+          onOpenChange={(open) => {
+            if (!open) {
+              setContextMenu(null)
+            }
+          }}
+        >
+          <ContextMenuTrigger
+            className="h-full w-full select-text"
+            onContextMenu={handleTerminalContextMenu}
+          >
+            <div className="h-full w-full" ref={containerRef} />
+          </ContextMenuTrigger>
+          {contextMenu !== null && (
+            <ContextMenuContent className="min-w-40">
+              {terminalContextMenuItems({
+                link: contextMenu.link,
+                hasSelection: contextMenu.selection.length > 0,
+              }).map((item) => (
+                <ContextMenuItem
+                  key={item.id}
+                  onSelect={() => {
+                    executeTerminalContextAction(item.id, contextMenu)
+                  }}
+                >
+                  {item.label}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuContent>
+          )}
+        </ContextMenu>
+      )}
 
       {isFindVisible && (
         <TerminalFindOverlay
@@ -1178,21 +1277,6 @@ function TerminalPaneRenderer({
           screen is restored. */}
       {loadingMessage !== undefined && (
         <TerminalLoadingOverlay message={loadingMessage} />
-      )}
-
-      {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
-          and the terminal is waiting for the next key to complete a panel
-          shortcut sequence. */}
-      {prefixMode && (
-        <div className="absolute top-1 left-1 z-20 flex items-center gap-1 rounded bg-primary/90 px-2 py-0.5 text-primary-foreground text-xs backdrop-blur-sm">
-          <span>Prefix</span>
-          <Kbd className="h-4 min-w-0 bg-primary-foreground/15 px-1 text-[10px] text-primary-foreground">
-            Ctrl
-          </Kbd>
-          <Kbd className="h-4 min-w-0 bg-primary-foreground/15 px-1 text-[10px] text-primary-foreground">
-            B
-          </Kbd>
-        </div>
       )}
 
       {/* Data channel disconnection indicator */}

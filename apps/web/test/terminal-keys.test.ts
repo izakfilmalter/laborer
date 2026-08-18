@@ -208,7 +208,7 @@ describe('shouldBypassTerminal', () => {
 
   // --- Ctrl+B — prefix key ---
 
-  it('bypasses Ctrl+B (panel prefix key)', () => {
+  it('classifies Ctrl+B as an app prefix outside focused terminal input', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'b', ctrlKey: true }))
     ).toBe(true)

@@ -280,17 +280,27 @@ function WorkspaceList({
   )
 
   // The database owns promotion on parent deletion (`ON DELETE SET NULL`).
-  // The root workspace (the main checkout, worktreePath === rootPath) is
-  // always pinned to the top of the tree.
+  // Pull the root workspace out before building the lineage tree so even a
+  // stale parentTaskId cannot nest the main checkout under another workspace.
+  // Pending creations render separately above this tree while they are in
+  // flight; within the workspace tree, the root is always first.
   const workspaceTree = useMemo(() => {
-    const tree = buildWorkspaceTree<WorkspaceTreeRow>(activeWorkspaces)
-    const rootNodes = tree.filter(
-      (node) => node.workspace.worktreePath === rootPath
+    const rootWorkspaces = activeWorkspaces.filter(
+      (workspace) => workspace.worktreePath === rootPath
     )
-    const otherNodes = tree.filter(
-      (node) => node.workspace.worktreePath !== rootPath
+    const otherWorkspaces = activeWorkspaces.filter(
+      (workspace) => workspace.worktreePath !== rootPath
     )
-    return [...rootNodes, ...otherNodes]
+    const rootNodes = rootWorkspaces.map(
+      (workspace): WorkspaceTreeNode<WorkspaceTreeRow> => ({
+        children: [],
+        workspace,
+      })
+    )
+    return [
+      ...rootNodes,
+      ...buildWorkspaceTree<WorkspaceTreeRow>(otherWorkspaces),
+    ]
   }, [activeWorkspaces, rootPath])
 
   if (activeWorkspaces.length === 0 && pendingCreations.length === 0) {

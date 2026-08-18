@@ -28,7 +28,7 @@
  * - `attachCustomKeyEventHandler` intercepts keyboard events before
  *   xterm.js processes them. Keys matching app-level keybinds are
  *   returned as `false` so they bubble to TanStack Hotkeys on document.
- * - Ctrl+B enters prefix mode for tmux-style sequences.
+ * - Terminal-native navigation keys are sent directly to the PTY.
  *
  * @see packages/terminal/src/services/terminal-manager.ts — headless terminal + subscribers
  * @see apps/web/src/hooks/use-terminal-rpc.ts — daemon WebSocket hook
@@ -57,7 +57,6 @@ import {
   InputGroupInput,
   InputGroupText,
 } from '@laborer/ui/components/input-group'
-import { Kbd } from '@laborer/ui/components/kbd'
 import { Spinner } from '@laborer/ui/components/spinner'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import {
@@ -76,13 +75,13 @@ import {
 import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import {
-  isPrefixKey,
   isTerminalFindNextShortcut,
   isTerminalFindPreviousShortcut,
   isTerminalFindShortcut,
   shouldBypassTerminal,
 } from '@/lib/keybinds'
 import { localApi } from '@/lib/local-api'
+import { handleTerminalKeyEvent } from '@/lib/terminal-keyboard'
 import {
   createTerminalLinkProvider,
   openTerminalLink,
@@ -104,13 +103,6 @@ import {
 const resizeMutation = TerminalServiceClient.mutation('terminal.resize')
 type ReplayStatus = 'idle' | 'replaying' | 'complete'
 type TerminalStatus = 'running' | 'stopped' | 'restarted'
-
-/**
- * Timeout for prefix mode (ms). Matches the SEQUENCE_TIMEOUT in panel-hotkeys.tsx
- * so that if the user presses Ctrl+B but doesn't follow up with an action key
- * within this window, prefix mode exits and the terminal resumes normal input.
- */
-const PREFIX_MODE_TIMEOUT = 1500
 
 /** Search highlight limit. Matches VS Code's higher-than-default threshold. */
 const TERMINAL_FIND_HIGHLIGHT_LIMIT = 20_000
@@ -562,19 +554,6 @@ function TerminalPaneRenderer({
    */
   const resizeTerminalRef = useRef(resizeTerminal)
   resizeTerminalRef.current = resizeTerminal
-
-  /**
-   * Prefix mode state for keyboard shortcut scope isolation (Issue #80).
-   *
-   * When Ctrl+B is pressed inside the terminal, prefix mode activates.
-   * The next keypress is suppressed from the terminal and bubbles to
-   * document where TanStack Hotkeys catches it as the action key.
-   * Prefix mode auto-exits after PREFIX_MODE_TIMEOUT or after the
-   * action key is consumed.
-   */
-  const [prefixMode, setPrefixMode] = useState(false)
-  const prefixModeRef = useRef(false)
-  const prefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
    * Loading state tracking.
@@ -1086,28 +1065,6 @@ function TerminalPaneRenderer({
     //
     // Uses the centralized keybind definitions from `@/lib/keybinds` to
     // determine which keys should bypass the terminal.
-    const enterPrefixMode = () => {
-      prefixModeRef.current = true
-      setPrefixMode(true)
-      if (prefixTimeoutRef.current !== null) {
-        clearTimeout(prefixTimeoutRef.current)
-      }
-      prefixTimeoutRef.current = setTimeout(() => {
-        prefixModeRef.current = false
-        setPrefixMode(false)
-        prefixTimeoutRef.current = null
-      }, PREFIX_MODE_TIMEOUT)
-    }
-
-    const exitPrefixMode = () => {
-      prefixModeRef.current = false
-      setPrefixMode(false)
-      if (prefixTimeoutRef.current !== null) {
-        clearTimeout(prefixTimeoutRef.current)
-        prefixTimeoutRef.current = null
-      }
-    }
-
     const handleTerminalFindShortcut = (event: KeyboardEvent) => {
       if (isTerminalFindShortcut(event)) {
         event.preventDefault()
@@ -1134,35 +1091,15 @@ function TerminalPaneRenderer({
     }
 
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-      // Only intercept keydown events — keyup should pass through
-      // to avoid breaking key state tracking in the browser.
-      if (event.type !== 'keydown') {
-        return true
-      }
-
-      // Let app-level shortcuts bubble to TanStack Hotkeys on document.
-      // xterm.js convention: return `false` to bypass (let event bubble).
-      if (shouldBypassTerminal(event)) {
-        // Ctrl+B additionally enters prefix mode for tmux-style sequences.
-        if (isPrefixKey(event)) {
-          enterPrefixMode()
-        }
-        return false
-      }
-
-      // In prefix mode: pass the action key through to TanStack Hotkeys.
-      // This is the second key in the Ctrl+B -> action sequence.
-      if (prefixModeRef.current) {
-        exitPrefixMode()
-        return false
-      }
-
-      if (handleTerminalFindShortcut(event)) {
-        return false
-      }
-
-      // Normal key — let xterm.js handle it
-      return true
+      // Match native macOS terminals and VS Code: readline/Emacs navigation
+      // belongs to the focused terminal. In particular, xterm's default
+      // Option+Arrow CSI sequences are not understood by every shell/TUI.
+      return handleTerminalKeyEvent(event, {
+        handleTerminalLocalShortcut: handleTerminalFindShortcut,
+        isRunning: isRunningRef.current,
+        send: connectionSendRef.current,
+        shouldBypass: shouldBypassTerminal,
+      })
     })
 
     // Wire keyboard input to server PTY via the data channel.
@@ -1205,12 +1142,6 @@ function TerminalPaneRenderer({
       searchAddonRef.current = null
       terminalRef.current = null
       fitAddonRef.current = null
-      // Clear prefix mode timeout to prevent stale state updates
-      if (prefixTimeoutRef.current !== null) {
-        clearTimeout(prefixTimeoutRef.current)
-        prefixTimeoutRef.current = null
-      }
-      prefixModeRef.current = false
     }
   }, [screen, terminalId, terminalRef])
 
@@ -1346,21 +1277,6 @@ function TerminalPaneRenderer({
           screen is restored. */}
       {loadingMessage !== undefined && (
         <TerminalLoadingOverlay message={loadingMessage} />
-      )}
-
-      {/* Prefix mode indicator (Issue #80) — shown when Ctrl+B was pressed
-          and the terminal is waiting for the next key to complete a panel
-          shortcut sequence. */}
-      {prefixMode && (
-        <div className="absolute top-1 left-1 z-20 flex items-center gap-1 rounded bg-primary/90 px-2 py-0.5 text-primary-foreground text-xs backdrop-blur-sm">
-          <span>Prefix</span>
-          <Kbd className="h-4 min-w-0 bg-primary-foreground/15 px-1 text-[10px] text-primary-foreground">
-            Ctrl
-          </Kbd>
-          <Kbd className="h-4 min-w-0 bg-primary-foreground/15 px-1 text-[10px] text-primary-foreground">
-            B
-          </Kbd>
-        </div>
       )}
 
       {/* Data channel disconnection indicator */}

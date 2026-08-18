@@ -116,6 +116,21 @@ test.describe('task board and kanban journeys', () => {
         throw new Error('Created task did not expose its durable identity')
       }
 
+      const taskIdentifier = await created
+        .locator('[data-task-identifier]')
+        .getAttribute('data-task-identifier')
+      expect(taskIdentifier).not.toBeNull()
+      if (taskIdentifier === null) {
+        throw new Error('Created task did not expose its readable identifier')
+      }
+      const search = board.getByRole('textbox', { name: 'Search cards' })
+      await search.fill(taskIdentifier.toLowerCase())
+      await expect(created).toBeVisible()
+      await search.fill(`${taskIdentifier}-not-a-match`)
+      await expect(created).toBeHidden()
+      await expect(board.getByText('No matching cards')).toBeVisible()
+      await search.clear()
+
       await page.reload()
       await expect(page.getByTestId('mission-control')).toBeVisible({
         timeout: 30_000,

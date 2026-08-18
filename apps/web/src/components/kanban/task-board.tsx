@@ -15,6 +15,7 @@
 import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { SharedLabelRow } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
+import { formatTaskIdentifier } from '@laborer/task-db/task-identifier'
 import { createTaskUlid } from '@laborer/task-db/ulid'
 import { Badge } from '@laborer/ui/components/badge'
 import { Button } from '@laborer/ui/components/button'
@@ -169,15 +170,23 @@ function buildColumnTasks(
   return byColumn
 }
 
-/** Case-insensitive substring match against title, branch, label, or PR. */
+/** Case-insensitive substring match against task ID, title, branch, label, or PR. */
 function matchesQuery(
   task: BoardTask,
   query: string,
-  labels: readonly { readonly id: string; readonly name: string }[]
+  labels: readonly { readonly id: string; readonly name: string }[],
+  projectShortName: string | null
 ): boolean {
   // "#212" and "212" both match PR #212.
   const prNumberQuery = query.startsWith('#') ? query.slice(1) : query
+  const taskIdentifier =
+    projectShortName &&
+    Number.isSafeInteger(task.taskNumber) &&
+    task.taskNumber > 0
+      ? formatTaskIdentifier(projectShortName, task.taskNumber).toLowerCase()
+      : null
   return (
+    (taskIdentifier?.includes(query) ?? false) ||
     task.title.toLowerCase().includes(query) ||
     labels.some(
       (label) =>
@@ -190,6 +199,38 @@ function matchesQuery(
         String(task.pr.number).includes(prNumberQuery)) ||
         task.pr.title.toLowerCase().includes(query)))
   )
+}
+
+/** Resolve project configuration before filtering its cards by readable ID. */
+function FilteredProjectLane({
+  children,
+  labels,
+  projectId,
+  query,
+  tasks,
+}: {
+  readonly children: (
+    visibleTasks: readonly BoardTask[],
+    projectShortName: string | null
+  ) => React.ReactNode
+  readonly labels: readonly { readonly id: string; readonly name: string }[]
+  readonly projectId: string
+  readonly query: string
+  readonly tasks: readonly BoardTask[]
+}) {
+  const projectShortName = useProjectShortName(projectId)
+  const searching = query.length > 0
+  const doneCutoff = Date.now() - DONE_RETENTION_MS
+  const visibleTasks = tasks.filter(
+    (task) =>
+      task.status !== 'cancelled' &&
+      !(task.status === 'done' && task.updatedAt < doneCutoff) &&
+      (!searching || matchesQuery(task, query, labels, projectShortName))
+  )
+
+  return searching && visibleTasks.length === 0
+    ? null
+    : children(visibleTasks, projectShortName)
 }
 
 /**
@@ -779,6 +820,7 @@ function LaneBoard({
   onOpenTask,
   onSlackCardQueued,
   projectId,
+  projectShortName,
   projectRootPath,
   tasks,
   workspaceForCard,
@@ -797,6 +839,7 @@ function LaneBoard({
   readonly onOpenTask: (task: BoardTask) => void
   readonly onSlackCardQueued: (taskId: string) => void
   readonly projectId: string
+  readonly projectShortName: string | null
   /** Canonical repo root for the lane, mirrored onto optimistic rows. */
   readonly projectRootPath: string
   readonly tasks: readonly BoardTask[]
@@ -813,8 +856,6 @@ function LaneBoard({
   // Done is clipped by default so the archive never sets the lane's height.
   const [doneExpanded, setDoneExpanded] = useState(false)
   const laneId = useId()
-  const projectShortName = useProjectShortName(projectId)
-
   // Server-side card changes reset the local drag state without remounting the
   // lane, so a card arriving in the background never steals a half-typed
   // composer or its focus.
@@ -1242,25 +1283,15 @@ function TaskBoard({
   const query = searchQuery.trim().toLowerCase()
   const searching = query.length > 0
 
-  // Lanes with zero matches are hidden while searching; matches force-
-  // expand their lane without mutating the stored collapse state.
-  const lanes = projectList
-    .map((project) => {
-      const laneTasks = boardTasks.filter(
-        (task) => projectForRoot(task.rootPath, projectList)?.id === project.id
-      )
-      const visibleTasks = laneTasks.filter(
-        (task) =>
-          task.status !== 'cancelled' &&
-          !(
-            task.status === 'done' &&
-            task.updatedAt < Date.now() - DONE_RETENTION_MS
-          ) &&
-          (!searching || matchesQuery(task, query, labelRows))
-      )
-      return { project, visibleTasks }
-    })
-    .filter((lane) => !searching || lane.visibleTasks.length > 0)
+  // Lanes resolve their project short name before filtering so a visible task
+  // identifier such as LAB-123 is searchable. Matches force-expand their lane
+  // without mutating the stored collapse state.
+  const lanes = projectList.map((project) => {
+    const laneTasks = boardTasks.filter(
+      (task) => projectForRoot(task.rootPath, projectList)?.id === project.id
+    )
+    return { laneTasks, project }
+  })
   /**
    * The workspace a card's work runs in, resolved once per card so the card
    * it renders and the click it answers never disagree about where it leads.
@@ -1350,41 +1381,53 @@ function TaskBoard({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
-          {lanes.map(({ project, visibleTasks }, laneIndex) => {
-            const expanded = searching || collapseState.isExpanded(project.id)
-
-            return (
-              <ProjectLane
-                count={visibleTasks.length}
-                expanded={expanded}
-                index={laneIndex}
-                key={project.id}
-                onToggle={() => collapseState.toggle(project.id)}
-                project={project}
-                reorderEnabled={!searching}
-              >
-                {expanded && (
-                  <LaneBoard
-                    attachedTaskId={attachedTerminal?.taskId ?? null}
-                    attachingTaskId={attachingTaskId}
-                    labelRows={labelRows}
-                    onActivateTask={activateTask}
-                    onAttach={handleAttach}
-                    onCancelTask={cancelTask}
-                    onMoveTask={persistMove}
-                    onOpenTask={openTaskEditor}
-                    onSlackCardQueued={queueSlackAgentOpen}
-                    projectId={project.id}
-                    projectRootPath={project.rootPath}
-                    tasks={visibleTasks}
-                    workspaceForCard={(task) => workspaceForCard(task, project)}
-                  />
-                )}
-              </ProjectLane>
-            )
-          })}
-          {searching && lanes.length === 0 && (
-            <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
+          {lanes.map(({ laneTasks, project }, laneIndex) => (
+            <FilteredProjectLane
+              key={project.id}
+              labels={labelRows}
+              projectId={project.id}
+              query={query}
+              tasks={laneTasks}
+            >
+              {(visibleTasks, projectShortName) => {
+                const expanded =
+                  searching || collapseState.isExpanded(project.id)
+                return (
+                  <ProjectLane
+                    count={visibleTasks.length}
+                    expanded={expanded}
+                    index={laneIndex}
+                    onToggle={() => collapseState.toggle(project.id)}
+                    project={project}
+                    reorderEnabled={!searching}
+                  >
+                    {expanded && (
+                      <LaneBoard
+                        attachedTaskId={attachedTerminal?.taskId ?? null}
+                        attachingTaskId={attachingTaskId}
+                        labelRows={labelRows}
+                        onActivateTask={activateTask}
+                        onAttach={handleAttach}
+                        onCancelTask={cancelTask}
+                        onMoveTask={persistMove}
+                        onOpenTask={openTaskEditor}
+                        onSlackCardQueued={queueSlackAgentOpen}
+                        projectId={project.id}
+                        projectRootPath={project.rootPath}
+                        projectShortName={projectShortName}
+                        tasks={visibleTasks}
+                        workspaceForCard={(task) =>
+                          workspaceForCard(task, project)
+                        }
+                      />
+                    )}
+                  </ProjectLane>
+                )
+              }}
+            </FilteredProjectLane>
+          ))}
+          {searching && (
+            <div className="hidden items-center justify-center p-8 text-muted-foreground text-sm only:flex">
               No matching cards
             </div>
           )}

@@ -201,6 +201,7 @@ const makeWorkspace = (
     worktreePath: string
     status: string
     origin: string
+    parentTaskId: string | null
     createdAt: string
     taskSource: string | null
     worktreeSetupStep: string | null
@@ -218,6 +219,7 @@ const makeWorkspace = (
   worktreePath: PROJECT_REPO_PATH,
   status: 'running',
   origin: 'external',
+  parentTaskId: null,
   createdAt: new Date().toISOString(),
   taskSource: null,
   worktreeSetupStep: null,
@@ -336,6 +338,74 @@ describe('WorkspaceList — root workspace delete protection', () => {
 
     const cards = screen.getAllByTestId(WORKSPACE_CARD_TESTID_RE)
     expect(cards[0]?.getAttribute('data-testid')).toBe('workspace-card-main')
+  })
+
+  it('keeps the root workspace top-level when stale lineage points at another workspace', () => {
+    const linkedWorkspace = makeWorkspace({
+      id: 'linked-ws',
+      branchName: 'feature/my-feature',
+      worktreePath: '/Users/dev/my-project-worktrees/feature-my-feature',
+    })
+    const rootWorkspace = makeWorkspace({
+      id: 'root-ws',
+      branchName: 'main',
+      parentTaskId: 'linked-ws',
+      worktreePath: PROJECT_REPO_PATH,
+    })
+
+    mockStore([linkedWorkspace, rootWorkspace])
+
+    render(
+      <WorkspaceList
+        projectId="project-1"
+        projectName="my-project"
+        rootPath={PROJECT_REPO_PATH}
+      />
+    )
+
+    const cards = screen.getAllByTestId(WORKSPACE_CARD_TESTID_RE)
+    expect(cards[0]?.getAttribute('data-testid')).toBe('workspace-card-main')
+  })
+
+  it('allows an in-flight creation above the root workspace', () => {
+    const rootWorkspace = makeWorkspace({
+      id: 'root-ws',
+      branchName: 'main',
+      worktreePath: PROJECT_REPO_PATH,
+    })
+    const linkedWorkspace = makeWorkspace({
+      id: 'linked-ws',
+      branchName: 'feature/my-feature',
+      worktreePath: '/Users/dev/my-project-worktrees/feature-my-feature',
+    })
+
+    mockStore([linkedWorkspace, rootWorkspace])
+
+    const { container } = render(
+      <WorkspaceList
+        pendingCreations={[
+          {
+            branchName: 'slack/planned-workspace',
+            id: 'pending-slack',
+            phase: 'creating',
+          },
+        ]}
+        projectId="project-1"
+        projectName="my-project"
+        rootPath={PROJECT_REPO_PATH}
+      />
+    )
+
+    const items = container.querySelectorAll(
+      '[data-testid^="pending-workspace-"], [data-testid^="workspace-card-"]'
+    )
+    expect(
+      Array.from(items, (item) => item.getAttribute('data-testid'))
+    ).toEqual([
+      'pending-workspace-pending-slack',
+      'workspace-card-main',
+      'workspace-card-feature/my-feature',
+    ])
   })
 
   it('shows a pending workspace instead of the empty state during Slack planning', () => {

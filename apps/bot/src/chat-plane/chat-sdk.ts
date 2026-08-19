@@ -53,6 +53,13 @@ export type ChatSdkMessageHandler = (
 export type ChatSdkMentionHandler = ChatSdkMessageHandler
 
 export interface ChatSdkLike {
+  readonly addReaction?: (
+    workspaceId: string,
+    channelId: string,
+    rootTs: string,
+    messageTs: string,
+    emoji: string
+  ) => Promise<void>
   readonly getPermalink?: (
     workspaceId: string,
     channelId: string,
@@ -70,6 +77,13 @@ export interface ChatSdkLike {
     channelId: string,
     rootTs: string,
     output: string
+  ) => Promise<void>
+  readonly removeReaction?: (
+    workspaceId: string,
+    channelId: string,
+    rootTs: string,
+    messageTs: string,
+    emoji: string
   ) => Promise<void>
   readonly settlePermission?: (
     request: ChatPermissionSettlement
@@ -121,6 +135,11 @@ export class ChatPlaneOperationError extends Schema.TaggedError<ChatPlaneOperati
 ) {}
 
 export interface ChatPlaneShape {
+  readonly addReaction: (
+    thread: ChatSdkThreadLike,
+    messageTs: string,
+    emoji: string
+  ) => Effect.Effect<void, ChatPlaneOperationError>
   readonly getPermalink: (
     workspaceId: string,
     channelId: string,
@@ -143,6 +162,11 @@ export interface ChatPlaneShape {
     thread: ChatSdkThreadLike,
     activation: ChatSdkMessageLike
   ) => Effect.Effect<readonly ChatSdkMessageLike[], ChatPlaneOperationError>
+  readonly removeReaction: (
+    thread: ChatSdkThreadLike,
+    messageTs: string,
+    emoji: string
+  ) => Effect.Effect<void, ChatPlaneOperationError>
   readonly settlePermission: (
     request: ChatPermissionSettlement
   ) => Effect.Effect<void, ChatPlaneOperationError>
@@ -311,6 +335,22 @@ const collectActivationHistory = async (
 }
 
 const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
+  addReaction: (thread, messageTs, emoji) =>
+    Effect.tryPromise({
+      try: () => {
+        if (sdk.addReaction === undefined) {
+          throw new Error('Chat reactions unavailable')
+        }
+        return sdk.addReaction(
+          thread.workspaceId,
+          thread.channelId,
+          thread.rootMessageId,
+          messageTs,
+          emoji
+        )
+      },
+      catch: () => operationFailure('message.add-reaction'),
+    }),
   getPermalink: (workspaceId, channelId, messageTs) =>
     Effect.tryPromise({
       try: () => {
@@ -350,6 +390,22 @@ const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
     Effect.tryPromise({
       try: () => collectActivationHistory(thread, activation),
       catch: () => operationFailure('thread.read-activation-history'),
+    }),
+  removeReaction: (thread, messageTs, emoji) =>
+    Effect.tryPromise({
+      try: () => {
+        if (sdk.removeReaction === undefined) {
+          throw new Error('Chat reactions unavailable')
+        }
+        return sdk.removeReaction(
+          thread.workspaceId,
+          thread.channelId,
+          thread.rootMessageId,
+          messageTs,
+          emoji
+        )
+      },
+      catch: () => operationFailure('message.remove-reaction'),
     }),
   streamReply: (thread, chunks) =>
     Effect.tryPromise({
@@ -494,6 +550,18 @@ export const makeLocalSlackInstallationProvider = (
     },
   }
 }
+
+const isIdempotentReactionOutcome = (
+  cause: unknown,
+  outcome: 'already_reacted' | 'no_reaction'
+): boolean =>
+  typeof cause === 'object' &&
+  cause !== null &&
+  'data' in cause &&
+  typeof cause.data === 'object' &&
+  cause.data !== null &&
+  'error' in cause.data &&
+  cause.data.error === outcome
 
 const SlackMessageWorkspace = Schema.Struct({
   team: Schema.optional(
@@ -710,6 +778,27 @@ export const makeLiveChatPlaneLayer = (
       }
 
       return {
+        addReaction: async (
+          workspaceId,
+          channelId,
+          rootTs,
+          messageTs,
+          emoji
+        ) => {
+          try {
+            await withWorkspaceToken(workspaceId, () =>
+              slackAdapter.addReaction(
+                `slack:${channelId}:${rootTs}`,
+                messageTs,
+                emoji
+              )
+            )
+          } catch (cause) {
+            if (!isIdempotentReactionOutcome(cause, 'already_reacted')) {
+              throw cause
+            }
+          }
+        },
         getPermalink: async (workspaceId, channelId, messageTs) => {
           const response = await withWorkspaceToken(workspaceId, () =>
             slackAdapter.webClient.chat.getPermalink({
@@ -824,6 +913,27 @@ export const makeLiveChatPlaneLayer = (
           await withWorkspaceToken(workspaceId, () =>
             bot.thread(`slack:${channelId}:${rootTs}`).post(output)
           )
+        },
+        removeReaction: async (
+          workspaceId,
+          channelId,
+          rootTs,
+          messageTs,
+          emoji
+        ) => {
+          try {
+            await withWorkspaceToken(workspaceId, () =>
+              slackAdapter.removeReaction(
+                `slack:${channelId}:${rootTs}`,
+                messageTs,
+                emoji
+              )
+            )
+          } catch (cause) {
+            if (!isIdempotentReactionOutcome(cause, 'no_reaction')) {
+              throw cause
+            }
+          }
         },
         settlePermission: async (request) => {
           const sent = permissionMessages.get(request.presentationMarker)

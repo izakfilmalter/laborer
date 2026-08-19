@@ -882,6 +882,250 @@ describe('Chat plane walking skeleton', () => {
       )
   )
 
+  it.effect(
+    'marks activation turns with working and completion reactions',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let mentionHandler: ChatSdkMentionHandler | undefined
+          let subscribedHandler: ChatSdkMentionHandler | undefined
+          const activation = message('60.000', '@laborer work', {
+            isMention: true,
+          })
+          const reactions: string[][] = []
+          const thread: ChatSdkThreadLike = {
+            allMessages: asMessages([activation]),
+            channelId: 'C1',
+            channelMessages: asMessages([activation]),
+            id: 'slack:C1:60.000',
+            isDM: false,
+            post: () => Promise.resolve(),
+            rootMessageId: activation.id,
+            subscribe: () => Promise.resolve(),
+            workspaceId: 'TFIRST',
+          }
+          const sdk: ChatSdkLike = {
+            addReaction: (workspaceId, channelId, rootTs, messageTs, emoji) => {
+              reactions.push([
+                'add',
+                workspaceId,
+                channelId,
+                rootTs,
+                messageTs,
+                emoji,
+              ])
+              return Promise.resolve()
+            },
+            initialize: () => Promise.resolve(),
+            onNewMention: (handler) => {
+              mentionHandler = handler
+            },
+            onSubscribedMessage: (handler) => {
+              subscribedHandler = handler
+            },
+            removeReaction: (
+              workspaceId,
+              channelId,
+              rootTs,
+              messageTs,
+              emoji
+            ) => {
+              reactions.push([
+                'remove',
+                workspaceId,
+                channelId,
+                rootTs,
+                messageTs,
+                emoji,
+              ])
+              return Promise.resolve()
+            },
+            shutdown: () => Promise.resolve(),
+          }
+          const handler = makeConversationHandler(() => Effect.succeed({}))
+
+          yield* Effect.provide(
+            Effect.promise(async () => {
+              assert.ok(mentionHandler)
+              assert.ok(subscribedHandler)
+              await mentionHandler(thread, activation)
+              await subscribedHandler(thread, message('61.000', 'follow-up'))
+            }),
+            makeChatPlaneLayer({ handler, makeSdk: () => sdk })
+          )
+
+          assert.deepStrictEqual(reactions, [
+            [
+              'add',
+              'TFIRST',
+              'C1',
+              '60.000',
+              '60.000',
+              'hourglass_flowing_sand',
+            ],
+            ['add', 'TFIRST', 'C1', '60.000', '60.000', 'white_check_mark'],
+            [
+              'remove',
+              'TFIRST',
+              'C1',
+              '60.000',
+              '60.000',
+              'hourglass_flowing_sand',
+            ],
+            ['add', 'TFIRST', 'C1', '60.000', '60.000', 'white_check_mark'],
+          ])
+        })
+      )
+  )
+
+  it.effect(
+    'keeps turns alive when reactions fail and skips completion on failure',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let mentionHandler: ChatSdkMentionHandler | undefined
+          const activation = message('70.000', '@laborer work', {
+            isMention: true,
+          })
+          const posts: string[] = []
+          const attemptedReactions: string[] = []
+          let shouldFail = false
+          const thread: ChatSdkThreadLike = {
+            allMessages: asMessages([activation]),
+            channelId: 'C1',
+            channelMessages: asMessages([activation]),
+            id: 'slack:C1:70.000',
+            isDM: false,
+            post: async (reply) => {
+              if (typeof reply === 'string') {
+                posts.push(reply)
+                return
+              }
+              let text = ''
+              for await (const chunk of reply) {
+                text += chunk
+              }
+              posts.push(text)
+            },
+            rootMessageId: activation.id,
+            subscribe: () => Promise.resolve(),
+            workspaceId: 'TFIRST',
+          }
+          const sdk: ChatSdkLike = {
+            addReaction: (_workspaceId, _channelId, _rootTs, _ts, emoji) => {
+              attemptedReactions.push(`add:${emoji}`)
+              return Promise.reject(new Error('private reaction failure'))
+            },
+            initialize: () => Promise.resolve(),
+            onNewMention: (handler) => {
+              mentionHandler = handler
+            },
+            onSubscribedMessage: () => undefined,
+            removeReaction: (_workspaceId, _channelId, _rootTs, _ts, emoji) => {
+              attemptedReactions.push(`remove:${emoji}`)
+              return Promise.reject(new Error('private reaction failure'))
+            },
+            shutdown: () => Promise.resolve(),
+          }
+          const handler = makeConversationHandler(() => {
+            if (shouldFail) {
+              return Effect.die(new Error('work failed'))
+            }
+            return Effect.succeed({
+              publicReply: (async function* () {
+                await Promise.resolve()
+                yield 'delivered despite reactions'
+              })(),
+            })
+          })
+
+          yield* Effect.provide(
+            Effect.promise(async () => {
+              assert.ok(mentionHandler)
+              await mentionHandler(thread, activation)
+              shouldFail = true
+              await mentionHandler(
+                thread,
+                message('71.000', '@laborer again', { isMention: true })
+              )
+            }),
+            makeChatPlaneLayer({ handler, makeSdk: () => sdk })
+          )
+
+          assert.deepStrictEqual(posts, [
+            'delivered despite reactions',
+            TURN_FAILED_OPERATIONAL_NOTICE,
+          ])
+          assert.deepStrictEqual(attemptedReactions, [
+            'add:hourglass_flowing_sand',
+            'add:white_check_mark',
+            'remove:hourglass_flowing_sand',
+            'add:hourglass_flowing_sand',
+            'remove:hourglass_flowing_sand',
+          ])
+        })
+      )
+  )
+
+  it.effect('completes turns on SDKs without reaction support', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let mentionHandler: ChatSdkMentionHandler | undefined
+        const activation = message('80.000', '@laborer work', {
+          isMention: true,
+        })
+        const posts: string[] = []
+        const thread: ChatSdkThreadLike = {
+          allMessages: asMessages([activation]),
+          channelId: 'C1',
+          channelMessages: asMessages([activation]),
+          id: 'slack:C1:80.000',
+          isDM: false,
+          post: async (reply) => {
+            if (typeof reply === 'string') {
+              posts.push(reply)
+              return
+            }
+            let text = ''
+            for await (const chunk of reply) {
+              text += chunk
+            }
+            posts.push(text)
+          },
+          rootMessageId: activation.id,
+          subscribe: () => Promise.resolve(),
+          workspaceId: 'TFIRST',
+        }
+        const sdk: ChatSdkLike = {
+          initialize: () => Promise.resolve(),
+          onNewMention: (handler) => {
+            mentionHandler = handler
+          },
+          onSubscribedMessage: () => undefined,
+          shutdown: () => Promise.resolve(),
+        }
+        const handler = makeConversationHandler(() =>
+          Effect.succeed({
+            publicReply: (async function* () {
+              await Promise.resolve()
+              yield 'reaction-free reply'
+            })(),
+          })
+        )
+
+        yield* Effect.provide(
+          Effect.promise(async () => {
+            assert.ok(mentionHandler)
+            await mentionHandler(thread, activation)
+          }),
+          makeChatPlaneLayer({ handler, makeSdk: () => sdk })
+        )
+
+        assert.deepStrictEqual(posts, ['reaction-free reply'])
+      })
+    )
+  )
+
   it('keeps Chat SDK package imports inside the Effect service module', () => {
     const packageRoot = resolve(process.cwd())
     const files = [

@@ -38,6 +38,9 @@ export type ChatPlaneWorkHandler = (
 export const TURN_FAILED_OPERATIONAL_NOTICE =
   'Laborer turn failed (category: work-handler). Mention Laborer again to continue.'
 
+export const WORKING_REACTION = 'hourglass_flowing_sand'
+export const COMPLETED_REACTION = 'white_check_mark'
+
 type TurnFailureCategory = 'chat-operation' | 'internal' | 'work-handler'
 
 const operationalNotice = (category: TurnFailureCategory): string =>
@@ -76,6 +79,11 @@ export const makeConversationHandler = (
           yield* chatPlane
             .subscribe(thread)
             .pipe(Effect.mapError(() => 'chat-operation' as const))
+          // Reactions are best-effort presentation state on an at-most-once
+          // chat plane: never fail or retry a turn because of them.
+          yield* chatPlane
+            .addReaction(thread, message.id, WORKING_REACTION)
+            .pipe(Effect.ignore)
         }
         const history = isActivation
           ? yield* chatPlane
@@ -107,6 +115,11 @@ export const makeConversationHandler = (
       })
 
       yield* runTurn.pipe(
+        Effect.tap(() =>
+          chatPlane
+            .addReaction(thread, thread.rootMessageId, COMPLETED_REACTION)
+            .pipe(Effect.ignore)
+        ),
         Effect.catch((category) =>
           chatPlane
             .postNotice(thread, operationalNotice(category))
@@ -116,6 +129,13 @@ export const makeConversationHandler = (
           chatPlane
             .postNotice(thread, operationalNotice('internal'))
             .pipe(Effect.ignore)
+        ),
+        Effect.ensuring(
+          isActivation
+            ? chatPlane
+                .removeReaction(thread, message.id, WORKING_REACTION)
+                .pipe(Effect.ignore)
+            : Effect.void
         )
       )
     }

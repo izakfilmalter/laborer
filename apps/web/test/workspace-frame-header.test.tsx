@@ -11,9 +11,23 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { isElectronMock, openExternalUrlMock } = vi.hoisted(() => ({
-  isElectronMock: vi.fn(() => false),
-  openExternalUrlMock: vi.fn(async () => true),
+const { isElectronMock, openExternalUrlMock, syncCountsRef } = vi.hoisted(
+  () => ({
+    isElectronMock: vi.fn(() => false),
+    openExternalUrlMock: vi.fn(async () => true),
+    syncCountsRef: {
+      current: {
+        aheadCount: null as number | null,
+        behindCount: null as number | null,
+      },
+    },
+  })
+)
+
+// The header no longer receives sync counts as props: the indicator reads
+// them for its own workspace.
+vi.mock('@/hooks/use-workspace-sync-status', () => ({
+  useWorkspaceSyncStatus: () => syncCountsRef.current,
 }))
 
 vi.mock('@/lib/local-api', () => ({
@@ -94,9 +108,7 @@ const PULL_COMMITS_RE = /pull 3 commits/i
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
   activePaneId: 'pane-1',
-  aheadCount: null,
   branchName: 'main',
-  behindCount: null,
   diffIsOpen: false,
   prNumber: null,
   prState: null,
@@ -113,6 +125,7 @@ const BASE_PROPS = {
 describe('WorkspaceFrameHeader', () => {
   afterEach(() => {
     cleanup()
+    syncCountsRef.current = { aheadCount: null, behindCount: null }
   })
 
   beforeEach(() => {
@@ -560,18 +573,21 @@ describe('WorkspaceFrameHeader', () => {
   })
 
   it('renders push and pull sync actions when commits are available', () => {
+    syncCountsRef.current = { aheadCount: 2, behindCount: 3 }
     const actions = mockActions()
-    render(
-      <WorkspaceFrameHeader
-        {...BASE_PROPS}
-        actions={actions}
-        aheadCount={2}
-        behindCount={3}
-      />
-    )
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
 
     expect(screen.getByRole('button', { name: PUSH_COMMITS_RE })).toBeTruthy()
     expect(screen.getByRole('button', { name: PULL_COMMITS_RE })).toBeTruthy()
+  })
+
+  it('renders no sync actions while the workspace is level with upstream', () => {
+    syncCountsRef.current = { aheadCount: 0, behindCount: 0 }
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    expect(screen.queryByRole('button', { name: PUSH_COMMITS_RE })).toBeNull()
+    expect(screen.queryByRole('button', { name: PULL_COMMITS_RE })).toBeNull()
   })
 
   // ---------------------------------------------------------------------------

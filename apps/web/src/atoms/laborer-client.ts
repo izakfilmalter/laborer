@@ -20,4 +20,14 @@ import { BrowserDaemonClient } from './browser-daemon-client'
  */
 export const ConfigReactivityKeys = ['config'] as const
 
+/**
+ * Reactivity keys for one workspace's git sync status, so a push or pull
+ * refreshes every view of that workspace's ahead/behind counts.
+ */
+export const workspaceSyncReactivityKeys = (
+  workspaceId: string
+): Record<string, readonly string[]> => ({
+  'workspace-sync': [workspaceId],
+})
+
 export const LaborerClient = BrowserDaemonClient

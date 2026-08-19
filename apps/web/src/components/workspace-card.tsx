@@ -450,8 +450,6 @@ interface WorkspaceCardProps {
 
 /** The workspace fields the card reads. */
 interface WorkspaceCardWorkspace {
-  readonly aheadCount: number | null
-  readonly behindCount: number | null
   readonly branchName: string
   readonly createdAt: string
   readonly errorMessage: string | null
@@ -791,11 +789,7 @@ function WorkspaceCard({
     <CardShell
       actions={
         <>
-          <WorkspaceSyncStatus
-            aheadCount={workspace.aheadCount}
-            behindCount={workspace.behindCount}
-            workspaceId={workspace.id}
-          />
+          <WorkspaceSyncStatus workspaceId={workspace.id} />
           {!isRootWorkspace && showCreateSubWorkspaceAction && (
             <CreateWorkspaceForm
               baseWorkspace={{

@@ -1,7 +1,10 @@
 import { useAtomSet } from '@effect/atom-react/Hooks'
 import { useCallback } from 'react'
 import { toast } from 'sonner'
-import { LaborerClient } from '@/atoms/laborer-client'
+import {
+  LaborerClient,
+  workspaceSyncReactivityKeys,
+} from '@/atoms/laborer-client'
 import { extractErrorMessage } from '@/lib/errors'
 
 const pushWorkspaceMutation = LaborerClient.mutation('workspace.push')
@@ -16,7 +19,10 @@ function useWorkspaceSyncActions() {
       const toastId = toast.loading('Pushing commits...')
 
       try {
-        const result = await pushWorkspace({ payload: { workspaceId } })
+        const result = await pushWorkspace({
+          payload: { workspaceId },
+          reactivityKeys: workspaceSyncReactivityKeys(workspaceId),
+        })
         const pushedCount = result.aheadCount ?? 0
         toast.success(
           pushedCount === 0
@@ -38,7 +44,10 @@ function useWorkspaceSyncActions() {
       const toastId = toast.loading('Pulling commits...')
 
       try {
-        const result = await pullWorkspace({ payload: { workspaceId } })
+        const result = await pullWorkspace({
+          payload: { workspaceId },
+          reactivityKeys: workspaceSyncReactivityKeys(workspaceId),
+        })
         const pulledCount = result.behindCount ?? 0
         toast.success(
           pulledCount === 0

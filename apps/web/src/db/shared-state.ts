@@ -453,10 +453,8 @@ export const taskCountsByLabel = (
 }
 
 export interface WorkspaceView {
-  readonly aheadCount: number | null
   readonly baseBranch: string | null
   readonly baseSha: string | null
-  readonly behindCount: number | null
   readonly branchName: string
   readonly createdAt: string
   readonly errorMessage: string | null
@@ -506,10 +504,8 @@ const workspaceStatus = (
 }
 
 const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
-  aheadCount: null,
   baseBranch: null,
   baseSha: null,
-  behindCount: null,
   branchName: project.branchName ?? ROOT_WORKSPACE_BRANCH_LABEL,
   createdAt: String(project.createdAt),
   errorMessage: null,
@@ -547,10 +543,8 @@ export const workspaceViewsFromRows = (
       continue
     }
     views.push({
-      aheadCount: null,
       baseBranch: task.baseBranch,
       baseSha: task.baseSha,
-      behindCount: null,
       branchName: task.branchName ?? task.title,
       createdAt: String(task.createdAt),
       errorMessage: task.worktreeError,

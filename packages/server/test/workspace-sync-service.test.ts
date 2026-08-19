@@ -1,6 +1,7 @@
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
+import { rootWorkspaceId } from '@laborer/shared/root-workspace'
 import { Context, Effect, Layer, Ref, Result } from 'effect'
 import { afterAll } from 'vitest'
 import { BackgroundFetchService } from '../src/services/background-fetch-service.js'
@@ -70,13 +71,37 @@ const TestPrWatcherLayer = Layer.effect(
   })
 )
 
-const TestBackgroundFetchLayer = Layer.succeed(
+class TestBackgroundFetchRecorder extends Context.Service<
+  TestBackgroundFetchRecorder,
+  {
+    readonly startFetchingCalls: Ref.Ref<readonly string[]>
+  }
+>()('@laborer/test/TestBackgroundFetchRecorder') {}
+
+const TestBackgroundFetchRecorderLayer = Layer.effect(
+  TestBackgroundFetchRecorder,
+  Effect.gen(function* () {
+    return TestBackgroundFetchRecorder.of({
+      startFetchingCalls: yield* Ref.make<readonly string[]>([]),
+    })
+  })
+)
+
+const TestBackgroundFetchLayer = Layer.effect(
   BackgroundFetchService,
-  BackgroundFetchService.of({
-    startFetching: () => Effect.void,
-    stopFetching: () => Effect.void,
-    stopAllFetching: () => Effect.void,
-    fetchNow: () => Effect.succeed(false),
+  Effect.gen(function* () {
+    const recorder = yield* TestBackgroundFetchRecorder
+
+    return BackgroundFetchService.of({
+      startFetching: (workspaceId) =>
+        Ref.update(recorder.startFetchingCalls, (calls) => [
+          ...calls,
+          workspaceId,
+        ]),
+      stopFetching: () => Effect.void,
+      stopAllFetching: () => Effect.void,
+      fetchNow: () => Effect.succeed(false),
+    })
   })
 )
 
@@ -84,6 +109,7 @@ const TestLayer = WorkspaceSyncService.layer.pipe(
   Layer.provide(TestPrWatcherLayer),
   Layer.provide(TestBackgroundFetchLayer),
   Layer.provideMerge(TestPrWatcherRecorderLayer),
+  Layer.provideMerge(TestBackgroundFetchRecorderLayer),
   Layer.provideMerge(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
@@ -252,6 +278,48 @@ describe('WorkspaceSyncService', () => {
         behindCount: 1,
       })
     }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.effect(
+    'tracks the repo root, which has no task row of its own to poll',
+    () =>
+      Effect.gen(function* () {
+        const { localPath, remotePath } = initRemoteRepo('sync-root')
+        const remoteClonePath = createRemoteClone(
+          remotePath,
+          'sync-root-remote-work'
+        )
+
+        commitFile(localPath, 'local.txt', 'local change\n')
+        commitFile(remoteClonePath, 'remote.txt', 'remote change\n')
+        git('push origin main', remoteClonePath)
+        git('fetch origin', localPath)
+
+        const { database } = yield* LaborerDatabase
+        createWorkspace(database, localPath, 'project-with-root')
+        const workspaceId = rootWorkspaceId('project-with-root')
+
+        const backgroundFetchRecorder = yield* TestBackgroundFetchRecorder
+        const workspaceSyncService = yield* WorkspaceSyncService
+        const result = yield* workspaceSyncService.checkStatus(workspaceId)
+
+        assert.deepStrictEqual(result, {
+          aheadCount: 1,
+          behindCount: 1,
+        })
+
+        // The root's tracking refs go stale unless reading its status
+        // enrolls the repo in background fetching, and repeated reads must
+        // not re-enrol it.
+        yield* workspaceSyncService.checkStatus(workspaceId)
+        const startFetchingCalls = yield* Ref.get(
+          backgroundFetchRecorder.startFetchingCalls
+        )
+        assert.deepStrictEqual(
+          startFetchingCalls.filter((id) => id === workspaceId),
+          [workspaceId]
+        )
+      }).pipe(Effect.provide(TestLayer))
   )
 
   it.effect('pushes local commits and refreshes PR state after push', () =>

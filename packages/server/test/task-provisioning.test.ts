@@ -168,6 +168,33 @@ describe('task provisioning', () => {
     )
   })
 
+  it('asks for a pasted branch name verbatim so origin can supply it', async () => {
+    const path = databasePath()
+    const createWorktree = vi.fn(() => Effect.succeed(workspace))
+
+    const created = await Effect.runPromise(
+      handleTaskCreateAtPath(
+        {
+          rootPath: '/repo',
+          status: 'in_progress',
+          text: 'feature/colleague-pr',
+        },
+        path
+      ).pipe(Effect.provide(testLayer(createWorktree)))
+    )
+
+    // The slugified title ("feature-colleague-pr") would never match
+    // origin/feature/colleague-pr, so the colleague's commits would be lost.
+    expect(createWorktree).toHaveBeenCalledWith(
+      project.id,
+      'feature/colleague-pr',
+      expect.any(Function),
+      undefined,
+      expect.any(Function),
+      created.id
+    )
+  })
+
   it('provisions once on entering In Progress and returns the stored prompt', async () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)

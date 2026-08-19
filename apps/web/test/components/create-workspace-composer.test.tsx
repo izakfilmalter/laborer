@@ -122,25 +122,25 @@ describe('create workspace composer', () => {
 
   it('creates the masked branch name on Enter and stays open for the next one', async () => {
     createWorkspace.mockResolvedValue({
-      branchName: 'my-feature',
+      branchName: 'My-Feature',
       id: 'ws-1',
       projectId: 'project-1',
       status: 'creating',
-      worktreePath: '/repo/.worktrees/my-feature',
+      worktreePath: '/repo/.worktrees/My-Feature',
     })
     const user = userEvent.setup()
     const input = renderComposer()
 
     await user.type(input, 'My Feature')
     await waitFor(() => {
-      expect(input.value).toBe('my-feature')
+      expect(input.value).toBe('My-Feature')
     })
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalledWith({
         payload: {
-          branchName: 'my-feature',
+          branchName: 'My-Feature',
           operationId: expect.any(String),
           projectId: 'project-1',
         },

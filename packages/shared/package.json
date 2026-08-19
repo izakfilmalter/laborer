@@ -17,7 +17,8 @@
     "./root-workspace": "./src/root-workspace.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",
     "./process-time-scheduler": "./src/process-time-scheduler.ts",
-    "./slack-url": "./src/slack-url.ts"
+    "./slack-url": "./src/slack-url.ts",
+    "./branch-name": "./src/branch-name.ts"
   },
   "dependencies": {
     "effect": "catalog:"

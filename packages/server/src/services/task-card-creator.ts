@@ -1,3 +1,4 @@
+import { pastedBranchName } from '@laborer/shared/branch-name'
 import { RpcError } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import type { TaskPatch, TaskStatus } from '@laborer/task-db'
@@ -35,6 +36,11 @@ export interface CreateTaskCardInput {
 
 /**
  * Unadorned branch name for a manually titled task.
+ *
+ * Only for titles that read as prose. Text that already names a branch is
+ * stored verbatim at creation (see `createTaskCard`) so provisioning can find
+ * it on `origin`; slugifying it here would strip the slashes and dots that make
+ * the match possible.
  */
 export const manualTaskBranchName = (title: string): string => {
   const slug = title
@@ -219,6 +225,10 @@ export const createTaskCard = (
     }
 
     const slackUrl = isSlackUrl ? new URL(text).toString() : null
+    // A pasted branch name is bound to the card now, so provisioning asks git
+    // for that exact ref and checks out the branch from origin when it exists
+    // there, instead of deriving a fresh branch from the title.
+    const branchName = slackUrl === null ? pastedBranchName(text) : null
 
     // A client-minted id makes creation idempotent: a retry after a dropped
     // response finds the stored card instead of inserting a duplicate. The
@@ -240,6 +250,7 @@ export const createTaskCard = (
               title: slackUrl ?? text,
               status: input.status,
               source: slackUrl ? 'slack_url' : 'manual',
+              branchName,
               slackPermalink: slackUrl,
               executionStatus: slackUrl ? 'queued' : null,
             },

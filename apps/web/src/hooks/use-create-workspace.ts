@@ -30,7 +30,7 @@ const planSlackWorkspaceMutation = LaborerClient.mutation(
 
 /** Characters the combined input accepts: branch-safe characters plus URL syntax. */
 const ALLOWED_INPUT_PATTERN = /^[a-zA-Z0-9\s\-_/.:?=&#%~+@]*$/
-const BRANCH_UNSAFE_PATTERN = /[^a-z0-9\-_/.]/g
+const BRANCH_UNSAFE_PATTERN = /[^A-Za-z0-9\-_/.]/g
 const HTTP_SCHEME_PATTERN = /^https?:\/\//i
 const URL_SCHEMES = ['https://', 'http://']
 /** Below this length a value is still ambiguous with a branch name like "ht". */
@@ -58,13 +58,18 @@ const isSlackUrlInput = (value: string): boolean => {
 const toSlackUrl = (value: string): string =>
   HTTP_SCHEME_PATTERN.test(value) ? value : `https://${value}`
 
+/**
+ * Mask typed text into something git will accept as a branch name.
+ *
+ * Case is preserved deliberately. Git refs are case-sensitive on the wire, so
+ * folding `PROJ-1234-Fix-Login` to lowercase makes `git fetch origin
+ * refs/heads/<name>` miss a branch that exists on origin, and workspace
+ * creation silently starts a new branch off HEAD instead of checking the
+ * existing commits out. (macOS hides this locally — its case-insensitive
+ * filesystem resolves loose refs either way — but GitHub does not.)
+ */
 const toBranchName = (value: string): string =>
-  pipe(
-    value,
-    Str.toLowerCase,
-    Str.replaceAll(' ', '-'),
-    Str.replace(BRANCH_UNSAFE_PATTERN, '')
-  )
+  pipe(value, Str.replaceAll(' ', '-'), Str.replace(BRANCH_UNSAFE_PATTERN, ''))
 
 /**
  * What the typed value will become once committed. `unrecognized-link` is a

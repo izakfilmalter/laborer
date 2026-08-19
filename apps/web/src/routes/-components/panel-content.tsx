@@ -126,6 +126,14 @@ function FullscreenWorkspaceOverlay({
  * hidden-but-laid-out elements, causing a storm of resize RPC calls.
  * `display: none` removes the element from layout entirely so the
  * FitAddon does not trigger resize calculations for inactive tabs.
+ *
+ * `isolate` (isolation: isolate) makes this container its own stacking
+ * context so pane-level overlays — the hover toolbar (`z-20`) and the
+ * terminal notification (`z-30`) — stay contained. Without it those
+ * z-indexes compete with the fullscreen overlay (`z-10`) in the shared
+ * parent stacking context and paint (and hit-test) on top of the
+ * fullscreened pane, letting background panes reveal their hover
+ * toolbars over a fullscreen terminal.
  */
 function WindowTabContent({
   tab,
@@ -150,7 +158,9 @@ function WindowTabContent({
 
   return (
     <div
-      className={isActive ? 'relative h-full w-full' : 'relative'}
+      className={
+        isActive ? 'relative isolate h-full w-full' : 'relative isolate'
+      }
       data-testid="window-tab-content"
       data-window-tab-id={tab.id}
       style={isActive ? undefined : { display: 'none' }}
@@ -308,7 +318,9 @@ export function PanelContent({
             {/* Fullscreen portal target — panes portal into this overlay
                 when fullscreened. Positioned absolutely to cover the
                 workspace frames area (below the workspace header) without
-                affecting the normal layout flow. */}
+                affecting the normal layout flow. It relies on each
+                WindowTabContent being an isolated stacking context so
+                background pane overlays cannot paint above it. */}
             {fullscreenPaneId && fullscreenWorkspaceId ? (
               <FullscreenWorkspaceOverlay
                 fullscreenPaneId={fullscreenPaneId}

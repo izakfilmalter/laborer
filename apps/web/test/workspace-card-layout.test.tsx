@@ -80,6 +80,13 @@ vi.mock('@/atoms/laborer-client', () => ({
     },
     query: () => Symbol.for('query:stub'),
   },
+  workspaceSyncReactivityKeys: (workspaceId: string) => ({
+    'workspace-sync': [workspaceId],
+  }),
+}))
+
+vi.mock('@/hooks/use-workspace-sync-status', () => ({
+  useWorkspaceSyncStatus: () => ({ aheadCount: null, behindCount: null }),
 }))
 
 vi.mock('sonner', () => ({

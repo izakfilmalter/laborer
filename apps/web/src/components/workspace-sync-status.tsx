@@ -10,10 +10,9 @@ import { ArrowDownToLine, ArrowUpToLine } from 'lucide-react'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
+import { useWorkspaceSyncStatus } from '@/hooks/use-workspace-sync-status'
 
 interface WorkspaceSyncStatusProps {
-  readonly aheadCount: number | null
-  readonly behindCount: number | null
   readonly className?: string | undefined
   readonly size?: 'card' | 'header' | undefined
   readonly workspaceId: string
@@ -22,15 +21,20 @@ interface WorkspaceSyncStatusProps {
 const getCountLabel = (count: number): string =>
   `${count} commit${count === 1 ? '' : 's'}`
 
+/**
+ * Push and pull buttons for a workspace, shown only while it is ahead of or
+ * behind its upstream. The counts are read here rather than passed in: the
+ * repo root and every worktree ask the same question of git, and no caller
+ * has an answer to hand down.
+ */
 function WorkspaceSyncStatus({
-  aheadCount,
-  behindCount,
   className,
   size = 'card',
   workspaceId,
 }: WorkspaceSyncStatusProps) {
   const isServerReady = useWhenPhase(LifecyclePhase.Ready)
   const { pullWorkspace, pushWorkspace } = useWorkspaceSyncActions()
+  const { aheadCount, behindCount } = useWorkspaceSyncStatus(workspaceId)
 
   const hasPush = (aheadCount ?? 0) > 0
   const hasPull = (behindCount ?? 0) > 0

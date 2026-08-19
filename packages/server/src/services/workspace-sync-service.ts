@@ -24,9 +24,6 @@ const EMPTY_SYNC_STATUS: WorkspaceSyncStatus = {
 const BRANCH_AB_RE = /^# branch\.ab \+(\d+) -(\d+)$/u
 const LINE_SPLIT_RE = /\r?\n/u
 
-const serializeSyncStatus = (status: WorkspaceSyncStatus): string =>
-  JSON.stringify([status.aheadCount, status.behindCount])
-
 const parseSyncStatus = (output: string): WorkspaceSyncStatus => {
   const lines = output.split(LINE_SPLIT_RE)
   const hasUpstream = lines.some((line) =>
@@ -107,7 +104,11 @@ class WorkspaceSyncService extends Context.Service<
       const pollingFibers = yield* Ref.make<
         Map<string, Fiber.Fiber<void, never>>
       >(new Map())
-      const previousStatuses = yield* Ref.make<Map<string, string>>(new Map())
+      /**
+       * Workspaces whose repo already has a background fetch schedule, so a
+       * repeated status read does not re-resolve the repo root every time.
+       */
+      const fetchedWorkspaces = yield* Ref.make<Set<string>>(new Set())
 
       const getWorkspace = Effect.fn('WorkspaceSyncService.getWorkspace')(
         function* (workspaceId: string) {
@@ -127,28 +128,38 @@ class WorkspaceSyncService extends Context.Service<
         }
       )
 
-      const commitSyncStatus = Effect.fn(
-        'WorkspaceSyncService.commitSyncStatus'
-      )(function* (workspaceId: string, status: WorkspaceSyncStatus) {
-        const serialized = serializeSyncStatus(status)
-        const previousSerialized = yield* Ref.modify(
-          previousStatuses,
-          (cache) => {
-            const previousValue = cache.get(workspaceId)
-            const next = new Map(cache)
-            next.set(workspaceId, serialized)
-            return [previousValue, next] as const
+      /**
+       * Ahead/behind counts are only as fresh as the repo's tracking refs, so
+       * asking for a workspace's status enrolls its repo in background
+       * fetching. Schedules are deduplicated per repo, and the main checkout
+       * enrolls itself here because it has no task row to provision one.
+       */
+      const ensureBackgroundFetch = Effect.fn(
+        'WorkspaceSyncService.ensureBackgroundFetch'
+      )(function* (workspaceId: string) {
+        const alreadyFetching = yield* Ref.modify(
+          fetchedWorkspaces,
+          (workspaces) => {
+            if (workspaces.has(workspaceId)) {
+              return [true, workspaces] as const
+            }
+            const next = new Set(workspaces)
+            next.add(workspaceId)
+            return [false, next] as const
           }
         )
 
-        if (previousSerialized === serialized) {
+        if (alreadyFetching) {
           return
         }
+
+        yield* backgroundFetch.startFetching(workspaceId)
       })
 
       const checkStatus = Effect.fn('WorkspaceSyncService.checkStatus')(
         function* (workspaceId: string) {
           const workspace = yield* getWorkspace(workspaceId)
+          yield* ensureBackgroundFetch(workspaceId)
 
           const result = yield* Effect.tryPromise({
             try: () =>
@@ -170,9 +181,7 @@ class WorkspaceSyncService extends Context.Service<
             })
           }
 
-          const status = parseSyncStatus(result.stdout)
-          yield* commitSyncStatus(workspaceId, status)
-          return status
+          return parseSyncStatus(result.stdout)
         }
       )
 
@@ -234,7 +243,7 @@ class WorkspaceSyncService extends Context.Service<
           }
 
           // Start background fetching so tracking refs stay fresh
-          yield* backgroundFetch.startFetching(workspaceId)
+          yield* ensureBackgroundFetch(workspaceId)
 
           const interval = intervalMs ?? SYNC_STATUS_POLL_INTERVAL_MS
           const fiber = yield* checkStatus(workspaceId).pipe(
@@ -271,8 +280,8 @@ class WorkspaceSyncService extends Context.Service<
           // Stop background fetching for this workspace
           yield* backgroundFetch.stopFetching(workspaceId)
 
-          yield* Ref.update(previousStatuses, (cache) => {
-            const next = new Map(cache)
+          yield* Ref.update(fetchedWorkspaces, (workspaces) => {
+            const next = new Set(workspaces)
             next.delete(workspaceId)
             return next
           })
@@ -286,7 +295,7 @@ class WorkspaceSyncService extends Context.Service<
             discard: true,
           })
           yield* backgroundFetch.stopAllFetching()
-          yield* Ref.set(previousStatuses, new Map())
+          yield* Ref.set(fetchedWorkspaces, new Set())
         }
       )
 

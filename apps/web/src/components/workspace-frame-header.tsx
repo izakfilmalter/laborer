@@ -43,10 +43,6 @@ interface WorkspaceFrameHeaderProps {
   readonly activePaneId: string | null
   /** Aggregate semantic Agent status for the workspace. */
   readonly agentStatus?: AgentDisplayStatus | null | undefined
-  /** Number of local commits ahead of upstream. */
-  readonly aheadCount: number | null
-  /** Number of upstream commits not yet pulled locally. */
-  readonly behindCount: number | null
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
   /** Whether the diff viewer is currently open for the active pane. */
@@ -160,9 +156,7 @@ function WorkspaceFrameHeader({
   activePaneId,
   actions,
   agentStatus,
-  aheadCount,
   branchName,
-  behindCount,
   diffIsOpen,
   dragHandleRef,
   isActiveFrame = false,
@@ -271,12 +265,7 @@ function WorkspaceFrameHeader({
           prUrl={prUrl}
         />
         {workspaceId ? (
-          <WorkspaceSyncStatus
-            aheadCount={aheadCount}
-            behindCount={behindCount}
-            size="header"
-            workspaceId={workspaceId}
-          />
+          <WorkspaceSyncStatus size="header" workspaceId={workspaceId} />
         ) : null}
         {showsAgentStatus ? (
           <AggregateAgentStatusBadge

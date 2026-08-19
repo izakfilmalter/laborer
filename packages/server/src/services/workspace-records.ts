@@ -15,10 +15,8 @@ import type {
  * UI vocabulary; task rows are the durable source of these facts.
  */
 export interface WorkspaceRecord {
-  readonly aheadCount: number | null
   readonly baseBranch: string | null
   readonly baseSha: string | null
-  readonly behindCount: number | null
   readonly branchName: string
   readonly createdAt: string
   readonly errorMessage: string | null
@@ -83,10 +81,8 @@ const toWorkspaceRecord = (
     status = 'creating'
   }
   return {
-    aheadCount: null,
     baseBranch: task.baseBranch,
     baseSha: task.baseSha,
-    behindCount: null,
     // Detached worktrees have no branch. Keep their stable task title as the
     // display/runtime label, matching the renderer's task projection.
     branchName: task.branchName ?? task.title,
@@ -133,10 +129,8 @@ export const listWorkspaceRecords = (
  * tracker, reconciler) never treat the main checkout as tracked work.
  */
 const rootWorkspaceRecord = (project: Project): WorkspaceRecord => ({
-  aheadCount: null,
   baseBranch: null,
   baseSha: null,
-  behindCount: null,
   branchName: project.branchName ?? ROOT_WORKSPACE_BRANCH_LABEL,
   createdAt: new Date(project.createdAt).toISOString(),
   errorMessage: null,

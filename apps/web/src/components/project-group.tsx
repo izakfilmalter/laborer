@@ -296,7 +296,7 @@ function ProjectGroup({
         </div>
         {composerOpen && (
           // Outside the collapsible so the composer survives a collapse mid-typing.
-          <div className="ml-2 border-l pt-1 pl-2">
+          <div className="pt-1">
             <CreateWorkspaceComposer
               composerId={composerId}
               onClose={closeComposer}
@@ -307,7 +307,11 @@ function ProjectGroup({
           </div>
         )}
         <CollapsibleContent>
-          <div className="mt-1 ml-2 border-l pl-2">
+          {/* No indent: the cards hold the sidebar's outer rail, the same one
+              the search field sits on. The heading's own inset comes from its
+              drag-handle gutter, which reads as a header treatment rather than
+              a level of nesting for the cards to step in from. */}
+          <div className="mt-1">
             <WorkspaceList
               onPendingCreationChange={handlePendingCreationChange}
               pendingCreations={pendingWorkspaceCreations}

@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { lstat, readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, resolve } from 'node:path'
@@ -36,6 +37,25 @@ const popPendingDirectory = (pending: string[]): string => {
   return directory
 }
 
+/**
+ * Whether the walk descends into an entry. A symlink is unlinked by `rm`, never
+ * followed, so it cannot carry the delete outside the tree; skipping rather than
+ * refusing lets the cutover survive an installed `node_modules/.bin` left under
+ * the retired root.
+ */
+const shouldDescendInto = (entry: Dirent): boolean => {
+  if (entry.isSymbolicLink()) {
+    return false
+  }
+  if (entry.isDirectory()) {
+    return true
+  }
+  if (entry.isFile() || entry.isSocket()) {
+    return false
+  }
+  throw new Error('retired runtime tree has an unsupported entry')
+}
+
 const removeRetiredRuntimeDirectory = async (
   projectRoot: string
 ): Promise<void> => {
@@ -58,13 +78,11 @@ const removeRetiredRuntimeDirectory = async (
     const directory = popPendingDirectory(pending)
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       entries += 1
-      if (entries > RETIRED_RUNTIME_ENTRY_LIMIT || entry.isSymbolicLink()) {
+      if (entries > RETIRED_RUNTIME_ENTRY_LIMIT) {
         throw new Error('retired runtime tree is unsafe or oversized')
       }
-      if (entry.isDirectory()) {
+      if (shouldDescendInto(entry)) {
         pending.push(resolve(directory, entry.name))
-      } else if (!(entry.isFile() || entry.isSocket())) {
-        throw new Error('retired runtime tree has an unsupported entry')
       }
     }
   }

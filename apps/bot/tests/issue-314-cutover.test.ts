@@ -1,9 +1,11 @@
 import {
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -89,6 +91,24 @@ describe('issue 314 production cutover', () => {
     expect(entries.some((entry) => entry.includes('laborer-runtime'))).toBe(
       false
     )
+  })
+
+  it('deletes retired runtime state containing symlinks', async () => {
+    const root = await temporaryRoot()
+    const retired = join(root, '.laborer-runtime')
+    const binary = join(retired, 'opencode-config', 'node_modules', '.bin')
+    await mkdir(binary, { recursive: true })
+    await writeFile(join(retired, 'runner-state.json'), 'old state')
+    await writeFile(join(root, 'keep.txt'), 'untouched')
+    await symlink('../yaml/bin.js', join(binary, 'yaml'))
+    await symlink(root, join(binary, 'escape-hatch'))
+
+    await Effect.runPromise(deleteRetiredSlackRuntimeState(root))
+
+    await expect(readFile(join(retired, 'runner-state.json'))).rejects.toThrow()
+    // The escape-hatch symlink is unlinked, never followed, so everything it
+    // pointed at outside the retired tree survives.
+    expect(await readdir(root)).toEqual(['keep.txt'])
   })
 
   it('makes the Chat/ACP entrypoint the only production Slack script', async () => {

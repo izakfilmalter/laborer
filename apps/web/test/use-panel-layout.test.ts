@@ -192,6 +192,50 @@ const layoutContainsTerminal = (
   )
 }
 
+/**
+ * A tab holding two side-by-side workspaces, with focus recorded on the
+ * second. Both are on screen; only the focused one is attended.
+ */
+const makeSplitWindowLayout = (): WindowLayout => {
+  const [first, second] = ['pane-left', 'pane-right'].map((paneId, index) => ({
+    _tag: 'WorkspaceTileLeaf' as const,
+    activePanelTabId: `panel-tab-${paneId}`,
+    id: `workspace-tile-${paneId}`,
+    panelTabs: [
+      {
+        focusedPaneId: paneId,
+        id: `panel-tab-${paneId}`,
+        label: 'Terminal',
+        panelLayout: {
+          _tag: 'LeafNode' as const,
+          id: paneId,
+          paneType: 'terminal' as const,
+          workspaceId: index === 0 ? 'workspace-left' : 'workspace-right',
+        },
+      },
+    ],
+    workspaceId: index === 0 ? 'workspace-left' : 'workspace-right',
+  }))
+
+  return {
+    activeTabId: 'window-tab-split',
+    tabs: [
+      {
+        focusedWorkspaceTileId: 'workspace-tile-pane-right',
+        id: 'window-tab-split',
+        label: 'Tab 1',
+        workspaceLayout: {
+          _tag: 'WorkspaceTileSplit',
+          children: [first, second],
+          direction: 'horizontal',
+          id: 'ws-split',
+          sizes: [50, 50],
+        },
+      },
+    ],
+  } as WindowLayout
+}
+
 describe('usePanelLayout', () => {
   beforeEach(() => {
     currentWindowIdRef.current = 'window-a'
@@ -245,6 +289,24 @@ describe('usePanelLayout', () => {
     await waitFor(() => {
       expect(result.current.activePaneId).toBe('pane-window-b')
     })
+  })
+
+  it('reports only the focused workspace as observed', async () => {
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    writeStoredWindowLayout('window-a', makeSplitWindowLayout())
+
+    renderHook(() => usePanelLayout())
+
+    // Both workspaces are on screen, so reporting both would mark a
+    // completion in the unfocused pane seen and hide its attention badge.
+    await waitFor(() => {
+      expect(reportWorkspacePresenceMock).toHaveBeenCalled()
+    })
+    const lastCall = reportWorkspacePresenceMock.mock.calls.at(-1)?.[0] as
+      | { payload: { workspaceIds: readonly string[] } }
+      | undefined
+    expect(lastCall?.payload.workspaceIds).toEqual(['workspace-right'])
+    hasFocus.mockRestore()
   })
 
   it('repairs and persists stale current-window layout pointers', async () => {

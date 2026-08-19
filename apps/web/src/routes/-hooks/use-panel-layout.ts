@@ -79,6 +79,7 @@ import {
   resolveActivePaneForPanelTab,
   resolveActivePaneForWindowTab,
   resolveActivePaneFromLeaf,
+  resolveActiveWorkspaceId,
   saveFocusedPaneId,
   switchWindowTab,
   switchWindowTabByIndex,
@@ -773,10 +774,19 @@ export function usePanelLayout() {
       ),
     ]
 
+    // Seen means attended, not merely on screen. Every laid-out workspace is
+    // visible at once, so reporting all of them marks a completion in an
+    // unfocused pane as seen the moment it lands and suppresses its
+    // needs-attention badge. Only the focused pane's workspace is attended.
+    const attendedWorkspaceId = resolveActiveWorkspaceId(persistedWindowLayout)
+
     const report = () => {
       const focused =
         document.visibilityState === 'visible' && document.hasFocus()
-      const observedWorkspaceIds = focused ? workspaceIds : []
+      const observedWorkspaceIds =
+        focused && attendedWorkspaceId !== undefined
+          ? [attendedWorkspaceId]
+          : []
       reportWorkspacePresence({
         payload: {
           clientId: presenceClientId.current,

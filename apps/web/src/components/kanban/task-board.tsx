@@ -13,6 +13,7 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
+import { isPastedBranchName } from '@laborer/shared/branch-name'
 import type { SharedLabelRow } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { formatTaskIdentifier } from '@laborer/task-db/task-identifier'
@@ -584,15 +585,21 @@ function TaskBoardCard({
 }
 
 /** What the typed text will become once committed. */
-type ComposerIntent = 'empty' | 'manual' | 'slack' | 'unrecognized-link'
+type ComposerIntent =
+  | 'branch'
+  | 'empty'
+  | 'manual'
+  | 'slack'
+  | 'unrecognized-link'
 
 const LINK_LIKE_PATTERN = /^https?:\/\//i
 
 /**
  * Classify composer text the way the server will: a recognized Slack message
- * permalink becomes a Slack card, anything else becomes a manual card. Text
- * that only looks like a link is called out before it silently becomes a card
- * titled with a URL.
+ * permalink becomes a Slack card, text that names a branch verbatim becomes a
+ * card bound to that branch, and anything else becomes a manual card. Text that
+ * only looks like a link is called out before it silently becomes a card titled
+ * with a URL.
  */
 const composerIntent = (trimmed: string): ComposerIntent => {
   if (trimmed.length === 0) {
@@ -601,10 +608,13 @@ const composerIntent = (trimmed: string): ComposerIntent => {
   if (isSlackMessageUrl(trimmed)) {
     return 'slack'
   }
-  return LINK_LIKE_PATTERN.test(trimmed) ||
+  if (
+    LINK_LIKE_PATTERN.test(trimmed) ||
     trimmed.toLowerCase().includes('slack.com')
-    ? 'unrecognized-link'
-    : 'manual'
+  ) {
+    return 'unrecognized-link'
+  }
+  return isPastedBranchName(trimmed) ? 'branch' : 'manual'
 }
 
 /** The column header's Plus affordance, which toggles that column's composer. */
@@ -697,14 +707,17 @@ function AddCardComposer({
   return (
     <div className="px-2 pt-1.5">
       <InlineComposer
-        addon={(trimmed) =>
-          composerIntent(trimmed) === 'slack' ? (
-            <Slack aria-hidden="true" className="size-3.5" />
-          ) : (
-            <SquarePen aria-hidden="true" className="size-3.5" />
-          )
-        }
-        ariaLabel={`Card title or Slack message link for ${column.title}`}
+        addon={(trimmed) => {
+          const intent = composerIntent(trimmed)
+          if (intent === 'slack') {
+            return <Slack aria-hidden="true" className="size-3.5" />
+          }
+          if (intent === 'branch') {
+            return <GitBranch aria-hidden="true" className="size-3.5" />
+          }
+          return <SquarePen aria-hidden="true" className="size-3.5" />
+        }}
+        ariaLabel={`Card title, branch name, or Slack message link for ${column.title}`}
         commit={commit}
         commitsOnPaste={isSlackMessageUrl}
         composerId={composerId}
@@ -730,11 +743,17 @@ function AddCardComposer({
               text: 'Not a Slack message link — this becomes a manual card titled with the URL.',
             }
           }
+          if (intent === 'branch') {
+            return {
+              className: 'text-muted-foreground',
+              text: 'Branch name — checked out from origin if it exists there.',
+            }
+          }
           return null
         }}
         idleHint={() => 'Enter to add · Esc to close'}
         onClose={onClose}
-        placeholder="Title, or paste a Slack link"
+        placeholder="Title, branch name, or paste a Slack link"
       />
     </div>
   )

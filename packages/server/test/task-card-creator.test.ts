@@ -67,6 +67,42 @@ describe('task card creation', () => {
     database.close()
   })
 
+  it('binds a pasted branch name to the card verbatim', async () => {
+    const path = databasePath()
+
+    const result = await Effect.runPromise(
+      createTaskCard(
+        { rootPath: '/repo', status: 'todo', text: '  feature/colleague-pr  ' },
+        path
+      )
+    )
+
+    // Verbatim, not slugified: provisioning fetches refs/heads/<name> from
+    // origin with this exact string, so a mangled name would silently create a
+    // new branch off HEAD instead of checking the colleague's work out.
+    expect(storedTask(path, result.id)).toMatchObject({
+      branchName: 'feature/colleague-pr',
+      source: 'manual',
+      title: 'feature/colleague-pr',
+    })
+  })
+
+  it('leaves a prose title free to derive its own branch', async () => {
+    const path = databasePath()
+
+    const result = await Effect.runPromise(
+      createTaskCard(
+        { rootPath: '/repo', status: 'todo', text: 'Fix the login flow' },
+        path
+      )
+    )
+
+    expect(storedTask(path, result.id)).toMatchObject({
+      branchName: null,
+      title: 'Fix the login flow',
+    })
+  })
+
   it('analyzes a Slack card that waits in its Todo column', async () => {
     const path = databasePath()
     const planner = vi.fn(() => Effect.succeed(slackPlan))

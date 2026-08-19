@@ -64,7 +64,7 @@ describe('add card composer', () => {
 
     await user.click(
       screen.getByRole('textbox', {
-        name: 'Card title or Slack message link for In Progress',
+        name: 'Card title, branch name, or Slack message link for In Progress',
       })
     )
     await user.paste(slackUrl)
@@ -111,7 +111,7 @@ describe('add card composer', () => {
 
     await user.click(
       screen.getByRole('textbox', {
-        name: 'Card title or Slack message link for In Progress',
+        name: 'Card title, branch name, or Slack message link for In Progress',
       })
     )
     await user.paste(slackUrl)
@@ -144,7 +144,7 @@ describe('add card composer', () => {
 
     await user.click(
       screen.getByRole('textbox', {
-        name: 'Card title or Slack message link for Todo',
+        name: 'Card title, branch name, or Slack message link for Todo',
       })
     )
     await user.paste(slackUrl)
@@ -169,12 +169,41 @@ describe('add card composer', () => {
     )
 
     const input = screen.getByRole('textbox', {
-      name: 'Card title or Slack message link for Todo',
+      name: 'Card title, branch name, or Slack message link for Todo',
     })
     await user.click(input)
     await user.paste('Write release notes')
 
     expect(createTask).not.toHaveBeenCalled()
     expect((input as HTMLInputElement).value).toBe('Write release notes')
+  })
+
+  it('says a pasted branch name will be checked out from origin', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <AddCardComposer
+        column={{ dotClassName: 'bg-muted', id: 'todo', title: 'Todo' }}
+        composerId="test-composer"
+        onClose={vi.fn()}
+        projectId="project-1"
+        projectRootPath="/repo"
+      />
+    )
+
+    const input = screen.getByRole('textbox', {
+      name: 'Card title, branch name, or Slack message link for Todo',
+    })
+    await user.click(input)
+    await user.paste('feature/colleague-pr')
+
+    const branchHint =
+      'Branch name — checked out from origin if it exists there.'
+    expect(screen.getByText(branchHint)).toBeTruthy()
+
+    // Prose stays a plain card title.
+    await user.clear(input)
+    await user.type(input, 'Write release notes')
+    expect(screen.queryByText(branchHint)).toBeNull()
   })
 })

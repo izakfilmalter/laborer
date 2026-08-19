@@ -243,7 +243,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     })
   })
 
-  it('converts uppercase to lowercase', async () => {
+  it('keeps uppercase, which git refs are sensitive to', async () => {
     const user = userEvent.setup()
     render(
       <ReadyPhaseWrapper>
@@ -252,10 +252,13 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     )
     const input = getBranchInput()
 
-    await user.type(input, 'My-Feature')
+    // Lowercasing would make `git fetch origin refs/heads/PROJ-1234-Fix-Login`
+    // miss a branch that exists on origin, so pasting a colleague's branch
+    // would start an empty one off HEAD instead of checking their commits out.
+    await user.type(input, 'PROJ-1234-Fix-Login')
 
     await waitFor(() => {
-      expect((input as HTMLInputElement).value).toBe('my-feature')
+      expect((input as HTMLInputElement).value).toBe('PROJ-1234-Fix-Login')
     })
   })
 
@@ -346,7 +349,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     createWorkspaceFn.mockResolvedValue({
       id: 'ws-new',
       projectId: 'project-1',
-      branchName: 'my-feature-branch',
+      branchName: 'My-Feature-Branch',
       worktreePath: '/path/to/worktree',
       status: 'running',
     })
@@ -361,7 +364,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     await user.type(input, 'My Feature Branch')
 
     await waitFor(() => {
-      expect((input as HTMLInputElement).value).toBe('my-feature-branch')
+      expect((input as HTMLInputElement).value).toBe('My-Feature-Branch')
     })
 
     const submitButton = screen.getByRole('button', {
@@ -372,7 +375,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     await waitFor(() => {
       expect(createWorkspaceFn).toHaveBeenCalledWith({
         payload: {
-          branchName: 'my-feature-branch',
+          branchName: 'My-Feature-Branch',
           operationId: expect.any(String),
           projectId: 'project-1',
         },

@@ -130,6 +130,13 @@ const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
  */
 const COLUMN_MIN_HEIGHT = 'min-h-[24rem]'
 /**
+ * A card needs its whole badge row — identifier, agent, worktree — on one line
+ * beside the title's edit and cancel controls before it reads as a card rather
+ * than a squeezed column of wrapped fragments. Columns stop shrinking here and
+ * the lane scrolls sideways instead.
+ */
+const COLUMN_MIN_WIDTH = 'min-w-[20rem]'
+/**
  * Done is an archive, not the work. Past this many cards it offers to unfold
  * rather than growing; until then it is already as tall as the lane allows.
  */
@@ -910,169 +917,174 @@ function LaneBoard({
       onValueChange={setColumnTasks}
       value={columnTasks}
     >
-      <KanbanBoard className="grid max-h-[80vh] min-h-0 min-w-0 grid-cols-4 grid-rows-[minmax(0,1fr)] gap-2 sm:grid-cols-4">
-        {BOARD_COLUMNS.map((column) => {
-          const composerId = `${laneId}-${column.id}-composer`
-          const addButtonId = `${laneId}-${column.id}-add`
-          const composerOpen = composerColumn === column.id
-          const cards = columnTasks[column.id] ?? []
-          const isDone = column.id === 'done'
-          // Done is always laid out over its own footprint, so neither the
-          // archive nor an expanded archive can stretch the lane past the
-          // board and push its own toggle off screen; every other column can.
-          const clipped = isDone
-          // Collapsed Done shows only the most recent cards; expanded shows
-          // them all, scrolling inside the same footprint.
-          const visibleCards =
-            isDone && !doneExpanded
-              ? cards.slice(0, DONE_COLLAPSED_CARD_LIMIT)
-              : cards
-          const closeComposer = (reason: ComposerCloseReason) => {
-            setComposerColumn(null)
-            if (reason === 'cancel') {
-              document.getElementById(addButtonId)?.focus()
+      {/* Columns share the lane's width when it is wide enough and stop
+          shrinking at COLUMN_MIN_WIDTH, so cards stay readable and the lane
+          scrolls horizontally instead. */}
+      <ScrollArea className="min-h-0" scrollbarGutter>
+        <KanbanBoard className="flex max-h-[80vh] min-h-0 w-full min-w-max gap-2">
+          {BOARD_COLUMNS.map((column) => {
+            const composerId = `${laneId}-${column.id}-composer`
+            const addButtonId = `${laneId}-${column.id}-add`
+            const composerOpen = composerColumn === column.id
+            const cards = columnTasks[column.id] ?? []
+            const isDone = column.id === 'done'
+            // Done is always laid out over its own footprint, so neither the
+            // archive nor an expanded archive can stretch the lane past the
+            // board and push its own toggle off screen; every other column can.
+            const clipped = isDone
+            // Collapsed Done shows only the most recent cards; expanded shows
+            // them all, scrolling inside the same footprint.
+            const visibleCards =
+              isDone && !doneExpanded
+                ? cards.slice(0, DONE_COLLAPSED_CARD_LIMIT)
+                : cards
+            const closeComposer = (reason: ComposerCloseReason) => {
+              setComposerColumn(null)
+              if (reason === 'cancel') {
+                document.getElementById(addButtonId)?.focus()
+              }
             }
-          }
 
-          return (
-            <KanbanColumn
-              className="min-h-0 min-w-0"
-              data-status={column.id}
-              data-testid="task-board-column"
-              key={column.id}
-              value={column.id}
-            >
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg bg-muted/50">
-                <div className="flex min-w-0 shrink-0 items-center gap-2 pt-1.5 pr-1.5 pb-0.5 pl-3">
-                  <span
-                    className={cn(
-                      'inline-block size-2 shrink-0 rounded-full',
-                      column.dotClassName
-                    )}
-                  />
-                  <span className="truncate font-medium text-sm">
-                    {column.title}
-                  </span>
-                  <span className="text-muted-foreground text-sm tabular-nums">
-                    {cards.length}
-                  </span>
-                  <AddCardButton
-                    columnTitle={column.title}
-                    composerId={composerId}
-                    id={addButtonId}
-                    onToggle={() =>
-                      setComposerColumn(composerOpen ? null : column.id)
-                    }
-                    open={composerOpen}
-                  />
-                </div>
-                {composerOpen && (
-                  <AddCardComposer
-                    column={column}
-                    composerId={composerId}
-                    onClose={closeComposer}
-                    onSlackCardQueued={onSlackCardQueued}
-                    projectId={projectId}
-                    projectRootPath={projectRootPath}
-                  />
-                )}
-                <div
-                  className={cn(
-                    'min-h-0 min-w-0 flex-1',
-                    COLUMN_MIN_HEIGHT,
-                    clipped && 'relative'
+            return (
+              <KanbanColumn
+                className={cn('min-h-0 flex-1 basis-0', COLUMN_MIN_WIDTH)}
+                data-status={column.id}
+                data-testid="task-board-column"
+                key={column.id}
+                value={column.id}
+              >
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg bg-muted/50">
+                  <div className="flex min-w-0 shrink-0 items-center gap-2 pt-1.5 pr-1.5 pb-0.5 pl-3">
+                    <span
+                      className={cn(
+                        'inline-block size-2 shrink-0 rounded-full',
+                        column.dotClassName
+                      )}
+                    />
+                    <span className="truncate font-medium text-sm">
+                      {column.title}
+                    </span>
+                    <span className="text-muted-foreground text-sm tabular-nums">
+                      {cards.length}
+                    </span>
+                    <AddCardButton
+                      columnTitle={column.title}
+                      composerId={composerId}
+                      id={addButtonId}
+                      onToggle={() =>
+                        setComposerColumn(composerOpen ? null : column.id)
+                      }
+                      open={composerOpen}
+                    />
+                  </div>
+                  {composerOpen && (
+                    <AddCardComposer
+                      column={column}
+                      composerId={composerId}
+                      onClose={closeComposer}
+                      onSlackCardQueued={onSlackCardQueued}
+                      projectId={projectId}
+                      projectRootPath={projectRootPath}
+                    />
                   )}
-                >
-                  <div className={cn(clipped && 'absolute inset-0')}>
-                    <ScrollArea className="min-h-0" overscrollContain>
-                      <KanbanColumnContent
-                        className="flex min-h-24 flex-col gap-2 px-2 pt-1.5 pb-2"
-                        value={column.id}
-                      >
-                        {visibleCards.map((task) => (
-                          <KanbanItem
-                            data-task-id={task.id}
-                            data-testid="task-board-card"
-                            key={task.id}
-                            value={task.id}
-                          >
-                            <KanbanItemHandle>
-                              <TaskBoardCard
-                                attachBlocked={
-                                  attachingTaskId !== null &&
-                                  attachingTaskId !== task.id
-                                }
-                                attached={attachedTaskId === task.id}
-                                attaching={attachingTaskId === task.id}
-                                labelRows={labelRows}
-                                onActivate={onActivateTask}
-                                onAttach={onAttach}
-                                onCancel={onCancelTask}
-                                onOpen={onOpenTask}
-                                parentTitle={
-                                  task.parentTaskId === null
-                                    ? undefined
-                                    : tasksById.get(task.parentTaskId)?.title
-                                }
-                                projectId={projectId}
-                                projectShortName={projectShortName}
-                                task={task}
-                                workspace={workspaceForCard(task)}
-                              />
-                            </KanbanItemHandle>
-                          </KanbanItem>
-                        ))}
-                        {cards.length === 0 &&
-                          (composerOpen ? (
-                            <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
-                              No cards
-                            </div>
-                          ) : (
-                            <button
-                              aria-label={`Add the first card to ${column.title}`}
-                              className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              onClick={() => setComposerColumn(column.id)}
-                              type="button"
-                            >
-                              No cards — add one
-                            </button>
-                          ))}
-                      </KanbanColumnContent>
-                    </ScrollArea>
-                  </div>
-                </div>
-                {isDone && (
-                  <div className="flex min-w-0 shrink-0 items-center gap-2 px-3 pb-2">
-                    <p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70">
-                      Done cards auto-hide after 7 days
-                    </p>
-                    {cards.length > DONE_COLLAPSED_CARD_LIMIT && (
-                      <button
-                        aria-expanded={doneExpanded}
-                        className="flex shrink-0 items-center gap-1 rounded-sm text-[10px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => setDoneExpanded(!doneExpanded)}
-                        type="button"
-                      >
-                        {doneExpanded ? (
-                          <>
-                            <ChevronUp className="size-3" />
-                            Show less
-                          </>
-                        ) : (
-                          <>
-                            <ChevronDown className="size-3" />
-                            Show all {cards.length}
-                          </>
-                        )}
-                      </button>
+                  <div
+                    className={cn(
+                      'min-h-0 min-w-0 flex-1',
+                      COLUMN_MIN_HEIGHT,
+                      clipped && 'relative'
                     )}
+                  >
+                    <div className={cn(clipped && 'absolute inset-0')}>
+                      <ScrollArea className="min-h-0" overscrollContain>
+                        <KanbanColumnContent
+                          className="flex min-h-24 flex-col gap-2 px-2 pt-1.5 pb-2"
+                          value={column.id}
+                        >
+                          {visibleCards.map((task) => (
+                            <KanbanItem
+                              data-task-id={task.id}
+                              data-testid="task-board-card"
+                              key={task.id}
+                              value={task.id}
+                            >
+                              <KanbanItemHandle>
+                                <TaskBoardCard
+                                  attachBlocked={
+                                    attachingTaskId !== null &&
+                                    attachingTaskId !== task.id
+                                  }
+                                  attached={attachedTaskId === task.id}
+                                  attaching={attachingTaskId === task.id}
+                                  labelRows={labelRows}
+                                  onActivate={onActivateTask}
+                                  onAttach={onAttach}
+                                  onCancel={onCancelTask}
+                                  onOpen={onOpenTask}
+                                  parentTitle={
+                                    task.parentTaskId === null
+                                      ? undefined
+                                      : tasksById.get(task.parentTaskId)?.title
+                                  }
+                                  projectId={projectId}
+                                  projectShortName={projectShortName}
+                                  task={task}
+                                  workspace={workspaceForCard(task)}
+                                />
+                              </KanbanItemHandle>
+                            </KanbanItem>
+                          ))}
+                          {cards.length === 0 &&
+                            (composerOpen ? (
+                              <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs">
+                                No cards
+                              </div>
+                            ) : (
+                              <button
+                                aria-label={`Add the first card to ${column.title}`}
+                                className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-xs transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={() => setComposerColumn(column.id)}
+                                type="button"
+                              >
+                                No cards — add one
+                              </button>
+                            ))}
+                        </KanbanColumnContent>
+                      </ScrollArea>
+                    </div>
                   </div>
-                )}
-              </div>
-            </KanbanColumn>
-          )
-        })}
-      </KanbanBoard>
+                  {isDone && (
+                    <div className="flex min-w-0 shrink-0 items-center gap-2 px-3 pb-2">
+                      <p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70">
+                        Done cards auto-hide after 7 days
+                      </p>
+                      {cards.length > DONE_COLLAPSED_CARD_LIMIT && (
+                        <button
+                          aria-expanded={doneExpanded}
+                          className="flex shrink-0 items-center gap-1 rounded-sm text-[10px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() => setDoneExpanded(!doneExpanded)}
+                          type="button"
+                        >
+                          {doneExpanded ? (
+                            <>
+                              <ChevronUp className="size-3" />
+                              Show less
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="size-3" />
+                              Show all {cards.length}
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </KanbanColumn>
+            )
+          })}
+        </KanbanBoard>
+      </ScrollArea>
       <KanbanOverlay>
         {({ value }) => {
           const task = tasksById.get(String(value))

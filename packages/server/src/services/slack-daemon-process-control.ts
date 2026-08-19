@@ -18,6 +18,9 @@ export const SOURCE_SLACK_DAEMON_QUERY: ProcessQuery = {
   cwd: SOURCE_LABORER_CHECKOUT,
 }
 
+export const SOURCE_SLACK_DAEMON_LOG =
+  '/Users/izakfilmalter/.local/state/laborer/slack-daemon.log'
+
 export const SOURCE_SLACK_DAEMON_LAUNCH: DetachedProcessLaunch = {
   args: [
     '-lc',
@@ -34,6 +37,7 @@ exec /Users/izakfilmalter/.bun/bin/bun run start:bot`,
     USER: 'izakfilmalter',
   },
   file: '/bin/zsh',
+  logFile: SOURCE_SLACK_DAEMON_LOG,
 }
 
 export class SlackDaemonControlError extends Schema.TaggedError<SlackDaemonControlError>()(

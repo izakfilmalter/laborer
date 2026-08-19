@@ -5,7 +5,7 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { RotateCcw, Settings } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useAppSettings } from '@/components/app-settings-context'
 import { DesktopUpdatePill } from '@/components/desktop-update-pill'
 
@@ -57,15 +57,21 @@ function SettingsButton() {
 }
 
 export function SidebarFooter() {
+  /*
+   * The Slack popover anchors to this row rather than its own trigger so it
+   * spans the sidebar instead of spilling over the app content beside it.
+   */
+  const controlsRef = useRef<HTMLDivElement>(null)
+
   return (
     <div className="grid gap-2 border-t p-3">
       <DesktopUpdatePill />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" ref={controlsRef}>
         <div className="min-w-0 flex-1">
           <ServiceStatusDots />
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <ConnectedSlackDaemonStatusButton />
+          <ConnectedSlackDaemonStatusButton anchor={controlsRef} />
           <ResetButton />
           <SettingsButton />
           <ModeToggle />

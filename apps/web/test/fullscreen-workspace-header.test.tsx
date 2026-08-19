@@ -336,4 +336,25 @@ describe('Workspace header visibility during fullscreen', () => {
 
     expect(screen.queryByTestId('fullscreen-workspace-header')).toBeNull()
   })
+
+  it('isolates window tab content so background pane overlays cannot paint above the fullscreen overlay', () => {
+    render(
+      <PanelContent
+        activePaneId="pane-1"
+        activeTabId={TWO_WORKSPACE_WINDOW_LAYOUT.activeTabId}
+        fullscreenPaneId="pane-1"
+        isReconciling={false}
+        windowLayout={TWO_WORKSPACE_WINDOW_LAYOUT}
+        windowTabs={TWO_WORKSPACE_WINDOW_LAYOUT.tabs}
+      />
+    )
+
+    // Pane-level overlays inside the normal tree use z-20 (hover toolbar)
+    // and z-30 (terminal notification). The fullscreen overlay is z-10, so
+    // the tab container must form its own stacking context or those
+    // overlays would render on top of the fullscreened pane.
+    for (const tabContent of screen.getAllByTestId('window-tab-content')) {
+      expect(tabContent.className.split(' ')).toContain('isolate')
+    }
+  })
 })

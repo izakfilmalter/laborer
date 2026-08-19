@@ -7,8 +7,28 @@ import type {
 const DEFAULT_DOWNWARD_CONFIRMATIONS = 3
 const DEFAULT_STALE_AFTER_MS = 10_000
 
+/**
+ * `ps` raw names (`ps -o comm=`) of agents Laborer ships a status hook for.
+ *
+ * For these agents the hook reports the lifecycle and process inspection is
+ * only corroborating evidence, so a running process on its own says nothing
+ * about whether the agent is busy — an OpenCode TUI parked on its session
+ * picker looks identical to one mid-turn. Agents absent from this set have no
+ * hook, so process presence remains the only available signal.
+ *
+ * @see packages/server/src/services/opencode-status-plugin.ts
+ * @see packages/server/src/services/claude-status-hooks.ts
+ */
+const HOOK_BACKED_AGENTS: ReadonlySet<string> = new Set([
+  'claude',
+  'opencode',
+  'opencode2',
+])
+
 interface AgentProcess {
   readonly pid: number
+  /** Raw `ps` process name, used to decide whether a hook governs this agent. */
+  readonly rawName: string
 }
 
 interface ProcessSample {
@@ -23,8 +43,32 @@ interface StatusEngineOptions {
 }
 
 interface HookAuthority {
-  readonly processId: number | null
+  /**
+   * Agent PIDs observed when the report landed, identifying the process
+   * generation the report describes. Empty when no successful sample had
+   * been taken yet; the next sample adopts its generation.
+   */
+  readonly processIds: ReadonlySet<number>
   readonly status: AgentStatus
+}
+
+/**
+ * Whether two agent PID sets describe the same process generation.
+ *
+ * Agents fork helpers and daemons, so the PID set churns within a single
+ * run. Any overlap means the generation survived; a wholly disjoint set
+ * means the agent was replaced and its hook state no longer applies.
+ */
+const sharesProcessGeneration = (
+  authorityPids: ReadonlySet<number>,
+  processIds: ReadonlySet<number>
+): boolean => {
+  for (const pid of authorityPids) {
+    if (processIds.has(pid)) {
+      return true
+    }
+  }
+  return false
 }
 
 /**
@@ -72,13 +116,14 @@ class TerminalStatusEngine {
     if (processIds.size > 0) {
       this.#downwardSamples = 0
       if (this.#hookAuthority !== null) {
-        const authorityPid = this.#hookAuthority.processId
-        if (authorityPid === null) {
+        if (this.#hookAuthority.processIds.size === 0) {
           this.#hookAuthority = {
             ...this.#hookAuthority,
-            processId: processIds.values().next().value ?? null,
+            processIds,
           }
-        } else if (!processIds.has(authorityPid)) {
+        } else if (
+          !sharesProcessGeneration(this.#hookAuthority.processIds, processIds)
+        ) {
           this.#hookAuthority = null
         }
       }
@@ -90,7 +135,11 @@ class TerminalStatusEngine {
           sample.sampledAt
         )
       }
-      return this.#transition('working', 'ps', sample.sampledAt)
+      return this.#transition(
+        this.#statusFromProcesses(sample.agentProcesses),
+        'ps',
+        sample.sampledAt
+      )
     }
 
     if (this.#snapshot === null) {
@@ -151,11 +200,28 @@ class TerminalStatusEngine {
     }
 
     this.#hookAuthority = {
-      processId: this.#lastAgentProcessIds.values().next().value ?? null,
+      processIds: new Set(this.#lastAgentProcessIds),
       status: report.status,
     }
     this.#downwardSamples = 0
     return this.#transition(report.status, 'hook', reportedAt)
+  }
+
+  /**
+   * Status implied by process inspection alone, with no hook authority.
+   *
+   * Process presence proves an agent is running, never that it is busy. When
+   * every running agent is hook-backed, the absent hook evidence is the whole
+   * answer and the honest status is `unknown` — claiming `working` pins an
+   * idle agent to a busy badge for as long as it stays open. A non-hooked
+   * agent has no better signal available, so presence still implies `working`.
+   */
+  #statusFromProcesses(agentProcesses: readonly AgentProcess[]): AgentStatus {
+    return agentProcesses.every(({ rawName }) =>
+      HOOK_BACKED_AGENTS.has(rawName)
+    )
+      ? 'unknown'
+      : 'working'
   }
 
   #recoverDetection(): void {

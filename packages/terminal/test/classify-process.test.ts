@@ -95,7 +95,7 @@ describe('process-tree walking', () => {
 
     const result = detectForShellPid(1, childrenByPid, commByPid)
 
-    expect(result.agentProcessIds).toEqual([4])
+    expect(result.agentProcesses).toEqual([{ pid: 4, rawName: 'claude' }])
     expect(result.processChain.map(({ rawName }) => rawName)).toEqual([
       'node',
       'vite',
@@ -118,7 +118,7 @@ describe('process-tree walking', () => {
 
     const result = detectForShellPid(1, childrenByPid, commByPid)
 
-    expect(result.agentProcessIds).toEqual([3])
+    expect(result.agentProcesses).toEqual([{ pid: 3, rawName: 'claude' }])
   })
 })
 
@@ -154,7 +154,7 @@ describe('isIdleTitle', () => {
 
 describe('buildDetectionFromTitle', () => {
   const snapshotWithChild: ProcessDetectionResult = {
-    agentProcessIds: [],
+    agentProcesses: [],
     foregroundProcess: {
       category: 'unknown',
       label: 'sleep',
@@ -165,7 +165,7 @@ describe('buildDetectionFromTitle', () => {
   }
 
   const snapshotIdle: ProcessDetectionResult = {
-    agentProcessIds: [],
+    agentProcesses: [],
     foregroundProcess: null,
     hasChildProcess: false,
     processChain: [],

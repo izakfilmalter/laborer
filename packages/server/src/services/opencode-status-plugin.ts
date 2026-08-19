@@ -299,6 +299,26 @@ function createOpenCodeStatusPluginRuntime(
     }
   }
 
+  /**
+   * Abandon busy bookkeeping accumulated under a stream that has since
+   * dropped.
+   *
+   * Busy state is a fold over `session.execution.*` deltas, so a completion
+   * lost in a resubscribe gap leaves its directory busy forever and pins the
+   * terminal to `working`. Nothing in the event stream can undo that. Each
+   * affected directory is released to `idle`; a run still in flight re-marks
+   * itself `working` on its next `session.step.started`, which arrives
+   * within moments.
+   */
+  const releaseBusySessions = (): void => {
+    const directories = [...busySessions.keys()]
+    busySessions.clear()
+    pendingBusy.clear()
+    for (const directory of directories) {
+      report(directory, 'idle')
+    }
+  }
+
   const handleEvent = (event: unknown): void => {
     if (!isRecord(event) || typeof event.type !== 'string') {
       return
@@ -341,6 +361,7 @@ function createOpenCodeStatusPluginRuntime(
           // The event stream is volatile by contract; resubscribe below.
         }
         if (active) {
+          releaseBusySessions()
           await sleep(resubscribeDelayMs)
         }
       }

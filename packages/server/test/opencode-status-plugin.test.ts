@@ -45,6 +45,13 @@ const eventQueue = () => {
   let waiter: ((next: IteratorResult<unknown>) => void) | undefined
   let closed = false
   return {
+    /** End the stream as a dropped subscription would. */
+    close: () => {
+      closed = true
+      const pendingWaiter = waiter
+      waiter = undefined
+      pendingWaiter?.({ done: true, value: undefined })
+    },
     push: (event: unknown) => {
       if (waiter !== undefined) {
         const resolve = waiter
@@ -312,6 +319,39 @@ describe('OpenCode v2 status plugin runtime', () => {
     queue.push(unlocated('session.execution.succeeded', { sessionID: 'root' }))
     await flush()
     expect(reports.map(({ status }) => status)).toEqual(['working'])
+  })
+
+  it('releases busy directories when the event stream drops', async () => {
+    const reports: OpenCodeStatusReport[] = []
+    const runtime = createOpenCodeStatusPluginRuntime(
+      (report) => {
+        reports.push(report)
+        return Promise.resolve()
+      },
+      { resubscribeDelayMs: 1 }
+    )
+    let queue = eventQueue()
+    const cleanup = runtime.setup({
+      event: {
+        subscribe: () => {
+          queue = eventQueue()
+          return queue.iterable
+        },
+      },
+    })
+
+    queue.push(located('session.step.started', { sessionID: 'root' }))
+    await flush()
+    expect(reports.map(({ status }) => status)).toEqual(['working'])
+
+    // The stream ends mid-run, so the completion is never delivered. Without
+    // release the directory stays busy forever and the terminal is pinned to
+    // `working`.
+    queue.close()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(reports.map(({ status }) => status)).toEqual(['working', 'idle'])
+    cleanup()
   })
 })
 

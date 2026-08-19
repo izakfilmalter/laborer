@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { TerminalStatusEngine } from '../src/services/terminal-status-engine.js'
 
-const agent = (pid = 42) => [{ pid }]
+/**
+ * An agent Laborer ships no status hook for, so process presence is the only
+ * available evidence and implies `working`.
+ */
+const agent = (pid = 42) => [{ pid, rawName: 'codex' }]
+
+/** An agent whose lifecycle a Laborer hook reports. */
+const hookedAgent = (...pids: number[]) =>
+  (pids.length > 0 ? pids : [42]).map((pid) => ({ pid, rawName: 'opencode' }))
 
 describe('TerminalStatusEngine', () => {
   it('classifies a one-shot agent run as working then idle', () => {
@@ -98,6 +106,50 @@ describe('TerminalStatusEngine', () => {
     expect(
       engine.sample({ agentProcesses: agent(99), sampledAt: 40 })
     ).toMatchObject({ status: 'working', source: 'ps' })
+  })
+
+  it('does not call a hook-backed agent working on process presence alone', () => {
+    const engine = new TerminalStatusEngine()
+
+    // An OpenCode TUI parked on its session picker is indistinguishable from
+    // one mid-turn by process inspection, and reports nothing until a session
+    // runs. Presence must not stand in for the absent hook evidence.
+    expect(
+      engine.sample({ agentProcesses: hookedAgent(), sampledAt: 0 })
+    ).toMatchObject({ status: 'unknown', source: 'ps' })
+  })
+
+  it('still infers working from presence when any agent has no hook', () => {
+    const engine = new TerminalStatusEngine()
+
+    expect(
+      engine.sample({
+        agentProcesses: [...hookedAgent(42), ...agent(43)],
+        sampledAt: 0,
+      })
+    ).toMatchObject({ status: 'working', source: 'ps' })
+  })
+
+  it('keeps hook authority across churn in the agent process set', () => {
+    const engine = new TerminalStatusEngine()
+    engine.sample({ agentProcesses: hookedAgent(42, 43), sampledAt: 0 })
+    engine.report({ status: 'idle', sequence: 1 }, 10)
+
+    // Agents fork helpers and daemons mid-run, so the PID set churns. An
+    // overlapping set is the same generation and must not revoke the hook.
+    expect(
+      engine.sample({ agentProcesses: hookedAgent(43, 44), sampledAt: 20 })
+    ).toMatchObject({ status: 'idle', source: 'hook', seen: false })
+  })
+
+  it('revokes hook authority when the agent generation is replaced', () => {
+    const engine = new TerminalStatusEngine()
+    engine.sample({ agentProcesses: hookedAgent(42), sampledAt: 0 })
+    engine.report({ status: 'needs_input', sequence: 1 }, 10)
+
+    expect(
+      engine.sample({ agentProcesses: hookedAgent(99), sampledAt: 20 })
+    ).toMatchObject({ status: 'unknown', source: 'ps' })
   })
 
   it('rejects reports arriving after a successful no-agent sample', () => {

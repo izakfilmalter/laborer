@@ -37,7 +37,10 @@ import type {
   SerializedCommandDetectionCapability,
   SerializedReplayEvent,
 } from './terminal-session-persistence.js'
-import { TerminalStatusEngine } from './terminal-status-engine.js'
+import {
+  type AgentProcess,
+  TerminalStatusEngine,
+} from './terminal-status-engine.js'
 import {
   positiveIntegerFromEnv,
   splitByUtf8Bytes,
@@ -363,8 +366,12 @@ const execAsync = (command: string): Promise<string | null> =>
  * Computed asynchronously and cached on the TerminalRecord.
  */
 interface ProcessDetectionResult {
-  /** PIDs of every recognized agent found in the bounded process-tree walk. */
-  readonly agentProcessIds: readonly number[]
+  /**
+   * Every recognized agent found in the bounded process-tree walk. The raw
+   * name travels with the PID because status arbitration treats hook-backed
+   * agents differently from agents with no hook.
+   */
+  readonly agentProcesses: readonly AgentProcess[]
   readonly foregroundProcess: ForegroundProcess | null
   readonly hasChildProcess: boolean
   /**
@@ -378,7 +385,7 @@ interface ProcessDetectionResult {
 
 /** Default detection result when process info is unavailable. */
 const EMPTY_DETECTION: ProcessDetectionResult = {
-  agentProcessIds: [],
+  agentProcesses: [],
   foregroundProcess: null,
   hasChildProcess: false,
   processChain: [],
@@ -460,7 +467,7 @@ const walkProcessTree = (
   childrenByPid: ReadonlyMap<number, number[]>,
   commByPid: ReadonlyMap<number, string>,
   chain: ForegroundProcess[],
-  agentProcessIds: number[],
+  agentProcesses: AgentProcess[],
   visitedPids: Set<number>
 ): void => {
   const MAX_DEPTH = 10
@@ -479,7 +486,7 @@ const walkProcessTree = (
     visitedPids.add(next.pid)
     const classified = classifyAndCollect(next.pid, commByPid, chain)
     if (classified?.category === 'agent') {
-      agentProcessIds.push(next.pid)
+      agentProcesses.push({ pid: next.pid, rawName: classified.rawName })
     }
     if (next.depth >= MAX_DEPTH) {
       continue
@@ -519,7 +526,7 @@ const detectForShellPid = (
 
   if (hasChildren) {
     const chain: ForegroundProcess[] = []
-    const agentProcessIds: number[] = []
+    const agentProcesses: AgentProcess[] = []
     const visitedPids = new Set<number>()
 
     // If the shell was exec-replaced (e.g., zsh → opencode), include the
@@ -527,7 +534,10 @@ const detectForShellPid = (
     if (isExecReplaced) {
       chain.push(shellClassified)
       if (shellClassified.category === 'agent') {
-        agentProcessIds.push(shellPid)
+        agentProcesses.push({
+          pid: shellPid,
+          rawName: shellClassified.rawName,
+        })
       }
     }
 
@@ -539,12 +549,12 @@ const detectForShellPid = (
       childrenByPid,
       commByPid,
       chain,
-      agentProcessIds,
+      agentProcesses,
       visitedPids
     )
 
     return {
-      agentProcessIds,
+      agentProcesses,
       foregroundProcess: chain.at(-1) ?? null,
       hasChildProcess: true,
       processChain: chain,
@@ -559,7 +569,10 @@ const detectForShellPid = (
   // child process beneath the original shell PID, but the terminal still has
   // an active foreground process and should require close confirmation.
   return {
-    agentProcessIds: shellClassified.category === 'agent' ? [shellPid] : [],
+    agentProcesses:
+      shellClassified.category === 'agent'
+        ? [{ pid: shellPid, rawName: shellClassified.rawName }]
+        : [],
     foregroundProcess: shellClassified,
     hasChildProcess: true,
     processChain: [shellClassified],
@@ -683,7 +696,7 @@ const buildDetectionFromTitle = (
     }
     // Preserve ps-based hasChildProcess — never downgrade to false.
     return {
-      agentProcessIds: previousSnapshot.agentProcessIds,
+      agentProcesses: previousSnapshot.agentProcesses,
       foregroundProcess: null,
       hasChildProcess: previousSnapshot.hasChildProcess,
       processChain: previousSnapshot.processChain,
@@ -694,9 +707,9 @@ const buildDetectionFromTitle = (
   const classified = classifyProcess(title)
   if (classified !== null && classified.category !== 'shell') {
     return {
-      agentProcessIds:
+      agentProcesses:
         classified.category === 'agent'
-          ? (previousSnapshot?.agentProcessIds ?? [])
+          ? (previousSnapshot?.agentProcesses ?? [])
           : [],
       foregroundProcess: classified,
       hasChildProcess: true,
@@ -708,7 +721,7 @@ const buildDetectionFromTitle = (
   const hasChild =
     classified !== null || (previousSnapshot?.hasChildProcess ?? false)
   return {
-    agentProcessIds: previousSnapshot?.agentProcessIds ?? [],
+    agentProcesses: previousSnapshot?.agentProcesses ?? [],
     foregroundProcess: classified,
     hasChildProcess: hasChild,
     processChain:
@@ -1804,7 +1817,9 @@ class TerminalManager extends Context.Service<
         const agentStatus = statusEngines.get(terminal.id)?.current ?? null
 
         return {
-          agentProcessIds: liveDetection?.agentProcessIds ?? [],
+          agentProcessIds: (liveDetection?.agentProcesses ?? []).map(
+            ({ pid }) => pid
+          ),
           id: terminal.id,
           workspaceId: terminal.workspaceId,
           command: terminal.command,
@@ -1829,9 +1844,7 @@ class TerminalManager extends Context.Service<
           const engine = getStatusEngine(terminal.id)
           if (detectionBatch.available && freshDetection !== undefined) {
             engine.sample({
-              agentProcesses: freshDetection.agentProcessIds.map((pid) => ({
-                pid,
-              })),
+              agentProcesses: freshDetection.agentProcesses,
               // Nested shells are omitted from the presentation chain, but
               // they still mean another command has taken over.
               hasNonAgentProcess: freshDetection.hasChildProcess,

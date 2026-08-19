@@ -179,4 +179,57 @@ describe('WorkspaceFrameHeaderContainer', () => {
       })
     )
   })
+
+  it('forwards the pull request check rollup and merge status to the header', () => {
+    activePaneIdMock.mockReturnValue('pane-1')
+    projectRowsMock.mockReturnValue([{ id: 'project-1', name: 'Demo' }])
+    const prChecks = [
+      {
+        bucket: 'failure',
+        durationMs: 179_000,
+        group: 'Merge Checks',
+        name: 'Unit Tests',
+        url: null,
+      },
+    ]
+    workspaceRowsMock.mockReturnValue([
+      {
+        branchName: 'feature/ticket-header',
+        id: 'ws-1',
+        parentTaskId: null,
+        prBaseBranch: 'dev',
+        prCheckStatus: 'failure',
+        prChecks,
+        prMergeStatus: 'conflicting',
+        prNumber: 42,
+        prState: 'OPEN',
+        prTitle: 'Ship the fix',
+        prUrl: 'https://github.com/example/repo/pull/42',
+        projectId: 'project-1',
+        status: 'ready',
+        taskNumber: 7,
+      },
+    ])
+
+    render(
+      <WorkspaceFrameHeaderContainer
+        isActiveFrame
+        isMinimized={false}
+        onHeaderClick={() => undefined}
+        onMinimize={() => undefined}
+        subLayout={subLayout}
+        workspaceId="ws-1"
+      />
+    )
+
+    expect(headerPropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        prBaseBranch: 'dev',
+        prCheckStatus: 'failure',
+        prChecks,
+        prMergeStatus: 'conflicting',
+        prNumber: 42,
+      })
+    )
+  })
 })

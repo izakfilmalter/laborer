@@ -94,32 +94,27 @@ export function WorkspaceFrameHeaderContainer({
   const workspaceAgentStatus = useWorkspaceAgentStatus(workspaceId)
 
   const workspaceData = useMemo(() => {
+    const emptyWorkspaceData = {
+      projectName: undefined,
+      projectId: undefined,
+      taskNumber: null,
+      workspacePath: [],
+      branchName: undefined,
+      prBaseBranch: null,
+      prCheckStatus: null,
+      prChecks: null,
+      prMergeStatus: null,
+      prNumber: null,
+      prUrl: null,
+      prTitle: null,
+      prState: null,
+    }
     if (!workspaceId) {
-      return {
-        projectName: undefined,
-        projectId: undefined,
-        taskNumber: null,
-        workspacePath: [],
-        branchName: undefined,
-        prNumber: null,
-        prUrl: null,
-        prTitle: null,
-        prState: null,
-      }
+      return emptyWorkspaceData
     }
     const workspace = workspaceList.find((ws) => ws.id === workspaceId)
     if (!workspace) {
-      return {
-        projectName: undefined,
-        projectId: undefined,
-        taskNumber: null,
-        workspacePath: [],
-        branchName: undefined,
-        prNumber: null,
-        prUrl: null,
-        prTitle: null,
-        prState: null,
-      }
+      return emptyWorkspaceData
     }
     const project = projectList.find((p) => p.id === workspace.projectId)
     const projectWorkspaces = workspaceList
@@ -142,6 +137,10 @@ export function WorkspaceFrameHeaderContainer({
       taskNumber: workspace.taskNumber,
       workspacePath,
       branchName: workspace.branchName,
+      prBaseBranch: workspace.prBaseBranch ?? null,
+      prCheckStatus: workspace.prCheckStatus ?? null,
+      prChecks: workspace.prChecks ?? null,
+      prMergeStatus: workspace.prMergeStatus ?? null,
       prNumber: workspace.prNumber ?? null,
       prUrl: workspace.prUrl ?? null,
       prTitle: workspace.prTitle ?? null,
@@ -169,6 +168,10 @@ export function WorkspaceFrameHeaderContainer({
     isMinimized,
     onHeaderClick,
     onMinimize,
+    prBaseBranch: workspaceData.prBaseBranch,
+    prCheckStatus: workspaceData.prCheckStatus,
+    prChecks: workspaceData.prChecks,
+    prMergeStatus: workspaceData.prMergeStatus,
     prNumber: workspaceData.prNumber,
     projectId: workspaceData.projectId,
     projectName: workspaceData.projectName,

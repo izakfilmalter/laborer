@@ -104,6 +104,8 @@ const MERGED_PR_RE = /#42 merged/i
 const CLOSED_PR_RE = /#17 closed/i
 const PUSH_COMMITS_RE = /push 2 commits/i
 const PULL_COMMITS_RE = /pull 3 commits/i
+const CONFLICTS_RE = /Conflicts with/i
+const CHECKS_RE = /checks/i
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
@@ -570,6 +572,83 @@ describe('WorkspaceFrameHeader', () => {
     expect(screen.getByText('#17')).toBeTruthy()
     expect(screen.getByText('closed')).toBeTruthy()
     expect(screen.queryByRole('link', { name: CLOSED_PR_RE })).toBeNull()
+  })
+
+  it('hangs the check rollup off the header pull request pill', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        prCheckStatus="failure"
+        prChecks={[
+          {
+            bucket: 'failure',
+            durationMs: 179_000,
+            group: 'Merge Checks',
+            name: 'Unit Tests',
+            url: null,
+          },
+          {
+            bucket: 'success',
+            durationMs: 40_000,
+            group: 'Merge Checks',
+            name: 'Build',
+            url: null,
+          },
+        ]}
+        prNumber={42}
+        prState="OPEN"
+        prTitle="Ship the fix"
+        prUrl="https://github.com/example/repo/pull/42"
+      />
+    )
+
+    const pill = screen
+      .getByText('#42')
+      .closest('[data-slot="pr-status-badge"]')
+    const checks = screen.getByRole('link', {
+      name: 'Some checks were not successful: 1 failed · 1 passed',
+    })
+    expect(pill?.contains(checks)).toBe(true)
+    expect(checks.getAttribute('href')).toBe(
+      'https://github.com/example/repo/pull/42/checks'
+    )
+  })
+
+  it('marks a merge conflict in the header without spending words on it', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        prBaseBranch="dev"
+        prMergeStatus="conflicting"
+        prNumber={42}
+        prState="OPEN"
+        prTitle="Ship the fix"
+        prUrl="https://github.com/example/repo/pull/42"
+      />
+    )
+
+    expect(screen.getByRole('img', { name: 'Conflicts with dev' })).toBeTruthy()
+  })
+
+  it('leaves the header pill bare when the pull request has no checks', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        prNumber={42}
+        prState="OPEN"
+        prTitle="Ship the fix"
+        prUrl="https://github.com/example/repo/pull/42"
+      />
+    )
+
+    expect(screen.queryByRole('img', { name: CONFLICTS_RE })).toBeNull()
+    expect(screen.queryByRole('link', { name: CHECKS_RE })).toBeNull()
   })
 
   it('renders push and pull sync actions when commits are available', () => {

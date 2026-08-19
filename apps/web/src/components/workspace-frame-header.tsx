@@ -15,6 +15,7 @@
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
+import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import { Button } from '@laborer/ui/components/button'
 import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import {
@@ -26,6 +27,7 @@ import { cn } from '@laborer/ui/lib/utils'
 import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
 import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
+import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { TaskIdentifier } from '@/components/task-identifier'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
@@ -59,6 +61,19 @@ interface WorkspaceFrameHeaderProps {
   readonly onHeaderClick?: (() => void) | undefined
   /** Called when the minimize/expand button is clicked. */
   readonly onMinimize?: (() => void) | undefined
+  /** Base branch the pull request targets, named in the conflict label. */
+  readonly prBaseBranch?: string | null | undefined
+  /** Rollup of the pull request's CI checks. */
+  readonly prCheckStatus?: 'pending' | 'success' | 'failure' | null | undefined
+  /** Individual check runs behind the rollup, for the hover summary. */
+  readonly prChecks?: readonly PullRequestCheckRun[] | null | undefined
+  /** Whether the pull request merges cleanly into its base branch. */
+  readonly prMergeStatus?:
+    | 'clean'
+    | 'conflicting'
+    | 'unknown'
+    | null
+    | undefined
   /** PR number, if the workspace has an associated pull request. */
   readonly prNumber: number | null
   /** The project ID used to associate the task identifier with its project. */
@@ -163,6 +178,10 @@ function WorkspaceFrameHeader({
   isMinimized,
   onHeaderClick,
   onMinimize,
+  prBaseBranch = null,
+  prCheckStatus = null,
+  prChecks = null,
+  prMergeStatus = null,
   prNumber,
   prState,
   prTitle,
@@ -258,6 +277,8 @@ function WorkspaceFrameHeader({
           />
         ) : null}
         <GitHubPrStatusBadge
+          checkStatus={prCheckStatus}
+          checks={prChecks}
           className="shrink-0"
           prNumber={prNumber}
           prState={prState}
@@ -273,6 +294,11 @@ function WorkspaceFrameHeader({
             status={agentStatus}
           />
         ) : null}
+        {/* Last, and only a mark — the same place the card gives it. */}
+        <GitHubMergeConflictMark
+          baseBranch={prBaseBranch}
+          mergeStatus={prMergeStatus}
+        />
       </div>
       <div className="flex gap-0.5">
         {!isMinimized && (

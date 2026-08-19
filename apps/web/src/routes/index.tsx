@@ -30,6 +30,7 @@ import { useResponsiveLayout } from '@/hooks/use-responsive-layout'
 import { useSidebarWidth } from '@/hooks/use-sidebar-width'
 import { useTrayWorkspaceCount } from '@/hooks/use-tray-workspace-count'
 import { extractErrorMessage } from '@/lib/errors'
+import { localApi } from '@/lib/local-api'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
   PanelActionsProvider,
@@ -1172,7 +1173,14 @@ function HomeComponent() {
             <div className="flex h-full min-h-0 flex-col">
               {/* Search bar + Add Project — shared top row */}
               {hasProjects && (
-                <div className="drag-region flex h-10 shrink-0 items-center gap-2 border-b px-2 pl-[88px]">
+                <div
+                  className={cn(
+                    'drag-region flex h-10 shrink-0 items-center gap-2 px-2',
+                    // Reserve room for the macOS traffic lights only in the
+                    // Electron shell; the browser has no window chrome.
+                    localApi.isDesktop && 'pl-[88px]'
+                  )}
+                >
                   <SidebarSearch
                     className="min-w-0 flex-1"
                     onChange={setSearchQuery}
@@ -1182,7 +1190,7 @@ function HomeComponent() {
                 </div>
               )}
               <ScrollArea className="min-h-0 flex-1">
-                <div className="grid gap-4 p-3">
+                <div className="grid gap-3 px-2 py-2">
                   {/* Project-grouped tree — each project is a collapsible heading */}
                   {filteredProjects.map((project, projectIndex) => (
                     <ProjectGroup

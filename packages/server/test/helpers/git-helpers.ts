@@ -34,7 +34,10 @@ export const nudgeGitWatcher = (repoPath: string): void => {
 
 export const initRepo = (prefix: string, tempRoots?: string[]): string => {
   const repoPath = createTempDir(prefix, tempRoots)
-  git('init', repoPath)
+  // Name the branch rather than inheriting init.defaultBranch: these tests
+  // push and assert against `main`, and a host configured for `master` would
+  // fail them for a reason that has nothing to do with the behaviour.
+  git('init -b main', repoPath)
   git('config user.email test@example.com', repoPath)
   git('config user.name Test User', repoPath)
   writeFileSync(join(repoPath, 'README.md'), '# test\n')

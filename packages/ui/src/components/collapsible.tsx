@@ -1,7 +1,29 @@
 import { Collapsible as CollapsiblePrimitive } from '@base-ui/react/collapsible'
+import { haptics } from '@laborer/ui/lib/haptics'
 
-function Collapsible({ ...props }: CollapsiblePrimitive.Root.Props) {
-  return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />
+function Collapsible({
+  onOpenChange,
+  ...props
+}: CollapsiblePrimitive.Root.Props) {
+  const handleOpenChange: CollapsiblePrimitive.Root.Props['onOpenChange'] = (
+    open,
+    eventDetails
+  ) => {
+    if (open) {
+      haptics.expand()
+    } else {
+      haptics.collapse()
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+
+  return (
+    <CollapsiblePrimitive.Root
+      data-slot="collapsible"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function CollapsibleTrigger({ ...props }: CollapsiblePrimitive.Trigger.Props) {

@@ -1,11 +1,27 @@
 'use client'
 
 import { Select as SelectPrimitive } from '@base-ui/react/select'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import type * as React from 'react'
 
-const Select = SelectPrimitive.Root
+function Select<Value, Multiple extends boolean | undefined = false>({
+  onValueChange,
+  ...props
+}: SelectPrimitive.Root.Props<Value, Multiple>) {
+  // Committing a value is the moment worth marking; opening the popup is
+  // already covered by the trigger.
+  const handleValueChange: SelectPrimitive.Root.Props<
+    Value,
+    Multiple
+  >['onValueChange'] = (value, eventDetails) => {
+    haptics.selection()
+    onValueChange?.(value, eventDetails)
+  }
+
+  return <SelectPrimitive.Root onValueChange={handleValueChange} {...props} />
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (

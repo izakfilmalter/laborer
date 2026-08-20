@@ -2,6 +2,7 @@
 /** biome-ignore-all lint/suspicious/noArrayIndexKey: shadcn */
 import { Slider as SliderPrimitive } from '@base-ui/react/slider'
 
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 
 function Slider({
@@ -10,8 +11,20 @@ function Slider({
   value,
   min = 0,
   max = 100,
+  onValueCommitted,
   ...props
 }: SliderPrimitive.Root.Props) {
+  // Deliberately on commit, not on change: ticking every step of a drag turns
+  // into one long continuous vibration, which is the anti-pattern. The thumb
+  // landing is the moment that deserves feedback.
+  const handleValueCommitted: SliderPrimitive.Root.Props['onValueCommitted'] = (
+    committed,
+    eventDetails
+  ) => {
+    haptics.commit()
+    onValueCommitted?.(committed, eventDetails)
+  }
+
   const _values = Array.isArray(value)
     ? value
     : Array.isArray(defaultValue)
@@ -25,6 +38,7 @@ function Slider({
       defaultValue={defaultValue}
       max={max}
       min={min}
+      onValueCommitted={handleValueCommitted}
       thumbAlignment="edge"
       value={value}
       {...props}

@@ -34,9 +34,10 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/combine', () => ({
 }))
 
 // Stub haptics to avoid web-haptics dependency in jsdom
-vi.mock('@laborer/ui/lib/haptics', () => ({
-  haptics: { buttonTap: vi.fn(), heavyImpact: vi.fn() },
-}))
+vi.mock('@laborer/ui/lib/haptics', async () => {
+  const { createHapticsStub } = await import('./haptics-stub')
+  return { haptics: createHapticsStub() }
+})
 
 // Stub tooltip — render trigger and content inline for testing
 vi.mock('@laborer/ui/components/tooltip', () => ({

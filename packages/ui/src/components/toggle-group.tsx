@@ -4,6 +4,7 @@
 import { Toggle as TogglePrimitive } from '@base-ui/react/toggle'
 import { ToggleGroup as ToggleGroupPrimitive } from '@base-ui/react/toggle-group'
 import { toggleVariants } from '@laborer/ui/components/toggle'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import type { VariantProps } from 'class-variance-authority'
 import * as React from 'react'
@@ -27,12 +28,23 @@ function ToggleGroup({
   spacing = 0,
   orientation = 'horizontal',
   children,
+  onValueChange,
   ...props
 }: ToggleGroupPrimitive.Props &
   VariantProps<typeof toggleVariants> & {
     spacing?: number
     orientation?: 'horizontal' | 'vertical'
   }) {
+  // Handled at the group so a segmented control ticks once per change, rather
+  // than each item firing independently.
+  const handleValueChange: ToggleGroupPrimitive.Props['onValueChange'] = (
+    value,
+    eventDetails
+  ) => {
+    haptics.selection()
+    onValueChange?.(value, eventDetails)
+  }
+
   return (
     <ToggleGroupPrimitive
       className={cn(
@@ -44,6 +56,7 @@ function ToggleGroup({
       data-slot="toggle-group"
       data-spacing={spacing}
       data-variant={variant}
+      onValueChange={handleValueChange}
       style={{ '--gap': spacing } as React.CSSProperties}
       {...props}
     >

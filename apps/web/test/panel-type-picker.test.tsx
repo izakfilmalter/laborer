@@ -17,9 +17,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // ---------------------------------------------------------------------------
 
 // Stub haptics to avoid web-haptics dependency in jsdom
-vi.mock('@laborer/ui/lib/haptics', () => ({
-  haptics: { buttonTap: vi.fn(), heavyImpact: vi.fn() },
-}))
+vi.mock('@laborer/ui/lib/haptics', async () => {
+  const { createHapticsStub } = await import('./haptics-stub')
+  return { haptics: createHapticsStub() }
+})
 
 // ---------------------------------------------------------------------------
 // Import component under test AFTER mocks

@@ -1,12 +1,35 @@
 'use client'
 
 import { ContextMenu as ContextMenuPrimitive } from '@base-ui/react/context-menu'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { CheckIcon, ChevronRightIcon } from 'lucide-react'
 import type * as React from 'react'
 
-function ContextMenu({ ...props }: ContextMenuPrimitive.Root.Props) {
-  return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />
+function ContextMenu({
+  onOpenChange,
+  ...props
+}: ContextMenuPrimitive.Root.Props) {
+  // A right-click has no Button in the chain to speak for it, so the menu
+  // itself confirms the gesture landed. Silent on close to avoid firing on
+  // every stray outside-click dismissal.
+  const handleOpenChange: ContextMenuPrimitive.Root.Props['onOpenChange'] = (
+    open,
+    eventDetails
+  ) => {
+    if (open) {
+      haptics.tap()
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+
+  return (
+    <ContextMenuPrimitive.Root
+      data-slot="context-menu"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function ContextMenuPortal({ ...props }: ContextMenuPrimitive.Portal.Props) {
@@ -92,11 +115,24 @@ function ContextMenuItem({
   className,
   inset,
   variant = 'default',
+  onClick,
   ...props
 }: ContextMenuPrimitive.Item.Props & {
   inset?: boolean
   variant?: 'default' | 'destructive'
 }) {
+  const handleClick: ContextMenuPrimitive.Item.Props['onClick'] = (
+    event,
+    ...rest
+  ) => {
+    if (variant === 'destructive') {
+      haptics.heavyImpact()
+    } else {
+      haptics.tap()
+    }
+    onClick?.(event, ...rest)
+  }
+
   return (
     <ContextMenuPrimitive.Item
       className={cn(
@@ -106,6 +142,7 @@ function ContextMenuItem({
       data-inset={inset}
       data-slot="context-menu-item"
       data-variant={variant}
+      onClick={handleClick}
       {...props}
     />
   )
@@ -159,10 +196,17 @@ function ContextMenuCheckboxItem({
   children,
   checked,
   inset,
+  onCheckedChange,
   ...props
 }: ContextMenuPrimitive.CheckboxItem.Props & {
   inset?: boolean
 }) {
+  const handleCheckedChange: ContextMenuPrimitive.CheckboxItem.Props['onCheckedChange'] =
+    (nextChecked, eventDetails) => {
+      haptics.selection()
+      onCheckedChange?.(nextChecked, eventDetails)
+    }
+
   return (
     <ContextMenuPrimitive.CheckboxItem
       checked={checked}
@@ -172,6 +216,7 @@ function ContextMenuCheckboxItem({
       )}
       data-inset={inset}
       data-slot="context-menu-checkbox-item"
+      onCheckedChange={handleCheckedChange}
       {...props}
     >
       <span className="pointer-events-none absolute right-2">
@@ -185,11 +230,19 @@ function ContextMenuCheckboxItem({
 }
 
 function ContextMenuRadioGroup({
+  onValueChange,
   ...props
 }: ContextMenuPrimitive.RadioGroup.Props) {
+  const handleValueChange: ContextMenuPrimitive.RadioGroup.Props['onValueChange'] =
+    (value, eventDetails) => {
+      haptics.selection()
+      onValueChange?.(value, eventDetails)
+    }
+
   return (
     <ContextMenuPrimitive.RadioGroup
       data-slot="context-menu-radio-group"
+      onValueChange={handleValueChange}
       {...props}
     />
   )

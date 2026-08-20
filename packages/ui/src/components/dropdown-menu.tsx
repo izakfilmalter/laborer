@@ -1,6 +1,7 @@
 'use client'
 
 import { Menu as MenuPrimitive } from '@base-ui/react/menu'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { CheckIcon, ChevronRightIcon } from 'lucide-react'
 import type * as React from 'react'
@@ -79,11 +80,22 @@ function DropdownMenuItem({
   className,
   inset,
   variant = 'default',
+  onClick,
   ...props
 }: MenuPrimitive.Item.Props & {
   inset?: boolean
   variant?: 'default' | 'destructive'
 }) {
+  // Mirrors Button: destructive choices land heavier than ordinary ones.
+  const handleClick: MenuPrimitive.Item.Props['onClick'] = (event, ...rest) => {
+    if (variant === 'destructive') {
+      haptics.heavyImpact()
+    } else {
+      haptics.tap()
+    }
+    onClick?.(event, ...rest)
+  }
+
   return (
     <MenuPrimitive.Item
       className={cn(
@@ -93,6 +105,7 @@ function DropdownMenuItem({
       data-inset={inset}
       data-slot="dropdown-menu-item"
       data-variant={variant}
+      onClick={handleClick}
       {...props}
     />
   )
@@ -155,10 +168,17 @@ function DropdownMenuCheckboxItem({
   children,
   checked,
   inset,
+  onCheckedChange,
   ...props
 }: MenuPrimitive.CheckboxItem.Props & {
   inset?: boolean
 }) {
+  const handleCheckedChange: MenuPrimitive.CheckboxItem.Props['onCheckedChange'] =
+    (nextChecked, eventDetails) => {
+      haptics.selection()
+      onCheckedChange?.(nextChecked, eventDetails)
+    }
+
   return (
     <MenuPrimitive.CheckboxItem
       checked={checked}
@@ -168,6 +188,7 @@ function DropdownMenuCheckboxItem({
       )}
       data-inset={inset}
       data-slot="dropdown-menu-checkbox-item"
+      onCheckedChange={handleCheckedChange}
       {...props}
     >
       <span
@@ -183,10 +204,23 @@ function DropdownMenuCheckboxItem({
   )
 }
 
-function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
+function DropdownMenuRadioGroup({
+  onValueChange,
+  ...props
+}: MenuPrimitive.RadioGroup.Props) {
+  // Group-level, so re-picking the current value stays silent.
+  const handleValueChange: MenuPrimitive.RadioGroup.Props['onValueChange'] = (
+    value,
+    eventDetails
+  ) => {
+    haptics.selection()
+    onValueChange?.(value, eventDetails)
+  }
+
   return (
     <MenuPrimitive.RadioGroup
       data-slot="dropdown-menu-radio-group"
+      onValueChange={handleValueChange}
       {...props}
     />
   )

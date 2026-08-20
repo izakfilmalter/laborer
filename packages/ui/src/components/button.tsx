@@ -40,6 +40,24 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * Haptic weight per button variant.
+ *
+ * `default` is the commit action, so it gets the heavier `press`. Supporting
+ * variants get a lighter `tap` so the primary action still feels distinct.
+ */
+const variantHaptic: Record<
+  NonNullable<VariantProps<typeof buttonVariants>['variant']>,
+  () => void
+> = {
+  default: haptics.press,
+  destructive: haptics.heavyImpact,
+  secondary: haptics.tap,
+  outline: haptics.tap,
+  ghost: haptics.tap,
+  link: haptics.tap,
+}
+
 function Button({
   className,
   variant = 'default',
@@ -47,16 +65,12 @@ function Button({
   onClick,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
-  const handleClick: typeof onClick = onClick
-    ? (event) => {
-        if (variant === 'destructive') {
-          haptics.heavyImpact()
-        } else {
-          haptics.buttonTap()
-        }
-        onClick(event)
-      }
-    : undefined
+  // Fire on every activation, not just when an `onClick` prop is supplied —
+  // submit buttons and `render`-as-link buttons are clickable too.
+  const handleClick: ButtonPrimitive.Props['onClick'] = (event, ...rest) => {
+    variantHaptic[variant ?? 'default']()
+    onClick?.(event, ...rest)
+  }
 
   return (
     <ButtonPrimitive

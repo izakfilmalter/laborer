@@ -68,9 +68,10 @@ const mockActions: PanelActions = {
 }
 
 // Stub haptics
-vi.mock('@laborer/ui/lib/haptics', () => ({
-  haptics: { buttonTap: vi.fn(), heavyImpact: vi.fn() },
-}))
+vi.mock('@laborer/ui/lib/haptics', async () => {
+  const { createHapticsStub } = await import('./haptics-stub')
+  return { haptics: createHapticsStub() }
+})
 
 // Stub lifecycle phase context
 vi.mock('@/components/lifecycle-phase-context', () => ({

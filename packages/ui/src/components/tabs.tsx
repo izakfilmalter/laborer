@@ -1,14 +1,26 @@
 'use client'
 
 import { Tabs as TabsPrimitive } from '@base-ui/react/tabs'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { cva, type VariantProps } from 'class-variance-authority'
 
 function Tabs({
   className,
   orientation = 'horizontal',
+  onValueChange,
   ...props
 }: TabsPrimitive.Root.Props) {
+  // Root-level so re-tapping the active tab stays silent, and keyboard
+  // arrow-key navigation ticks just like a pointer press.
+  const handleValueChange: TabsPrimitive.Root.Props['onValueChange'] = (
+    value,
+    eventDetails
+  ) => {
+    haptics.selection()
+    onValueChange?.(value, eventDetails)
+  }
+
   return (
     <TabsPrimitive.Root
       className={cn(
@@ -17,6 +29,7 @@ function Tabs({
       )}
       data-orientation={orientation}
       data-slot="tabs"
+      onValueChange={handleValueChange}
       {...props}
     />
   )

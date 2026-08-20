@@ -2,12 +2,32 @@
 
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { Button } from '@laborer/ui/components/button'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { XIcon } from 'lucide-react'
 import type * as React from 'react'
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+function Dialog({ onOpenChange, ...props }: DialogPrimitive.Root.Props) {
+  // The modal arriving is the significant moment; leaving just settles.
+  const handleOpenChange: DialogPrimitive.Root.Props['onOpenChange'] = (
+    open,
+    eventDetails
+  ) => {
+    if (open) {
+      haptics.dialogOpen()
+    } else {
+      haptics.dismiss()
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+
+  return (
+    <DialogPrimitive.Root
+      data-slot="dialog"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {

@@ -165,6 +165,7 @@ const applyEventToList = (
         hasChildProcess: false,
         id: event.id,
         processChain: [],
+        sessionTitle: null,
         status: event.status,
         workspaceId: event.workspaceId,
       })

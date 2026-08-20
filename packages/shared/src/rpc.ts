@@ -1491,6 +1491,15 @@ export const TerminalInfo = Schema.Struct({
    * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
    */
   processChain: Schema.Array(ForegroundProcessSchema),
+  /**
+   * Title of the agent session currently focused inside the terminal,
+   * parsed from the terminal's OSC 0/2 title. Lets the sidebar name a row
+   * after the work it is doing ("OpenCode 2 · Fix the flaky spawn test")
+   * rather than repeating the agent name on every row. Null when the
+   * terminal runs no session-aware agent, the agent is on a screen with no
+   * session identity, or the terminal is stopped.
+   */
+  sessionTitle: Schema.NullOr(Schema.String),
   status: TerminalStatus,
 })
 

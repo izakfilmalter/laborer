@@ -399,6 +399,7 @@ interface TerminalItemProps {
     readonly agentStatus: AgentStatusSnapshot | null
     readonly foregroundProcess: ForegroundProcess | null
     readonly processChain: readonly ForegroundProcess[]
+    readonly sessionTitle: string | null
     readonly status: string
   }
 }
@@ -727,8 +728,37 @@ function TerminalItem({
         type="button"
       >
         {icon}
-        <span className="min-w-0 flex-1 truncate font-medium font-mono text-foreground">
-          {label}
+        {/*
+          The agent name identifies the tool and the session title identifies
+          the work. The name keeps a bounded share of the row so the title
+          absorbs the remaining space and truncates first — the agent a row
+          belongs to must stay legible even when its session has a long name.
+        */}
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span
+            className={cn(
+              'min-w-0 truncate font-medium font-mono text-foreground',
+              terminal.sessionTitle === null ? 'flex-1' : 'max-w-[60%] shrink-0'
+            )}
+          >
+            {label}
+          </span>
+          {terminal.sessionTitle === null ? null : (
+            <>
+              <span
+                aria-hidden="true"
+                className="shrink-0 text-muted-foreground/60"
+              >
+                &middot;
+              </span>
+              <span
+                className="min-w-0 flex-1 truncate font-mono text-muted-foreground"
+                title={terminal.sessionTitle}
+              >
+                {terminal.sessionTitle}
+              </span>
+            </>
+          )}
         </span>
         {agentStatus ? (
           <AgentStatusBadge className="shrink-0" snapshot={agentStatus} />

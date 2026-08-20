@@ -54,6 +54,10 @@
     "tanstack-db": {
       "repository": "TanStack/db",
       "description": "Use for TanStack DB APIs, architecture, implementation patterns, tests, and examples"
+    },
+    "web-haptics": {
+      "repository": "lochie/web-haptics",
+      "description": "Use for WebHaptics APIs, framework integrations, implementation patterns, tests, and examples"
     }
   }
 }

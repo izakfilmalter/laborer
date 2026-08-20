@@ -12,6 +12,7 @@ import {
 } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { findPaneAcrossAllTabs } from '@/panels/window-layout-utils'
+import { CommentsPane } from '@/panes/comments-pane'
 import { DiffPane } from '@/panes/diff-pane'
 import { TreePane } from '@/panes/tree-pane'
 import { WindowTabCloseConfirmDialog } from './close-dialogs'
@@ -29,6 +30,7 @@ interface FullscreenWorkspaceOverlayProps {
   readonly fullscreenPaneId: string
   readonly fullscreenWorkspaceId: string
   readonly portalRef: (element: HTMLDivElement | null) => void
+  readonly showsComments: boolean
   readonly showsDiff: boolean
   readonly showsTree: boolean
 }
@@ -37,11 +39,13 @@ function FullscreenWorkspaceOverlay({
   fullscreenPaneId,
   fullscreenWorkspaceId,
   portalRef,
+  showsComments,
   showsDiff,
   showsTree,
 }: FullscreenWorkspaceOverlayProps) {
   const actions = usePanelActions()
-  const sidePanelCount = (showsTree ? 1 : 0) + (showsDiff ? 1 : 0)
+  const sidePanelCount =
+    (showsTree ? 1 : 0) + (showsDiff ? 1 : 0) + (showsComments ? 1 : 0)
   const sidePanelSizes = useMemo(
     () => computeSidePanelSizes(sidePanelCount),
     [sidePanelCount]
@@ -110,6 +114,23 @@ function FullscreenWorkspaceOverlay({
             </ResizablePanel>
           </>
         )}
+        {showsComments && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              className="h-full overflow-hidden"
+              defaultSize={sidePanelSizes.sidePanelSize}
+              minSize="15%"
+            >
+              <CommentsPane
+                onClose={() =>
+                  toggleFullscreenSidePanel(actions?.toggleCommentsPane)
+                }
+                workspaceId={fullscreenWorkspaceId}
+              />
+            </ResizablePanel>
+          </>
+        )}
       </ResizablePanelGroup>
     </div>
   )
@@ -139,12 +160,14 @@ function WindowTabContent({
   tab,
   isActive,
   activePaneId,
+  commentsWorkspaceIds,
   diffWorkspaceIds,
   treeWorkspaceIds,
 }: {
   readonly tab: WindowTab
   readonly isActive: boolean
   readonly activePaneId: string | null
+  readonly commentsWorkspaceIds: readonly string[]
   readonly diffWorkspaceIds: readonly string[]
   readonly treeWorkspaceIds: readonly string[]
 }) {
@@ -167,6 +190,7 @@ function WindowTabContent({
     >
       <WorkspaceFrames
         activePaneId={isActive ? activePaneId : null}
+        commentsWorkspaceIds={isActive ? commentsWorkspaceIds : []}
         diffWorkspaceIds={isActive ? diffWorkspaceIds : []}
         treeWorkspaceIds={isActive ? treeWorkspaceIds : []}
         workspaceTileLayout={layout}
@@ -184,6 +208,7 @@ function WindowTabContent({
 interface PanelContentProps {
   readonly activePaneId: string | null
   readonly activeTabId?: string | undefined
+  readonly commentsWorkspaceIds?: readonly string[]
   readonly diffWorkspaceIds?: readonly string[]
   readonly fullscreenPaneId: string | null
   /** True when the active window tab exists but has no workspace layout. */
@@ -219,6 +244,7 @@ export function PanelContent({
   isEmptyWindowTab = false,
   treeWorkspaceIds = [],
   diffWorkspaceIds = [],
+  commentsWorkspaceIds = [],
 }: PanelContentProps) {
   const [portalElement, setPortalElement] = useState<HTMLElement | null>(null)
   const handlePortalRef = useCallback((element: HTMLDivElement | null) => {
@@ -244,6 +270,9 @@ export function PanelContent({
   const fullscreenShowsTree =
     fullscreenWorkspaceId !== undefined &&
     treeWorkspaceIds.includes(fullscreenWorkspaceId)
+  const fullscreenShowsComments =
+    fullscreenWorkspaceId !== undefined &&
+    commentsWorkspaceIds.includes(fullscreenWorkspaceId)
 
   // Hide side panels for the fullscreened workspace in the normal tree so we
   // don't duplicate expensive panel instances underneath the fullscreen overlay.
@@ -257,6 +286,12 @@ export function PanelContent({
     fullscreenWorkspaceId === undefined
       ? treeWorkspaceIds
       : treeWorkspaceIds.filter(
+          (workspaceId) => workspaceId !== fullscreenWorkspaceId
+        )
+  const inlineCommentsWorkspaceIds =
+    fullscreenWorkspaceId === undefined
+      ? commentsWorkspaceIds
+      : commentsWorkspaceIds.filter(
           (workspaceId) => workspaceId !== fullscreenWorkspaceId
         )
 
@@ -294,6 +329,7 @@ export function PanelContent({
               data-workspace-id={fullscreenWorkspaceId}
             >
               <WorkspaceFrameHeaderContainer
+                commentsIsOpen={fullscreenShowsComments}
                 diffIsOpen={fullscreenShowsDiff}
                 isActiveFrame
                 isMinimized={false}
@@ -308,6 +344,7 @@ export function PanelContent({
             {tabsToRender.map((tab) => (
               <WindowTabContent
                 activePaneId={activePaneId}
+                commentsWorkspaceIds={inlineCommentsWorkspaceIds}
                 diffWorkspaceIds={inlineDiffWorkspaceIds}
                 isActive={tab.id === activeTabId}
                 key={tab.id}
@@ -326,6 +363,7 @@ export function PanelContent({
                 fullscreenPaneId={fullscreenPaneId}
                 fullscreenWorkspaceId={fullscreenWorkspaceId}
                 portalRef={handlePortalRef}
+                showsComments={fullscreenShowsComments}
                 showsDiff={fullscreenShowsDiff}
                 showsTree={fullscreenShowsTree}
               />

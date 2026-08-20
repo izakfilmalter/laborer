@@ -239,12 +239,20 @@ function HomeComponent() {
     readonly string[]
   >([])
 
-  // Auto-close diff/tree panels when their workspace no longer exists
-  // anywhere in the window layout (e.g., if the workspace was closed).
+  // Comments panel state — transient UI mode.
+  // Each workspace manages its own PR conversation visibility independently.
+  const [commentsPaneWorkspaceIds, setCommentsPaneWorkspaceIds] = useState<
+    readonly string[]
+  >([])
+
+  // Auto-close diff/tree/comments panels when their workspace no longer
+  // exists anywhere in the window layout (e.g., if the workspace was closed).
   useEffect(() => {
     if (
       !(
-        (diffPaneWorkspaceIds.length > 0 || treePaneWorkspaceIds.length > 0) &&
+        (diffPaneWorkspaceIds.length > 0 ||
+          treePaneWorkspaceIds.length > 0 ||
+          commentsPaneWorkspaceIds.length > 0) &&
         windowLayout
       )
     ) {
@@ -261,7 +269,15 @@ function HomeComponent() {
     setTreePaneWorkspaceIds((current) =>
       filterOpenWorkspacePanels(current, openWorkspaceIds)
     )
-  }, [diffPaneWorkspaceIds, treePaneWorkspaceIds, windowLayout])
+    setCommentsPaneWorkspaceIds((current) =>
+      filterOpenWorkspacePanels(current, openWorkspaceIds)
+    )
+  }, [
+    commentsPaneWorkspaceIds,
+    diffPaneWorkspaceIds,
+    treePaneWorkspaceIds,
+    windowLayout,
+  ])
 
   /**
    * Toggle the full-height diff panel for the workspace of the given pane.
@@ -327,6 +343,38 @@ function HomeComponent() {
       return !isOpen
     },
     [windowLayout, treePaneWorkspaceIds]
+  )
+
+  /**
+   * Toggle the full-height pull request comments panel for the workspace of
+   * the given pane. Like diff, it sits on the right; unlike diff, it reads
+   * GitHub rather than the worktree.
+   *
+   * @param paneId - The pane ID to get the workspace from
+   * @returns Whether the comments panel is now open
+   */
+  const toggleCommentsPane = useCallback(
+    (paneId: string): boolean => {
+      if (!windowLayout) {
+        return false
+      }
+
+      const found = findPaneInActiveTab(windowLayout, paneId)
+      if (!found?.workspaceId) {
+        return false
+      }
+
+      const workspaceId = found.workspaceId
+
+      const isOpen = commentsPaneWorkspaceIds.includes(workspaceId)
+
+      setCommentsPaneWorkspaceIds((current) =>
+        toggleWorkspacePanel(current, workspaceId)
+      )
+
+      return !isOpen
+    },
+    [windowLayout, commentsPaneWorkspaceIds]
   )
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -858,6 +906,7 @@ function HomeComponent() {
       toggleFullscreenPane,
       toggleDiffPane,
       toggleTreePane,
+      toggleCommentsPane,
       showPanelTypePicker,
     }),
     [
@@ -870,6 +919,7 @@ function HomeComponent() {
       toggleFullscreenPane,
       toggleDiffPane,
       toggleTreePane,
+      toggleCommentsPane,
       showPanelTypePicker,
     ]
   )
@@ -1273,6 +1323,7 @@ function HomeComponent() {
                   <PanelContent
                     activePaneId={activePaneId}
                     activeTabId={windowLayout?.activeTabId}
+                    commentsWorkspaceIds={commentsPaneWorkspaceIds}
                     diffWorkspaceIds={diffPaneWorkspaceIds}
                     fullscreenPaneId={fullscreenPaneId}
                     isEmptyWindowTab={isEmptyWindowTab}

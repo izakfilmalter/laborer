@@ -44,6 +44,7 @@ import {
   validateProjectTaskIdentifierNamespace,
   withProjectIdentifierNamespaceLock,
 } from '../services/project-task-identifiers.js'
+import { fetchPullRequestComments } from '../services/pull-request-comments.js'
 import { subscribeToSharedState } from '../services/shared-state-reader.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
@@ -1540,6 +1541,49 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const fileService = yield* FileService
         return yield* fileService.diff(workspaceId)
+      }),
+
+    // -------------------------------------------------------------------
+    // Pull Request Conversation RPCs
+    // -------------------------------------------------------------------
+    'pullRequest.comments': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceProvider = yield* WorkspaceProvider
+        const workspace =
+          yield* workspaceProvider.findWorkspaceForTask(workspaceId)
+
+        if (workspace === null) {
+          return yield* new RpcError({
+            message: `Workspace not found: ${workspaceId}`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        // PrWatcher already knows whether the branch has a pull request.
+        // Asking GitHub again here would just be a slower way to learn no.
+        if (workspace.prNumber === null) {
+          return yield* new RpcError({
+            message: `No pull request for ${workspace.branchName}`,
+            code: 'PR_NOT_FOUND',
+          })
+        }
+
+        const comments = yield* fetchPullRequestComments(
+          workspace.worktreePath,
+          workspace.prNumber
+        ).pipe(
+          Effect.mapError(
+            (failure) =>
+              new RpcError({ message: failure.message, code: 'GH_FAILED' })
+          )
+        )
+
+        return {
+          number: workspace.prNumber,
+          title: workspace.prTitle,
+          url: workspace.prUrl,
+          comments,
+        }
       }),
 
     // -------------------------------------------------------------------

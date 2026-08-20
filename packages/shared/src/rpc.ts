@@ -667,6 +667,92 @@ export const GitStatusEntry = Schema.Struct({
 export type GitStatusEntry = typeof GitStatusEntry.Type
 
 // ---------------------------------------------------------------------------
+// Pull Request Conversation Schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a pull request timeline entry came from on GitHub.
+ *
+ * - `issue` — a conversation comment on the pull request itself
+ * - `review` — a submitted review, carrying a verdict and an optional body
+ * - `reviewComment` — a comment anchored to a file and line in the diff
+ */
+export const PullRequestCommentKind = Schema.Literals([
+  'issue',
+  'review',
+  'reviewComment',
+])
+
+export type PullRequestCommentKind = typeof PullRequestCommentKind.Type
+
+/** The verdict a submitted review carries. Mirrors the GitHub review states. */
+export const PullRequestReviewState = Schema.Literals([
+  'approved',
+  'changesRequested',
+  'commented',
+  'dismissed',
+  'pending',
+])
+
+export type PullRequestReviewState = typeof PullRequestReviewState.Type
+
+/**
+ * One entry in a pull request's conversation, normalized across the three
+ * GitHub endpoints that feed it: issue comments, reviews, and review
+ * comments. Every entry can be rendered as the same timeline item — an
+ * author, a verb derived from {@link PullRequestCommentKind} plus
+ * {@link PullRequestReviewState}, a timestamp, and an optional markdown body.
+ *
+ * A review with an empty body still belongs in the timeline: "approved your
+ * pull request" is the whole message.
+ */
+export const PullRequestComment = Schema.Struct({
+  /** GitHub's numeric id, unique per endpoint but not across them. */
+  id: Schema.Int,
+  /** Which endpoint produced this entry. */
+  kind: PullRequestCommentKind,
+  /** The commenter's GitHub login. */
+  authorLogin: Schema.String,
+  /** Avatar image URL, absent for ghost or deleted accounts. */
+  authorAvatarUrl: Schema.NullOr(Schema.String),
+  /** The commenter's GitHub profile URL. */
+  authorUrl: Schema.NullOr(Schema.String),
+  /** Markdown body. Empty for reviews submitted without a comment. */
+  body: Schema.String,
+  /** ISO 8601 creation (or review submission) timestamp. */
+  createdAt: Schema.String,
+  /** Permalink to this entry on github.com. */
+  url: Schema.String,
+  /** The verdict, for `review` entries only. */
+  reviewState: Schema.NullOr(PullRequestReviewState),
+  /** Repository-relative path, for `reviewComment` entries only. */
+  filePath: Schema.NullOr(Schema.String),
+  /** Line in the file the comment is anchored to, when GitHub still knows it. */
+  line: Schema.NullOr(Schema.Int),
+  /** The id of the entry this one replies to, for threaded review comments. */
+  inReplyToId: Schema.NullOr(Schema.Int),
+})
+
+export type PullRequestComment = typeof PullRequestComment.Type
+
+/**
+ * A workspace's pull request conversation, returned by
+ * `pullRequest.comments` in chronological order.
+ */
+export const PullRequestConversation = Schema.Struct({
+  /** The pull request the conversation belongs to. */
+  number: Schema.Int,
+  /** Pull request title, when the workspace has it cached. */
+  title: Schema.NullOr(Schema.String),
+  /** Permalink to the pull request. */
+  url: Schema.NullOr(Schema.String),
+  /** Every timeline entry, oldest first. */
+  comments: Schema.Array(PullRequestComment),
+})
+
+export type PullRequestConversation = typeof PullRequestConversation.Type
+
+// ---------------------------------------------------------------------------
 // RPC Definitions
 // ---------------------------------------------------------------------------
 
@@ -1215,6 +1301,25 @@ export class LaborerRpcs extends RpcGroup.make(
    */
   Rpc.make('file.diff', {
     success: Schema.Array(FileDiffEntry),
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Return the pull request conversation for a workspace's branch.
+   *
+   * Reads GitHub directly through the `gh` CLI — issue comments, submitted
+   * reviews, and line-anchored review comments — and merges them into one
+   * chronological timeline.
+   *
+   * Fails with code `PR_NOT_FOUND` when the workspace's branch has no pull
+   * request yet, which the client renders as an empty state rather than an
+   * error.
+   */
+  Rpc.make('pullRequest.comments', {
+    success: PullRequestConversation,
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

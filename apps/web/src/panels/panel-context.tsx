@@ -331,6 +331,19 @@ interface PanelActions {
    */
   readonly switchWindowTabRelative: ((delta: number) => void) | undefined
   /**
+   * Toggle the pull request comments panel for a workspace.
+   *
+   * Shows a right-side panel with the conversation on the workspace's pull
+   * request, alongside the diff it discusses.
+   *
+   * Optional because the layout hook builds its actions before the
+   * full-height panel state exists; the route supplies the real one.
+   *
+   * @param paneId - The ID of the pane (used to inherit workspaceId)
+   * @returns Whether the comments panel is now visible (true = toggled on)
+   */
+  readonly toggleCommentsPane?: (paneId: string) => boolean
+  /**
    * Toggle the dev server terminal alongside a terminal pane.
    *
    * When toggled ON: the dev server terminal pane is rendered to the right of

@@ -140,6 +140,27 @@ const workspace = {
   worktreePath: '/repo.worktrees/laborer-12345678',
 }
 
+/**
+ * The durable record shape `findWorkspaceForTask` returns — the narrow
+ * provisioning fixture plus the pull request facts PrWatcher persists.
+ */
+const durableWorkspace = {
+  ...workspace,
+  errorMessage: null,
+  origin: 'laborer' as const,
+  prBaseBranch: null,
+  prCheckStatus: null,
+  prChecks: null,
+  prMergeStatus: null,
+  prNumber: null,
+  prState: null,
+  prTitle: null,
+  prUrl: null,
+  status: 'creating' as const,
+  taskSource: '',
+  worktreeSetupStep: null,
+}
+
 describe('task provisioning', () => {
   it('provisions a manual task created directly in In Progress', async () => {
     const path = databasePath()
@@ -441,7 +462,7 @@ describe('task provisioning', () => {
       ).pipe(
         Effect.provide(
           testLayer(createWorktree, () =>
-            Effect.succeed({ ...workspace, taskSource: 'task-adopt' })
+            Effect.succeed({ ...durableWorkspace, taskSource: 'task-adopt' })
           )
         )
       )

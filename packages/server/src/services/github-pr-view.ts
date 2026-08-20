@@ -1,4 +1,5 @@
 import { Effect } from 'effect'
+import type { SpawnResult } from '../lib/spawn.js'
 import { spawn } from '../lib/spawn.js'
 
 const GITHUB_HTTPS_REMOTE_REGEX =
@@ -29,46 +30,90 @@ interface GhPrViewResult {
   readonly stdout: string
 }
 
+/**
+ * Kill a child that outlived the fiber that wanted it.
+ *
+ * Reaping a process that already exited is not an error worth propagating —
+ * the point of the finalizer is that nothing is left running, and a process
+ * that ended on its own already satisfies that.
+ */
+const killQuietly = (spawned: SpawnResult) =>
+  Effect.ignore(Effect.try(() => spawned.kill()))
+
+/**
+ * Run a `gh` command in a worktree, holding the child process in a scope.
+ *
+ * Awaiting `proc.exited` inside a promise means an interrupted fiber walks
+ * away from a process that keeps running and keeps writing to a pipe nobody
+ * reads. Callers here are interruptible in ordinary use — `PrWatcher` polls
+ * on a schedule that can be shut down mid-flight — so the child is acquired
+ * in a scope and signalled when that scope closes.
+ */
 const runGhPrViewCommand = <E>(
   args: readonly string[],
   worktreePath: string,
   onError: (error: unknown) => E
 ): Effect.Effect<GhPrViewResult, E> =>
-  Effect.tryPromise({
-    try: async () => {
-      const proc = spawn([...args], {
-        cwd: worktreePath,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const exitCode = await proc.exited
-      const stdout = await new Response(proc.stdout).text()
-      const stderr = await new Response(proc.stderr).text()
+  Effect.gen(function* () {
+    const proc = yield* Effect.acquireRelease(
+      Effect.try({
+        try: () =>
+          spawn([...args], {
+            cwd: worktreePath,
+            stdout: 'pipe',
+            stderr: 'pipe',
+          }),
+        catch: onError,
+      }),
+      killQuietly
+    )
 
-      return { exitCode, stdout, stderr }
-    },
-    catch: onError,
-  })
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const exitCode = await proc.exited
+        const stdout = await new Response(proc.stdout).text()
+        const stderr = await new Response(proc.stderr).text()
+
+        return { exitCode, stdout, stderr }
+      },
+      catch: onError,
+    })
+  }).pipe(Effect.scoped)
 
 const resolveOriginRepoSlug = Effect.fn('GithubPrView.resolveOriginRepoSlug')(
   function* (worktreePath: string) {
-    const remoteUrl = yield* Effect.tryPromise({
-      try: async () => {
-        const proc = spawn(['git', 'config', '--get', 'remote.origin.url'], {
-          cwd: worktreePath,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const exitCode = await proc.exited
-        if (exitCode !== 0) {
-          return null
-        }
+    // Scoped for the same reason as `gh` above: a worktree with no origin is
+    // an ordinary answer, but a `git` left running after an interrupt is not.
+    const remoteUrl = yield* Effect.gen(function* () {
+      const proc = yield* Effect.acquireRelease(
+        Effect.try({
+          try: () =>
+            spawn(['git', 'config', '--get', 'remote.origin.url'], {
+              cwd: worktreePath,
+              stdout: 'pipe',
+              stderr: 'pipe',
+            }),
+          catch: () => null,
+        }),
+        killQuietly
+      )
 
-        const stdout = await new Response(proc.stdout).text()
-        return stdout.trim() || null
-      },
-      catch: () => null,
-    }).pipe(Effect.orElseSucceed(() => null))
+      return yield* Effect.tryPromise({
+        try: async () => {
+          const exitCode = await proc.exited
+          if (exitCode !== 0) {
+            return null
+          }
+
+          const stdout = await new Response(proc.stdout).text()
+          return stdout.trim() || null
+        },
+        catch: () => null,
+      })
+    }).pipe(
+      Effect.scoped,
+      Effect.orElseSucceed(() => null)
+    )
 
     if (remoteUrl === null) {
       return null
@@ -120,5 +165,5 @@ const runGhPrViewWithOriginFallback = <E>(
     )
   })
 
-export { parseGithubRepo, runGhPrViewWithOriginFallback }
+export { parseGithubRepo, resolveOriginRepoSlug, runGhPrViewWithOriginFallback }
 export type { GhPrViewResult }

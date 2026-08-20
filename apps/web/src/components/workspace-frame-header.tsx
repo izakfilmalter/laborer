@@ -24,7 +24,15 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
-import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
+import {
+  FileCode2,
+  FolderTree,
+  MessagesSquare,
+  Minus,
+  Plus,
+  Terminal,
+  X,
+} from 'lucide-react'
 import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
@@ -47,6 +55,8 @@ interface WorkspaceFrameHeaderProps {
   readonly agentStatus?: AgentDisplayStatus | null | undefined
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
+  /** Whether the PR comments panel is currently open for the active pane. */
+  readonly commentsIsOpen?: boolean | undefined
   /** Whether the diff viewer is currently open for the active pane. */
   readonly diffIsOpen: boolean
   /** Ref attached to the header element so it can serve as a drag handle. */
@@ -167,11 +177,56 @@ function TreeToggleButton({
   )
 }
 
+/**
+ * Icon-only pull request comments toggle.
+ *
+ * Disabled without a pull request, because the conversation it opens does
+ * not exist yet — the tooltip says so rather than letting the pane explain
+ * it after the fact.
+ */
+function CommentsToggleButton({
+  commentsIsOpen,
+  disabled,
+  hasPullRequest,
+  onClick,
+}: {
+  readonly commentsIsOpen: boolean
+  readonly disabled: boolean
+  readonly hasPullRequest: boolean
+  readonly onClick: () => void
+}) {
+  const label = commentsIsOpen ? 'Close PR comments' : 'Open PR comments'
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            aria-pressed={commentsIsOpen}
+            className={commentsIsOpen ? 'bg-accent text-foreground' : ''}
+            disabled={disabled || !hasPullRequest}
+            onClick={onClick}
+            size="icon-sm"
+            variant="ghost"
+          />
+        }
+      >
+        <MessagesSquare className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>
+        {hasPullRequest ? label : 'No pull request yet'}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
   agentStatus,
   branchName,
+  commentsIsOpen = false,
   diffIsOpen,
   dragHandleRef,
   isActiveFrame = false,
@@ -337,6 +392,14 @@ function WorkspaceFrameHeader({
                 </KbdGroup>
               </TooltipContent>
             </Tooltip>
+            <CommentsToggleButton
+              commentsIsOpen={commentsIsOpen}
+              disabled={!hasActivePane}
+              hasPullRequest={prNumber !== null && prNumber !== undefined}
+              onClick={withFocus((paneId) =>
+                actions?.toggleCommentsPane?.(paneId)
+              )}
+            />
             <Tooltip>
               <TooltipTrigger
                 render={

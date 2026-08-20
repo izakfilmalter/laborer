@@ -29,6 +29,7 @@ import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
+import { parsePullRequestRepoSlug } from '../services/github-pr-view.js'
 import { LaborerDatabase } from '../services/laborer-database.js'
 import {
   LaborerDatabaseStaleRevisionError,
@@ -1568,8 +1569,26 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           })
         }
 
+        // The number alone does not say which repository to ask: on a fork
+        // clone the pull request usually lives upstream while origin is the
+        // fork, so the URL PrWatcher persisted alongside the number is what
+        // decides. Guessing origin here reads a stranger's conversation at
+        // that number, or none at all.
+        const repoSlug =
+          workspace.prUrl === null
+            ? null
+            : parsePullRequestRepoSlug(workspace.prUrl)
+
+        if (repoSlug === null) {
+          return yield* new RpcError({
+            message: `Could not tell which GitHub repository pull request #${workspace.prNumber} lives in: ${workspace.prUrl ?? 'no pull request URL recorded'}`,
+            code: 'GH_FAILED',
+          })
+        }
+
         const comments = yield* fetchPullRequestComments(
           workspace.worktreePath,
+          repoSlug,
           workspace.prNumber
         ).pipe(
           Effect.mapError(

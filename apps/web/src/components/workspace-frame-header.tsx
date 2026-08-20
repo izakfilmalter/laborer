@@ -281,6 +281,25 @@ function WorkspaceFrameHeader({
     [activePaneId, actions]
   )
 
+  /**
+   * Open — not toggle — the conversation the PR badge is counting.
+   *
+   * The badge is a link to a fact, so it can only ever mean "show me". A
+   * toggle here would close the pane out from under an operator who clicked
+   * the count while already reading it; an already-open pane just takes the
+   * focus instead.
+   */
+  const openCommentsPane = useCallback(() => {
+    if (!activePaneId) {
+      return
+    }
+    actions?.setActivePaneId(activePaneId)
+    if (commentsIsOpen) {
+      return
+    }
+    actions?.toggleCommentsPane?.(activePaneId)
+  }, [actions, activePaneId, commentsIsOpen])
+
   return (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Conditional onClick when minimized as fallback for padding gaps; the inner button handles keyboard a11y.
     // biome-ignore lint/a11y/useKeyWithClickEvents: The inner button handles keyboard events; this div onClick is only a mouse fallback for padding gaps.
@@ -334,10 +353,18 @@ function WorkspaceFrameHeader({
             taskNumber={taskNumber}
           />
         ) : null}
+        {/* The frame that owns the conversation pane is the one surface that
+            can answer the badge's count in place, so here the count opens it
+            rather than leaving for a browser tab. */}
         <GitHubPrStatusBadge
           checkStatus={prCheckStatus}
           checks={prChecks}
           className="shrink-0"
+          onOpenConversation={
+            hasActivePane && actions?.toggleCommentsPane
+              ? openCommentsPane
+              : undefined
+          }
           prNumber={prNumber}
           prState={prState}
           prTitle={prTitle}

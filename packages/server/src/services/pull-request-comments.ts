@@ -34,7 +34,6 @@ import type {
 } from '@laborer/shared/rpc'
 import { Effect, Schema } from 'effect'
 import { spawn } from '../lib/spawn.js'
-import { resolveOriginRepoSlug } from './github-pr-view.js'
 
 /** What an older `gh` prints when it does not know `--slurp`. */
 const SLURP_UNSUPPORTED = 'unknown flag: --slurp'
@@ -323,20 +322,17 @@ const byCreatedAt = (left: PullRequestComment, right: PullRequestComment) =>
  * The three collections are fetched concurrently; any one of them failing
  * fails the whole read, because a half-loaded conversation is more
  * misleading than an error the user can retry.
+ *
+ * The repository is a parameter rather than something read back from the
+ * worktree's origin remote, because the pull request a caller holds may live
+ * in the fork's parent — see
+ * {@link ./github-pr-view.js parsePullRequestRepoSlug}. Asking origin about
+ * an upstream number reads someone else's conversation, or nobody's.
  */
 const fetchPullRequestComments = Effect.fn('fetchPullRequestComments')(
-  function* (worktreePath: string, prNumber: number) {
+  function* (worktreePath: string, repoSlug: string, prNumber: number) {
     if (!existsSync(worktreePath)) {
       return yield* Effect.fail(missingWorktreeFailure(worktreePath))
-    }
-
-    const repoSlug = yield* resolveOriginRepoSlug(worktreePath)
-    if (repoSlug === null) {
-      return yield* Effect.fail(
-        ghApiFailure(
-          `Could not resolve a GitHub repository from the origin remote in ${worktreePath}`
-        )
-      )
     }
 
     const [issueComments, reviews, reviewComments] = yield* Effect.all(
@@ -385,6 +381,18 @@ const REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$e
 }`
 
 const GhReviewThreadPage = Schema.Struct({
+  // GraphQL can answer with data *and* errors: a field the token may not read
+  // comes back null beside an entry here. Decoding the errors is what lets a
+  // partially answered page fail instead of reading as a short count.
+  errors: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          message: Schema.optional(Schema.NullOr(Schema.String)),
+        })
+      )
+    )
+  ),
   data: Schema.NullOr(
     Schema.Struct({
       repository: Schema.NullOr(
@@ -413,21 +421,23 @@ const GhReviewThreadPages = Schema.Array(GhReviewThreadPage)
  * would report nine outstanding things to do. Outdated threads still count,
  * matching what GitHub itself shows, because a thread against code that has
  * since moved is still a thread nobody answered.
+ *
+ * The repository is a parameter rather than something read back from the
+ * worktree's origin remote, because the pull request a caller holds may live
+ * in the fork's parent — see
+ * {@link ./github-pr-view.js parsePullRequestRepoSlug}.
  */
 const fetchUnresolvedReviewThreadCount = Effect.fn(
   'fetchUnresolvedReviewThreadCount'
-)(function* (worktreePath: string, prNumber: number) {
+)(function* (worktreePath: string, repoSlug: string, prNumber: number) {
   if (!existsSync(worktreePath)) {
     return yield* Effect.fail(missingWorktreeFailure(worktreePath))
   }
 
-  const repoSlug = yield* resolveOriginRepoSlug(worktreePath)
-  const [owner, repo] = repoSlug?.split('/') ?? []
-  if (owner === undefined || repo === undefined) {
+  const [owner, repo] = repoSlug.split('/')
+  if (owner === undefined || repo === undefined || repo.length === 0) {
     return yield* Effect.fail(
-      ghApiFailure(
-        `Could not resolve a GitHub repository from the origin remote in ${worktreePath}`
-      )
+      ghApiFailure(`Not a GitHub owner/repo pair: ${repoSlug}`)
     )
   }
 
@@ -472,9 +482,23 @@ const fetchUnresolvedReviewThreadCount = Effect.fn(
   ).pipe(Effect.mapError(() => ghApiFailure(`Unexpected ${label} response`)))
 
   // A page whose data came back null is a query GitHub refused, not a pull
-  // request with nothing on it, so it fails rather than reading as zero.
+  // request with nothing on it, so it fails rather than reading as zero. A
+  // page carrying errors is the same story told the other way: the threads
+  // it did return are a partial answer, and a partial count reads as
+  // progress nobody made.
   let unresolved = 0
   for (const page of pages) {
+    const errors = page.errors ?? []
+    if (errors.length > 0) {
+      return yield* Effect.fail(
+        ghApiFailure(
+          `${label} returned errors: ${errors
+            .map((error) => error.message ?? 'unknown error')
+            .join('; ')}`
+        )
+      )
+    }
+
     const threads = page.data?.repository?.pullRequest?.reviewThreads
     if (threads === undefined) {
       return yield* Effect.fail(

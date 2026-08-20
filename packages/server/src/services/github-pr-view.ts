@@ -5,6 +5,8 @@ import { spawn } from '../lib/spawn.js'
 const GITHUB_HTTPS_REMOTE_REGEX =
   /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/
 const GITHUB_SSH_REMOTE_REGEX = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/
+const GITHUB_PULL_REQUEST_URL_REGEX =
+  /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/
 
 /** Parse a GitHub owner and repository from a supported origin URL. */
 const parseGithubRepo = (
@@ -19,6 +21,24 @@ const parseGithubRepo = (
   const sshMatch = trimmedRemoteUrl.match(GITHUB_SSH_REMOTE_REGEX)
   if (sshMatch?.[1] && sshMatch[2]) {
     return { owner: sshMatch[1], repo: sshMatch[2] }
+  }
+
+  return null
+}
+
+/**
+ * The `owner/repo` a pull request actually lives in, read from its own URL.
+ *
+ * The origin remote is the wrong answer for a fork: `gh pr view` falls back
+ * to the parent repository when origin has no pull request, so a follow-up
+ * request built from `remote.origin.url` would ask the fork about a number
+ * that only exists upstream. The URL GitHub returned alongside the number is
+ * the one repository both are guaranteed to agree on.
+ */
+const parsePullRequestRepoSlug = (pullRequestUrl: string): string | null => {
+  const match = pullRequestUrl.trim().match(GITHUB_PULL_REQUEST_URL_REGEX)
+  if (match?.[1] && match[2]) {
+    return `${match[1]}/${match[2]}`
   }
 
   return null
@@ -165,5 +185,10 @@ const runGhPrViewWithOriginFallback = <E>(
     )
   })
 
-export { parseGithubRepo, resolveOriginRepoSlug, runGhPrViewWithOriginFallback }
+export {
+  parseGithubRepo,
+  parsePullRequestRepoSlug,
+  resolveOriginRepoSlug,
+  runGhPrViewWithOriginFallback,
+}
 export type { GhPrViewResult }

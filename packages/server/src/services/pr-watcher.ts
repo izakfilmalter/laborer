@@ -22,7 +22,10 @@
 import { existsSync } from 'node:fs'
 import { Context, Duration, Effect, Fiber, Layer, Ref, Schema } from 'effect'
 import { spawn } from '../lib/spawn.js'
-import { runGhPrViewWithOriginFallback } from './github-pr-view.js'
+import {
+  parsePullRequestRepoSlug,
+  runGhPrViewWithOriginFallback,
+} from './github-pr-view.js'
 import { LaborerDatabase } from './laborer-database.js'
 import {
   MAX_PULL_REQUEST_CHECK_RUNS,
@@ -30,6 +33,7 @@ import {
 } from './native-laborer-database.js'
 import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
+  PR_REVIEW_THREADS_TIMEOUT_MS,
   PR_VISIBLE_POLL_INTERVAL_MS,
 } from './polling-intervals.js'
 import { PrTaskTransitions } from './pr-task-transitions.js'
@@ -87,10 +91,19 @@ const GhPrData = Schema.Struct({
   number: Schema.optional(Schema.NullOr(Schema.Number)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   title: Schema.optional(Schema.NullOr(Schema.String)),
+  updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
   url: Schema.optional(Schema.NullOr(Schema.String)),
   statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(GhCheck))),
 })
 const GhPrDataJson = Schema.fromJsonString(GhPrData)
+
+/**
+ * Fields asked of `gh pr view`. `url` names the repository the pull request
+ * really lives in and `updatedAt` says whether anything about it moved; both
+ * ride along on a request already being made.
+ */
+const PR_VIEW_JSON_FIELDS =
+  'number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt'
 
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
@@ -321,36 +334,74 @@ const loadLocalMergeData = Effect.fn('PrWatcher.loadLocalMergeData')(function* (
 })
 
 /**
- * How many review threads are still waiting on someone.
+ * Read how many review threads are still waiting on someone, or null when the
+ * read did not produce an answer.
  *
- * Resolution state is a GraphQL-only fact, so this costs a request beyond
- * `gh pr view`. Only an open pull request can still be waiting on anyone,
- * and it is the only state the badge appears in, so a closed or merged one
- * is not worth asking about.
+ * A failure is a value here rather than an error because the caller holds the
+ * last known count: on a five-second poll, one refused request would
+ * otherwise make the badge blink out and back. It is logged at debug because
+ * the same request repeats every tick, so a lasting fault — a revoked token,
+ * an exhausted GraphQL budget — would fill the log with one line per attempt
+ * saying nothing new.
  */
 const loadUnresolvedThreads = Effect.fn('PrWatcher.loadUnresolvedThreads')(
-  function* (
-    worktreePath: string,
-    prNumber: number | null,
-    prState: string | null,
-    lastCount: number | null
-  ) {
-    if (prNumber === null || prState?.toUpperCase() !== 'OPEN') {
-      return null
-    }
-
-    return yield* fetchUnresolvedReviewThreadCount(worktreePath, prNumber).pipe(
-      // A failed read holds the last known count rather than blanking it: on
-      // a five-second poll, one refused request would otherwise make the
-      // badge blink out and back.
+  function* (worktreePath: string, repoSlug: string, prNumber: number) {
+    return yield* fetchUnresolvedReviewThreadCount(
+      worktreePath,
+      repoSlug,
+      prNumber
+    ).pipe(
+      // `runGh` kills the child when this fiber unwinds, but nothing bounds
+      // how long it waits for one. The poll loop is sequential, so an
+      // unbounded wait here is an unbounded pause on check status and
+      // mergeability too.
+      Effect.timeout(Duration.millis(PR_REVIEW_THREADS_TIMEOUT_MS)),
       Effect.catch((failure) =>
-        Effect.logWarning(
+        Effect.logDebug(
           `[PrWatcher] Failed to read unresolved review threads for #${prNumber}: ${failure.message}`
-        ).pipe(Effect.as(lastCount))
+        ).pipe(Effect.as(null))
       )
     )
   }
 )
+
+/** What a workspace's last successful thread count was, and for which
+ * revision of the pull request. */
+interface ThreadCountCacheEntry {
+  readonly count: number
+  readonly updatedAt: string
+}
+
+/**
+ * Fold what `gh pr view` reported together with the local merge check into
+ * the facts the badge is drawn from.
+ *
+ * The local check wins wherever it has an opinion: GitHub answers about a
+ * base branch that may be behind what the worktree has fetched.
+ */
+const hostedPrData = (
+  parsed: typeof GhPrData.Type,
+  localMergeData: PrData,
+  unresolvedThreads: number | null
+): PrData => {
+  const localMergeStatus = localMergeData.mergeStatus
+
+  return {
+    baseBranch: parsed.baseRefName ?? localMergeData.baseBranch ?? null,
+    checkStatus: checkStatus(parsed.statusCheckRollup),
+    checks: checkRuns(parsed.statusCheckRollup),
+    isDraft: parsed.isDraft ?? false,
+    mergeStatus:
+      localMergeStatus === null || localMergeStatus === 'unknown'
+        ? mergeStatus(parsed.mergeable, parsed.mergeStateStatus)
+        : localMergeStatus,
+    number: parsed.number ?? null,
+    unresolvedThreads,
+    url: parsed.url ?? null,
+    title: parsed.title ?? null,
+    state: parsed.state ?? null,
+  }
+}
 
 class PrWatcher extends Context.Service<
   PrWatcher,
@@ -421,11 +472,86 @@ class PrWatcher extends Context.Service<
       // Cache previous PR state per workspace for deduplication.
       const previousPrState = yield* Ref.make<Map<string, string>>(new Map())
 
+      // Last thread count read per workspace, keyed by the PR revision it was
+      // read for. GraphQL spends from a budget of its own and honours no
+      // conditional request, so unlike `gh pr view` there is no cheap way to
+      // ask again; a visible workspace polling every five seconds would spend
+      // 720 of the 5 000 hourly points on questions whose answer cannot have
+      // changed. `updatedAt` moves whenever anything on the pull request
+      // does, including a review comment, so an unchanged one means the
+      // previous count still stands. Kept in memory rather than persisted:
+      // the cost of forgetting it is one request per workspace at startup.
+      // GitHub Desktop gates its pull request refresh on `updated_at` the
+      // same way (app/src/lib/api.ts, `fetchUpdatedPullRequests`).
+      const threadCountCache = yield* Ref.make<
+        Map<string, ThreadCountCacheEntry>
+      >(new Map())
+
+      /**
+       * How many review threads are still waiting on someone.
+       *
+       * Only an open pull request can be waiting on anyone, and open is the
+       * only state the badge appears in, so a closed or merged one is not
+       * worth a request. Anything that stops short of an answer — no
+       * repository in the URL, a refused or slow request — holds the last
+       * count that was persisted.
+       */
+      const readUnresolvedThreads = Effect.fn(
+        'PrWatcher.readUnresolvedThreads'
+      )(function* (
+        workspaceId: string,
+        worktreePath: string,
+        pullRequest: typeof GhPrData.Type,
+        lastCount: number | null
+      ) {
+        const prNumber = pullRequest.number ?? null
+        if (prNumber === null || pullRequest.state?.toUpperCase() !== 'OPEN') {
+          return null
+        }
+
+        const updatedAt = pullRequest.updatedAt ?? null
+        const cached = (yield* Ref.get(threadCountCache)).get(workspaceId)
+        if (updatedAt !== null && cached?.updatedAt === updatedAt) {
+          return cached.count
+        }
+
+        // The pull request the number belongs to is the one its own URL
+        // names — for a fork, `gh pr view` may have answered from upstream
+        // while origin is the fork.
+        const prUrl = pullRequest.url ?? null
+        const repoSlug = prUrl === null ? null : parsePullRequestRepoSlug(prUrl)
+        if (repoSlug === null) {
+          yield* Effect.logDebug(
+            `[PrWatcher] No GitHub repository in the URL for PR #${prNumber}: ${prUrl ?? 'none'}`
+          )
+          return lastCount
+        }
+
+        const count = yield* loadUnresolvedThreads(
+          worktreePath,
+          repoSlug,
+          prNumber
+        )
+        if (count === null) {
+          return lastCount
+        }
+
+        if (updatedAt !== null) {
+          const entry = { count, updatedAt }
+          yield* Ref.update(threadCountCache, (cache) =>
+            new Map(cache).set(workspaceId, entry)
+          )
+        }
+
+        return count
+      })
+
       /**
        * Run `gh pr view` in a worktree directory and parse the JSON output.
        * Returns EMPTY_PR if no PR is found (exit code 1) or on any error.
        */
       const loadPrData = Effect.fn('PrWatcher.loadPrData')(function* (
+        workspaceId: string,
         worktreePath: string,
         branchName: string,
         baseBranch: string | null,
@@ -442,7 +568,7 @@ class PrWatcher extends Context.Service<
         const spawnResult = yield* runGhPrViewWithOriginFallback(
           worktreePath,
           branchName,
-          'number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup',
+          PR_VIEW_JSON_FIELDS,
           (error) => error
         ).pipe(
           Effect.catch((error) => {
@@ -481,39 +607,18 @@ class PrWatcher extends Context.Service<
           return EMPTY_PR
         }
 
-        const hostedMergeStatus = mergeStatus(
-          parseResult.mergeable,
-          parseResult.mergeStateStatus
-        )
         const localMergeData = yield* loadLocalMergeData(
           worktreePath,
           parseResult.baseRefName ?? baseBranch
         )
-        const localMergeStatus = localMergeData.mergeStatus
-        const prNumber = parseResult.number ?? null
-        const unresolvedThreads = yield* loadUnresolvedThreads(
+        const unresolvedThreads = yield* readUnresolvedThreads(
+          workspaceId,
           worktreePath,
-          prNumber,
-          parseResult.state ?? null,
+          parseResult,
           lastUnresolvedThreads
         )
 
-        return {
-          baseBranch:
-            parseResult.baseRefName ?? localMergeData.baseBranch ?? null,
-          checkStatus: checkStatus(parseResult.statusCheckRollup),
-          checks: checkRuns(parseResult.statusCheckRollup),
-          isDraft: parseResult.isDraft ?? false,
-          mergeStatus:
-            localMergeStatus === null || localMergeStatus === 'unknown'
-              ? hostedMergeStatus
-              : localMergeStatus,
-          number: prNumber,
-          unresolvedThreads,
-          url: parseResult.url ?? null,
-          title: parseResult.title ?? null,
-          state: parseResult.state ?? null,
-        } satisfies PrData
+        return hostedPrData(parseResult, localMergeData, unresolvedThreads)
       })
 
       const checkPr = Effect.fn('PrWatcher.checkPr')(function* (
@@ -534,6 +639,7 @@ class PrWatcher extends Context.Service<
         }
 
         const prData = yield* loadPrData(
+          workspaceId,
           workspace.worktreePath,
           workspace.branchName,
           workspace.baseBranch,
@@ -739,6 +845,11 @@ class PrWatcher extends Context.Service<
           next.delete(workspaceId)
           return next
         })
+        yield* Ref.update(threadCountCache, (cache) => {
+          const next = new Map(cache)
+          next.delete(workspaceId)
+          return next
+        })
 
         yield* Effect.log(
           `[PrWatcher] stopped polling for workspace ${workspaceId}`
@@ -756,6 +867,7 @@ class PrWatcher extends Context.Service<
           )
 
           yield* Ref.set(previousPrState, new Map())
+          yield* Ref.set(threadCountCache, new Map())
 
           yield* Effect.log(
             `[PrWatcher] stopped all polling (${fibers.size} workspaces)`

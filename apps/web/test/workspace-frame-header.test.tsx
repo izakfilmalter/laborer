@@ -107,6 +107,7 @@ const PULL_COMMITS_RE = /pull 3 commits/i
 const SYNC_RE = /pull|push/i
 const CONFLICTS_RE = /Conflicts with/i
 const CHECKS_RE = /checks/i
+const UNRESOLVED_RE = /unresolved conversation/i
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
@@ -650,6 +651,75 @@ describe('WorkspaceFrameHeader', () => {
 
     expect(screen.queryByRole('img', { name: CONFLICTS_RE })).toBeNull()
     expect(screen.queryByRole('link', { name: CHECKS_RE })).toBeNull()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Unresolved conversations: the count opens the pane it counts
+  // ---------------------------------------------------------------------------
+
+  describe('unresolved conversations on the header pill', () => {
+    const withComments = () => ({
+      ...mockActions(),
+      toggleCommentsPane: vi.fn(() => true),
+    })
+
+    const renderWithThreads = (
+      actions: PanelActions,
+      overrides?: { activePaneId?: string | null; commentsIsOpen?: boolean }
+    ) =>
+      render(
+        <WorkspaceFrameHeader
+          {...BASE_PROPS}
+          actions={actions}
+          // `??` would swallow a deliberate null, which is the whole point of
+          // the no-pane case.
+          activePaneId={
+            overrides?.activePaneId === undefined
+              ? BASE_PROPS.activePaneId
+              : overrides.activePaneId
+          }
+          commentsIsOpen={overrides?.commentsIsOpen ?? false}
+          prNumber={42}
+          prState="OPEN"
+          prTitle="Ship the fix"
+          prUnresolvedThreads={3}
+          prUrl="https://github.com/example/repo/pull/42"
+        />
+      )
+
+    it('opens the comments pane instead of leaving for the browser', () => {
+      isElectronMock.mockReturnValue(true)
+      const actions = withComments()
+      renderWithThreads(actions)
+
+      fireEvent.click(screen.getByRole('link', { name: UNRESOLVED_RE }))
+
+      expect(actions.toggleCommentsPane).toHaveBeenCalledWith('pane-1')
+      expect(openExternalUrlMock).not.toHaveBeenCalled()
+    })
+
+    it('focuses a pane that is already open rather than closing it', () => {
+      const actions = withComments()
+      renderWithThreads(actions, { commentsIsOpen: true })
+
+      fireEvent.click(screen.getByRole('link', { name: UNRESOLVED_RE }))
+
+      expect(actions.setActivePaneId).toHaveBeenCalledWith('pane-1')
+      expect(actions.toggleCommentsPane).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the diff on GitHub when the frame has no pane', () => {
+      isElectronMock.mockReturnValue(true)
+      const actions = withComments()
+      renderWithThreads(actions, { activePaneId: null })
+
+      fireEvent.click(screen.getByRole('link', { name: UNRESOLVED_RE }))
+
+      expect(actions.toggleCommentsPane).not.toHaveBeenCalled()
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'https://github.com/example/repo/pull/42/files'
+      )
+    })
   })
 
   it('offers pulling first when the workspace is both ahead and behind', () => {

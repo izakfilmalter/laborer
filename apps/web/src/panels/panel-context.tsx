@@ -193,6 +193,28 @@ interface PanelActions {
     | undefined
 
   /**
+   * Reveal a workspace and open its pull request conversation.
+   *
+   * Named by workspace because the surfaces that need it are looking at
+   * work rather than at panes: a sidebar card holds no pane ID, and its
+   * workspace may sit in another window tab or be open nowhere at all.
+   * Revealing it commits the layout, so the pane that would answer to
+   * `toggleCommentsPane` does not exist yet at the moment of the click —
+   * the workspace key is what survives that gap.
+   *
+   * Opens, never toggles. Callers reach it from a count of unresolved
+   * conversations, which can only mean "show me"; clicking the count while
+   * the panel is already open brings the workspace forward instead of
+   * pulling the panel away mid-read.
+   *
+   * Optional because the layout hook builds its actions before the
+   * full-height panel state exists; the route supplies the real one.
+   *
+   * @param workspaceId - The workspace whose conversation should be shown
+   */
+  readonly openCommentsPaneForWorkspace?: (workspaceId: string) => void
+
+  /**
    * Remove a panel tab by ID from a workspace.
    *
    * @param workspaceId - The workspace containing the tab

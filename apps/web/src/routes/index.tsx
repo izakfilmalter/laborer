@@ -52,7 +52,6 @@ import {
   findPaneInActiveTab,
   getActiveTabLeafNodes,
   getActiveWindowTab,
-  getAllWorkspaceTileLeaves,
   resolveActiveWorkspaceId,
   shouldConfirmClosePanelTab,
   shouldConfirmCloseWindowTab,
@@ -66,6 +65,7 @@ import { PanelContent } from './-components/panel-content'
 import { PanelHeaderBar } from './-components/panel-header-bar'
 import { WelcomeEmptyState } from './-components/welcome-empty-state'
 import { usePanelLayout } from './-hooks/use-panel-layout'
+import { useWorkspacePanelVisibility } from './-hooks/use-workspace-panel-visibility'
 
 /**
  * Route-level wrapper that provides PanelGroupRegistryProvider above
@@ -86,25 +86,6 @@ export const Route = createFileRoute('/')({
 })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
-
-const toggleWorkspacePanel = (
-  workspaceIds: readonly string[],
-  workspaceId: string
-): readonly string[] =>
-  workspaceIds.includes(workspaceId)
-    ? workspaceIds.filter((id) => id !== workspaceId)
-    : [...workspaceIds, workspaceId]
-
-const filterOpenWorkspacePanels = (
-  workspaceIds: readonly string[],
-  openWorkspaceIds: ReadonlySet<string>
-): readonly string[] => {
-  const nextWorkspaceIds = workspaceIds.filter((id) => openWorkspaceIds.has(id))
-
-  return nextWorkspaceIds.length === workspaceIds.length
-    ? workspaceIds
-    : nextWorkspaceIds
-}
 
 function HomeComponent() {
   const {
@@ -227,122 +208,62 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Diff panel state — transient UI mode.
-  // Each workspace manages its own diff viewer visibility independently.
-  const [diffPaneWorkspaceIds, setDiffPaneWorkspaceIds] = useState<
-    readonly string[]
-  >([])
-
-  // Tree panel state — transient UI mode.
-  // Each workspace manages its own file tree visibility independently.
-  const [treePaneWorkspaceIds, setTreePaneWorkspaceIds] = useState<
-    readonly string[]
-  >([])
-
-  // Comments panel state — transient UI mode.
-  // Each workspace manages its own PR conversation visibility independently.
-  const [commentsPaneWorkspaceIds, setCommentsPaneWorkspaceIds] = useState<
-    readonly string[]
-  >([])
-
-  // Auto-close diff/tree/comments panels when their workspace no longer
-  // exists anywhere in the window layout (e.g., if the workspace was closed).
-  useEffect(() => {
-    if (
-      !(
-        (diffPaneWorkspaceIds.length > 0 ||
-          treePaneWorkspaceIds.length > 0 ||
-          commentsPaneWorkspaceIds.length > 0) &&
-        windowLayout
-      )
-    ) {
-      return
-    }
-
-    const openWorkspaceIds = new Set(
-      getAllWorkspaceTileLeaves(windowLayout).map((leaf) => leaf.workspaceId)
-    )
-
-    setDiffPaneWorkspaceIds((current) =>
-      filterOpenWorkspacePanels(current, openWorkspaceIds)
-    )
-    setTreePaneWorkspaceIds((current) =>
-      filterOpenWorkspacePanels(current, openWorkspaceIds)
-    )
-    setCommentsPaneWorkspaceIds((current) =>
-      filterOpenWorkspacePanels(current, openWorkspaceIds)
-    )
-  }, [
-    commentsPaneWorkspaceIds,
-    diffPaneWorkspaceIds,
-    treePaneWorkspaceIds,
+  // Diff, file tree, and PR conversation are transient UI modes owned per
+  // workspace, so opening one workspace's panel leaves every other alone.
+  const panelVisibility = useWorkspacePanelVisibility({
+    focusWorkspace: panelActions.focusWorkspace,
     windowLayout,
-  ])
+  })
+
+  /**
+   * The workspace a pane belongs to, which is the unit the full-height
+   * panels are keyed by. Panes are addressed within the active tab, so a
+   * pane the operator cannot currently see names no workspace.
+   */
+  const resolvePaneWorkspaceId = useCallback(
+    (paneId: string): string | undefined => {
+      if (!windowLayout) {
+        return undefined
+      }
+
+      return findPaneInActiveTab(windowLayout, paneId)?.workspaceId
+    },
+    [windowLayout]
+  )
 
   /**
    * Toggle the full-height diff panel for the workspace of the given pane.
-   * Each workspace manages its own diff viewer, so toggling one workspace
-   * does not affect any others.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the diff panel is now open
    */
   const toggleDiffPane = useCallback(
     (paneId: string): boolean => {
-      if (!windowLayout) {
-        return false
-      }
+      const workspaceId = resolvePaneWorkspaceId(paneId)
 
-      const found = findPaneInActiveTab(windowLayout, paneId)
-      if (!found?.workspaceId) {
-        return false
-      }
-
-      const workspaceId = found.workspaceId
-
-      const isOpen = diffPaneWorkspaceIds.includes(workspaceId)
-
-      setDiffPaneWorkspaceIds((current) =>
-        toggleWorkspacePanel(current, workspaceId)
-      )
-
-      return !isOpen
+      return workspaceId === undefined
+        ? false
+        : panelVisibility.toggleDiff(workspaceId)
     },
-    [windowLayout, diffPaneWorkspaceIds]
+    [resolvePaneWorkspaceId, panelVisibility.toggleDiff]
   )
 
   /**
-   * Toggle the full-height file tree panel for the workspace of the given pane.
-   * Each workspace manages its own file tree, so toggling one workspace
-   * does not affect any others.
-   *
-   * The tree panel is forced to the left side, unlike diff.
+   * Toggle the full-height file tree panel for the workspace of the given
+   * pane. The tree panel is forced to the left side, unlike diff.
    *
    * @param paneId - The pane ID to get the workspace from
    * @returns Whether the tree panel is now open
    */
   const toggleTreePane = useCallback(
     (paneId: string): boolean => {
-      if (!windowLayout) {
-        return false
-      }
+      const workspaceId = resolvePaneWorkspaceId(paneId)
 
-      const found = findPaneInActiveTab(windowLayout, paneId)
-      if (!found?.workspaceId) {
-        return false
-      }
-
-      const workspaceId = found.workspaceId
-
-      const isOpen = treePaneWorkspaceIds.includes(workspaceId)
-
-      setTreePaneWorkspaceIds((current) =>
-        toggleWorkspacePanel(current, workspaceId)
-      )
-
-      return !isOpen
+      return workspaceId === undefined
+        ? false
+        : panelVisibility.toggleTree(workspaceId)
     },
-    [windowLayout, treePaneWorkspaceIds]
+    [resolvePaneWorkspaceId, panelVisibility.toggleTree]
   )
 
   /**
@@ -355,26 +276,13 @@ function HomeComponent() {
    */
   const toggleCommentsPane = useCallback(
     (paneId: string): boolean => {
-      if (!windowLayout) {
-        return false
-      }
+      const workspaceId = resolvePaneWorkspaceId(paneId)
 
-      const found = findPaneInActiveTab(windowLayout, paneId)
-      if (!found?.workspaceId) {
-        return false
-      }
-
-      const workspaceId = found.workspaceId
-
-      const isOpen = commentsPaneWorkspaceIds.includes(workspaceId)
-
-      setCommentsPaneWorkspaceIds((current) =>
-        toggleWorkspacePanel(current, workspaceId)
-      )
-
-      return !isOpen
+      return workspaceId === undefined
+        ? false
+        : panelVisibility.toggleComments(workspaceId)
     },
-    [windowLayout, commentsPaneWorkspaceIds]
+    [resolvePaneWorkspaceId, panelVisibility.toggleComments]
   )
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -907,6 +815,7 @@ function HomeComponent() {
       toggleDiffPane,
       toggleTreePane,
       toggleCommentsPane,
+      openCommentsPaneForWorkspace: panelVisibility.openCommentsForWorkspace,
       showPanelTypePicker,
     }),
     [
@@ -920,6 +829,7 @@ function HomeComponent() {
       toggleDiffPane,
       toggleTreePane,
       toggleCommentsPane,
+      panelVisibility.openCommentsForWorkspace,
       showPanelTypePicker,
     ]
   )
@@ -1323,12 +1233,12 @@ function HomeComponent() {
                   <PanelContent
                     activePaneId={activePaneId}
                     activeTabId={windowLayout?.activeTabId}
-                    commentsWorkspaceIds={commentsPaneWorkspaceIds}
-                    diffWorkspaceIds={diffPaneWorkspaceIds}
+                    commentsWorkspaceIds={panelVisibility.commentsWorkspaceIds}
+                    diffWorkspaceIds={panelVisibility.diffWorkspaceIds}
                     fullscreenPaneId={fullscreenPaneId}
                     isEmptyWindowTab={isEmptyWindowTab}
                     isReconciling={isReconciling}
-                    treeWorkspaceIds={treePaneWorkspaceIds}
+                    treeWorkspaceIds={panelVisibility.treeWorkspaceIds}
                     windowLayout={windowLayout}
                     windowTabs={windowLayout?.tabs}
                   />

@@ -2,6 +2,7 @@ import { Button as ButtonPrimitive } from '@base-ui/react/button'
 import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { cva, type VariantProps } from 'class-variance-authority'
+import { Loader2Icon } from 'lucide-react'
 
 const buttonVariants = cva(
   "group/button inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-lg border border-transparent bg-clip-padding font-medium text-xs outline-none transition-all focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-1 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
@@ -40,13 +41,26 @@ const buttonVariants = cva(
   }
 )
 
+interface ButtonProps
+  extends ButtonPrimitive.Props,
+    VariantProps<typeof buttonVariants> {
+  /**
+   * Swaps the label for a centred spinner and blocks further clicks. The label
+   * stays mounted underneath so the button keeps its width mid-action.
+   */
+  readonly loading?: boolean | undefined
+}
+
 function Button({
+  children,
   className,
   variant = 'default',
   size = 'default',
+  disabled = false,
+  loading = false,
   onClick,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonProps) {
   const handleClick: typeof onClick = onClick
     ? (event) => {
         if (variant === 'destructive') {
@@ -60,12 +74,33 @@ function Button({
 
   return (
     <ButtonPrimitive
-      className={cn(buttonVariants({ variant, size, className }))}
+      aria-busy={loading || undefined}
+      className={cn(
+        buttonVariants({ variant, size, className }),
+        loading && 'relative'
+      )}
+      data-loading={loading || undefined}
       data-slot="button"
+      disabled={disabled || loading}
       onClick={handleClick}
       {...props}
-    />
+    >
+      {loading ? (
+        <>
+          {/* Sized by the variant's own `[&_svg]` rules, so it tracks the button. */}
+          <Loader2Icon
+            aria-hidden="true"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin"
+          />
+          <span className="inline-flex items-center justify-center gap-[inherit] opacity-30">
+            {children}
+          </span>
+        </>
+      ) : (
+        children
+      )}
+    </ButtonPrimitive>
   )
 }
 
-export { Button, buttonVariants }
+export { Button, buttonVariants, type ButtonProps }

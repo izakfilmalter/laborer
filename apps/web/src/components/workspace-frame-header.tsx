@@ -285,9 +285,7 @@ function WorkspaceFrameHeader({
           prTitle={prTitle}
           prUrl={prUrl}
         />
-        {workspaceId ? (
-          <WorkspaceSyncStatus size="header" workspaceId={workspaceId} />
-        ) : null}
+        {workspaceId ? <WorkspaceSyncStatus workspaceId={workspaceId} /> : null}
         {showsAgentStatus ? (
           <AggregateAgentStatusBadge
             className="shrink-0"

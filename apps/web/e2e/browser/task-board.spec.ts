@@ -251,7 +251,9 @@ test.describe('task board and kanban journeys', () => {
         'changed elsewhere while saving'
       )
       await expect(detail.getByLabel('Title')).toHaveValue(losingTitle)
-      await expect(detail.getByLabel('Description')).toHaveValue(
+      // The brief is a rich-text surface, so its draft is text content rather
+      // than a form value.
+      await expect(detail.getByLabel('Description')).toHaveText(
         draftDescription
       )
       await expect(page.getByTestId('toast-region')).toContainText(

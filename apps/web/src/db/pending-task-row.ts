@@ -29,6 +29,8 @@ export const pendingTaskRow = (input: {
     prIsDraft: false,
     prMergeStatus: null,
     prNumber: null,
+    prApprovals: null,
+    prReviewDecision: null,
     prState: null,
     prTitle: null,
     prUnresolvedThreads: null,

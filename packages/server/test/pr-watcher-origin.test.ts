@@ -97,7 +97,8 @@ const makeWorktreeDir = Effect.acquireRelease(
 const createWorkspace = (
   database: NativeLaborerDatabase,
   worktreePath: string,
-  prUnresolvedThreads: number | null = null
+  prUnresolvedThreads: number | null = null,
+  prApprovals: number | null = null
 ) => {
   database.insertProject({
     canonicalGitCommonDir: '/tmp/.git',
@@ -109,6 +110,7 @@ const createWorkspace = (
   database.insertTask({
     branchName: 'feature/fork-pr',
     id: 'workspace-1',
+    prApprovals,
     prUnresolvedThreads,
     rootPath: '/tmp',
     source: 'worktree',
@@ -136,13 +138,28 @@ const graphqlCalls = () =>
     .map(([cmd]) => cmd.join(' '))
     .filter((cmd) => cmd.includes('graphql'))
 
-/** One `gh api graphql --slurp` page of review threads. */
-const threadPages = (resolved: readonly boolean[]) =>
+/**
+ * One `gh api graphql --slurp` page of the review summary. `reviews` are the
+ * states of `latestOpinionatedReviews`, whose `totalCount` says how many
+ * opinions exist whether or not the page could carry them all.
+ */
+const threadPages = (
+  resolved: readonly boolean[],
+  reviews?: { readonly states: readonly string[]; readonly totalCount?: number }
+) =>
   JSON.stringify([
     {
       data: {
         repository: {
           pullRequest: {
+            ...(reviews === undefined
+              ? {}
+              : {
+                  latestOpinionatedReviews: {
+                    nodes: reviews.states.map((state) => ({ state })),
+                    totalCount: reviews.totalCount ?? reviews.states.length,
+                  },
+                }),
             reviewThreads: {
               nodes: resolved.map((isResolved) => ({ isResolved })),
               pageInfo: { endCursor: null, hasNextPage: false },
@@ -230,7 +247,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt':
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision':
               {
                 stdout: '',
                 stderr: 'no pull requests found',
@@ -290,7 +307,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         assert.isAtLeast(ghCalls.length, 1)
         assert.include(
           ghCalls[0]?.[0].join(' '),
-          'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt --repo acme/fork'
+          'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision --repo acme/fork'
         )
       })
   )
@@ -309,7 +326,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt':
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision':
               {
                 stdout: JSON.stringify({
                   number: 7,
@@ -352,7 +369,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             cmd
               .join(' ')
               .includes(
-                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt --repo acme/fork'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision --repo acme/fork'
               )
           )
         )
@@ -361,7 +378,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             const call = cmd.join(' ')
             return (
               call.includes(
-                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision'
               ) && !call.includes('--repo')
             )
           })
@@ -656,6 +673,271 @@ describe('PrWatcher unresolved review threads', () => {
       // request, so an unchanged `updatedAt` is answered from memory.
       assert.strictEqual(second.unresolvedThreads, 2)
       assert.lengthOf(graphqlCalls(), 1)
+    })
+  )
+})
+describe('PrWatcher approvals', () => {
+  it.effect('keeps an approval its reviewer later commented over', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            stdout: JSON.stringify({
+              // What `gh pr view --json latestReviews` would say about a
+              // reviewer who approved and then left a plain comment: their
+              // approval is gone from it, while GitHub still calls the pull
+              // request approved.
+              latestReviews: [{ state: 'COMMENTED' }],
+              number: 11,
+              reviewDecision: 'APPROVED',
+              state: 'OPEN',
+              title: 'In review',
+              updatedAt: '2026-08-14T10:00:00Z',
+              url: 'https://github.com/acme/fork/pull/11',
+            }),
+          },
+          'api graphql': {
+            stdout: threadPages([], { states: ['APPROVED'] }),
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath)
+      const prWatcher = yield* buildWatcher(databaseContext)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      assert.strictEqual(prData.approvals, 1)
+      assert.strictEqual(prData.reviewDecision, 'approved')
+      assert.strictEqual(database.findTask('workspace-1')?.prApprovals, 1)
+      // The count is a standing opinion, which only `gh api graphql` answers.
+      assert.include(graphqlCalls()[0] ?? '', 'latestOpinionatedReviews')
+      assert.notInclude(
+        spawnMock.mock.calls.map(([cmd]) => cmd.join(' ')).join('\n'),
+        'latestReviews'
+      )
+    })
+  )
+
+  it.effect('does not count a review that was dismissed', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            stdout: JSON.stringify({
+              number: 11,
+              reviewDecision: 'REVIEW_REQUIRED',
+              state: 'OPEN',
+              title: 'In review',
+              updatedAt: '2026-08-14T10:00:00Z',
+              url: 'https://github.com/acme/fork/pull/11',
+            }),
+          },
+          'api graphql': {
+            stdout: threadPages([], {
+              states: ['APPROVED', 'DISMISSED', 'CHANGES_REQUESTED'],
+            }),
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath)
+      const prWatcher = yield* buildWatcher(databaseContext)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      // A dismissed approval no longer supports the merge, and a change
+      // request is an opinion but not an approving one.
+      assert.strictEqual(prData.approvals, 1)
+      assert.strictEqual(prData.reviewDecision, 'reviewRequired')
+    })
+  )
+
+  it.effect('counts approvals where no review is required at all', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            stdout: JSON.stringify({
+              number: 11,
+              reviewDecision: '',
+              state: 'OPEN',
+              title: 'In review',
+              updatedAt: '2026-08-14T10:00:00Z',
+              url: 'https://github.com/acme/fork/pull/11',
+            }),
+          },
+          'api graphql': {
+            stdout: threadPages([], { states: ['APPROVED', 'APPROVED'] }),
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath)
+      const prWatcher = yield* buildWatcher(databaseContext)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      // An empty decision is "no review required", which the badge must not
+      // draw as "not yet approved" — and people still approved regardless.
+      assert.isNull(prData.reviewDecision)
+      assert.strictEqual(prData.approvals, 2)
+    })
+  )
+
+  it.effect('holds the last count when the review read fails', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            stdout: JSON.stringify({
+              number: 11,
+              reviewDecision: 'APPROVED',
+              state: 'OPEN',
+              title: 'In review',
+              updatedAt: '2026-08-14T10:00:00Z',
+              url: 'https://github.com/acme/fork/pull/11',
+            }),
+          },
+          'api graphql': {
+            exitCode: 1,
+            stderr: 'HTTP 502: Bad gateway',
+            stdout: '',
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath, 4, 3)
+      const prWatcher = yield* buildWatcher(databaseContext)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      // One refused request on a five-second poll must not blink the badge
+      // out and back.
+      assert.strictEqual(prData.approvals, 3)
+      assert.strictEqual(database.findTask('workspace-1')?.prApprovals, 3)
+    })
+  )
+
+  it.effect('holds the last count when the reviewers outrun one request', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            stdout: JSON.stringify({
+              number: 11,
+              reviewDecision: 'APPROVED',
+              state: 'OPEN',
+              title: 'In review',
+              updatedAt: '2026-08-14T10:00:00Z',
+              url: 'https://github.com/acme/fork/pull/11',
+            }),
+          },
+          'api graphql': {
+            stdout: threadPages([], {
+              states: ['APPROVED', 'APPROVED'],
+              totalCount: 120,
+            }),
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath, 4, 7)
+      const prWatcher = yield* buildWatcher(databaseContext)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      // Two approvals out of the page is not the answer when 120 opinions
+      // exist, so the truncated read is worth no more than a failed one.
+      assert.strictEqual(prData.approvals, 7)
+      // The threads on the same response are complete, so they still count.
+      assert.strictEqual(prData.unresolvedThreads, 0)
+    })
+  )
+
+  it.effect(
+    'asks again for approvals only when the pull request has moved',
+    () =>
+      Effect.gen(function* () {
+        spawnMock.mockImplementation(
+          createSpawnMock({
+            'gh pr view': {
+              stdout: JSON.stringify({
+                number: 11,
+                reviewDecision: 'APPROVED',
+                state: 'OPEN',
+                title: 'In review',
+                updatedAt: '2026-08-14T10:00:00Z',
+                url: 'https://github.com/acme/fork/pull/11',
+              }),
+            },
+            'api graphql': {
+              stdout: threadPages([false], { states: ['APPROVED'] }),
+            },
+          })
+        )
+
+        const worktreePath = yield* makeWorktreeDir
+        const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+        const { database } = Context.get(databaseContext, LaborerDatabase)
+        createWorkspace(database, worktreePath)
+        const prWatcher = yield* buildWatcher(databaseContext)
+
+        yield* prWatcher.checkPr('workspace-1')
+        const second = yield* prWatcher.checkPr('workspace-1')
+
+        // Approvals ride on the same cached response as the thread count, so
+        // an unchanged `updatedAt` still costs one request in total.
+        assert.strictEqual(second.approvals, 1)
+        assert.strictEqual(second.unresolvedThreads, 1)
+        assert.lengthOf(graphqlCalls(), 1)
+      })
+  )
+
+  it.effect('spends no request on a pull request that is closed', () =>
+    Effect.gen(function* () {
+      spawnMock.mockImplementation(
+        createSpawnMock({
+          'gh pr view': {
+            stdout: JSON.stringify({
+              number: 11,
+              reviewDecision: 'APPROVED',
+              state: 'CLOSED',
+              title: 'Abandoned',
+              updatedAt: '2026-08-14T10:00:00Z',
+              url: 'https://github.com/acme/fork/pull/11',
+            }),
+          },
+        })
+      )
+
+      const worktreePath = yield* makeWorktreeDir
+      const databaseContext = yield* Layer.build(LaborerDatabase.testLayer())
+      const { database } = Context.get(databaseContext, LaborerDatabase)
+      createWorkspace(database, worktreePath, 4, 3)
+      const prWatcher = yield* buildWatcher(databaseContext)
+
+      const prData = yield* prWatcher.checkPr('workspace-1')
+
+      // Nobody's approval is load-bearing on a pull request that is over,
+      // and the badge it would feed is gone with it.
+      assert.isNull(prData.approvals)
+      assert.deepEqual(graphqlCalls(), [])
     })
   )
 })

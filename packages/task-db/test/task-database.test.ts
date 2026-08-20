@@ -31,6 +31,7 @@ const migrationNames = [
   '0012_task_labels',
   '0013_correlated_operations',
   '0014_pr_unresolved_threads',
+  '0015_pr_review_decision',
 ]
 
 const temporaryDatabasePath = (): string => {

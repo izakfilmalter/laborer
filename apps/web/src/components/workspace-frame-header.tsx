@@ -15,7 +15,10 @@
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
-import type { PullRequestCheckRun } from '@laborer/shared/rpc'
+import type {
+  PullRequestCheckRun,
+  PullRequestReviewDecision,
+} from '@laborer/shared/rpc'
 import { Button } from '@laborer/ui/components/button'
 import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import {
@@ -71,12 +74,16 @@ interface WorkspaceFrameHeaderProps {
   readonly onHeaderClick?: (() => void) | undefined
   /** Called when the minimize/expand button is clicked. */
   readonly onMinimize?: (() => void) | undefined
+  /** How many reviewers' latest review on the pull request is an approval. */
+  readonly prApprovals?: number | null | undefined
   /** Base branch the pull request targets, named in the conflict label. */
   readonly prBaseBranch?: string | null | undefined
   /** Rollup of the pull request's CI checks. */
   readonly prCheckStatus?: 'pending' | 'success' | 'failure' | null | undefined
   /** Individual check runs behind the rollup, for the hover summary. */
   readonly prChecks?: readonly PullRequestCheckRun[] | null | undefined
+  /** Whether the pull request is still a draft, asking nobody for review. */
+  readonly prIsDraft?: boolean | undefined
   /** Whether the pull request merges cleanly into its base branch. */
   readonly prMergeStatus?:
     | 'clean'
@@ -92,6 +99,8 @@ interface WorkspaceFrameHeaderProps {
   readonly projectName: string | undefined
   /** The project prefix used in the task identifier. */
   readonly projectShortName: string | null
+  /** GitHub's rolled-up verdict on the pull request's reviews. */
+  readonly prReviewDecision?: PullRequestReviewDecision | null | undefined
   /** PR state: 'OPEN', 'CLOSED', or 'MERGED'. */
   readonly prState: string | null
   /** PR title for tooltip. */
@@ -239,7 +248,10 @@ function WorkspaceFrameHeader({
   prCheckStatus = null,
   prChecks = null,
   prMergeStatus = null,
+  prApprovals = null,
+  prIsDraft = false,
   prNumber,
+  prReviewDecision = null,
   prState,
   prTitle,
   prUnresolvedThreads = null,
@@ -357,6 +369,7 @@ function WorkspaceFrameHeader({
             can answer the badge's count in place, so here the count opens it
             rather than leaving for a browser tab. */}
         <GitHubPrStatusBadge
+          approvals={prApprovals}
           checkStatus={prCheckStatus}
           checks={prChecks}
           className="shrink-0"
@@ -365,10 +378,12 @@ function WorkspaceFrameHeader({
               ? openCommentsPane
               : undefined
           }
+          prIsDraft={prIsDraft}
           prNumber={prNumber}
           prState={prState}
           prTitle={prTitle}
           prUrl={prUrl}
+          reviewDecision={prReviewDecision}
           unresolvedThreads={prUnresolvedThreads}
         />
         {workspaceId ? <WorkspaceSyncStatus workspaceId={workspaceId} /> : null}

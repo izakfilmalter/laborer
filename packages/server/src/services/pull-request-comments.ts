@@ -365,13 +365,34 @@ const fetchPullRequestComments = Effect.fn('fetchPullRequestComments')(
 )
 
 /**
- * Whether a review thread is settled is a GraphQL-only fact. The REST review
- * comments carry no resolution state at all, so the count the pull request
- * page shows as "unresolved conversations" has to be asked for separately.
+ * How many opinionated reviews one request will read. A pull request with
+ * more than this many distinct reviewers holding an opinion does not exist
+ * in practice, and `totalCount` says when that assumption broke, so the
+ * connection is asked for flat rather than paginated: `gh api --paginate`
+ * follows exactly one cursor, and that cursor belongs to the threads.
  */
-const REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){
+const MAX_OPINIONATED_REVIEWS = 100
+
+/**
+ * Two GraphQL-only facts, asked for together because they are read on the
+ * same poll and GraphQL charges per request:
+ *
+ * - Whether a review thread is settled. The REST review comments carry no
+ *   resolution state at all, so "unresolved conversations" has to be asked
+ *   for here.
+ * - Who currently holds an opinion. `latestOpinionatedReviews` is each
+ *   reviewer's last APPROVED or CHANGES_REQUESTED verdict, which is the set
+ *   github.com counts. The neighbouring `latestReviews` is each reviewer's
+ *   last review of *any* kind, so an approver who later leaves a plain
+ *   comment silently drops out of it.
+ */
+const REVIEW_SUMMARY_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$number){
+      latestOpinionatedReviews(first:${MAX_OPINIONATED_REVIEWS}){
+        totalCount
+        nodes{state}
+      }
       reviewThreads(first:100,after:$endCursor){
         nodes{isResolved}
         pageInfo{hasNextPage endCursor}
@@ -379,6 +400,13 @@ const REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$e
     }
   }
 }`
+
+const GhOpinionatedReviews = Schema.Struct({
+  nodes: Schema.Array(
+    Schema.Struct({ state: Schema.optional(Schema.NullOr(Schema.String)) })
+  ),
+  totalCount: Schema.Number,
+})
 
 const GhReviewThreadPage = Schema.Struct({
   // GraphQL can answer with data *and* errors: a field the token may not read
@@ -399,6 +427,9 @@ const GhReviewThreadPage = Schema.Struct({
         Schema.Struct({
           pullRequest: Schema.NullOr(
             Schema.Struct({
+              latestOpinionatedReviews: Schema.optional(
+                Schema.NullOr(GhOpinionatedReviews)
+              ),
               reviewThreads: Schema.Struct({
                 nodes: Schema.Array(
                   Schema.Struct({ isResolved: Schema.Boolean })
@@ -413,8 +444,37 @@ const GhReviewThreadPage = Schema.Struct({
 })
 const GhReviewThreadPages = Schema.Array(GhReviewThreadPage)
 
+/** What one poll needs to know about a pull request's reviews. */
+interface PullRequestReviewSummary {
+  /**
+   * Reviewers whose standing opinion is an approval, or null when the answer
+   * would be a guess — more reviewers than one request reads, or a GitHub
+   * that did not return the field.
+   */
+  readonly approvals: number | null
+  readonly unresolvedThreads: number
+}
+
 /**
- * Count the review threads on a pull request that nobody has resolved.
+ * Approvals on the pull request comes only from the first page: the reviews
+ * connection carries no cursor, so every page repeats the same answer, and
+ * adding them up would multiply the count by the number of thread pages.
+ */
+const approvalsOf = (
+  reviews: typeof GhOpinionatedReviews.Type | null | undefined
+): number | null => {
+  if (reviews == null || reviews.totalCount > reviews.nodes.length) {
+    return null
+  }
+
+  return reviews.nodes.filter(
+    (review) => review.state?.toUpperCase() === 'APPROVED'
+  ).length
+}
+
+/**
+ * Read the review facts behind the pull request badge: how many threads are
+ * still waiting on someone, and how many reviewers stand behind it.
  *
  * A thread is the unit of resolution, not a comment: a ten-reply argument
  * that ends in agreement is one settled thread, and counting its comments
@@ -427,8 +487,8 @@ const GhReviewThreadPages = Schema.Array(GhReviewThreadPage)
  * in the fork's parent — see
  * {@link ./github-pr-view.js parsePullRequestRepoSlug}.
  */
-const fetchUnresolvedReviewThreadCount = Effect.fn(
-  'fetchUnresolvedReviewThreadCount'
+const fetchPullRequestReviewSummary = Effect.fn(
+  'fetchPullRequestReviewSummary'
 )(function* (worktreePath: string, repoSlug: string, prNumber: number) {
   if (!existsSync(worktreePath)) {
     return yield* Effect.fail(missingWorktreeFailure(worktreePath))
@@ -441,7 +501,7 @@ const fetchUnresolvedReviewThreadCount = Effect.fn(
     )
   }
 
-  const label = `gh api graphql reviewThreads for #${prNumber}`
+  const label = `gh api graphql reviewSummary for #${prNumber}`
   const result = yield* runGh(
     worktreePath,
     [
@@ -456,7 +516,7 @@ const fetchUnresolvedReviewThreadCount = Effect.fn(
       '-F',
       `number=${prNumber}`,
       '-f',
-      `query=${REVIEW_THREADS_QUERY}`,
+      `query=${REVIEW_SUMMARY_QUERY}`,
     ],
     label
   )
@@ -487,7 +547,8 @@ const fetchUnresolvedReviewThreadCount = Effect.fn(
   // it did return are a partial answer, and a partial count reads as
   // progress nobody made.
   let unresolved = 0
-  for (const page of pages) {
+  let approvals: number | null = null
+  for (const [index, page] of pages.entries()) {
     const errors = page.errors ?? []
     if (errors.length > 0) {
       return yield* Effect.fail(
@@ -499,21 +560,37 @@ const fetchUnresolvedReviewThreadCount = Effect.fn(
       )
     }
 
-    const threads = page.data?.repository?.pullRequest?.reviewThreads
-    if (threads === undefined) {
+    const pullRequest = page.data?.repository?.pullRequest
+    if (pullRequest == null) {
       return yield* Effect.fail(
         ghApiFailure(`${label} returned no pull request`)
       )
     }
-    unresolved += threads.nodes.filter((thread) => !thread.isResolved).length
+    if (index === 0) {
+      approvals = approvalsOf(pullRequest.latestOpinionatedReviews)
+    }
+    unresolved += pullRequest.reviewThreads.nodes.filter(
+      (thread) => !thread.isResolved
+    ).length
   }
 
-  return unresolved
+  return { approvals, unresolvedThreads: unresolved }
 })
+
+/** The thread half of {@link fetchPullRequestReviewSummary}, on its own. */
+const fetchUnresolvedReviewThreadCount = (
+  worktreePath: string,
+  repoSlug: string,
+  prNumber: number
+): Effect.Effect<number, GhApiFailure> =>
+  fetchPullRequestReviewSummary(worktreePath, repoSlug, prNumber).pipe(
+    Effect.map((summary) => summary.unresolvedThreads)
+  )
 
 export {
   fetchPullRequestComments,
+  fetchPullRequestReviewSummary,
   fetchUnresolvedReviewThreadCount,
   parsePaginatedJsonArray,
 }
-export type { GhApiFailure }
+export type { GhApiFailure, PullRequestReviewSummary }

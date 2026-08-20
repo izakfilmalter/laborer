@@ -489,10 +489,13 @@ function TaskBoardCard({
           in for a workspace that does not exist yet. */}
       {task.pr && !workspace && (
         <GitHubPrStatusBadge
+          approvals={task.pr.approvals}
+          prIsDraft={task.pr.isDraft}
           prNumber={task.pr.number}
           prState={toPrBadgeState(task.pr.state)}
           prTitle={task.pr.title}
           prUrl={task.pr.url}
+          reviewDecision={task.pr.reviewDecision}
           unresolvedThreads={task.pr.unresolvedThreads}
         />
       )}

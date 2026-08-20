@@ -13,7 +13,10 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
-import type { PullRequestCheckRun } from '@laborer/shared/rpc'
+import type {
+  PullRequestCheckRun,
+  PullRequestReviewDecision,
+} from '@laborer/shared/rpc'
 import type { WorkspaceOrigin } from '@laborer/shared/types'
 import {
   AlertDialog,
@@ -455,12 +458,15 @@ interface WorkspaceCardWorkspace {
   readonly errorMessage: string | null
   readonly id: string
   readonly origin: WorkspaceOrigin | string
+  readonly prApprovals?: number | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
   readonly prChecks: readonly PullRequestCheckRun[] | null
+  readonly prIsDraft?: boolean
   readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
+  readonly prReviewDecision?: PullRequestReviewDecision | null
   readonly prState: string | null
   readonly prTitle: string | null
   readonly prUnresolvedThreads?: number | null
@@ -875,6 +881,7 @@ function WorkspaceCard({
               conversation — rather than handing the operator to a browser tab
               for something mission control can already show them. */}
           <GitHubPrStatusBadge
+            approvals={workspace.prApprovals}
             checkStatus={workspace.prCheckStatus}
             checks={workspace.prChecks}
             onOpenConversation={
@@ -882,10 +889,12 @@ function WorkspaceCard({
                 ? undefined
                 : () => openCommentsPaneForWorkspace(workspace.id)
             }
+            prIsDraft={workspace.prIsDraft}
             prNumber={workspace.prNumber}
             prState={workspace.prState}
             prTitle={workspace.prTitle}
             prUrl={workspace.prUrl}
+            reviewDecision={workspace.prReviewDecision}
             unresolvedThreads={workspace.prUnresolvedThreads}
           />
           {showsStatus ? (

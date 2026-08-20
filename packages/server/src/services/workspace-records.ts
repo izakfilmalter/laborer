@@ -22,12 +22,20 @@ export interface WorkspaceRecord {
   readonly errorMessage: string | null
   readonly id: string
   readonly origin: 'laborer' | 'external'
+  /** How many reviewers' latest review is an approval. Null when never read. */
+  readonly prApprovals: number | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
   readonly prChecks: readonly PullRequestCheckRun[] | null
   readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
+  /** GitHub's rolled-up review verdict. Null when nobody's review is asked. */
+  readonly prReviewDecision:
+    | 'approved'
+    | 'changesRequested'
+    | 'reviewRequired'
+    | null
   readonly prState: 'OPEN' | 'CLOSED' | 'MERGED' | null
   readonly prTitle: string | null
   readonly prUnresolvedThreads: number | null
@@ -96,6 +104,8 @@ const toWorkspaceRecord = (
     prChecks: task.prChecks,
     prMergeStatus: task.prMergeStatus,
     prNumber: task.prNumber,
+    prApprovals: task.prApprovals,
+    prReviewDecision: task.prReviewDecision,
     prState: workspacePrState(task.prState),
     prTitle: task.prTitle,
     prUnresolvedThreads: task.prUnresolvedThreads,
@@ -143,6 +153,8 @@ const rootWorkspaceRecord = (project: Project): WorkspaceRecord => ({
   prChecks: null,
   prMergeStatus: null,
   prNumber: null,
+  prApprovals: null,
+  prReviewDecision: null,
   prState: null,
   prTitle: null,
   prUnresolvedThreads: null,

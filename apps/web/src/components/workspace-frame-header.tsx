@@ -298,6 +298,8 @@ function WorkspaceFrameHeader({
         <GitHubMergeConflictMark
           baseBranch={prBaseBranch}
           mergeStatus={prMergeStatus}
+          projectId={projectId}
+          workspaceId={workspaceId}
         />
       </div>
       <div className="flex gap-0.5">

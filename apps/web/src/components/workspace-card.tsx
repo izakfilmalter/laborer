@@ -890,6 +890,8 @@ function WorkspaceCard({
           <GitHubMergeConflictMark
             baseBranch={workspace.prBaseBranch}
             mergeStatus={workspace.prMergeStatus}
+            projectId={workspace.projectId}
+            workspaceId={workspace.id}
           />
         </>
       }

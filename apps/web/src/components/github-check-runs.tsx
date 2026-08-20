@@ -13,6 +13,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from '@laborer/ui/components/hover-card'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { cn } from '@laborer/ui/lib/utils'
 import {
   CircleCheck,
@@ -228,22 +229,24 @@ function GitHubCheckRunsSummary({
           </p>
         </div>
       </div>
-      <div className="max-h-72 overflow-y-auto p-1">
-        {groups.map(([group, runs]) => (
-          <div key={group}>
-            {/* One group would name the whole list, so the heading only
+      <ScrollArea className="h-auto max-h-72">
+        <div className="p-1">
+          {groups.map(([group, runs]) => (
+            <div key={group}>
+              {/* One group would name the whole list, so the heading only
                 appears once workflows actually divide it. */}
-            {groups.length > 1 && (
-              <p className="px-1.5 pt-1.5 pb-1 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
-                {group}
-              </p>
-            )}
-            {runs.map((check) => (
-              <CheckRunRow check={check} key={`${group}/${check.name}`} />
-            ))}
-          </div>
-        ))}
-      </div>
+              {groups.length > 1 && (
+                <p className="px-1.5 pt-1.5 pb-1 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
+                  {group}
+                </p>
+              )}
+              {runs.map((check) => (
+                <CheckRunRow check={check} key={`${group}/${check.name}`} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </ScrollArea>
     </>
   )
 }

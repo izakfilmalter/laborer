@@ -31,6 +31,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@laborer/ui/components/popover'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import {
   Table,
   TableBody,
@@ -179,7 +180,7 @@ export function LabelSettings({
         </Alert>
       )}
 
-      <div className="max-h-72 overflow-y-auto">
+      <ScrollArea className="h-auto max-h-72">
         <Table>
           <TableHeader>
             <TableRow>
@@ -245,7 +246,7 @@ export function LabelSettings({
             ) : null}
           </TableBody>
         </Table>
-      </div>
+      </ScrollArea>
     </section>
   )
 }

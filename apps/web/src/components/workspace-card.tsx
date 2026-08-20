@@ -28,6 +28,7 @@ import { Badge } from '@laborer/ui/components/badge'
 import { Button } from '@laborer/ui/components/button'
 import { DialogTrigger } from '@laborer/ui/components/dialog'
 import { Kbd } from '@laborer/ui/components/kbd'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { Spinner } from '@laborer/ui/components/spinner'
 import {
   Tooltip,
@@ -246,25 +247,32 @@ function DestroyDialogBody({
           </p>
         )}
         {dirtyFiles.length > 0 && (
-          <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
-            {dirtyFiles.map((file) => (
-              <li className="break-all py-0.5 text-muted-foreground" key={file}>
-                {file}
-              </li>
-            ))}
-          </ul>
+          <ScrollArea className="h-auto max-h-40 rounded-md border bg-muted/50">
+            <ul className="list-none p-2 font-mono text-xs">
+              {dirtyFiles.map((file) => (
+                <li
+                  className="break-all py-0.5 text-muted-foreground"
+                  key={file}
+                >
+                  {file}
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
         )}
         {activeTerminals.length > 0 && (
-          <ul className="max-h-40 list-none overflow-y-auto rounded-md border bg-muted/50 p-2 font-mono text-xs">
-            {activeTerminals.map((terminal) => (
-              <li
-                className="break-all py-0.5 text-muted-foreground"
-                key={terminal.id}
-              >
-                {terminal.label}
-              </li>
-            ))}
-          </ul>
+          <ScrollArea className="h-auto max-h-40 rounded-md border bg-muted/50">
+            <ul className="list-none p-2 font-mono text-xs">
+              {activeTerminals.map((terminal) => (
+                <li
+                  className="break-all py-0.5 text-muted-foreground"
+                  key={terminal.id}
+                >
+                  {terminal.label}
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
         )}
       </>
     )

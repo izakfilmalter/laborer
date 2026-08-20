@@ -44,6 +44,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@laborer/ui/components/context-menu'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { useLiveQuery } from '@tanstack/react-db'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { AlertCircle, ExternalLink, Files, Loader2 } from 'lucide-react'
@@ -526,13 +527,13 @@ function TreePane({ workspaceId, onClose }: TreePaneProps) {
           </button>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <ScrollArea className="min-h-0 flex-1">
         {isEventually ? (
           <TreePaneContent workspaceId={workspaceId} />
         ) : (
           <TreePaneLoading />
         )}
-      </div>
+      </ScrollArea>
     </div>
   )
 }

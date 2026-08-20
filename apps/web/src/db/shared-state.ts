@@ -4,6 +4,7 @@ import {
 } from '@laborer/shared/root-workspace'
 import type {
   PullRequestCheckRun,
+  PullRequestReviewDecision,
   SharedLabelRow,
   SharedProjectRow,
   SharedSettingRow,
@@ -461,6 +462,8 @@ export interface WorkspaceView {
   readonly id: string
   readonly origin: 'laborer' | 'external'
   readonly parentTaskId: string | null
+  /** How many reviewers' latest review is an approval. Null when never read. */
+  readonly prApprovals: number | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
   readonly prChecks: readonly PullRequestCheckRun[] | null
@@ -468,6 +471,8 @@ export interface WorkspaceView {
   readonly prMergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly prNumber: number | null
   readonly projectId: string
+  /** GitHub's rolled-up review verdict. Null when nobody's review is asked. */
+  readonly prReviewDecision: PullRequestReviewDecision | null
   readonly prState: string | null
   readonly prTitle: string | null
   readonly prUnresolvedThreads: number | null
@@ -519,6 +524,8 @@ const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
   prIsDraft: false,
   prMergeStatus: null,
   prNumber: null,
+  prApprovals: null,
+  prReviewDecision: null,
   projectId: project.id,
   prState: null,
   prTitle: null,
@@ -559,6 +566,8 @@ export const workspaceViewsFromRows = (
       prIsDraft: task.prIsDraft,
       prMergeStatus: task.prMergeStatus,
       prNumber: task.prNumber,
+      prApprovals: task.prApprovals,
+      prReviewDecision: task.prReviewDecision,
       projectId: project.id,
       prState: task.prState?.toUpperCase() ?? null,
       prTitle: task.prTitle,

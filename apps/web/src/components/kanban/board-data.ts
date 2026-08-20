@@ -1,4 +1,5 @@
 import type {
+  PullRequestReviewDecision,
   BoardTask as RpcBoardTask,
   SharedTaskRow,
 } from '@laborer/shared/rpc'
@@ -10,7 +11,13 @@ export type WorktreeState = 'exists' | 'provisioning' | 'gone' | 'none'
 export type SlackAnalysisState = 'analyzing' | 'failed' | null
 
 export interface BoardPr {
+  /** How many reviewers' latest review is an approval. Null is unread. */
+  readonly approvals: number | null
+  /** Still a draft: open, but asking nobody for review and unable to merge. */
+  readonly isDraft: boolean
   readonly number: number
+  /** GitHub's rolled-up verdict on the reviews. Null when none is asked. */
+  readonly reviewDecision: PullRequestReviewDecision | null
   readonly state: 'open' | 'merged' | 'closed'
   readonly title: string
   /** Review threads nobody has resolved. Null is unread, not settled. */
@@ -65,7 +72,10 @@ export const boardTaskFromSharedRow = (task: SharedTaskRow): BoardTask => ({
     task.prUrl === null
       ? null
       : {
+          approvals: task.prApprovals,
+          isDraft: task.prIsDraft,
           number: task.prNumber,
+          reviewDecision: task.prReviewDecision,
           state: task.prState,
           title: task.prTitle,
           unresolvedThreads: task.prUnresolvedThreads,

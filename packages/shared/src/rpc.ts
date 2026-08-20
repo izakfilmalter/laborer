@@ -275,6 +275,21 @@ export const PullRequestCheckRun = Schema.Struct({
 })
 export type PullRequestCheckRun = typeof PullRequestCheckRun.Type
 
+/**
+ * GitHub's rolled-up verdict on a pull request's reviews.
+ *
+ * It is not the same question as "who said what": a reviewer who approved
+ * and was then overruled by a later change request still shows as approving
+ * in the timeline, while the decision reads `changesRequested`, because the
+ * decision is what the merge button obeys.
+ */
+export const PullRequestReviewDecision = Schema.Literals([
+  'approved',
+  'changesRequested',
+  'reviewRequired',
+])
+export type PullRequestReviewDecision = typeof PullRequestReviewDecision.Type
+
 /** Authoritative shared-database task row plus server-only worktree facts. */
 export const SharedTaskRow = Schema.Struct({
   ...BoardTask.fields,
@@ -291,6 +306,12 @@ export const SharedTaskRow = Schema.Struct({
     Schema.Literals(['clean', 'conflicting', 'unknown'])
   ),
   prNumber: Schema.NullOr(Schema.Int),
+  /**
+   * How many reviewers' standing opinion is an approval. Null means unread
+   * rather than unapproved.
+   */
+  prApprovals: Schema.NullOr(NonNegativeInt),
+  prReviewDecision: Schema.NullOr(PullRequestReviewDecision),
   prState: Schema.NullOr(Schema.Literals(['open', 'closed', 'merged'])),
   prTitle: Schema.NullOr(Schema.String),
   /**

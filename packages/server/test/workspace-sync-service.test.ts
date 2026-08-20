@@ -51,12 +51,14 @@ const TestPrWatcherLayer = Layer.effect(
           ])
 
           return {
+            approvals: null,
             baseBranch: null,
             checkStatus: null,
             checks: null,
             isDraft: false,
             mergeStatus: null,
             number: null,
+            reviewDecision: null,
             state: null,
             title: null,
             unresolvedThreads: null,

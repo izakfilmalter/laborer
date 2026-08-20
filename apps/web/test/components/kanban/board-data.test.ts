@@ -34,8 +34,10 @@ const sharedTask = (overrides: Partial<SharedTaskRow> = {}): SharedTaskRow => ({
   baseBranch: null,
   baseSha: null,
   parentTaskId: null,
+  prApprovals: null,
   prIsDraft: false,
   prNumber: null,
+  prReviewDecision: null,
   prState: null,
   prTitle: null,
   prUrl: null,
@@ -85,10 +87,46 @@ describe('board task projection', () => {
     expect(projected).toMatchObject({
       parentTaskId: 'parent',
       pr: {
+        isDraft: true,
         number: 421,
         state: 'open',
         title: 'Stream workspace surfaces',
       },
+    })
+  })
+
+  it('carries the review verdict and its approvals onto the card', () => {
+    const [projected] = boardTasksFromSharedRows([
+      sharedTask({
+        prApprovals: 2,
+        prNumber: 421,
+        prReviewDecision: 'approved',
+        prState: 'open',
+        prTitle: 'Stream workspace surfaces',
+        prUrl: 'https://github.com/example/repo/pull/421',
+      }),
+    ])
+
+    expect(projected?.pr).toMatchObject({
+      approvals: 2,
+      isDraft: false,
+      reviewDecision: 'approved',
+    })
+  })
+
+  it('keeps an unread review verdict unread rather than unapproved', () => {
+    const [projected] = boardTasksFromSharedRows([
+      sharedTask({
+        prNumber: 421,
+        prState: 'open',
+        prTitle: 'Stream workspace surfaces',
+        prUrl: 'https://github.com/example/repo/pull/421',
+      }),
+    ])
+
+    expect(projected?.pr).toMatchObject({
+      approvals: null,
+      reviewDecision: null,
     })
   })
 

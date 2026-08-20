@@ -108,6 +108,8 @@ const SYNC_RE = /pull|push/i
 const CONFLICTS_RE = /Conflicts with/i
 const CHECKS_RE = /checks/i
 const UNRESOLVED_RE = /unresolved conversation/i
+const APPROVED_RE = /^Approved/
+const ANY_REVIEW_RE = /Approved|Review required|Changes requested/
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
@@ -719,6 +721,55 @@ describe('WorkspaceFrameHeader', () => {
       expect(openExternalUrlMock).toHaveBeenCalledWith(
         'https://github.com/example/repo/pull/42/files'
       )
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Review verdict: the header hands the badge what the workspace knows
+  // ---------------------------------------------------------------------------
+
+  describe('the review verdict on the header pill', () => {
+    const renderWithReview = (
+      props: Partial<{
+        prApprovals: number | null
+        prIsDraft: boolean
+        prReviewDecision: 'approved' | 'changesRequested' | 'reviewRequired'
+      }>
+    ) =>
+      render(
+        <WorkspaceFrameHeader
+          {...BASE_PROPS}
+          actions={mockActions()}
+          prNumber={42}
+          prState="OPEN"
+          prTitle="Ship the fix"
+          prUrl="https://github.com/example/repo/pull/42"
+          {...props}
+        />
+      )
+
+    it('shows the verdict and its approvals the workspace was given', () => {
+      renderWithReview({ prApprovals: 2, prReviewDecision: 'approved' })
+
+      const segment = screen.getByRole('link', { name: APPROVED_RE })
+      expect(segment.textContent).toContain('2')
+    })
+
+    it('says nothing where no review has been asked for', () => {
+      renderWithReview({})
+
+      expect(screen.queryByRole('link', { name: ANY_REVIEW_RE })).toBeNull()
+    })
+
+    it('withholds the verdict while the pull request is still a draft', () => {
+      renderWithReview({
+        prApprovals: 0,
+        prIsDraft: true,
+        prReviewDecision: 'reviewRequired',
+      })
+
+      expect(screen.queryByRole('link', { name: ANY_REVIEW_RE })).toBeNull()
+      expect(screen.getByText('draft')).toBeTruthy()
     })
   })
 

@@ -33,6 +33,10 @@ export type WorktreeStatus = 'provisioning' | 'ready' | 'errored'
 export type PullRequestState = 'open' | 'closed' | 'merged'
 export type PullRequestMergeStatus = 'clean' | 'conflicting' | 'unknown'
 export type PullRequestCheckStatus = 'pending' | 'success' | 'failure'
+export type PullRequestReviewDecision =
+  | 'approved'
+  | 'changesRequested'
+  | 'reviewRequired'
 export type PullRequestCheckRunBucket =
   | 'success'
   | 'failure'
@@ -79,12 +83,19 @@ export interface LaborerTask {
   /** Ids of the labels applied to this task, in application order. */
   readonly labelIds: readonly string[]
   readonly parentTaskId: string | null
+  /**
+   * How many reviewers' standing opinion is an approval. Null when never
+   * read.
+   */
+  readonly prApprovals: number | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: PullRequestCheckStatus | null
   readonly prChecks: readonly PullRequestCheckRun[] | null
   readonly prIsDraft: boolean
   readonly prMergeStatus: PullRequestMergeStatus | null
   readonly prNumber: number | null
+  /** GitHub's rolled-up review verdict. Null when nobody's review is asked. */
+  readonly prReviewDecision: PullRequestReviewDecision | null
   readonly prState: PullRequestState | null
   readonly prTitle: string | null
   /**
@@ -120,12 +131,14 @@ export interface NewLaborerTask {
   readonly executionStatus?: ExecutionStatus | null
   readonly id: string
   readonly parentTaskId?: string | null
+  readonly prApprovals?: number | null
   readonly prBaseBranch?: string | null
   readonly prCheckStatus?: PullRequestCheckStatus | null
   readonly prChecks?: readonly PullRequestCheckRun[] | null
   readonly prIsDraft?: boolean
   readonly prMergeStatus?: PullRequestMergeStatus | null
   readonly prNumber?: number | null
+  readonly prReviewDecision?: PullRequestReviewDecision | null
   readonly prState?: PullRequestState | null
   readonly prTitle?: string | null
   readonly prUnresolvedThreads?: number | null
@@ -159,6 +172,8 @@ export type LaborerTaskPatch = Partial<
     | 'prIsDraft'
     | 'prMergeStatus'
     | 'prNumber'
+    | 'prApprovals'
+    | 'prReviewDecision'
     | 'prState'
     | 'prTitle'
     | 'prUnresolvedThreads'
@@ -400,7 +415,8 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
   pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order,
   pr_base_branch, pr_merge_status, pr_check_status, pr_checks,
-  pr_unresolved_threads, task_number, label_ids`
+  pr_unresolved_threads, pr_review_decision, pr_approvals, task_number,
+  label_ids`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
   created_at, updated_at, revision, sort_order, branch_name`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
@@ -431,6 +447,8 @@ const TASK_PATCH_FIELDS = [
   'prIsDraft',
   'prMergeStatus',
   'prNumber',
+  'prApprovals',
+  'prReviewDecision',
   'prState',
   'prTitle',
   'prUnresolvedThreads',
@@ -469,6 +487,8 @@ const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
   prIsDraft: 'pr_is_draft',
   prMergeStatus: 'pr_merge_status',
   prNumber: 'pr_number',
+  prApprovals: 'pr_approvals',
+  prReviewDecision: 'pr_review_decision',
   prState: 'pr_state',
   prTitle: 'pr_title',
   prUnresolvedThreads: 'pr_unresolved_threads',
@@ -513,6 +533,15 @@ const revision = (value: unknown, column: string): number => {
 }
 const nullableInteger = (value: unknown, column: string): number | null =>
   value === null ? null : integer(value, column)
+/** A count, which a negative value is not: "-1 approvals" is a corrupt row
+ * to reject, not a number to render. */
+const nullableCount = (value: unknown, column: string): number | null => {
+  const parsed = nullableInteger(value, column)
+  if (parsed !== null && parsed < 0) {
+    return invalidColumn(column)
+  }
+  return parsed
+}
 const nullableNumber = (value: unknown, column: string): number | null => {
   if (value === null) {
     return null
@@ -685,6 +714,12 @@ const rowToTask = (value: unknown): LaborerTask => {
       'tasks.pr_merge_status'
     ),
     prNumber: nullableInteger(row.pr_number, 'tasks.pr_number'),
+    prApprovals: nullableCount(row.pr_approvals, 'tasks.pr_approvals'),
+    prReviewDecision: nullableEnum(
+      row.pr_review_decision,
+      ['approved', 'changesRequested', 'reviewRequired'],
+      'tasks.pr_review_decision'
+    ),
     prState: nullableEnum(
       row.pr_state,
       ['open', 'closed', 'merged'],
@@ -927,6 +962,8 @@ export class NativeLaborerDatabase {
     const prBaseBranch = input.prBaseBranch ?? null
     const prMergeStatus = input.prMergeStatus ?? null
     const prCheckStatus = input.prCheckStatus ?? null
+    const prReviewDecision = input.prReviewDecision ?? null
+    const prApprovals = input.prApprovals ?? null
     return this.#writeTransaction(() => {
       const sortOrder = taskSortOrder(this.#database, input)
       this.#database
@@ -937,9 +974,9 @@ export class NativeLaborerDatabase {
           worktree_error, setup_completed_at, parent_task_id, base_sha,
           base_branch, pr_number, pr_url, pr_title, pr_state, pr_is_draft,
           sort_order, pr_base_branch, pr_merge_status, pr_check_status,
-          pr_checks, pr_unresolved_threads
+          pr_checks, pr_unresolved_threads, pr_review_decision, pr_approvals
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           input.id,
           input.rootPath,
@@ -971,7 +1008,9 @@ export class NativeLaborerDatabase {
           prMergeStatus,
           prCheckStatus,
           serializeCheckRuns(input.prChecks),
-          input.prUnresolvedThreads ?? null
+          input.prUnresolvedThreads ?? null,
+          prReviewDecision,
+          prApprovals
         )
       const cursor = this.#appendTaskChange(input.id, changedAt, operationId)
       return { row: this.#requireTask(input.id), cursor }

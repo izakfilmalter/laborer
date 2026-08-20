@@ -30,6 +30,7 @@ import { LaborerDatabase } from './laborer-database.js'
 import {
   MAX_PULL_REQUEST_CHECK_RUNS,
   type PullRequestCheckRun,
+  type PullRequestReviewDecision,
 } from './native-laborer-database.js'
 import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
@@ -37,7 +38,7 @@ import {
   PR_VISIBLE_POLL_INTERVAL_MS,
 } from './polling-intervals.js'
 import { PrTaskTransitions } from './pr-task-transitions.js'
-import { fetchUnresolvedReviewThreadCount } from './pull-request-comments.js'
+import { fetchPullRequestReviewSummary } from './pull-request-comments.js'
 import { getVisibleWorkspaceIds } from './visible-workspaces.js'
 import {
   findWorkspaceRecord,
@@ -53,12 +54,25 @@ import {
  * All fields are nullable because the branch may not have a PR.
  */
 interface PrData {
+  /**
+   * How many reviewers' standing opinion is an approval. Null when the
+   * question does not apply, matching {@link unresolvedThreads}: a stale
+   * approval on a pull request nobody is reviewing is not a fact worth
+   * drawing.
+   */
+  readonly approvals: number | null
   readonly baseBranch: string | null
   readonly checkStatus: 'pending' | 'success' | 'failure' | null
   readonly checks: readonly PullRequestCheckRun[] | null
   readonly isDraft: boolean
   readonly mergeStatus: 'clean' | 'conflicting' | 'unknown' | null
   readonly number: number | null
+  /**
+   * GitHub's own verdict on the reviews — what its merge button obeys — as
+   * opposed to the tally of who said what. Null when the repository asks
+   * nobody for review, which is silence rather than "not yet approved".
+   */
+  readonly reviewDecision: PullRequestReviewDecision | null
   readonly state: string | null
   readonly title: string | null
   /**
@@ -85,6 +99,7 @@ const GhCheck = Schema.Struct({
 
 const GhPrData = Schema.Struct({
   baseRefName: Schema.optional(Schema.NullOr(Schema.String)),
+  reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.String)),
   mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
@@ -103,7 +118,26 @@ const GhPrDataJson = Schema.fromJsonString(GhPrData)
  * ride along on a request already being made.
  */
 const PR_VIEW_JSON_FIELDS =
-  'number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt'
+  'number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision'
+
+/**
+ * GitHub's review decision, in this app's spelling. An empty string means the
+ * repository requires no review, which is not a verdict.
+ */
+const reviewDecision = (
+  value: string | null | undefined
+): PullRequestReviewDecision | null => {
+  switch (value?.toUpperCase()) {
+    case 'APPROVED':
+      return 'approved'
+    case 'CHANGES_REQUESTED':
+      return 'changesRequested'
+    case 'REVIEW_REQUIRED':
+      return 'reviewRequired'
+    default:
+      return null
+  }
+}
 
 /** Serialized PR state for deduplication. */
 const serializePrData = (data: PrData): string =>
@@ -118,6 +152,8 @@ const serializePrData = (data: PrData): string =>
     data.checkStatus,
     data.checks?.map((check) => [check.name, check.bucket]) ?? null,
     data.unresolvedThreads,
+    data.reviewDecision,
+    data.approvals,
   ])
 
 const FAILURE_CONCLUSIONS = new Set([
@@ -244,12 +280,14 @@ const mergeStatus = (
 
 /** Empty PR data (no PR found). */
 const EMPTY_PR: PrData = {
+  approvals: null,
   baseBranch: null,
   checkStatus: null,
   checks: null,
   isDraft: false,
   mergeStatus: null,
   number: null,
+  reviewDecision: null,
   unresolvedThreads: null,
   url: null,
   title: null,
@@ -334,42 +372,56 @@ const loadLocalMergeData = Effect.fn('PrWatcher.loadLocalMergeData')(function* (
 })
 
 /**
- * Read how many review threads are still waiting on someone, or null when the
+ * Read the review facts GitHub only answers over GraphQL, or null when the
  * read did not produce an answer.
  *
  * A failure is a value here rather than an error because the caller holds the
- * last known count: on a five-second poll, one refused request would
+ * last known counts: on a five-second poll, one refused request would
  * otherwise make the badge blink out and back. It is logged at debug because
  * the same request repeats every tick, so a lasting fault — a revoked token,
  * an exhausted GraphQL budget — would fill the log with one line per attempt
  * saying nothing new.
  */
-const loadUnresolvedThreads = Effect.fn('PrWatcher.loadUnresolvedThreads')(
-  function* (worktreePath: string, repoSlug: string, prNumber: number) {
-    return yield* fetchUnresolvedReviewThreadCount(
-      worktreePath,
-      repoSlug,
-      prNumber
-    ).pipe(
-      // `runGh` kills the child when this fiber unwinds, but nothing bounds
-      // how long it waits for one. The poll loop is sequential, so an
-      // unbounded wait here is an unbounded pause on check status and
-      // mergeability too.
-      Effect.timeout(Duration.millis(PR_REVIEW_THREADS_TIMEOUT_MS)),
-      Effect.catch((failure) =>
-        Effect.logDebug(
-          `[PrWatcher] Failed to read unresolved review threads for #${prNumber}: ${failure.message}`
-        ).pipe(Effect.as(null))
-      )
+const loadReviewSummary = Effect.fn('PrWatcher.loadReviewSummary')(function* (
+  worktreePath: string,
+  repoSlug: string,
+  prNumber: number
+) {
+  return yield* fetchPullRequestReviewSummary(
+    worktreePath,
+    repoSlug,
+    prNumber
+  ).pipe(
+    // `runGh` kills the child when this fiber unwinds, but nothing bounds
+    // how long it waits for one. The poll loop is sequential, so an
+    // unbounded wait here is an unbounded pause on check status and
+    // mergeability too.
+    Effect.timeout(Duration.millis(PR_REVIEW_THREADS_TIMEOUT_MS)),
+    Effect.catch((failure) =>
+      Effect.logDebug(
+        `[PrWatcher] Failed to read the review summary for #${prNumber}: ${failure.message}`
+      ).pipe(Effect.as(null))
     )
-  }
-)
+  )
+})
 
-/** What a workspace's last successful thread count was, and for which
- * revision of the pull request. */
-interface ThreadCountCacheEntry {
-  readonly count: number
+/** The review facts a workspace last read, and the revision of the pull
+ * request they were read for. */
+interface ReviewSummaryCacheEntry extends ReviewCounts {
   readonly updatedAt: string
+}
+
+/** The review facts as the badge and the task row carry them: null is
+ * "unread", which is not the same fact as zero. */
+interface ReviewCounts {
+  readonly approvals: number | null
+  readonly unresolvedThreads: number | null
+}
+
+/** Neither question applies — no pull request, or one already closed. */
+const NO_REVIEW_COUNTS: ReviewCounts = {
+  approvals: null,
+  unresolvedThreads: null,
 }
 
 /**
@@ -382,11 +434,13 @@ interface ThreadCountCacheEntry {
 const hostedPrData = (
   parsed: typeof GhPrData.Type,
   localMergeData: PrData,
-  unresolvedThreads: number | null
+  reviewCounts: ReviewCounts
 ): PrData => {
   const localMergeStatus = localMergeData.mergeStatus
 
   return {
+    approvals: reviewCounts.approvals,
+    reviewDecision: reviewDecision(parsed.reviewDecision),
     baseBranch: parsed.baseRefName ?? localMergeData.baseBranch ?? null,
     checkStatus: checkStatus(parsed.statusCheckRollup),
     checks: checkRuns(parsed.statusCheckRollup),
@@ -396,7 +450,7 @@ const hostedPrData = (
         ? mergeStatus(parsed.mergeable, parsed.mergeStateStatus)
         : localMergeStatus,
     number: parsed.number ?? null,
-    unresolvedThreads,
+    unresolvedThreads: reviewCounts.unresolvedThreads,
     url: parsed.url ?? null,
     title: parsed.title ?? null,
     state: parsed.state ?? null,
@@ -472,8 +526,8 @@ class PrWatcher extends Context.Service<
       // Cache previous PR state per workspace for deduplication.
       const previousPrState = yield* Ref.make<Map<string, string>>(new Map())
 
-      // Last thread count read per workspace, keyed by the PR revision it was
-      // read for. GraphQL spends from a budget of its own and honours no
+      // Last review facts read per workspace, keyed by the PR revision they
+      // were read for. GraphQL spends from a budget of its own and honours no
       // conditional request, so unlike `gh pr view` there is no cheap way to
       // ask again; a visible workspace polling every five seconds would spend
       // 720 of the 5 000 hourly points on questions whose answer cannot have
@@ -483,68 +537,79 @@ class PrWatcher extends Context.Service<
       // the cost of forgetting it is one request per workspace at startup.
       // GitHub Desktop gates its pull request refresh on `updated_at` the
       // same way (app/src/lib/api.ts, `fetchUpdatedPullRequests`).
-      const threadCountCache = yield* Ref.make<
-        Map<string, ThreadCountCacheEntry>
+      const reviewSummaryCache = yield* Ref.make<
+        Map<string, ReviewSummaryCacheEntry>
       >(new Map())
 
       /**
-       * How many review threads are still waiting on someone.
+       * How many review threads are still waiting on someone, and how many
+       * reviewers stand behind the pull request.
        *
        * Only an open pull request can be waiting on anyone, and open is the
        * only state the badge appears in, so a closed or merged one is not
        * worth a request. Anything that stops short of an answer — no
-       * repository in the URL, a refused or slow request — holds the last
-       * count that was persisted.
+       * repository in the URL, a refused or slow request, more reviewers than
+       * one request reads — holds the last counts that were persisted.
        */
-      const readUnresolvedThreads = Effect.fn(
-        'PrWatcher.readUnresolvedThreads'
-      )(function* (
-        workspaceId: string,
-        worktreePath: string,
-        pullRequest: typeof GhPrData.Type,
-        lastCount: number | null
-      ) {
-        const prNumber = pullRequest.number ?? null
-        if (prNumber === null || pullRequest.state?.toUpperCase() !== 'OPEN') {
-          return null
-        }
+      const readReviewCounts = Effect.fn('PrWatcher.readReviewCounts')(
+        function* (
+          workspaceId: string,
+          worktreePath: string,
+          pullRequest: typeof GhPrData.Type,
+          last: ReviewCounts
+        ) {
+          const prNumber = pullRequest.number ?? null
+          if (
+            prNumber === null ||
+            pullRequest.state?.toUpperCase() !== 'OPEN'
+          ) {
+            return NO_REVIEW_COUNTS
+          }
 
-        const updatedAt = pullRequest.updatedAt ?? null
-        const cached = (yield* Ref.get(threadCountCache)).get(workspaceId)
-        if (updatedAt !== null && cached?.updatedAt === updatedAt) {
-          return cached.count
-        }
+          const updatedAt = pullRequest.updatedAt ?? null
+          const cached = (yield* Ref.get(reviewSummaryCache)).get(workspaceId)
+          if (updatedAt !== null && cached?.updatedAt === updatedAt) {
+            return cached
+          }
 
-        // The pull request the number belongs to is the one its own URL
-        // names — for a fork, `gh pr view` may have answered from upstream
-        // while origin is the fork.
-        const prUrl = pullRequest.url ?? null
-        const repoSlug = prUrl === null ? null : parsePullRequestRepoSlug(prUrl)
-        if (repoSlug === null) {
-          yield* Effect.logDebug(
-            `[PrWatcher] No GitHub repository in the URL for PR #${prNumber}: ${prUrl ?? 'none'}`
+          // The pull request the number belongs to is the one its own URL
+          // names — for a fork, `gh pr view` may have answered from upstream
+          // while origin is the fork.
+          const prUrl = pullRequest.url ?? null
+          const repoSlug =
+            prUrl === null ? null : parsePullRequestRepoSlug(prUrl)
+          if (repoSlug === null) {
+            yield* Effect.logDebug(
+              `[PrWatcher] No GitHub repository in the URL for PR #${prNumber}: ${prUrl ?? 'none'}`
+            )
+            return last
+          }
+
+          const summary = yield* loadReviewSummary(
+            worktreePath,
+            repoSlug,
+            prNumber
           )
-          return lastCount
-        }
+          if (summary === null) {
+            return last
+          }
 
-        const count = yield* loadUnresolvedThreads(
-          worktreePath,
-          repoSlug,
-          prNumber
-        )
-        if (count === null) {
-          return lastCount
-        }
+          // An approval count GitHub would not answer for is held rather than
+          // reported as zero, for the same reason a refused request is.
+          const counts: ReviewCounts = {
+            approvals: summary.approvals ?? last.approvals,
+            unresolvedThreads: summary.unresolvedThreads,
+          }
 
-        if (updatedAt !== null) {
-          const entry = { count, updatedAt }
-          yield* Ref.update(threadCountCache, (cache) =>
-            new Map(cache).set(workspaceId, entry)
-          )
-        }
+          if (updatedAt !== null) {
+            yield* Ref.update(reviewSummaryCache, (cache) =>
+              new Map(cache).set(workspaceId, { ...counts, updatedAt })
+            )
+          }
 
-        return count
-      })
+          return counts
+        }
+      )
 
       /**
        * Run `gh pr view` in a worktree directory and parse the JSON output.
@@ -555,7 +620,7 @@ class PrWatcher extends Context.Service<
         worktreePath: string,
         branchName: string,
         baseBranch: string | null,
-        lastUnresolvedThreads: number | null
+        lastReviewCounts: ReviewCounts
       ) {
         // A workspace can outlive its directory (for example when its project
         // is removed). Node reports a missing cwd as `spawn gh ENOENT`, which
@@ -611,14 +676,14 @@ class PrWatcher extends Context.Service<
           worktreePath,
           parseResult.baseRefName ?? baseBranch
         )
-        const unresolvedThreads = yield* readUnresolvedThreads(
+        const reviewCounts = yield* readReviewCounts(
           workspaceId,
           worktreePath,
           parseResult,
-          lastUnresolvedThreads
+          lastReviewCounts
         )
 
-        return hostedPrData(parseResult, localMergeData, unresolvedThreads)
+        return hostedPrData(parseResult, localMergeData, reviewCounts)
       })
 
       const checkPr = Effect.fn('PrWatcher.checkPr')(function* (
@@ -643,7 +708,10 @@ class PrWatcher extends Context.Service<
           workspace.worktreePath,
           workspace.branchName,
           workspace.baseBranch,
-          workspace.prUnresolvedThreads
+          {
+            approvals: workspace.prApprovals,
+            unresolvedThreads: workspace.prUnresolvedThreads,
+          }
         )
 
         // Deduplicate: only commit event if PR state changed
@@ -653,6 +721,8 @@ class PrWatcher extends Context.Service<
           checkStatus: workspace.prCheckStatus,
           checks: workspace.prChecks,
           number: workspace.prNumber,
+          approvals: workspace.prApprovals,
+          reviewDecision: workspace.prReviewDecision,
           isDraft: false,
           mergeStatus: workspace.prMergeStatus,
           unresolvedThreads: workspace.prUnresolvedThreads,
@@ -712,6 +782,8 @@ class PrWatcher extends Context.Service<
             prIsDraft: prData.isDraft,
             prMergeStatus: prData.mergeStatus,
             prNumber: prData.number,
+            prApprovals: prData.approvals,
+            prReviewDecision: prData.reviewDecision,
             prState: normalizedState,
             prTitle: prData.title,
             prUnresolvedThreads: prData.unresolvedThreads,
@@ -845,7 +917,7 @@ class PrWatcher extends Context.Service<
           next.delete(workspaceId)
           return next
         })
-        yield* Ref.update(threadCountCache, (cache) => {
+        yield* Ref.update(reviewSummaryCache, (cache) => {
           const next = new Map(cache)
           next.delete(workspaceId)
           return next
@@ -867,7 +939,7 @@ class PrWatcher extends Context.Service<
           )
 
           yield* Ref.set(previousPrState, new Map())
-          yield* Ref.set(threadCountCache, new Map())
+          yield* Ref.set(reviewSummaryCache, new Map())
 
           yield* Effect.log(
             `[PrWatcher] stopped all polling (${fibers.size} workspaces)`

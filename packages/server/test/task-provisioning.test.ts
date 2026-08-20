@@ -97,12 +97,14 @@ const testLayer = (
       PrWatcher.of({
         checkPr: () =>
           Effect.succeed({
+            approvals: null,
             baseBranch: null,
             checkStatus: null,
             checks: null,
             isDraft: false,
             mergeStatus: null,
             number: null,
+            reviewDecision: null,
             state: null,
             title: null,
             unresolvedThreads: null,
@@ -154,6 +156,8 @@ const durableWorkspace = {
   prChecks: null,
   prMergeStatus: null,
   prNumber: null,
+  prApprovals: null,
+  prReviewDecision: null,
   prState: null,
   prTitle: null,
   prUnresolvedThreads: null,

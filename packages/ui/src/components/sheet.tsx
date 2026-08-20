@@ -1,11 +1,30 @@
 import { Dialog as SheetPrimitive } from '@base-ui/react/dialog'
 import { Button } from '@laborer/ui/components/button'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { XIcon } from 'lucide-react'
 import type * as React from 'react'
 
-function Sheet({ ...props }: SheetPrimitive.Root.Props) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+function Sheet({ onOpenChange, ...props }: SheetPrimitive.Root.Props) {
+  const handleOpenChange: SheetPrimitive.Root.Props['onOpenChange'] = (
+    open,
+    eventDetails
+  ) => {
+    if (open) {
+      haptics.dialogOpen()
+    } else {
+      haptics.dismiss()
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+
+  return (
+    <SheetPrimitive.Root
+      data-slot="sheet"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function SheetTrigger({ ...props }: SheetPrimitive.Trigger.Props) {

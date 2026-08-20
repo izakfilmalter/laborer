@@ -49,6 +49,7 @@
     "@tailwindcss/postcss": "^4.0.15",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4.0.15",
     "typescript": "catalog:",
     "vitest": "^4.0.18"

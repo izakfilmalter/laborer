@@ -1,4 +1,5 @@
 import { Accordion as AccordionPrimitive } from '@base-ui/react/accordion'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 
@@ -12,11 +13,29 @@ function Accordion({ className, ...props }: AccordionPrimitive.Root.Props) {
   )
 }
 
-function AccordionItem({ className, ...props }: AccordionPrimitive.Item.Props) {
+function AccordionItem({
+  className,
+  onOpenChange,
+  ...props
+}: AccordionPrimitive.Item.Props) {
+  // Opening swells, closing ticks — the texture carries the direction.
+  const handleOpenChange: AccordionPrimitive.Item.Props['onOpenChange'] = (
+    open,
+    eventDetails
+  ) => {
+    if (open) {
+      haptics.expand()
+    } else {
+      haptics.collapse()
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+
   return (
     <AccordionPrimitive.Item
       className={cn('not-last:border-b', className)}
       data-slot="accordion-item"
+      onOpenChange={handleOpenChange}
       {...props}
     />
   )

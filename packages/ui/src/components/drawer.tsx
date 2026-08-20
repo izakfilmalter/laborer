@@ -1,13 +1,30 @@
 'use client'
 
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import type * as React from 'react'
 import { Drawer as DrawerPrimitive } from 'vaul'
 
 function Drawer({
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Root>) {
-  return <DrawerPrimitive.Root data-slot="drawer" {...props} />
+  const handleOpenChange = (open: boolean) => {
+    if (open) {
+      haptics.dialogOpen()
+    } else {
+      haptics.dismiss()
+    }
+    onOpenChange?.(open)
+  }
+
+  return (
+    <DrawerPrimitive.Root
+      data-slot="drawer"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function DrawerTrigger({

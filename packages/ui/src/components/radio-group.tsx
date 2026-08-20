@@ -1,13 +1,29 @@
 import { Radio as RadioPrimitive } from '@base-ui/react/radio'
 import { RadioGroup as RadioGroupPrimitive } from '@base-ui/react/radio-group'
 
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 
-function RadioGroup({ className, ...props }: RadioGroupPrimitive.Props) {
+function RadioGroup({
+  className,
+  onValueChange,
+  ...props
+}: RadioGroupPrimitive.Props) {
+  // Driven from the group so re-selecting the active radio stays silent —
+  // a tick should mark a real change of selection, not every press.
+  const handleValueChange: RadioGroupPrimitive.Props['onValueChange'] = (
+    value,
+    eventDetails
+  ) => {
+    haptics.selection()
+    onValueChange?.(value, eventDetails)
+  }
+
   return (
     <RadioGroupPrimitive
       className={cn('grid w-full gap-2', className)}
       data-slot="radio-group"
+      onValueChange={handleValueChange}
       {...props}
     />
   )

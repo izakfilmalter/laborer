@@ -9,9 +9,9 @@
  * | success    | success        |
  * | error      | error          |
  * | warning    | warning        |
- * | loading    | soft (spawn)   |
- * | message    | buttonTap      |
- * | info       | buttonTap      |
+ * | loading    | spawn          |
+ * | message    | tap            |
+ * | info       | tap            |
  *
  * Usage:
  *   import { toast } from '@/lib/toast'
@@ -40,7 +40,7 @@ function withHaptic(
 const toast: ToastFn = Object.assign(
   // Default toast (bare `toast('message')`) — light tap
   ((...args: Parameters<ToastFn>) => {
-    haptics.buttonTap()
+    haptics.tap()
     return sonnerToast(...args)
   }) as ToastFn,
   {
@@ -52,8 +52,8 @@ const toast: ToastFn = Object.assign(
     error: withHaptic(sonnerToast.error, haptics.error),
     warning: withHaptic(sonnerToast.warning, haptics.warning),
     loading: withHaptic(sonnerToast.loading, haptics.spawn),
-    message: withHaptic(sonnerToast.message, haptics.buttonTap),
-    info: withHaptic(sonnerToast.info, haptics.buttonTap),
+    message: withHaptic(sonnerToast.message, haptics.tap),
+    info: withHaptic(sonnerToast.info, haptics.tap),
   }
 )
 

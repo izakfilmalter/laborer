@@ -13,12 +13,14 @@ function Switch({
 }: SwitchPrimitive.Root.Props & {
   size?: 'sm' | 'default'
 }) {
-  const handleCheckedChange: typeof onCheckedChange = onCheckedChange
-    ? (checked, eventDetails) => {
-        haptics.selection()
-        onCheckedChange(checked, eventDetails)
-      }
-    : undefined
+  // Fire whenever the switch actually flips, even for uncontrolled usage.
+  const handleCheckedChange: SwitchPrimitive.Root.Props['onCheckedChange'] = (
+    checked,
+    eventDetails
+  ) => {
+    haptics.selection()
+    onCheckedChange?.(checked, eventDetails)
+  }
 
   return (
     <SwitchPrimitive.Root

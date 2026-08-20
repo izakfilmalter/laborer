@@ -2,11 +2,35 @@
 
 import { AlertDialog as AlertDialogPrimitive } from '@base-ui/react/alert-dialog'
 import { Button } from '@laborer/ui/components/button'
+import { haptics } from '@laborer/ui/lib/haptics'
 import { cn } from '@laborer/ui/lib/utils'
 import type * as React from 'react'
 
-function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+function AlertDialog({
+  onOpenChange,
+  ...props
+}: AlertDialogPrimitive.Root.Props) {
+  // An alert dialog exists to say "destructive action ahead", so it warns
+  // rather than using the neutral dialog-open tap.
+  const handleOpenChange: AlertDialogPrimitive.Root.Props['onOpenChange'] = (
+    open,
+    eventDetails
+  ) => {
+    if (open) {
+      haptics.warning()
+    } else {
+      haptics.dismiss()
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+
+  return (
+    <AlertDialogPrimitive.Root
+      data-slot="alert-dialog"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {

@@ -31,6 +31,7 @@ export const pendingTaskRow = (input: {
     prNumber: null,
     prState: null,
     prTitle: null,
+    prUnresolvedThreads: null,
     prUrl: null,
     revision: 1,
     rootPath: input.rootPath,

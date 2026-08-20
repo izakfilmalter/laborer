@@ -59,6 +59,7 @@ const TestPrWatcherLayer = Layer.effect(
             number: null,
             state: null,
             title: null,
+            unresolvedThreads: null,
             url: null,
           }
         }),

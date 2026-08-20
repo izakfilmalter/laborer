@@ -293,6 +293,11 @@ export const SharedTaskRow = Schema.Struct({
   prNumber: Schema.NullOr(Schema.Int),
   prState: Schema.NullOr(Schema.Literals(['open', 'closed', 'merged'])),
   prTitle: Schema.NullOr(Schema.String),
+  /**
+   * Review threads still awaiting resolution. Null means unread rather than
+   * settled: a closed pull request, or a branch that never had one.
+   */
+  prUnresolvedThreads: Schema.NullOr(Schema.Int),
   prUrl: Schema.NullOr(Schema.String),
   setupCompletedAt: Schema.NullOr(Schema.Int),
   sortOrder: Schema.NullOr(Schema.Finite),

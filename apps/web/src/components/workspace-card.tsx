@@ -463,6 +463,7 @@ interface WorkspaceCardWorkspace {
   readonly projectId: string
   readonly prState: string | null
   readonly prTitle: string | null
+  readonly prUnresolvedThreads?: number | null
   readonly prUrl: string | null
   readonly status: string
   readonly taskNumber?: number | null
@@ -871,6 +872,7 @@ function WorkspaceCard({
             prState={workspace.prState}
             prTitle={workspace.prTitle}
             prUrl={workspace.prUrl}
+            unresolvedThreads={workspace.prUnresolvedThreads}
           />
           {showsStatus ? (
             <WorkspaceStatusBadge

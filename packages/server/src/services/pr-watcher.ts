@@ -33,6 +33,7 @@ import {
   PR_VISIBLE_POLL_INTERVAL_MS,
 } from './polling-intervals.js'
 import { PrTaskTransitions } from './pr-task-transitions.js'
+import { fetchUnresolvedReviewThreadCount } from './pull-request-comments.js'
 import { getVisibleWorkspaceIds } from './visible-workspaces.js'
 import {
   findWorkspaceRecord,
@@ -56,6 +57,12 @@ interface PrData {
   readonly number: number | null
   readonly state: string | null
   readonly title: string | null
+  /**
+   * Review threads nobody has resolved. Null when the question does not
+   * apply — no pull request, or one already closed — which the badge reads
+   * as "nothing to say" rather than "all clear".
+   */
+  readonly unresolvedThreads: number | null
   readonly url: string | null
 }
 
@@ -97,6 +104,7 @@ const serializePrData = (data: PrData): string =>
     data.mergeStatus,
     data.checkStatus,
     data.checks?.map((check) => [check.name, check.bucket]) ?? null,
+    data.unresolvedThreads,
   ])
 
 const FAILURE_CONCLUSIONS = new Set([
@@ -229,6 +237,7 @@ const EMPTY_PR: PrData = {
   isDraft: false,
   mergeStatus: null,
   number: null,
+  unresolvedThreads: null,
   url: null,
   title: null,
   state: null,
@@ -311,6 +320,38 @@ const loadLocalMergeData = Effect.fn('PrWatcher.loadLocalMergeData')(function* (
   }
 })
 
+/**
+ * How many review threads are still waiting on someone.
+ *
+ * Resolution state is a GraphQL-only fact, so this costs a request beyond
+ * `gh pr view`. Only an open pull request can still be waiting on anyone,
+ * and it is the only state the badge appears in, so a closed or merged one
+ * is not worth asking about.
+ */
+const loadUnresolvedThreads = Effect.fn('PrWatcher.loadUnresolvedThreads')(
+  function* (
+    worktreePath: string,
+    prNumber: number | null,
+    prState: string | null,
+    lastCount: number | null
+  ) {
+    if (prNumber === null || prState?.toUpperCase() !== 'OPEN') {
+      return null
+    }
+
+    return yield* fetchUnresolvedReviewThreadCount(worktreePath, prNumber).pipe(
+      // A failed read holds the last known count rather than blanking it: on
+      // a five-second poll, one refused request would otherwise make the
+      // badge blink out and back.
+      Effect.catch((failure) =>
+        Effect.logWarning(
+          `[PrWatcher] Failed to read unresolved review threads for #${prNumber}: ${failure.message}`
+        ).pipe(Effect.as(lastCount))
+      )
+    )
+  }
+)
+
 class PrWatcher extends Context.Service<
   PrWatcher,
   {
@@ -387,7 +428,8 @@ class PrWatcher extends Context.Service<
       const loadPrData = Effect.fn('PrWatcher.loadPrData')(function* (
         worktreePath: string,
         branchName: string,
-        baseBranch: string | null
+        baseBranch: string | null,
+        lastUnresolvedThreads: number | null
       ) {
         // A workspace can outlive its directory (for example when its project
         // is removed). Node reports a missing cwd as `spawn gh ENOENT`, which
@@ -448,6 +490,13 @@ class PrWatcher extends Context.Service<
           parseResult.baseRefName ?? baseBranch
         )
         const localMergeStatus = localMergeData.mergeStatus
+        const prNumber = parseResult.number ?? null
+        const unresolvedThreads = yield* loadUnresolvedThreads(
+          worktreePath,
+          prNumber,
+          parseResult.state ?? null,
+          lastUnresolvedThreads
+        )
 
         return {
           baseBranch:
@@ -459,7 +508,8 @@ class PrWatcher extends Context.Service<
             localMergeStatus === null || localMergeStatus === 'unknown'
               ? hostedMergeStatus
               : localMergeStatus,
-          number: parseResult.number ?? null,
+          number: prNumber,
+          unresolvedThreads,
           url: parseResult.url ?? null,
           title: parseResult.title ?? null,
           state: parseResult.state ?? null,
@@ -486,7 +536,8 @@ class PrWatcher extends Context.Service<
         const prData = yield* loadPrData(
           workspace.worktreePath,
           workspace.branchName,
-          workspace.baseBranch
+          workspace.baseBranch,
+          workspace.prUnresolvedThreads
         )
 
         // Deduplicate: only commit event if PR state changed
@@ -498,6 +549,7 @@ class PrWatcher extends Context.Service<
           number: workspace.prNumber,
           isDraft: false,
           mergeStatus: workspace.prMergeStatus,
+          unresolvedThreads: workspace.prUnresolvedThreads,
           url: workspace.prUrl,
           title: workspace.prTitle,
           state: workspace.prState,
@@ -556,6 +608,7 @@ class PrWatcher extends Context.Service<
             prNumber: prData.number,
             prState: normalizedState,
             prTitle: prData.title,
+            prUnresolvedThreads: prData.unresolvedThreads,
             prUrl: prData.url,
           }).pipe(
             Effect.catch((error) =>

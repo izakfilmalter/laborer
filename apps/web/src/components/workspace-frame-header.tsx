@@ -96,6 +96,8 @@ interface WorkspaceFrameHeaderProps {
   readonly prState: string | null
   /** PR title for tooltip. */
   readonly prTitle: string | null
+  /** Review threads on the pull request that nobody has resolved yet. */
+  readonly prUnresolvedThreads?: number | null | undefined
   /** PR URL for linking. */
   readonly prUrl: string | null
   /** Project-scoped task number, absent for the root workspace. */
@@ -240,6 +242,7 @@ function WorkspaceFrameHeader({
   prNumber,
   prState,
   prTitle,
+  prUnresolvedThreads = null,
   prUrl,
   projectId,
   projectName,
@@ -339,6 +342,7 @@ function WorkspaceFrameHeader({
           prState={prState}
           prTitle={prTitle}
           prUrl={prUrl}
+          unresolvedThreads={prUnresolvedThreads}
         />
         {workspaceId ? <WorkspaceSyncStatus workspaceId={workspaceId} /> : null}
         {showsAgentStatus ? (

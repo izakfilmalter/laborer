@@ -8,6 +8,7 @@ import type { SpawnResult } from '../src/lib/spawn.js'
 import { spawn } from '../src/lib/spawn.js'
 import {
   fetchPullRequestComments,
+  fetchUnresolvedReviewThreadCount,
   parsePaginatedJsonArray,
 } from '../src/services/pull-request-comments.js'
 
@@ -118,6 +119,109 @@ describe('fetchPullRequestComments', () => {
       yield* Fiber.interrupt(fiber)
 
       expect(kill).toHaveBeenCalled()
+    })
+  )
+})
+
+/** One `gh api graphql --slurp` page of review threads. */
+const threadPage = (resolved: readonly boolean[]) => ({
+  data: {
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          nodes: resolved.map((isResolved) => ({ isResolved })),
+          pageInfo: { endCursor: null, hasNextPage: false },
+        },
+      },
+    },
+  },
+})
+
+/** `git config` answers the origin, `gh` answers whatever the test sets. */
+const mockGh = (stdout: string, exitCode = 0) => {
+  spawnMock.mockImplementation(((cmd: string[]) =>
+    cmd[0] === 'git'
+      ? {
+          exited: Promise.resolve(0),
+          kill: () => true,
+          pid: 1,
+          stderr: streamOf(''),
+          stdout: streamOf('git@github.com:izakfilmalter/laborer.git\n'),
+        }
+      : {
+          exited: Promise.resolve(exitCode),
+          kill: () => true,
+          pid: 2,
+          stderr: streamOf(exitCode === 0 ? '' : stdout),
+          stdout: streamOf(exitCode === 0 ? stdout : ''),
+        }) as typeof spawn)
+}
+
+describe('fetchUnresolvedReviewThreadCount', () => {
+  it.effect('counts threads nobody resolved, across every page', () =>
+    Effect.gen(function* () {
+      const worktreePath = yield* makeWorktreeDir
+      mockGh(
+        JSON.stringify([
+          threadPage([true, false, false]),
+          threadPage([false, true]),
+        ])
+      )
+
+      expect(yield* fetchUnresolvedReviewThreadCount(worktreePath, 7)).toBe(3)
+    })
+  )
+
+  it.effect('asks GitHub only about the pull request it was given', () =>
+    Effect.gen(function* () {
+      const worktreePath = yield* makeWorktreeDir
+      mockGh(JSON.stringify([threadPage([])]))
+
+      yield* fetchUnresolvedReviewThreadCount(worktreePath, 42)
+
+      const ghCall = spawnMock.mock.calls.find(
+        ([cmd]) => cmd[0] === 'gh'
+      )?.[0] as string[]
+      expect(ghCall).toContain('graphql')
+      expect(ghCall).toContain('number=42')
+      expect(ghCall).toContain('repo=laborer')
+      expect(ghCall).toContain('owner=izakfilmalter')
+    })
+  )
+
+  it.effect('reads a fully settled pull request as zero', () =>
+    Effect.gen(function* () {
+      const worktreePath = yield* makeWorktreeDir
+      mockGh(JSON.stringify([threadPage([true, true])]))
+
+      expect(yield* fetchUnresolvedReviewThreadCount(worktreePath, 7)).toBe(0)
+    })
+  )
+
+  it.effect('fails rather than reading a refused query as nothing to do', () =>
+    Effect.gen(function* () {
+      const worktreePath = yield* makeWorktreeDir
+      mockGh(JSON.stringify([{ data: null }]))
+
+      const failure = yield* Effect.flip(
+        fetchUnresolvedReviewThreadCount(worktreePath, 7)
+      )
+
+      assert.strictEqual(failure._tag, 'GhApiFailure')
+      expect(failure.message).toContain('no pull request')
+    })
+  )
+
+  it.effect('names the missing worktree instead of blaming gh', () =>
+    Effect.gen(function* () {
+      const missingPath = join(tmpdir(), 'pr-threads-gone')
+
+      const failure = yield* Effect.flip(
+        fetchUnresolvedReviewThreadCount(missingPath, 7)
+      )
+
+      expect(failure.message).toBe(`Worktree no longer exists: ${missingPath}`)
+      expect(spawnMock).not.toHaveBeenCalled()
     })
   )
 })

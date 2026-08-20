@@ -30,6 +30,7 @@ export interface WorkspaceRecord {
   readonly projectId: string
   readonly prState: 'OPEN' | 'CLOSED' | 'MERGED' | null
   readonly prTitle: string | null
+  readonly prUnresolvedThreads: number | null
   readonly prUrl: string | null
   readonly status: 'creating' | 'running' | 'errored'
   readonly taskSource: string
@@ -97,6 +98,7 @@ const toWorkspaceRecord = (
     prNumber: task.prNumber,
     prState: workspacePrState(task.prState),
     prTitle: task.prTitle,
+    prUnresolvedThreads: task.prUnresolvedThreads,
     prUrl: task.prUrl,
     projectId: project.id,
     status,
@@ -143,6 +145,7 @@ const rootWorkspaceRecord = (project: Project): WorkspaceRecord => ({
   prNumber: null,
   prState: null,
   prTitle: null,
+  prUnresolvedThreads: null,
   prUrl: null,
   projectId: project.id,
   status: 'running',

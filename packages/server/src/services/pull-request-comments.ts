@@ -146,11 +146,11 @@ const missingWorktreeFailure = (worktreePath: string): GhApiFailure =>
 /** The directory can also disappear between the guard and the spawn. */
 const spawnFailure = (
   worktreePath: string,
-  apiPath: string,
+  label: string,
   error: unknown
 ): GhApiFailure =>
   existsSync(worktreePath)
-    ? ghApiFailure(`Failed to run gh api ${apiPath}: ${String(error)}`)
+    ? ghApiFailure(`Failed to run ${label}: ${String(error)}`)
     : missingWorktreeFailure(worktreePath)
 
 interface GhApiOutput {
@@ -166,21 +166,25 @@ interface GhApiOutput {
  * a sibling request fails, or the client closes the pane — and interrupting
  * a fiber does nothing to the OS process it started. Acquiring the process
  * in a scope makes the kill part of the fiber's unwinding instead.
+ *
+ * `label` names the request in failures, since the argument list is not
+ * something to read back in an error message.
  */
-const runGhApi = (
+const runGh = (
   worktreePath: string,
-  apiPath: string
+  args: readonly string[],
+  label: string
 ): Effect.Effect<GhApiOutput, GhApiFailure> =>
   Effect.gen(function* () {
     const proc = yield* Effect.acquireRelease(
       Effect.try({
         try: () =>
-          spawn(['gh', 'api', '--paginate', '--slurp', apiPath], {
+          spawn(['gh', ...args], {
             cwd: worktreePath,
             stdout: 'pipe',
             stderr: 'pipe',
           }),
-        catch: (error) => spawnFailure(worktreePath, apiPath, error),
+        catch: (error) => spawnFailure(worktreePath, label, error),
       }),
       (spawned) => Effect.ignore(Effect.try(() => spawned.kill()))
     )
@@ -193,7 +197,7 @@ const runGhApi = (
 
         return { exitCode, stderr, stdout }
       },
-      catch: (error) => spawnFailure(worktreePath, apiPath, error),
+      catch: (error) => spawnFailure(worktreePath, label, error),
     })
   }).pipe(Effect.scoped)
 
@@ -208,7 +212,11 @@ const ghApiList = <A, I>(
   apiPath: string
 ): Effect.Effect<A, GhApiFailure> =>
   Effect.gen(function* () {
-    const result = yield* runGhApi(worktreePath, apiPath)
+    const result = yield* runGh(
+      worktreePath,
+      ['api', '--paginate', '--slurp', apiPath],
+      `gh api ${apiPath}`
+    )
 
     if (result.exitCode !== 0) {
       const stderr = result.stderr.trim()
@@ -360,5 +368,128 @@ const fetchPullRequestComments = Effect.fn('fetchPullRequestComments')(
   }
 )
 
-export { fetchPullRequestComments, parsePaginatedJsonArray }
+/**
+ * Whether a review thread is settled is a GraphQL-only fact. The REST review
+ * comments carry no resolution state at all, so the count the pull request
+ * page shows as "unresolved conversations" has to be asked for separately.
+ */
+const REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$number){
+      reviewThreads(first:100,after:$endCursor){
+        nodes{isResolved}
+        pageInfo{hasNextPage endCursor}
+      }
+    }
+  }
+}`
+
+const GhReviewThreadPage = Schema.Struct({
+  data: Schema.NullOr(
+    Schema.Struct({
+      repository: Schema.NullOr(
+        Schema.Struct({
+          pullRequest: Schema.NullOr(
+            Schema.Struct({
+              reviewThreads: Schema.Struct({
+                nodes: Schema.Array(
+                  Schema.Struct({ isResolved: Schema.Boolean })
+                ),
+              }),
+            })
+          ),
+        })
+      ),
+    })
+  ),
+})
+const GhReviewThreadPages = Schema.Array(GhReviewThreadPage)
+
+/**
+ * Count the review threads on a pull request that nobody has resolved.
+ *
+ * A thread is the unit of resolution, not a comment: a ten-reply argument
+ * that ends in agreement is one settled thread, and counting its comments
+ * would report nine outstanding things to do. Outdated threads still count,
+ * matching what GitHub itself shows, because a thread against code that has
+ * since moved is still a thread nobody answered.
+ */
+const fetchUnresolvedReviewThreadCount = Effect.fn(
+  'fetchUnresolvedReviewThreadCount'
+)(function* (worktreePath: string, prNumber: number) {
+  if (!existsSync(worktreePath)) {
+    return yield* Effect.fail(missingWorktreeFailure(worktreePath))
+  }
+
+  const repoSlug = yield* resolveOriginRepoSlug(worktreePath)
+  const [owner, repo] = repoSlug?.split('/') ?? []
+  if (owner === undefined || repo === undefined) {
+    return yield* Effect.fail(
+      ghApiFailure(
+        `Could not resolve a GitHub repository from the origin remote in ${worktreePath}`
+      )
+    )
+  }
+
+  const label = `gh api graphql reviewThreads for #${prNumber}`
+  const result = yield* runGh(
+    worktreePath,
+    [
+      'api',
+      'graphql',
+      '--paginate',
+      '--slurp',
+      '-F',
+      `owner=${owner}`,
+      '-F',
+      `repo=${repo}`,
+      '-F',
+      `number=${prNumber}`,
+      '-f',
+      `query=${REVIEW_THREADS_QUERY}`,
+    ],
+    label
+  )
+
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr.trim()
+    return yield* Effect.fail(
+      ghApiFailure(
+        stderr.includes(SLURP_UNSUPPORTED)
+          ? 'Reading unresolved review threads needs GitHub CLI 2.42 or newer (gh api --slurp)'
+          : stderr || `${label} exited with ${result.exitCode}`
+      )
+    )
+  }
+
+  const parsed = yield* Effect.try({
+    try: () => JSON.parse(result.stdout.trim() || '[]') as unknown,
+    catch: () => ghApiFailure(`Could not parse ${label} output`),
+  })
+
+  const pages = yield* Schema.decodeUnknownEffect(GhReviewThreadPages)(
+    parsed
+  ).pipe(Effect.mapError(() => ghApiFailure(`Unexpected ${label} response`)))
+
+  // A page whose data came back null is a query GitHub refused, not a pull
+  // request with nothing on it, so it fails rather than reading as zero.
+  let unresolved = 0
+  for (const page of pages) {
+    const threads = page.data?.repository?.pullRequest?.reviewThreads
+    if (threads === undefined) {
+      return yield* Effect.fail(
+        ghApiFailure(`${label} returned no pull request`)
+      )
+    }
+    unresolved += threads.nodes.filter((thread) => !thread.isResolved).length
+  }
+
+  return unresolved
+})
+
+export {
+  fetchPullRequestComments,
+  fetchUnresolvedReviewThreadCount,
+  parsePaginatedJsonArray,
+}
 export type { GhApiFailure }

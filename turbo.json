@@ -16,6 +16,9 @@
     "test": {
       "dependsOn": ["^typecheck"]
     },
+    "@laborer/server#test": {
+      "dependsOn": ["^typecheck", "@laborer/terminal#build"]
+    },
     "test:watch": {
       "dependsOn": ["^typecheck"],
       "cache": false,

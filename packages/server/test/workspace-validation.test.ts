@@ -37,7 +37,7 @@ const testBranch = 'test-worktree-branch'
 beforeAll(() => {
   // Create a temporary git repo with a commit
   testRepoPath = createTempDir('validation-repo')
-  git('init', testRepoPath)
+  git('init -b main', testRepoPath)
   git('config user.email test@test.com', testRepoPath)
   git('config user.name Test', testRepoPath)
 

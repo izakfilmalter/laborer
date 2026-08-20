@@ -270,6 +270,16 @@ export const supervisedNoSandbox = (
     SupervisedNoSandboxRuntime;
 };
 
+// A group we spawned stops being ours once its leader exits: the kernel is free
+// to recycle that group id onto an unrelated process we may not own. ESRCH says
+// the group is gone, EPERM says the id now belongs to someone else. Both mean
+// "nothing of ours left to signal", so neither may escape teardown as an error.
+const isForeignProcessGroupError = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error.code === "ESRCH" || error.code === "EPERM");
+
 const signalProcessGroup = (
   processGroup: number,
   signal: NodeJS.Signals
@@ -277,12 +287,7 @@ const signalProcessGroup = (
   try {
     process.kill(-processGroup, signal);
   } catch (error) {
-    if (
-      typeof error !== "object" ||
-      error === null ||
-      !("code" in error) ||
-      error.code !== "ESRCH"
-    ) {
+    if (!isForeignProcessGroupError(error)) {
       throw error;
     }
   }
@@ -293,12 +298,7 @@ const processGroupExists = (processGroup: number) => {
     process.kill(-processGroup, 0);
     return true;
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ESRCH"
-    ) {
+    if (isForeignProcessGroupError(error)) {
       return false;
     }
     throw error;

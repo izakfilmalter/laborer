@@ -37,7 +37,7 @@ const runWithRpcTestContext = <A, E>(
 
 const initRepoAt = (repoPath: string) => {
   mkdirSync(repoPath, { recursive: true })
-  git('init', repoPath)
+  git('init -b main', repoPath)
   git('config user.email test@example.com', repoPath)
   git('config user.name Test User', repoPath)
   writeFileSync(join(repoPath, 'README.md'), '# config rpc test\n')

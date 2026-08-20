@@ -132,6 +132,39 @@ describe('Sandcastle host process supervision', () => {
     }
   })
 
+  it('finishes teardown when the process group id has been recycled away', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'laborer-host-foreign-'))
+    const provider = supervisedNoSandbox({
+      defaultTimeoutSeconds: 30,
+      killGraceMilliseconds: 100,
+    })
+    const handle = await provider.create({ env: {}, worktreePath: directory })
+    const realKill = process.kill.bind(process)
+    // Once our child exits the kernel may hand its group id to a process we do
+    // not own, so signalling the group reports EPERM rather than ESRCH.
+    process.kill = ((pid: number, signal?: string | number) => {
+      if (pid < 0) {
+        throw Object.assign(new Error('kill EPERM'), {
+          code: 'EPERM',
+          errno: -1,
+          syscall: 'kill',
+        })
+      }
+      return realKill(pid, signal as NodeJS.Signals)
+    }) as typeof process.kill
+
+    try {
+      const result = await handle.exec("printf 'done'")
+
+      assert.strictEqual(result.exitCode, 0)
+      assert.strictEqual(result.stdout, 'done')
+      await handle.close()
+    } finally {
+      process.kill = realKill
+      rmSync(directory, { force: true, recursive: true })
+    }
+  })
+
   it('bounds retained and partial-line output', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'laborer-host-output-'))
     const provider = supervisedNoSandbox({

@@ -20,14 +20,15 @@
     "start:chat-canary": "cd ../.. && node --env-file-if-exists=.env.local apps/bot/src/chat-plane/live.ts",
     "start:slack": "cd ../.. && node --env-file-if-exists=.env.local apps/bot/src/acp-runtime/production-live.ts",
     "check:secrets": "vitest run tests/secret-safety.test.ts",
-    "test": "vitest run --exclude tests/opencode-permission-policy.test.ts --exclude tests/opencode-acp-compatibility.test.ts",
-    "test:acp-compatibility": "vitest run tests/opencode-acp-compatibility.test.ts tests/opencode-permission-policy.test.ts --maxWorkers=1",
-    "test:opencode-permissions": "vitest run tests/opencode-permission-policy.test.ts --maxWorkers=1",
+    "test": "vitest run",
+    "test:process-backed": "LABORER_PROCESS_BACKED=1 vitest run --maxWorkers=1",
+    "test:acp-compatibility": "LABORER_PROCESS_BACKED=1 vitest run tests/opencode-acp-compatibility.test.ts tests/opencode-permission-policy.test.ts --maxWorkers=1",
+    "test:opencode-permissions": "LABORER_PROCESS_BACKED=1 vitest run tests/opencode-permission-policy.test.ts --maxWorkers=1",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.companion.json",
     "verify:runtimes": "node tests/support/verify-runtime-versions.ts && bun tests/support/verify-runtime-versions.ts",
     "format": "ultracite check",
     "format:fix": "ultracite fix",
-    "check": "bun run typecheck && bun run format && bun run test && bun run test:acp-compatibility"
+    "check": "bun run typecheck && bun run format && bun run test && bun run test:process-backed"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

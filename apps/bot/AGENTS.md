@@ -20,8 +20,16 @@ Run these commands from the repository root:
 - Fix bot formatting: `bun run --cwd apps/bot format:fix`
 - Typecheck the bot and companion: `bun run --cwd apps/bot typecheck`
 - Run deterministic bot tests: `bun run --cwd apps/bot test`
+- Run process-backed bot tests: `bun run --cwd apps/bot test:process-backed`
 - Scan tracked files for Slack secrets: `bun run --cwd apps/bot check:secrets`
 - Run the bot check: `bun run --cwd apps/bot check`
+
+`test` covers the deterministic suites and is what CI runs. Tests that drive
+real ACP and MCP transports, the pinned OpenCode CLI, or supervised host
+process groups live behind `test:process-backed`, which runs them serially.
+They assert against real process lifetimes, so they report host speed and load
+as much as correctness and are kept out of the shared CI gate. `check` runs
+both.
 
 The Slack entry point runs on Node because the Chat Slack adapter depends on Node behavior. Use package scripts instead of invoking source with Bun.
 

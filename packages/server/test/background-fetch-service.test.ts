@@ -33,7 +33,10 @@ const commitFile = (repoPath: string, fileName: string, content: string) => {
 
 const initRemoteRepo = (prefix: string) => {
   const remotePath = createTempDir(`${prefix}-remote`, tempRoots)
-  git('init --bare', remotePath)
+  // Name the bare repository's branch so its HEAD matches the branch seeded
+  // below. A host defaulting to `master` would leave HEAD on an unborn branch,
+  // and clones of it would check nothing out and have no local `main` to push.
+  git('init --bare -b main', remotePath)
 
   const seedPath = initRepo(`${prefix}-seed`, tempRoots)
   git('branch -M main', seedPath)

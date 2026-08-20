@@ -134,7 +134,9 @@ const createRemoteClone = (remotePath: string, prefix: string): string => {
 
 const initRemoteRepo = (prefix: string) => {
   const remotePath = createTempDir(`${prefix}-remote`, tempRoots)
-  git('init --bare', remotePath)
+  // Name the branch so the bare HEAD matches the branch seeded below; a host
+  // defaulting to `master` leaves HEAD unborn and clones check nothing out.
+  git('init --bare -b main', remotePath)
 
   const seedPath = initRepo(`${prefix}-seed`, tempRoots)
   git('branch -M main', seedPath)

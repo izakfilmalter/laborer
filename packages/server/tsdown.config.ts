@@ -5,22 +5,27 @@ const shared = {
   outDir: 'dist',
   sourcemap: true,
 
-  // @laborer/task-db reads its SQL migrations at runtime via
-  // `new URL('./migrations/*.sql', import.meta.url)`. Once task-db is
-  // bundled into dist/ (see noExternal below), that URL resolves relative
-  // to the bundle, so the .sql files must be copied next to it. Without
-  // this, the packaged server sidecar crashes at import time with ENOENT
-  // and the desktop app backend fails during startup.
-  copy: [
-    {
-      from: '../task-db/src/migrations',
-      to: 'dist',
-    },
-  ],
-
   // Bundle workspace packages into the output so the dist/ directory is
   // self-contained (no workspace: links needed at runtime).
 } as const
+
+// @laborer/task-db reads its SQL migrations at runtime via
+// `new URL('./migrations/*.sql', import.meta.url)`. Once task-db is bundled
+// into dist/ (see noExternal below), that URL resolves relative to the bundle,
+// so the .sql files must be copied next to it. Without this, the packaged
+// server sidecar crashes at import time with ENOENT and the desktop app
+// backend fails during startup.
+//
+// Only the entry that cleans dist/ carries this. The three builds share one
+// output directory and run concurrently, so copying from each of them raced
+// three writers over the same .sql files and intermittently failed the build
+// with ENOENT on an already-replaced file.
+const copyTaskDbMigrations = [
+  {
+    from: '../task-db/src/migrations',
+    to: 'dist',
+  },
+]
 
 export default defineConfig([
   {
@@ -29,6 +34,7 @@ export default defineConfig([
     // complete entry while the first watch build replaces its chunks, or Node
     // can observe a transient missing entry and stay dead until another save.
     clean: process.env.LABORER_DEV_WATCH !== '1',
+    copy: copyTaskDbMigrations,
     entry: ['src/daemon-main.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
     inlineOnly: false,

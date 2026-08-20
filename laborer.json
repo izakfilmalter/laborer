@@ -15,5 +15,6 @@
   ],
   "agent": "opencode2",
   "shortName": "LAB",
-  "worktreeDir": "/Users/izakfilmalter/Projects/izakfilmalter/laborer.worktrees"
+  "worktreeDir": "/Users/izakfilmalter/Projects/izakfilmalter/laborer.worktrees",
+  "conflictPrompt": "pull in master, resolve conflicts, push"
 }

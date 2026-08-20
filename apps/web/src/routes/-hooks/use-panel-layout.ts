@@ -86,7 +86,10 @@ import {
   switchWindowTabRelative,
   updateWorkspaceTileLeaf,
 } from '@/panels/window-layout-utils'
-import type { WorkspaceDropEdge } from '@/panels/workspace-tile-utils'
+import type {
+  TabContentArea,
+  WorkspaceDropEdge,
+} from '@/panels/workspace-tile-utils'
 import {
   addWorkspaceToTab,
   cleanUpWorkspaceTiles,
@@ -101,32 +104,46 @@ import { useInitialLayout } from './use-initial-layout'
 const DEFAULT_PANEL_WINDOW_ID = 'default'
 
 /**
- * Fallback content height (px) used by layout clean-up when the tab's
+ * Fallback content area (px) used by layout clean-up when the tab's
  * container cannot be measured (e.g. in tests).
  */
-const FALLBACK_TAB_CONTENT_HEIGHT_PX = 800
+const FALLBACK_TAB_CONTENT_AREA: TabContentArea = {
+  widthPx: 1280,
+  heightPx: 800,
+}
 
 /**
- * Measure the rendered height of a window tab's content area.
+ * Measure the rendered size of a window tab's content area.
  *
  * The active tab's container carries a `data-window-tab-id` attribute
- * (see WindowTabContent) and fills the panel area, so its client height
- * is the space available to distribute among workspace frames. Falls
- * back to the viewport height, then a constant, when unavailable.
+ * (see WindowTabContent) and fills the panel area, so its client size is
+ * the space available to divide into workspace columns and rows. Falls
+ * back to the viewport, then a constant, when unavailable.
  */
-function measureTabContentHeight(tabId: string): number {
+function measureTabContentArea(tabId: string): TabContentArea {
   if (typeof document !== 'undefined') {
     const container = document.querySelector(
       `[data-window-tab-id="${CSS.escape(tabId)}"]`
     )
-    if (container instanceof HTMLElement && container.clientHeight > 0) {
-      return container.clientHeight
+    if (
+      container instanceof HTMLElement &&
+      container.clientWidth > 0 &&
+      container.clientHeight > 0
+    ) {
+      return {
+        widthPx: container.clientWidth,
+        heightPx: container.clientHeight,
+      }
     }
   }
-  if (typeof window !== 'undefined' && window.innerHeight > 0) {
-    return window.innerHeight
+  if (
+    typeof window !== 'undefined' &&
+    window.innerWidth > 0 &&
+    window.innerHeight > 0
+  ) {
+    return { widthPx: window.innerWidth, heightPx: window.innerHeight }
   }
-  return FALLBACK_TAB_CONTENT_HEIGHT_PX
+  return FALLBACK_TAB_CONTENT_AREA
 }
 
 interface PendingAgentSpawn {
@@ -1609,9 +1626,9 @@ export function usePanelLayout() {
   )
 
   /**
-   * Clean up the active tab's workspace layout: repack workspaces into
-   * balanced columns so every frame gets at least the minimum vertical
-   * space, based on the measured height of the tab's content area.
+   * Clean up the active tab's workspace layout: fill columns vertically
+   * to the minimum frame height and open new columns only while the
+   * measured content width still has room for them.
    */
   const handleCleanUpWorkspaceLayout = useCallback(() => {
     if (!persistedWindowLayout) {
@@ -1623,7 +1640,7 @@ export function usePanelLayout() {
     }
     const updatedTab = cleanUpWorkspaceTiles(
       activeTab,
-      measureTabContentHeight(activeTab.id)
+      measureTabContentArea(activeTab.id)
     )
     if (updatedTab === activeTab) {
       return

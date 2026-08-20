@@ -43,9 +43,16 @@ const MIN_TILE_SIZE = 5
 const RESIZE_STEP = 5
 
 /**
+ * Minimum horizontal space in pixels each workspace column should receive
+ * after a layout clean-up. This caps how many columns the content area
+ * can be divided into.
+ */
+const MIN_WORKSPACE_COLUMN_WIDTH_PX = 500
+
+/**
  * Minimum vertical space in pixels each workspace frame should receive
- * after a layout clean-up. Columns are added until every frame in a
- * column gets at least this much height.
+ * after a layout clean-up. This sets how many frames a single column can
+ * hold before clean-up opens another column.
  */
 const MIN_WORKSPACE_TILE_HEIGHT_PX = 352
 
@@ -974,23 +981,64 @@ function insertLeafAtEdge(
   return true
 }
 
+/** Pixel dimensions of a window tab's content area. */
+interface TabContentArea {
+  readonly heightPx: number
+  readonly widthPx: number
+}
+
+/** Fall back to the minimum when a measurement is missing or nonsensical. */
+function usableSize(measuredPx: number, minimumPx: number): number {
+  return Number.isFinite(measuredPx) && measuredPx > 0 ? measuredPx : minimumPx
+}
+
 /**
- * Repack a window tab's workspaces into balanced columns so every
- * workspace frame gets at least `minTileHeightPx` of vertical space.
+ * Decide how many columns `count` workspaces should occupy in `area`.
  *
- * The number of rows per column is derived from the available content
- * height; workspaces are distributed across the resulting columns in
- * reading order (top to bottom, left to right). Row heights and column
- * widths are equalized.
+ * Columns are filled top to bottom before another column is opened: the
+ * result is the fewest columns that still give every frame
+ * `minTileHeightPx` of height, so 6 workspaces in a 3-row-tall area
+ * become 2 columns of 3 rather than 3 columns of 2.
+ *
+ * Width is the ceiling on that answer — no more columns than fit at
+ * `minColumnWidthPx` — and there is never more than one column per
+ * workspace.
+ */
+function computeCleanUpColumnCount(
+  count: number,
+  area: TabContentArea,
+  minColumnWidthPx: number,
+  minTileHeightPx: number
+): number {
+  const width = usableSize(area.widthPx, minColumnWidthPx)
+  const height = usableSize(area.heightPx, minTileHeightPx)
+
+  const rowsPerColumn = Math.max(1, Math.floor(height / minTileHeightPx))
+  const columnsForHeight = Math.ceil(count / rowsPerColumn)
+  const columnsForWidth = Math.max(1, Math.floor(width / minColumnWidthPx))
+
+  return Math.min(count, columnsForWidth, columnsForHeight)
+}
+
+/**
+ * Repack a window tab's workspaces into balanced columns that respect
+ * both a minimum column width and a minimum frame height.
+ *
+ * Columns fill vertically first — a taller area means taller stacks, not
+ * more columns — and the content width caps how many columns may exist.
+ * Workspaces are distributed evenly in reading order (top to bottom,
+ * left to right), with row heights and column widths equalized.
  *
  * @param tab - The window tab to clean up
- * @param availableHeightPx - The pixel height of the tab's content area
+ * @param area - Pixel width and height of the tab's content area
+ * @param minColumnWidthPx - Minimum width per column (default 500)
  * @param minTileHeightPx - Minimum height per workspace frame (default 352)
  * @returns A new WindowTab with the cleaned-up layout
  */
 function cleanUpWorkspaceTiles(
   tab: WindowTab,
-  availableHeightPx: number,
+  area: TabContentArea,
+  minColumnWidthPx: number = MIN_WORKSPACE_COLUMN_WIDTH_PX,
   minTileHeightPx: number = MIN_WORKSPACE_TILE_HEIGHT_PX
 ): WindowTab {
   const root = tab.workspaceLayout
@@ -1005,12 +1053,12 @@ function cleanUpWorkspaceTiles(
     return tab
   }
 
-  const height =
-    Number.isFinite(availableHeightPx) && availableHeightPx > 0
-      ? availableHeightPx
-      : minTileHeightPx
-  const rowsPerColumn = Math.max(1, Math.floor(height / minTileHeightPx))
-  const columnCount = Math.min(count, Math.ceil(count / rowsPerColumn))
+  const columnCount = computeCleanUpColumnCount(
+    count,
+    area,
+    minColumnWidthPx,
+    minTileHeightPx
+  )
 
   const base = Math.floor(count / columnCount)
   const extra = count % columnCount
@@ -1041,6 +1089,7 @@ export {
   cleanUpWorkspaceTiles,
   getWorkspaceColumns,
   getWorkspaceTileLeaves,
+  MIN_WORKSPACE_COLUMN_WIDTH_PX,
   MIN_WORKSPACE_TILE_HEIGHT_PX,
   moveWorkspaceTileToEdge,
   removeWorkspaceFromTab,
@@ -1048,4 +1097,4 @@ export {
   resizeWorkspaceTiles,
   splitWorkspaceTile,
 }
-export type { WorkspaceDropEdge }
+export type { TabContentArea, WorkspaceDropEdge }

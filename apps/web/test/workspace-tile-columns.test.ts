@@ -3,8 +3,8 @@
  *
  * Covers dragging a workspace to a frame edge (`moveWorkspaceTileToEdge`)
  * — including creating a second column by dropping on a left/right edge —
- * the layout clean-up that guarantees each workspace frame a minimum
- * vertical space (`cleanUpWorkspaceTiles`), adding workspaces to
+ * the layout clean-up that fills columns to the minimum frame height and
+ * caps them at the minimum column width (`cleanUpWorkspaceTiles`), adding workspaces to
  * column layouts (`addWorkspaceToTab`), and the pointer-to-edge mapping
  * used by the drop targets (`computeWorkspaceDropEdge`).
  *
@@ -24,6 +24,7 @@ import {
   addWorkspaceToTab,
   cleanUpWorkspaceTiles,
   getWorkspaceColumns,
+  MIN_WORKSPACE_COLUMN_WIDTH_PX,
   MIN_WORKSPACE_TILE_HEIGHT_PX,
   moveWorkspaceTileToEdge,
 } from '../src/panels/workspace-tile-utils'
@@ -203,16 +204,37 @@ describe('moveWorkspaceTileToEdge', () => {
 })
 
 // ---------------------------------------------------------------------------
-// cleanUpWorkspaceTiles — minimum vertical space per workspace
+// cleanUpWorkspaceTiles — columns capped by width, filled by height
 // ---------------------------------------------------------------------------
 
+/** Content area sized as a multiple of the minimum column and row. */
+function area(columns: number, rows: number) {
+  return {
+    widthPx: MIN_WORKSPACE_COLUMN_WIDTH_PX * columns,
+    heightPx: MIN_WORKSPACE_TILE_HEIGHT_PX * rows,
+  }
+}
+
 describe('cleanUpWorkspaceTiles', () => {
-  it('splits a cramped stack into enough columns for 352px per frame', () => {
-    // 800px fits floor(800 / 352) = 2 rows per column; 5 workspaces
-    // need ceil(5 / 2) = 3 columns, balanced 2/2/1.
+  it('fills columns vertically before opening another column', () => {
+    // 3 columns fit by width and 3 rows fit by height, but 6 workspaces
+    // only need 2 full columns — prefer 2 stacks of 3 over 3 stacks of 2.
+    const tab = makeStackTab(['ws-1', 'ws-2', 'ws-3', 'ws-4', 'ws-5', 'ws-6'])
+
+    const result = cleanUpWorkspaceTiles(tab, area(3, 3))
+
+    expect(columnsOf(result)).toEqual([
+      ['ws-1', 'ws-2', 'ws-3'],
+      ['ws-4', 'ws-5', 'ws-6'],
+    ])
+  })
+
+  it('spreads across the columns width allows when frames need height', () => {
+    // 2 rows per column would need ceil(5 / 2) = 3 columns, and 3 fit by
+    // width, so the stack balances 2/2/1.
     const tab = makeStackTab(['ws-1', 'ws-2', 'ws-3', 'ws-4', 'ws-5'])
 
-    const result = cleanUpWorkspaceTiles(tab, 800)
+    const result = cleanUpWorkspaceTiles(tab, area(3, 2))
 
     expect(columnsOf(result)).toEqual([
       ['ws-1', 'ws-2'],
@@ -231,11 +253,23 @@ describe('cleanUpWorkspaceTiles', () => {
     }
   })
 
-  it('merges excess columns back when there is enough height', () => {
+  it('caps columns at what the width fits, however short the area', () => {
+    // Height alone would want a column per workspace; width allows 2.
+    const tab = makeStackTab(['ws-1', 'ws-2', 'ws-3', 'ws-4'])
+
+    const result = cleanUpWorkspaceTiles(tab, area(2, 1))
+
+    expect(columnsOf(result)).toEqual([
+      ['ws-1', 'ws-2'],
+      ['ws-3', 'ws-4'],
+    ])
+  })
+
+  it('merges excess columns back when the content area is narrow', () => {
     const tab = makeColumnsTab([['ws-1'], ['ws-2'], ['ws-3']])
 
-    // 3 rows fit: everything belongs in a single column again.
-    const result = cleanUpWorkspaceTiles(tab, MIN_WORKSPACE_TILE_HEIGHT_PX * 3)
+    // Only one 500px column fits: everything stacks in a single column.
+    const result = cleanUpWorkspaceTiles(tab, area(1, 3))
 
     expect(columnsOf(result)).toEqual([['ws-1', 'ws-2', 'ws-3']])
   })
@@ -250,7 +284,7 @@ describe('cleanUpWorkspaceTiles', () => {
     }
     const tab: WindowTab = { id: 'tab-1', workspaceLayout: column }
 
-    const result = cleanUpWorkspaceTiles(tab, MIN_WORKSPACE_TILE_HEIGHT_PX * 2)
+    const result = cleanUpWorkspaceTiles(tab, area(1, 2))
 
     expect(columnsOf(result)).toEqual([['ws-1', 'ws-2']])
     const root = result.workspaceLayout as WorkspaceTileSplit
@@ -259,17 +293,25 @@ describe('cleanUpWorkspaceTiles', () => {
     expect(root.id).toBe('col-1')
   })
 
-  it('never creates more columns than workspaces and survives tiny heights', () => {
+  it('never creates more columns than workspaces', () => {
     const tab = makeStackTab(['ws-1', 'ws-2'])
 
-    const result = cleanUpWorkspaceTiles(tab, 10)
+    const result = cleanUpWorkspaceTiles(tab, area(8, 1))
 
     expect(columnsOf(result)).toEqual([['ws-1'], ['ws-2']])
   })
 
+  it('keeps a single column when the area is smaller than one frame', () => {
+    const tab = makeColumnsTab([['ws-1'], ['ws-2']])
+
+    const result = cleanUpWorkspaceTiles(tab, { widthPx: 10, heightPx: 10 })
+
+    expect(columnsOf(result)).toEqual([['ws-1', 'ws-2']])
+  })
+
   it('is a no-op for tabs without a workspace layout', () => {
     const tab: WindowTab = { id: 'tab-1' }
-    expect(cleanUpWorkspaceTiles(tab, 800)).toBe(tab)
+    expect(cleanUpWorkspaceTiles(tab, area(3, 3))).toBe(tab)
   })
 })
 

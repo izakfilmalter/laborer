@@ -493,6 +493,7 @@ function TaskBoardCard({
           prState={toPrBadgeState(task.pr.state)}
           prTitle={task.pr.title}
           prUrl={task.pr.url}
+          unresolvedThreads={task.pr.unresolvedThreads}
         />
       )}
     </>

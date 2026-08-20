@@ -463,6 +463,7 @@ interface WorkspaceCardWorkspace {
   readonly projectId: string
   readonly prState: string | null
   readonly prTitle: string | null
+  readonly prUnresolvedThreads?: number | null
   readonly prUrl: string | null
   readonly status: string
   readonly taskNumber?: number | null
@@ -775,6 +776,9 @@ function WorkspaceCard({
     useState<AgentDisplayStatus | null>(null)
   const activeWorkspaceId = useActiveWorkspaceId()
   const isActiveWorkspace = activeWorkspaceId === workspace.id
+  const panelActions = usePanelActions()
+  const openCommentsPaneForWorkspace =
+    panelActions?.openCommentsPaneForWorkspace
 
   const agentSurface = getAgentStatusSurface(workspaceAgentStatus)
   // The card only summarizes states that ask for the operator. Working stays
@@ -863,14 +867,26 @@ function WorkspaceCard({
           ) : null}
           {/* The pull request is a status, not a control: it leads the rail
               because it is the furthest along the work has got, and it sits
-              opposite the controls that start more of it. */}
+              opposite the controls that start more of it.
+
+              Its count of unresolved conversations is the one exception. The
+              card names a workspace the app can reveal, so the count answers
+              itself in place — bringing the workspace forward and opening the
+              conversation — rather than handing the operator to a browser tab
+              for something mission control can already show them. */}
           <GitHubPrStatusBadge
             checkStatus={workspace.prCheckStatus}
             checks={workspace.prChecks}
+            onOpenConversation={
+              openCommentsPaneForWorkspace === undefined
+                ? undefined
+                : () => openCommentsPaneForWorkspace(workspace.id)
+            }
             prNumber={workspace.prNumber}
             prState={workspace.prState}
             prTitle={workspace.prTitle}
             prUrl={workspace.prUrl}
+            unresolvedThreads={workspace.prUnresolvedThreads}
           />
           {showsStatus ? (
             <WorkspaceStatusBadge

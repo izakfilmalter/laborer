@@ -24,7 +24,15 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
-import { FileCode2, FolderTree, Minus, Plus, Terminal, X } from 'lucide-react'
+import {
+  FileCode2,
+  FolderTree,
+  MessagesSquare,
+  Minus,
+  Plus,
+  Terminal,
+  X,
+} from 'lucide-react'
 import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
@@ -47,6 +55,8 @@ interface WorkspaceFrameHeaderProps {
   readonly agentStatus?: AgentDisplayStatus | null | undefined
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
+  /** Whether the PR comments panel is currently open for the active pane. */
+  readonly commentsIsOpen?: boolean | undefined
   /** Whether the diff viewer is currently open for the active pane. */
   readonly diffIsOpen: boolean
   /** Ref attached to the header element so it can serve as a drag handle. */
@@ -86,6 +96,8 @@ interface WorkspaceFrameHeaderProps {
   readonly prState: string | null
   /** PR title for tooltip. */
   readonly prTitle: string | null
+  /** Review threads on the pull request that nobody has resolved yet. */
+  readonly prUnresolvedThreads?: number | null | undefined
   /** PR URL for linking. */
   readonly prUrl: string | null
   /** Project-scoped task number, absent for the root workspace. */
@@ -167,11 +179,56 @@ function TreeToggleButton({
   )
 }
 
+/**
+ * Icon-only pull request comments toggle.
+ *
+ * Disabled without a pull request, because the conversation it opens does
+ * not exist yet — the tooltip says so rather than letting the pane explain
+ * it after the fact.
+ */
+function CommentsToggleButton({
+  commentsIsOpen,
+  disabled,
+  hasPullRequest,
+  onClick,
+}: {
+  readonly commentsIsOpen: boolean
+  readonly disabled: boolean
+  readonly hasPullRequest: boolean
+  readonly onClick: () => void
+}) {
+  const label = commentsIsOpen ? 'Close PR comments' : 'Open PR comments'
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            aria-pressed={commentsIsOpen}
+            className={commentsIsOpen ? 'bg-accent text-foreground' : ''}
+            disabled={disabled || !hasPullRequest}
+            onClick={onClick}
+            size="icon-sm"
+            variant="ghost"
+          />
+        }
+      >
+        <MessagesSquare className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>
+        {hasPullRequest ? label : 'No pull request yet'}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
   agentStatus,
   branchName,
+  commentsIsOpen = false,
   diffIsOpen,
   dragHandleRef,
   isActiveFrame = false,
@@ -185,6 +242,7 @@ function WorkspaceFrameHeader({
   prNumber,
   prState,
   prTitle,
+  prUnresolvedThreads = null,
   prUrl,
   projectId,
   projectName,
@@ -222,6 +280,25 @@ function WorkspaceFrameHeader({
     },
     [activePaneId, actions]
   )
+
+  /**
+   * Open — not toggle — the conversation the PR badge is counting.
+   *
+   * The badge is a link to a fact, so it can only ever mean "show me". A
+   * toggle here would close the pane out from under an operator who clicked
+   * the count while already reading it; an already-open pane just takes the
+   * focus instead.
+   */
+  const openCommentsPane = useCallback(() => {
+    if (!activePaneId) {
+      return
+    }
+    actions?.setActivePaneId(activePaneId)
+    if (commentsIsOpen) {
+      return
+    }
+    actions?.toggleCommentsPane?.(activePaneId)
+  }, [actions, activePaneId, commentsIsOpen])
 
   return (
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Conditional onClick when minimized as fallback for padding gaps; the inner button handles keyboard a11y.
@@ -276,14 +353,23 @@ function WorkspaceFrameHeader({
             taskNumber={taskNumber}
           />
         ) : null}
+        {/* The frame that owns the conversation pane is the one surface that
+            can answer the badge's count in place, so here the count opens it
+            rather than leaving for a browser tab. */}
         <GitHubPrStatusBadge
           checkStatus={prCheckStatus}
           checks={prChecks}
           className="shrink-0"
+          onOpenConversation={
+            hasActivePane && actions?.toggleCommentsPane
+              ? openCommentsPane
+              : undefined
+          }
           prNumber={prNumber}
           prState={prState}
           prTitle={prTitle}
           prUrl={prUrl}
+          unresolvedThreads={prUnresolvedThreads}
         />
         {workspaceId ? <WorkspaceSyncStatus workspaceId={workspaceId} /> : null}
         {showsAgentStatus ? (
@@ -337,6 +423,14 @@ function WorkspaceFrameHeader({
                 </KbdGroup>
               </TooltipContent>
             </Tooltip>
+            <CommentsToggleButton
+              commentsIsOpen={commentsIsOpen}
+              disabled={!hasActivePane}
+              hasPullRequest={prNumber !== null && prNumber !== undefined}
+              onClick={withFocus((paneId) =>
+                actions?.toggleCommentsPane?.(paneId)
+              )}
+            />
             <Tooltip>
               <TooltipTrigger
                 render={

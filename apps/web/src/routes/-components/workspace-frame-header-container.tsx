@@ -42,6 +42,7 @@ function WorkspaceFrameHeaderWithProjectShortName({
  * component.
  */
 export function WorkspaceFrameHeaderContainer({
+  commentsIsOpen,
   diffIsOpen,
   isActiveFrame,
   workspaceId,
@@ -61,6 +62,7 @@ export function WorkspaceFrameHeaderContainer({
   readonly isMinimized: boolean
   readonly onHeaderClick: () => void
   readonly onMinimize: () => void
+  readonly commentsIsOpen?: boolean
   readonly diffIsOpen?: boolean
   readonly treeIsOpen?: boolean
 }) {
@@ -105,6 +107,7 @@ export function WorkspaceFrameHeaderContainer({
       prChecks: null,
       prMergeStatus: null,
       prNumber: null,
+      prUnresolvedThreads: null,
       prUrl: null,
       prTitle: null,
       prState: null,
@@ -142,6 +145,7 @@ export function WorkspaceFrameHeaderContainer({
       prChecks: workspace.prChecks ?? null,
       prMergeStatus: workspace.prMergeStatus ?? null,
       prNumber: workspace.prNumber ?? null,
+      prUnresolvedThreads: workspace.prUnresolvedThreads ?? null,
       prUrl: workspace.prUrl ?? null,
       prTitle: workspace.prTitle ?? null,
       prState: workspace.prState ?? null,
@@ -162,6 +166,7 @@ export function WorkspaceFrameHeaderContainer({
     activePaneId: scopedActivePaneId,
     agentStatus: workspaceAgentStatus,
     branchName: workspaceData.branchName,
+    commentsIsOpen: commentsIsOpen ?? false,
     diffIsOpen: diffIsOpen ?? false,
     dragHandleRef,
     isActiveFrame,
@@ -177,6 +182,7 @@ export function WorkspaceFrameHeaderContainer({
     projectName: workspaceData.projectName,
     prState: workspaceData.prState,
     prTitle: workspaceData.prTitle,
+    prUnresolvedThreads: workspaceData.prUnresolvedThreads,
     prUrl: workspaceData.prUrl,
     taskNumber: workspaceData.taskNumber,
     treeIsOpen: treeIsOpen ?? false,

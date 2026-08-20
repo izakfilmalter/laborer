@@ -60,6 +60,10 @@ const migrationLedger = [
     '0013_correlated_operations',
     '4a853d0fcad0e8874d8f909d826e927853ca0f68f02b49982b15bcf8b1837657',
   ],
+  [
+    '0014_pr_unresolved_threads',
+    '6cfa6fc5cba0a47d45edece72c6103d35ce0d835c61a0636e4c6aae30076279e',
+  ],
 ]
 
 describe('@laborer/task-db exports', () => {

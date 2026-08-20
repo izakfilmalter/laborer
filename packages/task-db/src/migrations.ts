@@ -117,4 +117,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       'utf8'
     ),
   },
+  {
+    name: '0014_pr_unresolved_threads',
+    sql: readFileSync(
+      new URL('./migrations/0014_pr_unresolved_threads.sql', import.meta.url),
+      'utf8'
+    ),
+  },
 ]

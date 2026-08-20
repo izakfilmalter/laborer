@@ -29,6 +29,7 @@ import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
+import { parsePullRequestRepoSlug } from '../services/github-pr-view.js'
 import { LaborerDatabase } from '../services/laborer-database.js'
 import {
   LaborerDatabaseStaleRevisionError,
@@ -44,6 +45,7 @@ import {
   validateProjectTaskIdentifierNamespace,
   withProjectIdentifierNamespaceLock,
 } from '../services/project-task-identifiers.js'
+import { fetchPullRequestComments } from '../services/pull-request-comments.js'
 import { subscribeToSharedState } from '../services/shared-state-reader.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
@@ -1540,6 +1542,67 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const fileService = yield* FileService
         return yield* fileService.diff(workspaceId)
+      }),
+
+    // -------------------------------------------------------------------
+    // Pull Request Conversation RPCs
+    // -------------------------------------------------------------------
+    'pullRequest.comments': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceProvider = yield* WorkspaceProvider
+        const workspace =
+          yield* workspaceProvider.findWorkspaceForTask(workspaceId)
+
+        if (workspace === null) {
+          return yield* new RpcError({
+            message: `Workspace not found: ${workspaceId}`,
+            code: 'NOT_FOUND',
+          })
+        }
+
+        // PrWatcher already knows whether the branch has a pull request.
+        // Asking GitHub again here would just be a slower way to learn no.
+        if (workspace.prNumber === null) {
+          return yield* new RpcError({
+            message: `No pull request for ${workspace.branchName}`,
+            code: 'PR_NOT_FOUND',
+          })
+        }
+
+        // The number alone does not say which repository to ask: on a fork
+        // clone the pull request usually lives upstream while origin is the
+        // fork, so the URL PrWatcher persisted alongside the number is what
+        // decides. Guessing origin here reads a stranger's conversation at
+        // that number, or none at all.
+        const repoSlug =
+          workspace.prUrl === null
+            ? null
+            : parsePullRequestRepoSlug(workspace.prUrl)
+
+        if (repoSlug === null) {
+          return yield* new RpcError({
+            message: `Could not tell which GitHub repository pull request #${workspace.prNumber} lives in: ${workspace.prUrl ?? 'no pull request URL recorded'}`,
+            code: 'GH_FAILED',
+          })
+        }
+
+        const comments = yield* fetchPullRequestComments(
+          workspace.worktreePath,
+          repoSlug,
+          workspace.prNumber
+        ).pipe(
+          Effect.mapError(
+            (failure) =>
+              new RpcError({ message: failure.message, code: 'GH_FAILED' })
+          )
+        )
+
+        return {
+          number: workspace.prNumber,
+          title: workspace.prTitle,
+          url: workspace.prUrl,
+          comments,
+        }
       }),
 
     // -------------------------------------------------------------------

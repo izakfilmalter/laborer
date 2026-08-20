@@ -470,6 +470,7 @@ export interface WorkspaceView {
   readonly projectId: string
   readonly prState: string | null
   readonly prTitle: string | null
+  readonly prUnresolvedThreads: number | null
   readonly prUrl: string | null
   readonly status: string
   readonly taskNumber: number | null
@@ -521,6 +522,7 @@ const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
   projectId: project.id,
   prState: null,
   prTitle: null,
+  prUnresolvedThreads: null,
   prUrl: null,
   status: 'running',
   taskNumber: null,
@@ -560,6 +562,7 @@ export const workspaceViewsFromRows = (
       projectId: project.id,
       prState: task.prState?.toUpperCase() ?? null,
       prTitle: task.prTitle,
+      prUnresolvedThreads: task.prUnresolvedThreads,
       prUrl: task.prUrl,
       status: workspaceStatus(task.worktreeStatus),
       taskNumber: task.taskNumber,

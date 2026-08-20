@@ -105,6 +105,7 @@ const testLayer = (
             number: null,
             state: null,
             title: null,
+            unresolvedThreads: null,
             url: null,
           }),
         startPolling: () => Effect.void,
@@ -138,6 +139,28 @@ const workspace = {
   status: 'creating',
   taskSource: null,
   worktreePath: '/repo.worktrees/laborer-12345678',
+}
+
+/**
+ * The durable record shape `findWorkspaceForTask` returns — the narrow
+ * provisioning fixture plus the pull request facts PrWatcher persists.
+ */
+const durableWorkspace = {
+  ...workspace,
+  errorMessage: null,
+  origin: 'laborer' as const,
+  prBaseBranch: null,
+  prCheckStatus: null,
+  prChecks: null,
+  prMergeStatus: null,
+  prNumber: null,
+  prState: null,
+  prTitle: null,
+  prUnresolvedThreads: null,
+  prUrl: null,
+  status: 'creating' as const,
+  taskSource: '',
+  worktreeSetupStep: null,
 }
 
 describe('task provisioning', () => {
@@ -441,7 +464,7 @@ describe('task provisioning', () => {
       ).pipe(
         Effect.provide(
           testLayer(createWorktree, () =>
-            Effect.succeed({ ...workspace, taskSource: 'task-adopt' })
+            Effect.succeed({ ...durableWorkspace, taskSource: 'task-adopt' })
           )
         )
       )

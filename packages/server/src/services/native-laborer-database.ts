@@ -87,6 +87,12 @@ export interface LaborerTask {
   readonly prNumber: number | null
   readonly prState: PullRequestState | null
   readonly prTitle: string | null
+  /**
+   * Review threads still awaiting resolution. Null means never read — a
+   * closed pull request or a branch without one — which reads differently
+   * from zero, where every thread has been settled.
+   */
+  readonly prUnresolvedThreads: number | null
   readonly prUrl: string | null
   readonly revision: number
   readonly rootPath: string
@@ -122,6 +128,7 @@ export interface NewLaborerTask {
   readonly prNumber?: number | null
   readonly prState?: PullRequestState | null
   readonly prTitle?: string | null
+  readonly prUnresolvedThreads?: number | null
   readonly prUrl?: string | null
   readonly rootPath: string
   readonly setupCompletedAt?: number | null
@@ -154,6 +161,7 @@ export type LaborerTaskPatch = Partial<
     | 'prNumber'
     | 'prState'
     | 'prTitle'
+    | 'prUnresolvedThreads'
     | 'prUrl'
     | 'rootPath'
     | 'setupCompletedAt'
@@ -391,8 +399,8 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   description, created_at, updated_at, revision, worktree_status,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
   pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order,
-  pr_base_branch, pr_merge_status, pr_check_status, pr_checks, task_number,
-  label_ids`
+  pr_base_branch, pr_merge_status, pr_check_status, pr_checks,
+  pr_unresolved_threads, task_number, label_ids`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
   created_at, updated_at, revision, sort_order, branch_name`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
@@ -425,6 +433,7 @@ const TASK_PATCH_FIELDS = [
   'prNumber',
   'prState',
   'prTitle',
+  'prUnresolvedThreads',
   'prUrl',
   'rootPath',
   'setupCompletedAt',
@@ -462,6 +471,7 @@ const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
   prNumber: 'pr_number',
   prState: 'pr_state',
   prTitle: 'pr_title',
+  prUnresolvedThreads: 'pr_unresolved_threads',
   prUrl: 'pr_url',
   rootPath: 'root_path',
   setupCompletedAt: 'setup_completed_at',
@@ -681,6 +691,10 @@ const rowToTask = (value: unknown): LaborerTask => {
       'tasks.pr_state'
     ),
     prTitle: nullableString(row.pr_title, 'tasks.pr_title'),
+    prUnresolvedThreads: nullableInteger(
+      row.pr_unresolved_threads,
+      'tasks.pr_unresolved_threads'
+    ),
     prUrl: nullableString(row.pr_url, 'tasks.pr_url'),
     revision: revision(row.revision, 'tasks.revision'),
     rootPath: string(row.root_path, 'tasks.root_path'),
@@ -923,9 +937,9 @@ export class NativeLaborerDatabase {
           worktree_error, setup_completed_at, parent_task_id, base_sha,
           base_branch, pr_number, pr_url, pr_title, pr_state, pr_is_draft,
           sort_order, pr_base_branch, pr_merge_status, pr_check_status,
-          pr_checks
+          pr_checks, pr_unresolved_threads
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           input.id,
           input.rootPath,
@@ -956,7 +970,8 @@ export class NativeLaborerDatabase {
           prBaseBranch,
           prMergeStatus,
           prCheckStatus,
-          serializeCheckRuns(input.prChecks)
+          serializeCheckRuns(input.prChecks),
+          input.prUnresolvedThreads ?? null
         )
       const cursor = this.#appendTaskChange(input.id, changedAt, operationId)
       return { row: this.#requireTask(input.id), cursor }

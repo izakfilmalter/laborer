@@ -13,6 +13,8 @@ export interface BoardPr {
   readonly number: number
   readonly state: 'open' | 'merged' | 'closed'
   readonly title: string
+  /** Review threads nobody has resolved. Null is unread, not settled. */
+  readonly unresolvedThreads: number | null
   readonly url: string
 }
 
@@ -66,6 +68,7 @@ export const boardTaskFromSharedRow = (task: SharedTaskRow): BoardTask => ({
           number: task.prNumber,
           state: task.prState,
           title: task.prTitle,
+          unresolvedThreads: task.prUnresolvedThreads,
           url: task.prUrl,
         },
   sortOrder: task.sortOrder,

@@ -27,6 +27,17 @@ export const PR_VISIBLE_POLL_INTERVAL_MS = 5000
  */
 export const PR_BACKGROUND_POLL_INTERVAL_MS = 30_000
 
+/**
+ * Bound on one `gh api graphql` read of a pull request's review threads.
+ *
+ * The poll loop is sequential — check, then sleep — so a `gh` that never
+ * exits would stop PR polling for that workspace outright, taking check
+ * status and mergeability down with a count nobody would miss. 10 s is an
+ * order of magnitude past a healthy round trip; past it the last known
+ * count is held and the next tick tries again.
+ */
+export const PR_REVIEW_THREADS_TIMEOUT_MS = 10_000
+
 // ---------------------------------------------------------------------------
 // WorkspaceSyncService — `git status --branch` polling
 // ---------------------------------------------------------------------------

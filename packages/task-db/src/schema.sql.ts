@@ -27,6 +27,8 @@ export const tasks = sqliteTable(
     prCheckStatus: text('pr_check_status'),
     /** JSON array of individual check runs behind `pr_check_status`. */
     prChecks: text('pr_checks'),
+    /** Review threads still awaiting resolution. Null when never read. */
+    prUnresolvedThreads: integer('pr_unresolved_threads'),
     description: text('description'),
     /** JSON array of label ids applied to this task, in application order. */
     labelIds: text('label_ids').notNull().default('[]'),

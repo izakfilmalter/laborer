@@ -193,6 +193,28 @@ interface PanelActions {
     | undefined
 
   /**
+   * Reveal a workspace and open its pull request conversation.
+   *
+   * Named by workspace because the surfaces that need it are looking at
+   * work rather than at panes: a sidebar card holds no pane ID, and its
+   * workspace may sit in another window tab or be open nowhere at all.
+   * Revealing it commits the layout, so the pane that would answer to
+   * `toggleCommentsPane` does not exist yet at the moment of the click —
+   * the workspace key is what survives that gap.
+   *
+   * Opens, never toggles. Callers reach it from a count of unresolved
+   * conversations, which can only mean "show me"; clicking the count while
+   * the panel is already open brings the workspace forward instead of
+   * pulling the panel away mid-read.
+   *
+   * Optional because the layout hook builds its actions before the
+   * full-height panel state exists; the route supplies the real one.
+   *
+   * @param workspaceId - The workspace whose conversation should be shown
+   */
+  readonly openCommentsPaneForWorkspace?: (workspaceId: string) => void
+
+  /**
    * Remove a panel tab by ID from a workspace.
    *
    * @param workspaceId - The workspace containing the tab
@@ -330,6 +352,19 @@ interface PanelActions {
    * Triggered by Cmd+Shift+] (delta=1) and Cmd+Shift+[ (delta=-1).
    */
   readonly switchWindowTabRelative: ((delta: number) => void) | undefined
+  /**
+   * Toggle the pull request comments panel for a workspace.
+   *
+   * Shows a right-side panel with the conversation on the workspace's pull
+   * request, alongside the diff it discusses.
+   *
+   * Optional because the layout hook builds its actions before the
+   * full-height panel state exists; the route supplies the real one.
+   *
+   * @param paneId - The ID of the pane (used to inherit workspaceId)
+   * @returns Whether the comments panel is now visible (true = toggled on)
+   */
+  readonly toggleCommentsPane?: (paneId: string) => boolean
   /**
    * Toggle the dev server terminal alongside a terminal pane.
    *

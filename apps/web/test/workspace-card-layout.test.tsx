@@ -22,6 +22,7 @@ const {
   conflictPromptRef,
   destroyFn,
   mutationMap,
+  openCommentsForWorkspaceFn,
   tasksByIdRef,
   workspaceRowsRef,
 } = vi.hoisted(() => ({
@@ -29,6 +30,7 @@ const {
   conflictPromptRef: { current: '' },
   destroyFn: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  openCommentsForWorkspaceFn: vi.fn(),
   tasksByIdRef: { current: new Map<string, unknown>() },
   workspaceRowsRef: { current: [] as unknown[] },
 }))
@@ -114,6 +116,7 @@ vi.mock('@/panels/panel-context', () => ({
     autoOpenAgentWhenWorkspaceReady: autoOpenAgentFn,
     closeWorkspace: vi.fn(),
     forceCloseWorkspace: vi.fn(),
+    openCommentsPaneForWorkspace: openCommentsForWorkspaceFn,
   }),
 }))
 
@@ -223,6 +226,7 @@ const makeWorkspace = (
     prUrl: string | null
     prTitle: string | null
     prState: string | null
+    prUnresolvedThreads: number | null
   }> = {}
 ) => ({
   id: 'ws-1',
@@ -243,6 +247,7 @@ const makeWorkspace = (
   prUrl: null,
   prTitle: null,
   prState: null,
+  prUnresolvedThreads: null,
   ...overrides,
 })
 
@@ -311,6 +316,76 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
 
     expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
+  })
+})
+
+const UNRESOLVED_RE = /unresolved conversation/i
+
+/**
+ * The card names a workspace mission control can reveal, so the count of
+ * unresolved conversations answers itself in place instead of degrading to
+ * a browser tab the way a board card for unstarted work must.
+ */
+describe('Workspace card layout — unresolved conversations', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const renderCardWithThreads = () => {
+    mockStore([
+      makeWorkspace({
+        prNumber: 42,
+        prState: 'OPEN',
+        prTitle: 'Add feature',
+        prUnresolvedThreads: 3,
+        prUrl: 'https://github.com/org/repo/pull/42',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
+
+    return screen.getByRole('link', { name: UNRESOLVED_RE })
+  }
+
+  it('opens the conversation for its own workspace, not the focused one', async () => {
+    const user = userEvent.setup()
+    const count = renderCardWithThreads()
+
+    await user.click(count)
+
+    expect(openCommentsForWorkspaceFn).toHaveBeenCalledWith('ws-1')
+  })
+
+  it('asks again rather than closing when clicked a second time', async () => {
+    const user = userEvent.setup()
+    const count = renderCardWithThreads()
+
+    await user.click(count)
+    await user.click(count)
+
+    // The action opens and never toggles, so the card has nothing to track:
+    // the same ask twice is the same ask twice.
+    expect(openCommentsForWorkspaceFn).toHaveBeenCalledTimes(2)
+    expect(openCommentsForWorkspaceFn).toHaveBeenNthCalledWith(2, 'ws-1')
+  })
+
+  it('still points at the diff on GitHub for a modifier click', async () => {
+    const user = userEvent.setup()
+    const count = renderCardWithThreads()
+
+    expect(count.getAttribute('href')).toBe(
+      'https://github.com/org/repo/pull/42/files'
+    )
+
+    await user.keyboard('{Meta>}')
+    await user.click(count)
+    await user.keyboard('{/Meta}')
+
+    expect(openCommentsForWorkspaceFn).not.toHaveBeenCalled()
   })
 })
 

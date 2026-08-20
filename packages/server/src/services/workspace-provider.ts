@@ -68,7 +68,10 @@ import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
 import { LaborerDatabase } from './laborer-database.js'
 import { ProjectRegistry } from './project-registry.js'
-import { findWorkspaceRecord } from './workspace-records.js'
+import {
+  type WorkspaceRecord as DurableWorkspaceRecord,
+  findWorkspaceRecord,
+} from './workspace-records.js'
 import {
   findWorkspaceTask,
   updateServerTaskFacts,
@@ -607,10 +610,16 @@ class WorkspaceProvider extends Context.Service<
       operationId?: string | null
     ) => Effect.Effect<WorkspaceRecord, RpcError>
 
-    /** Find the non-destroyed workspace durably provisioned for a task. */
+    /**
+     * Find the non-destroyed workspace durably provisioned for a task.
+     *
+     * Returns the full durable record — including the pull request facts
+     * PrWatcher persists — rather than the narrower shape provisioning
+     * itself needs.
+     */
     readonly findWorkspaceForTask: (
       taskId: string
-    ) => Effect.Effect<WorkspaceRecord | null>
+    ) => Effect.Effect<DurableWorkspaceRecord | null>
 
     /**
      * Destroy a workspace by removing its git worktree and committing a

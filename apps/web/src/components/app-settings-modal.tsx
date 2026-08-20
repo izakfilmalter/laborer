@@ -16,6 +16,7 @@ import {
   FieldSet,
 } from '@laborer/ui/components/field'
 import { Input } from '@laborer/ui/components/input'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import {
   Select,
   SelectContent,
@@ -263,7 +264,7 @@ export function AppSettingsModal() {
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogContent
-        className="max-h-[85svh] overflow-y-auto sm:max-w-2xl"
+        className="max-h-[85svh] sm:max-w-2xl"
         data-testid="app-settings"
       >
         <DialogHeader>
@@ -279,177 +280,183 @@ export function AppSettingsModal() {
 
         {/* Constrained so the shortcut reference can't push the dialog past
             the viewport on short screens. */}
-        <div className="max-h-[60vh] space-y-6 overflow-y-auto py-2">
-          {/* Default Agent Section */}
-          <FieldSet>
-            <Field>
-              <FieldLabel>Default agent</FieldLabel>
-              {isLoadingAgent ? (
-                <div className="flex items-center gap-2 py-2 text-muted-foreground text-sm">
-                  <Spinner className="size-4" />
-                  Loading...
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <Select
-                      onValueChange={(value) =>
-                        setAgent(value as AgentProvider)
-                      }
-                      value={agent}
-                    >
-                      <SelectTrigger data-testid="default-agent-select">
-                        <SelectValue>
-                          <AgentIcon className="size-3.5" />
-                          {AGENT_OPTIONS.find((o) => o.value === agent)
-                            ?.label ?? agent}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {AGENT_OPTIONS.map((option) => {
-                          const Icon = AGENT_ICONS[option.value]
-                          return (
-                            <SelectItem
-                              data-testid={`default-agent-option-${option.value}`}
-                              key={option.value}
-                              value={option.value}
-                            >
-                              <Icon className="size-3.5" />
-                              {option.label}
-                            </SelectItem>
-                          )
-                        })}
-                      </SelectContent>
-                    </Select>
+        <ScrollArea className="h-auto max-h-[60vh]" scrollbarGutter>
+          <div className="space-y-6 py-2">
+            {/* Default Agent Section */}
+            <FieldSet>
+              <Field>
+                <FieldLabel>Default agent</FieldLabel>
+                {isLoadingAgent ? (
+                  <div className="flex items-center gap-2 py-2 text-muted-foreground text-sm">
+                    <Spinner className="size-4" />
+                    Loading...
                   </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <Select
+                        onValueChange={(value) =>
+                          setAgent(value as AgentProvider)
+                        }
+                        value={agent}
+                      >
+                        <SelectTrigger data-testid="default-agent-select">
+                          <SelectValue>
+                            <AgentIcon className="size-3.5" />
+                            {AGENT_OPTIONS.find((o) => o.value === agent)
+                              ?.label ?? agent}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {AGENT_OPTIONS.map((option) => {
+                            const Icon = AGENT_ICONS[option.value]
+                            return (
+                              <SelectItem
+                                data-testid={`default-agent-option-${option.value}`}
+                                key={option.value}
+                                value={option.value}
+                              >
+                                <Icon className="size-3.5" />
+                                {option.label}
+                              </SelectItem>
+                            )
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      data-testid="save-default-agent"
+                      disabled={isSavingAgent}
+                      onClick={handleSaveAgent}
+                      size="sm"
+                      variant="outline"
+                    >
+                      {isSavingAgent && <Spinner className="size-3.5" />}
+                      {isSavingAgent ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
+                )}
+                <FieldDescription>
+                  The CLI agent to use when opening new agent panels. Projects
+                  can override this in their own laborer.json.
+                </FieldDescription>
+              </Field>
+            </FieldSet>
+
+            {/* Labels Section — app-wide, shared by every project */}
+            <LabelSettingsSection />
+
+            {/* GitHub Connection Section */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Github className="h-5 w-5" />
+                <h3 className="font-medium text-sm">GitHub Connection</h3>
+                <span
+                  className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+                    hasToken
+                      ? 'bg-green-500/10 text-green-500'
+                      : 'bg-muted text-muted-foreground'
+                  }`}
+                  data-testid="github-connection-status"
+                >
+                  {hasToken && <Check className="h-3 w-3" />}
+                  {statusLabel}
+                </span>
+              </div>
+
+              <p className="text-muted-foreground text-sm">
+                Connect your GitHub account to enable real-time PR status
+                updates and other live notifications.
+              </p>
+
+              {hasToken ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground text-sm">
+                    GitHub account connected.
+                  </span>
                   <Button
-                    data-testid="save-default-agent"
-                    disabled={isSavingAgent}
-                    onClick={handleSaveAgent}
+                    onClick={handleDisconnect}
                     size="sm"
                     variant="outline"
                   >
-                    {isSavingAgent && <Spinner className="size-3.5" />}
-                    {isSavingAgent ? 'Saving...' : 'Save'}
+                    Disconnect
                   </Button>
                 </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Step 1: Start OAuth */}
+                  <Button
+                    className="w-full"
+                    onClick={handleStartOAuth}
+                    variant="outline"
+                  >
+                    <Github className="mr-2 h-4 w-4" />
+                    Connect GitHub Account
+                    <ExternalLink className="ml-2 h-3 w-3" />
+                  </Button>
+
+                  {/* Instructions */}
+                  <div className="rounded-md bg-muted p-3 text-sm">
+                    <p className="font-medium">How it works:</p>
+                    <ol className="mt-1 list-inside list-decimal space-y-1 text-muted-foreground">
+                      <li>
+                        Click the button above to open GitHub in your browser
+                      </li>
+                      <li>Authorize the application</li>
+                      <li>
+                        If the app doesn&apos;t auto-capture the callback, copy
+                        the URL shown in your browser and paste it below
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Step 2: Paste callback URL (fallback) */}
+                  <Field>
+                    <FieldLabel htmlFor="github-callback-url">
+                      Callback URL (if needed)
+                    </FieldLabel>
+                    <div className="flex gap-2">
+                      <Input
+                        data-testid="github-callback-url"
+                        id="github-callback-url"
+                        onChange={(e) => setCallbackUrl(e.target.value)}
+                        placeholder="x-github-desktop-dev-auth://oauth?code=..."
+                        value={callbackUrl}
+                      />
+                      <Button
+                        data-testid="submit-github-callback"
+                        disabled={!callbackUrl.trim() || isExchanging}
+                        onClick={handleSubmitUrl}
+                        variant="default"
+                      >
+                        {isExchanging ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          'Connect'
+                        )}
+                      </Button>
+                    </div>
+                    <FieldDescription>
+                      Paste the full URL from your browser after authorizing.
+                    </FieldDescription>
+                  </Field>
+                </div>
               )}
-              <FieldDescription>
-                The CLI agent to use when opening new agent panels. Projects can
-                override this in their own laborer.json.
-              </FieldDescription>
-            </Field>
-          </FieldSet>
-
-          {/* Labels Section — app-wide, shared by every project */}
-          <LabelSettingsSection />
-
-          {/* GitHub Connection Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Github className="h-5 w-5" />
-              <h3 className="font-medium text-sm">GitHub Connection</h3>
-              <span
-                className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
-                  hasToken
-                    ? 'bg-green-500/10 text-green-500'
-                    : 'bg-muted text-muted-foreground'
-                }`}
-                data-testid="github-connection-status"
-              >
-                {hasToken && <Check className="h-3 w-3" />}
-                {statusLabel}
-              </span>
+              {error && (
+                <p
+                  className="text-destructive text-sm"
+                  data-testid="github-connection-error"
+                  role="alert"
+                >
+                  {error}
+                </p>
+              )}
             </div>
 
-            <p className="text-muted-foreground text-sm">
-              Connect your GitHub account to enable real-time PR status updates
-              and other live notifications.
-            </p>
-
-            {hasToken ? (
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground text-sm">
-                  GitHub account connected.
-                </span>
-                <Button onClick={handleDisconnect} size="sm" variant="outline">
-                  Disconnect
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* Step 1: Start OAuth */}
-                <Button
-                  className="w-full"
-                  onClick={handleStartOAuth}
-                  variant="outline"
-                >
-                  <Github className="mr-2 h-4 w-4" />
-                  Connect GitHub Account
-                  <ExternalLink className="ml-2 h-3 w-3" />
-                </Button>
-
-                {/* Instructions */}
-                <div className="rounded-md bg-muted p-3 text-sm">
-                  <p className="font-medium">How it works:</p>
-                  <ol className="mt-1 list-inside list-decimal space-y-1 text-muted-foreground">
-                    <li>
-                      Click the button above to open GitHub in your browser
-                    </li>
-                    <li>Authorize the application</li>
-                    <li>
-                      If the app doesn&apos;t auto-capture the callback, copy
-                      the URL shown in your browser and paste it below
-                    </li>
-                  </ol>
-                </div>
-
-                {/* Step 2: Paste callback URL (fallback) */}
-                <Field>
-                  <FieldLabel htmlFor="github-callback-url">
-                    Callback URL (if needed)
-                  </FieldLabel>
-                  <div className="flex gap-2">
-                    <Input
-                      data-testid="github-callback-url"
-                      id="github-callback-url"
-                      onChange={(e) => setCallbackUrl(e.target.value)}
-                      placeholder="x-github-desktop-dev-auth://oauth?code=..."
-                      value={callbackUrl}
-                    />
-                    <Button
-                      data-testid="submit-github-callback"
-                      disabled={!callbackUrl.trim() || isExchanging}
-                      onClick={handleSubmitUrl}
-                      variant="default"
-                    >
-                      {isExchanging ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        'Connect'
-                      )}
-                    </Button>
-                  </div>
-                  <FieldDescription>
-                    Paste the full URL from your browser after authorizing.
-                  </FieldDescription>
-                </Field>
-              </div>
-            )}
-            {error && (
-              <p
-                className="text-destructive text-sm"
-                data-testid="github-connection-error"
-                role="alert"
-              >
-                {error}
-              </p>
-            )}
+            {/* Keyboard Shortcuts Section */}
+            <KeyboardShortcutsSection />
           </div>
-
-          {/* Keyboard Shortcuts Section */}
-          <KeyboardShortcutsSection />
-        </div>
+        </ScrollArea>
 
         <DialogFooter />
       </DialogContent>

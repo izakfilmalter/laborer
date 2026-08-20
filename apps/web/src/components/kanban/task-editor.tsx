@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from '@laborer/ui/components/dialog'
 import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { Separator } from '@laborer/ui/components/separator'
 import { cn } from '@laborer/ui/lib/utils'
 import {
@@ -547,7 +548,7 @@ function TaskDetailDialog({
               {/* Negative margin lets the editable's own padding provide the
                   hover and focus bleed for inline chips without the brief
                   sitting further in than the title above it. */}
-              <div className="-mx-2 min-h-32 flex-1 overflow-y-auto">
+              <ScrollArea className="-mx-2 min-h-32 flex-1">
                 <DescriptionEditor
                   ariaLabel="Description"
                   contentClassName="px-2"
@@ -588,7 +589,7 @@ function TaskDetailDialog({
                   placeholder="What should the agent know or do?"
                   value={description}
                 />
-              </div>
+              </ScrollArea>
             </div>
           </div>
           <div className="flex flex-col gap-2 px-3 py-2">

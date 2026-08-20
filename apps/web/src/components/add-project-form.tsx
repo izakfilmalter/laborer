@@ -24,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@laborer/ui/components/dialog'
+import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { ChevronLeft, Folder, FolderPlus } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -138,32 +139,34 @@ function BrowserDirectoryPicker({
               {listing?.path ?? 'Loading…'}
             </span>
           </div>
-          <div className="max-h-80 flex-1 overflow-y-auto p-1">
-            {listing?.directories.map((directory) => (
-              <button
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-                data-directory-path={directory.path}
-                data-testid="directory-option"
-                disabled={isLoading}
-                key={directory.path}
-                onClick={() => browse(directory.path).catch(() => undefined)}
-                type="button"
-              >
-                <Folder className="size-4 shrink-0" />
-                <span className="truncate">{directory.name}</span>
-              </button>
-            ))}
-            {!isLoading && listing?.directories.length === 0 && (
-              <p className="p-4 text-center text-muted-foreground text-sm">
-                No subfolders
-              </p>
-            )}
-            {!isLoading && listing?.truncated && (
-              <p className="p-2 text-center text-muted-foreground text-xs">
-                Only the first 1,000 entries are shown.
-              </p>
-            )}
-          </div>
+          <ScrollArea className="h-auto max-h-80 flex-1">
+            <div className="p-1">
+              {listing?.directories.map((directory) => (
+                <button
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                  data-directory-path={directory.path}
+                  data-testid="directory-option"
+                  disabled={isLoading}
+                  key={directory.path}
+                  onClick={() => browse(directory.path).catch(() => undefined)}
+                  type="button"
+                >
+                  <Folder className="size-4 shrink-0" />
+                  <span className="truncate">{directory.name}</span>
+                </button>
+              ))}
+              {!isLoading && listing?.directories.length === 0 && (
+                <p className="p-4 text-center text-muted-foreground text-sm">
+                  No subfolders
+                </p>
+              )}
+              {!isLoading && listing?.truncated && (
+                <p className="p-2 text-center text-muted-foreground text-xs">
+                  Only the first 1,000 entries are shown.
+                </p>
+              )}
+            </div>
+          </ScrollArea>
         </div>
         <DialogFooter>
           <Button onClick={onCancel} variant="outline">

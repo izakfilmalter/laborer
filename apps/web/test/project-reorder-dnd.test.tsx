@@ -84,8 +84,23 @@ import {
   ProjectDragHandle,
   type ProjectReorderSurface,
   useProjectDragItem,
+  useProjectReorderKeys,
   useProjectReorderMonitor,
 } from '../src/components/project-reorder'
+
+/** A sidebar-style heading: the grab area is the row's own toggle button. */
+function HeadingRow({ enabled }: { readonly enabled: boolean }) {
+  const handleReorderKeys = useProjectReorderKeys({
+    enabled,
+    projectId: 'b',
+  })
+
+  return (
+    <button onKeyDown={handleReorderKeys} type="button">
+      Laborer
+    </button>
+  )
+}
 
 function Row({
   enabled,
@@ -357,5 +372,30 @@ describe('keyboard reordering', () => {
 
     fireEvent.keyDown(handle, { key: 'Enter' })
     expect(nudgeProject).toHaveBeenCalledTimes(2)
+  })
+
+  it('moves a handle-less project with alt and the arrow keys', () => {
+    render(<HeadingRow enabled={true} />)
+
+    const heading = screen.getByRole('button', { name: 'Laborer' })
+    fireEvent.keyDown(heading, { altKey: true, key: 'ArrowUp' })
+    expect(nudgeProject).toHaveBeenCalledWith('b', -1)
+
+    fireEvent.keyDown(heading, { altKey: true, key: 'ArrowDown' })
+    expect(nudgeProject).toHaveBeenCalledWith('b', 1)
+
+    // Plain arrows stay free for navigating the tree.
+    fireEvent.keyDown(heading, { key: 'ArrowUp' })
+    expect(nudgeProject).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores the arrow keys while reordering is disabled', () => {
+    render(<HeadingRow enabled={false} />)
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Laborer' }), {
+      altKey: true,
+      key: 'ArrowUp',
+    })
+    expect(nudgeProject).not.toHaveBeenCalled()
   })
 })

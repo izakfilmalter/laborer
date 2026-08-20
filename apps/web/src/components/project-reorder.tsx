@@ -18,7 +18,13 @@ import {
 } from '@atlaskit/pragmatic-drag-and-drop/element/adapter'
 import { cn } from '@laborer/ui/lib/utils'
 import { GripVertical } from 'lucide-react'
-import { type RefObject, useEffect, useRef, useState } from 'react'
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { useProjectReorder } from '@/hooks/use-project-reorder'
 
 const PROJECT_DRAG_TYPE = 'project-item'
@@ -175,6 +181,34 @@ export function ProjectDropIndicator({
       )}
     />
   )
+}
+
+/**
+ * Keyboard reordering for a surface that has no visible grab handle: the row's
+ * own focusable heading moves the project with Alt+Arrow. Pragmatic
+ * drag-and-drop covers pointers only, so this is the keyboard route, and the
+ * Alt modifier keeps plain arrow keys free for list navigation.
+ */
+export function useProjectReorderKeys({
+  enabled,
+  projectId,
+}: {
+  readonly enabled: boolean
+  readonly projectId: string
+}): (event: ReactKeyboardEvent) => void {
+  const { nudgeProject } = useProjectReorder()
+
+  return (event: ReactKeyboardEvent) => {
+    if (!(enabled && event.altKey)) {
+      return
+    }
+    const delta = { ArrowDown: 1, ArrowUp: -1 }[event.key]
+    if (delta === undefined) {
+      return
+    }
+    event.preventDefault()
+    nudgeProject(projectId, delta)
+  }
 }
 
 /**

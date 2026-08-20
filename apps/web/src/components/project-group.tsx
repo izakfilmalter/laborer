@@ -49,9 +49,9 @@ import {
 import type { ComposerCloseReason } from '@/components/inline-composer'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
-  ProjectDragHandle,
   ProjectDropIndicator,
   useProjectDragItem,
+  useProjectReorderKeys,
 } from '@/components/project-reorder'
 import { ProjectSettingsModal } from '@/components/project-settings-modal'
 import { WorkspaceList } from '@/components/workspace-list'
@@ -103,6 +103,12 @@ function ProjectGroup({
     index,
     projectId: project.id,
     surface: 'sidebar',
+  })
+  // No grab handle in the sidebar: the heading itself is the grab area, so
+  // Alt+Arrow on the focused heading is the keyboard route for reordering.
+  const handleReorderKeys = useProjectReorderKeys({
+    enabled: canReorder,
+    projectId: project.id,
   })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
@@ -194,14 +200,13 @@ function ProjectGroup({
       <ProjectDropIndicator edge={closestEdge} />
       <Collapsible defaultOpen={expanded} open={expanded}>
         <div className="flex items-center gap-1" ref={headingRef}>
-          <ProjectDragHandle
-            disabled={!canReorder}
-            projectId={project.id}
-            projectName={project.name}
-          />
           <CollapsibleTrigger
+            aria-keyshortcuts={
+              canReorder ? 'Alt+ArrowUp Alt+ArrowDown' : undefined
+            }
             className="flex flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left font-medium text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             onClick={onToggle}
+            onKeyDown={handleReorderKeys}
           >
             <ChevronRight
               className={cn(
@@ -307,10 +312,8 @@ function ProjectGroup({
           </div>
         )}
         <CollapsibleContent>
-          {/* No indent: the cards hold the sidebar's outer rail, the same one
-              the search field sits on. The heading's own inset comes from its
-              drag-handle gutter, which reads as a header treatment rather than
-              a level of nesting for the cards to step in from. */}
+          {/* No indent: the cards and the heading both hold the sidebar's
+              outer rail, the same one the search field sits on. */}
           <div className="mt-1">
             <WorkspaceList
               onPendingCreationChange={handlePendingCreationChange}

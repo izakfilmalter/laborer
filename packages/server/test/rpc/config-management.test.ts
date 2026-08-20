@@ -97,6 +97,7 @@ describe('LaborerRpcs config management', () => {
             ...configWithoutAgent
           } = config
           assert.deepStrictEqual(configWithoutAgent, {
+            conflictPrompt: { source: 'default', value: '' },
             shortNameAliases: { source: 'default', value: [] },
             setupScripts: {
               source: canonicalProjectConfigPath,
@@ -244,6 +245,7 @@ describe('LaborerRpcs config management', () => {
 
           assert.deepStrictEqual(resolved, {
             agent: { source: canonicalConfigPath, value: 'opencode2' },
+            conflictPrompt: { source: 'default', value: '' },
             shortName: { source: canonicalConfigPath, value: 'RPC' },
             shortNameAliases: {
               source: canonicalConfigPath,
@@ -266,5 +268,52 @@ describe('LaborerRpcs config management', () => {
           })
         })
       )
+  )
+
+  it.effect('config.update round-trips a project conflict prompt', () =>
+    runWithRpcTestContext(({ client }) =>
+      Effect.gen(function* () {
+        const tempRoots: string[] = []
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => cleanupTempRoots(tempRoots))
+        )
+
+        const repoPath = createTempDir('rpc-conflict-prompt', tempRoots)
+        initRepoAt(repoPath)
+        const configPath = writeLaborerConfig(repoPath, {})
+
+        const project = yield* client['project.add']({
+          id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          repoPath,
+        })
+
+        const prompt = 'Rebase onto dev and resolve every conflict.'
+        yield* client['config.update']({
+          projectId: project.id,
+          config: { conflictPrompt: prompt },
+        })
+
+        const canonicalConfigPath = realpathSync(configPath)
+        const resolved = yield* client['config.get']({
+          projectId: project.id,
+        })
+
+        assert.deepStrictEqual(resolved.conflictPrompt, {
+          source: canonicalConfigPath,
+          value: prompt,
+        })
+
+        // Emptying the field clears the action rather than leaving the
+        // previous prompt behind.
+        yield* client['config.update']({
+          projectId: project.id,
+          config: { conflictPrompt: '' },
+        })
+
+        const cleared = yield* client['config.get']({ projectId: project.id })
+        assert.strictEqual(cleared.conflictPrompt.value, '')
+      })
+    )
   )
 })

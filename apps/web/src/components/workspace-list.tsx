@@ -61,6 +61,7 @@ import {
   taskCollection,
   workspaceViewsFromRows,
 } from '@/db/shared-state'
+import { orderedWorkspaceViews } from '@/db/workspace-order'
 import type {
   PendingWorkspaceCreation,
   PendingWorkspaceCreationChangeHandler,
@@ -270,11 +271,14 @@ function WorkspaceList({
   )
   const collapseState = useWorkspaceGroupCollapseState()
 
-  // Filter out destroyed workspaces, scoped to the given project
+  // Filter out destroyed workspaces, scoped to the given project, and present
+  // them oldest-first so newly created workspaces always land at the bottom.
   const activeWorkspaces = useMemo(
     () =>
-      workspaceList.filter(
-        (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
+      orderedWorkspaceViews(
+        workspaceList.filter(
+          (ws) => ws.status !== 'destroyed' && ws.projectId === projectId
+        )
       ),
     [workspaceList, projectId]
   )

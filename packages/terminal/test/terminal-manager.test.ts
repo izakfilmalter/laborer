@@ -2465,6 +2465,82 @@ describe('TerminalManager (terminal package)', { timeout: 30_000 }, () => {
     })
   })
 
+  // -------------------------------------------------------------------------
+  // Agent session title tracking
+  // -------------------------------------------------------------------------
+
+  it('tracks the focused agent session title across session switches', async () => {
+    // OpenCode's TUI renames the terminal (OSC 0) to "OC | <session title>"
+    // and rewrites it whenever the operator switches session tabs. The
+    // sidebar names each row after the session it is showing, so the manager
+    // must follow the latest title rather than keeping the first one.
+    await withGracePeriod(60_000, async (runLocalEffect) => {
+      const observed = await runLocalEffect(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const tm = yield* TerminalManager
+
+            // Emit a session title, then a second one (a tab switch), then
+            // the bare title OpenCode uses for screens with no session.
+            // `sleep` keeps a child process alive throughout so the
+            // terminal stays in the running, agent-occupied state.
+            const terminal = yield* tm.spawn({
+              command: '/bin/sh',
+              args: [
+                '-c',
+                'sleep 999 & printf "\\033]0;OC | Mirror church-work create task\\007"; sleep 1; printf "\\033]0;OC | Fix the flaky spawn test\\007"; sleep 1; printf "\\033]0;OpenCode\\007"; wait',
+              ],
+              cwd: TEST_CWD,
+              cols: 80,
+              rows: 24,
+              workspaceId: TEST_WORKSPACE_ID,
+            })
+
+            // After the first title lands, the row is named for that session.
+            yield* Effect.sleep(600)
+            const afterFirstTitle = (yield* tm.listTerminals()).find(
+              ({ id }) => id === terminal.id
+            )?.sessionTitle
+
+            // After the switch, the row follows to the newly focused session.
+            yield* Effect.sleep(1000)
+            const afterSwitch = (yield* tm.listTerminals()).find(
+              ({ id }) => id === terminal.id
+            )?.sessionTitle
+
+            // A title carrying no session identity clears the stale name.
+            yield* Effect.sleep(1000)
+            const afterSessionless = (yield* tm.listTerminals()).find(
+              ({ id }) => id === terminal.id
+            )?.sessionTitle
+
+            yield* tm.kill(terminal.id)
+
+            // A stopped terminal displays nothing, so it names no session.
+            const afterKill = (yield* tm.listTerminals()).find(
+              ({ id }) => id === terminal.id
+            )?.sessionTitle
+
+            return {
+              afterFirstTitle,
+              afterSwitch,
+              afterSessionless,
+              afterKill,
+            }
+          })
+        )
+      )
+
+      assert.strictEqual(
+        observed.afterFirstTitle,
+        'Mirror church-work create task'
+      )
+      assert.strictEqual(observed.afterSwitch, 'Fix the flaky spawn test')
+      assert.strictEqual(observed.afterSessionless, null)
+      assert.strictEqual(observed.afterKill, null)
+    })
+  })
+
   it('setAgentStatusFromHook emits ProcessChanged immediately', async () => {
     // When a hook sets the agent status, a ProcessChanged event should
     // be published before the hook update completes.

@@ -414,6 +414,11 @@ const ConfigResolvedValueAgent = Schema.Struct({
 
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
+  /**
+   * Prompt handed to a fresh agent when an operator acts on the merge
+   * conflict mark. Empty means the project has not configured one.
+   */
+  conflictPrompt: ConfigResolvedValueString,
   shortName: ConfigResolvedValueString,
   shortNameAliases: ConfigResolvedValueStringArray,
   worktreeDir: ConfigResolvedValueString,
@@ -966,6 +971,7 @@ export class LaborerRpcs extends RpcGroup.make(
       projectId: Schema.String,
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
+        conflictPrompt: Schema.optional(Schema.String),
         shortName: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
@@ -1485,6 +1491,15 @@ export const TerminalInfo = Schema.Struct({
    * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
    */
   processChain: Schema.Array(ForegroundProcessSchema),
+  /**
+   * Title of the agent session currently focused inside the terminal,
+   * parsed from the terminal's OSC 0/2 title. Lets the sidebar name a row
+   * after the work it is doing ("OpenCode 2 · Fix the flaky spawn test")
+   * rather than repeating the agent name on every row. Null when the
+   * terminal runs no session-aware agent, the agent is on a screen with no
+   * session identity, or the terminal is stopped.
+   */
+  sessionTitle: Schema.NullOr(Schema.String),
   status: TerminalStatus,
 })
 

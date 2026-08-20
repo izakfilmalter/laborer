@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from '@laborer/ui/components/select'
 import { Spinner } from '@laborer/ui/components/spinner'
+import { Textarea } from '@laborer/ui/components/textarea'
 import {
   Tooltip,
   TooltipContent,
@@ -104,6 +105,7 @@ function ProjectSettingsForm({
   const updateConfig = useAtomSet(updateConfigMutation, { mode: 'promise' })
 
   const [agent, setAgent] = useState<AgentProvider>('opencode2')
+  const [conflictPrompt, setConflictPrompt] = useState('')
   const [shortName, setShortName] = useState('')
   const [worktreeDir, setWorktreeDir] = useState('')
   const [setupScripts, setSetupScripts] = useState<SetupScriptItem[]>([])
@@ -124,6 +126,7 @@ function ProjectSettingsForm({
     }
 
     setAgent(configResult.value.agent.value)
+    setConflictPrompt(configResult.value.conflictPrompt.value)
     setShortName(configResult.value.shortName.value)
     setWorktreeDir(configResult.value.worktreeDir.value)
     setSetupScripts(toSetupScriptItems(configResult.value.setupScripts.value))
@@ -171,8 +174,10 @@ function ProjectSettingsForm({
   const handleSave = async () => {
     const updates = buildConfigUpdates({
       agent,
+      conflictPrompt,
       resolvedConfig: {
         agent: resolvedConfig.agent.value,
+        conflictPrompt: resolvedConfig.conflictPrompt.value,
         shortName: resolvedConfig.shortName.value,
         setupScripts: resolvedConfig.setupScripts.value,
         worktreeDir: resolvedConfig.worktreeDir.value,
@@ -302,6 +307,25 @@ function ProjectSettingsForm({
             />
             <FieldDescription className={provenanceClassName}>
               Source: {resolvedConfig.worktreeDir.source}
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor={`conflict-prompt-${projectId}`}>
+              Conflict prompt
+            </FieldLabel>
+            <Textarea
+              className="min-h-24 font-mono text-xs"
+              data-testid="project-conflict-prompt"
+              id={`conflict-prompt-${projectId}`}
+              onChange={(event) => setConflictPrompt(event.target.value)}
+              placeholder="Rebase this branch onto its base branch and resolve every merge conflict."
+              value={conflictPrompt}
+            />
+            <FieldDescription className={provenanceClassName}>
+              Run in a new agent when you click a workspace's merge conflict
+              mark. Leave empty to keep the mark read-only. Source:{' '}
+              {resolvedConfig.conflictPrompt.source}
             </FieldDescription>
           </Field>
 
@@ -437,8 +461,8 @@ function ProjectSettingsModal({
         <DialogHeader>
           <DialogTitle>Project settings</DialogTitle>
           <DialogDescription>
-            Configure the task short name, agent, worktree path, and setup
-            scripts for {projectName}.
+            Configure the task short name, agent, worktree path, conflict
+            prompt, and setup scripts for {projectName}.
           </DialogDescription>
         </DialogHeader>
         {open && !isServerReady && (

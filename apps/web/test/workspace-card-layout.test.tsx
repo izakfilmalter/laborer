@@ -10,20 +10,28 @@
 
 import type { PullRequestCheckRun } from '@laborer/shared/rpc'
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { destroyFn, mutationMap, tasksByIdRef, workspaceRowsRef } = vi.hoisted(
-  () => ({
-    destroyFn: vi.fn(),
-    mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
-    tasksByIdRef: { current: new Map<string, unknown>() },
-    workspaceRowsRef: { current: [] as unknown[] },
-  })
-)
+const {
+  autoOpenAgentFn,
+  conflictPromptRef,
+  destroyFn,
+  mutationMap,
+  tasksByIdRef,
+  workspaceRowsRef,
+} = vi.hoisted(() => ({
+  autoOpenAgentFn: vi.fn(),
+  conflictPromptRef: { current: '' },
+  destroyFn: vi.fn(),
+  mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  tasksByIdRef: { current: new Map<string, unknown>() },
+  workspaceRowsRef: { current: [] as unknown[] },
+}))
 
 vi.mock('@/hooks/use-terminal-list', () => ({
   useTerminalList: () => ({
@@ -48,7 +56,10 @@ vi.mock('@effect/atom-react/Hooks', () => ({
       }
       return {
         _tag: 'Success',
-        value: { shortName: { source: 'test', value: 'LAB' } },
+        value: {
+          conflictPrompt: { source: 'test', value: conflictPromptRef.current },
+          shortName: { source: 'test', value: 'LAB' },
+        },
       }
     })(),
 }))
@@ -100,6 +111,7 @@ vi.mock('sonner', () => ({
 vi.mock('@/panels/panel-context', () => ({
   useActiveWorkspaceId: () => null,
   usePanelActions: () => ({
+    autoOpenAgentWhenWorkspaceReady: autoOpenAgentFn,
     closeWorkspace: vi.fn(),
     forceCloseWorkspace: vi.fn(),
   }),
@@ -338,6 +350,7 @@ describe('Workspace card layout — editing the card behind the workspace', () =
 describe('Workspace card layout — status row', () => {
   afterEach(() => {
     cleanup()
+    conflictPromptRef.current = ''
   })
 
   beforeEach(() => {
@@ -427,6 +440,45 @@ describe('Workspace card layout — status row', () => {
     const statusRow = container.querySelector('[data-slot="card-status-row"]')
     const badges = statusRow?.firstElementChild
     expect(badges?.lastElementChild?.contains(mark)).toBe(true)
+  })
+
+  it('turns the conflict mark into the action that clears it', async () => {
+    conflictPromptRef.current = 'Rebase onto dev and resolve the conflicts.'
+    mockStore([
+      makeWorkspace({
+        prBaseBranch: 'dev',
+        prCheckStatus: null,
+        prMergeStatus: 'conflicting',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
+
+    const action = screen.getByRole('button', {
+      name: 'Resolve conflicts with dev',
+    })
+    await userEvent.click(action)
+
+    expect(autoOpenAgentFn).toHaveBeenCalledWith('ws-1', {
+      initialPrompt: 'Rebase onto dev and resolve the conflicts.',
+    })
+  })
+
+  it('leaves the conflict mark read-only without a project prompt', () => {
+    mockStore([
+      makeWorkspace({
+        prBaseBranch: 'dev',
+        prCheckStatus: null,
+        prMergeStatus: 'conflicting',
+      }),
+    ])
+
+    render(<WorkspaceList projectId="project-1" rootPath="/repo" />)
+
+    expect(
+      screen.queryByRole('button', { name: 'Resolve conflicts with dev' })
+    ).toBeNull()
+    expect(screen.getByRole('img', { name: 'Conflicts with dev' })).toBeTruthy()
   })
 
   it('hangs the check rollup off the pull request pill', () => {

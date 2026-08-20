@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { cloneElement, isValidElement } from 'react'
+import { cloneElement, isValidElement, useEffect, useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoardTask } from '@/components/kanban/board-data'
 import { TaskBoardCard } from '@/components/kanban/task-board'
@@ -48,6 +48,43 @@ vi.mock('@/components/github-pr-status-badge', () => ({
 // pull shared state into a suite about the editing cycle.
 vi.mock('@/components/labels/task-labels-control', () => ({
   TaskLabelsControl: () => null,
+}))
+
+// Slate does not process keystrokes under jsdom — it edits through
+// `beforeinput`, which the environment never dispatches — so the real editor
+// can be rendered here but never typed into. This suite is about the draft and
+// its save, not about rich text, so the editor stands in as the plain field it
+// presents itself as: markdown in, markdown out, and the normalization it
+// reports on mount. The editor's own contract is covered in
+// `test/components/editor/description-editor.test.tsx`.
+vi.mock('@/components/editor/description-editor', () => ({
+  DescriptionEditor: ({
+    ariaLabel,
+    onChange,
+    onNormalize,
+    value,
+  }: {
+    ariaLabel?: string
+    onChange?: (markdown: string) => void
+    onNormalize?: (markdown: string) => void
+    value: string
+  }) => {
+    const normalizeRef = useRef(false)
+    useEffect(() => {
+      if (normalizeRef.current) {
+        return
+      }
+      normalizeRef.current = true
+      onNormalize?.(value)
+    }, [onNormalize, value])
+    return (
+      <textarea
+        aria-label={ariaLabel}
+        defaultValue={value}
+        onChange={(event) => onChange?.(event.target.value)}
+      />
+    )
+  },
 }))
 
 vi.mock('@/components/kanban/worktree-affordance', () => ({

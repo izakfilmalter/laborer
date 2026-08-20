@@ -736,6 +736,7 @@ export function usePanelLayout() {
           hasChildProcess: false,
           id: result.id,
           processChain: [],
+          sessionTitle: null,
           status: result.status as 'running' | 'stopped',
           workspaceId: wsId,
         })

@@ -285,9 +285,7 @@ function WorkspaceFrameHeader({
           prTitle={prTitle}
           prUrl={prUrl}
         />
-        {workspaceId ? (
-          <WorkspaceSyncStatus size="header" workspaceId={workspaceId} />
-        ) : null}
+        {workspaceId ? <WorkspaceSyncStatus workspaceId={workspaceId} /> : null}
         {showsAgentStatus ? (
           <AggregateAgentStatusBadge
             className="shrink-0"
@@ -298,6 +296,8 @@ function WorkspaceFrameHeader({
         <GitHubMergeConflictMark
           baseBranch={prBaseBranch}
           mergeStatus={prMergeStatus}
+          projectId={projectId}
+          workspaceId={workspaceId}
         />
       </div>
       <div className="flex gap-0.5">

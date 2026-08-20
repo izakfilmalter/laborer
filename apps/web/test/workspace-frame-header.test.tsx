@@ -104,6 +104,7 @@ const MERGED_PR_RE = /#42 merged/i
 const CLOSED_PR_RE = /#17 closed/i
 const PUSH_COMMITS_RE = /push 2 commits/i
 const PULL_COMMITS_RE = /pull 3 commits/i
+const SYNC_RE = /pull|push/i
 const CONFLICTS_RE = /Conflicts with/i
 const CHECKS_RE = /checks/i
 
@@ -651,13 +652,23 @@ describe('WorkspaceFrameHeader', () => {
     expect(screen.queryByRole('link', { name: CHECKS_RE })).toBeNull()
   })
 
-  it('renders push and pull sync actions when commits are available', () => {
+  it('offers pulling first when the workspace is both ahead and behind', () => {
     syncCountsRef.current = { aheadCount: 2, behindCount: 3 }
     const actions = mockActions()
     render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
 
-    expect(screen.getByRole('button', { name: PUSH_COMMITS_RE })).toBeTruthy()
+    // One button, not two: pulling is the step that keeps the later push
+    // fast-forwardable, so it owns the click while the push count rides along.
+    expect(screen.getAllByRole('button', { name: SYNC_RE })).toHaveLength(1)
     expect(screen.getByRole('button', { name: PULL_COMMITS_RE })).toBeTruthy()
+  })
+
+  it('offers pushing when the workspace is only ahead', () => {
+    syncCountsRef.current = { aheadCount: 2, behindCount: 0 }
+    const actions = mockActions()
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
+
+    expect(screen.getByRole('button', { name: PUSH_COMMITS_RE })).toBeTruthy()
   })
 
   it('renders no sync actions while the workspace is level with upstream', () => {

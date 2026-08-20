@@ -118,6 +118,7 @@ export const toTerminalInfo = (record: {
     readonly label: string
     readonly rawName: string
   }[]
+  readonly sessionTitle: string | null
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }) => ({
@@ -130,6 +131,7 @@ export const toTerminalInfo = (record: {
   foregroundProcess: record.foregroundProcess,
   hasChildProcess: record.hasChildProcess,
   processChain: [...record.processChain],
+  sessionTitle: record.sessionTitle,
   status: record.status,
 })
 

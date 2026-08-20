@@ -121,6 +121,8 @@ describe('applyEventToList', () => {
       foregroundProcess: null,
       hasChildProcess: false,
       processChain: [],
+      // A spawned terminal has not rendered an agent session yet.
+      sessionTitle: null,
       status: 'running',
     })
   })

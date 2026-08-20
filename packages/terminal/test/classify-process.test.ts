@@ -3,6 +3,7 @@
  * - classifyProcess — maps process name to ForegroundProcess descriptor
  * - buildDetectionFromTitle — builds detection result from OSC title
  * - isIdleTitle — classifies terminal title as idle or running
+ * - parseAgentSessionTitle — extracts the focused agent session title
  *
  * @see packages/terminal/src/services/terminal-manager.ts
  */
@@ -14,6 +15,7 @@ import {
   classifyProcess,
   detectForShellPid,
   isIdleTitle,
+  parseAgentSessionTitle,
   parsePsOutput,
 } from '../src/services/terminal-manager.js'
 
@@ -149,6 +151,55 @@ describe('isIdleTitle', () => {
     expect(isIdleTitle('opencode')).toBe(false)
     expect(isIdleTitle('vim main.ts')).toBe(false)
     expect(isIdleTitle('npm run dev')).toBe(false)
+  })
+})
+
+describe('parseAgentSessionTitle', () => {
+  it('extracts the session title OpenCode publishes for the focused session', () => {
+    expect(parseAgentSessionTitle('OC | Mirror church-work create task')).toBe(
+      'Mirror church-work create task'
+    )
+  })
+
+  it('reads the title OpenCode emits after the operator switches session tabs', () => {
+    expect(parseAgentSessionTitle('OC | Fix the flaky spawn test')).toBe(
+      'Fix the flaky spawn test'
+    )
+  })
+
+  it('keeps the ellipsis OpenCode adds when it truncates a long title', () => {
+    expect(
+      parseAgentSessionTitle(
+        'OC | Rework the terminal transport so attach neve...'
+      )
+    ).toBe('Rework the terminal transport so attach neve...')
+  })
+
+  it('returns null for the bare title used by home and untitled sessions', () => {
+    expect(parseAgentSessionTitle('OpenCode')).toBeNull()
+  })
+
+  it('returns null for shell titles that name no session', () => {
+    expect(parseAgentSessionTitle('~/projects/laborer')).toBeNull()
+    expect(parseAgentSessionTitle('zsh')).toBeNull()
+    expect(parseAgentSessionTitle('')).toBeNull()
+  })
+
+  it('returns null when the prefix is present but the title is empty', () => {
+    expect(parseAgentSessionTitle('OC | ')).toBeNull()
+    expect(parseAgentSessionTitle('OC |')).toBeNull()
+  })
+
+  it('tolerates the spacing around the separator varying', () => {
+    expect(parseAgentSessionTitle('OC|Compact the session log')).toBe(
+      'Compact the session log'
+    )
+  })
+
+  it('preserves a pipe inside the session title itself', () => {
+    expect(parseAgentSessionTitle('OC | Rename a | b to a-or-b')).toBe(
+      'Rename a | b to a-or-b'
+    )
   })
 })
 

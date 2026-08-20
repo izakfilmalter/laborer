@@ -157,6 +157,15 @@ interface TerminalRecord {
    * e.g. "OpenCode › biome". Empty when the shell is idle or stopped.
    */
   readonly processChain: readonly ForegroundProcess[]
+  /**
+   * Title of the agent session currently focused inside the terminal,
+   * parsed from the OSC 0/2 terminal title. Lets the sidebar name a row
+   * "OpenCode 2 · Fix the flaky spawn test" instead of repeating the agent
+   * name across every row. Null when the terminal runs no session-aware
+   * agent, the agent is on a screen with no session identity, or the
+   * terminal is stopped.
+   */
+  readonly sessionTitle: string | null
   readonly status: 'running' | 'stopped'
   readonly workspaceId: string
 }
@@ -664,6 +673,32 @@ const isIdleTitle = (title: string): boolean => {
 }
 
 /**
+ * OpenCode's TUI publishes the session the operator is looking at through
+ * the terminal title (OSC 0/2), formatted as `OC | <session title>` and
+ * rewritten on every session-tab switch. Its home screen, untitled
+ * sessions, and fallback titles emit a bare `OpenCode`, which carries no
+ * session identity — those must clear any previously parsed title rather
+ * than leave a stale one on the row.
+ *
+ * The TUI truncates titles longer than 40 characters to `37 chars + "..."`,
+ * so the value parsed here is already display-sized.
+ *
+ * @see opencode `packages/tui/src/app.tsx` — `renderer.setTerminalTitle`
+ */
+const AGENT_SESSION_TITLE_REGEX = /^OC\s*\|\s*(.+)$/
+
+/**
+ * Extract the agent session title from a raw OSC 0/2 terminal title.
+ * Returns null when the title carries no session identity.
+ */
+const parseAgentSessionTitle = (title: string): string | null => {
+  const sessionTitle = AGENT_SESSION_TITLE_REGEX.exec(title.trim())?.[1]?.trim()
+  return sessionTitle === undefined || sessionTitle.length === 0
+    ? null
+    : sessionTitle
+}
+
+/**
  * Build a ProcessDetectionResult from an OSC title change.
  *
  * This function is the safety boundary between OSC-based (heuristic) and
@@ -1084,6 +1119,12 @@ class TerminalManager extends Context.Service<
       const oscPromptState = new Map<string, 'idle' | 'running'>()
 
       /**
+       * Per-terminal agent session title parsed from OSC 0/2 titles.
+       * Absent when the focused agent screen carries no session identity.
+       */
+      const agentSessionTitles = new Map<string, string>()
+
+      /**
        * Handle an OSC title change. Classifies the title as idle or
        * running and immediately triggers a detection re-evaluation for
        * the terminal by directly emitting a ProcessChanged event.
@@ -1101,6 +1142,17 @@ class TerminalManager extends Context.Service<
         }
 
         oscTitleMap.set(terminalId, title)
+
+        // A session-aware agent renames the terminal on every session
+        // switch, so the parsed title tracks whichever session the
+        // operator is looking at. A title without session identity
+        // clears the previous one rather than leaving it stale.
+        const sessionTitle = parseAgentSessionTitle(title)
+        if (sessionTitle === null) {
+          agentSessionTitles.delete(terminalId)
+        } else {
+          agentSessionTitles.set(terminalId, sessionTitle)
+        }
 
         // Immediately trigger a detection re-evaluation by emitting
         // a ProcessChanged event with the title-derived process info.
@@ -1126,7 +1178,10 @@ class TerminalManager extends Context.Service<
         if (state === 'idle') {
           // When prompt returns to idle, clear the OSC title so the
           // ps-based detection takes over with its full process chain.
+          // The shell owns the terminal again, so any agent session it
+          // was displaying is gone.
           oscTitleMap.delete(terminalId)
+          agentSessionTitles.delete(terminalId)
           emitTitleBasedProcessChanged(terminalId, '')
         }
       }
@@ -1540,6 +1595,8 @@ class TerminalManager extends Context.Service<
           foregroundProcess: null,
           hasChildProcess: false,
           processChain: [],
+          // A freshly spawned terminal has not rendered a session yet.
+          sessionTitle: null,
           status: 'running',
         }
 
@@ -1781,6 +1838,7 @@ class TerminalManager extends Context.Service<
         sessionsWithOscActivity.delete(terminalId)
         oscTitleMap.delete(terminalId)
         oscPromptState.delete(terminalId)
+        agentSessionTitles.delete(terminalId)
         const oscFallback = noOscIdleFallbacks.get(terminalId)
         if (oscFallback !== undefined) {
           clearTimeout(oscFallback)
@@ -1829,6 +1887,11 @@ class TerminalManager extends Context.Service<
           foregroundProcess,
           hasChildProcess: liveDetection?.hasChildProcess ?? false,
           processChain,
+          // A stopped terminal displays nothing, so it names no session.
+          sessionTitle:
+            terminal.status === 'running'
+              ? (agentSessionTitles.get(terminal.id) ?? null)
+              : null,
           status: terminal.status,
         }
       }
@@ -1963,6 +2026,7 @@ class TerminalManager extends Context.Service<
         sessionsWithOscActivity.delete(terminalId)
         oscTitleMap.delete(terminalId)
         oscPromptState.delete(terminalId)
+        agentSessionTitles.delete(terminalId)
         const restartFallback = noOscIdleFallbacks.get(terminalId)
         if (restartFallback !== undefined) {
           clearTimeout(restartFallback)
@@ -2094,6 +2158,9 @@ class TerminalManager extends Context.Service<
           foregroundProcess: null,
           hasChildProcess: false,
           processChain: [],
+          // The restarted process has not rendered a session yet, and the
+          // previous generation's title was cleared above.
+          sessionTitle: null,
           status: 'running',
         }
 
@@ -2784,6 +2851,7 @@ export {
   detectProcessesForPids,
   EMPTY_DETECTION,
   isIdleTitle,
+  parseAgentSessionTitle,
   parsePsOutput,
   TerminalManager,
 }

@@ -1,19 +1,29 @@
 import { defaultExclude, defineConfig } from 'vitest/config'
 
-// Integration tests that drive real child processes: ACP and MCP transports,
-// the pinned OpenCode CLI, and supervised host process groups. They cost far
-// more wall time than the deterministic suites and assert against real process
-// lifetimes, so their results track how fast and how loaded the host is rather
-// than whether the behaviour is correct. The default run leaves them out and
-// `test:process-backed` runs them serially as a local gate.
+// Tests that start long-lived child processes — ACP and MCP transports, the
+// pinned OpenCode CLI, supervised host process groups — or that poll for when
+// one becomes live or dies. Their assertions are about real process lifetimes,
+// so they measure how fast and how loaded the host is as much as whether the
+// behaviour is right, and a shared runner fails them for reasons the code does
+// not control. The default run leaves them out and `test:process-backed` runs
+// them serially as a local gate.
+//
+// Tests that only shell out to git and read the result are deterministic and
+// stay in the default run.
 const PROCESS_BACKED_TESTS = [
+  'tests/acp-process-supervisor.test.ts',
+  'tests/acp-runtime-matrix.test.ts',
   'tests/acp-session-resume.test.ts',
   'tests/action-mcp.test.ts',
+  'tests/cold-root-runtime-recovery.test.ts',
   'tests/conversation-client-replacement.test.ts',
+  'tests/local-command-action.test.ts',
   'tests/opencode-acp-compatibility.test.ts',
   'tests/opencode-config-preflight.test.ts',
   'tests/opencode-permission-policy.test.ts',
+  'tests/opencode-v1-source-policy.test.ts',
   'tests/sandcastle-host-command.test.ts',
+  'tests/sandcastle-opencode2-agent.test.ts',
 ]
 
 const runsProcessBacked = process.env.LABORER_PROCESS_BACKED === '1'

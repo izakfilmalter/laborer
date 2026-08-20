@@ -14,26 +14,18 @@ function useWorkspaceSyncActions() {
   const pushWorkspace = useAtomSet(pushWorkspaceMutation, { mode: 'promise' })
   const pullWorkspace = useAtomSet(pullWorkspaceMutation, { mode: 'promise' })
 
+  // Progress and success are already legible where the action was taken: the
+  // sync button spins while the call is in flight and the ahead/behind counts
+  // drop when it lands. Only a failure needs a toast to explain itself.
   const handlePush = useCallback(
     async (workspaceId: string) => {
-      const toastId = toast.loading('Pushing commits...')
-
       try {
-        const result = await pushWorkspace({
+        await pushWorkspace({
           payload: { workspaceId },
           reactivityKeys: workspaceSyncReactivityKeys(workspaceId),
         })
-        const pushedCount = result.aheadCount ?? 0
-        toast.success(
-          pushedCount === 0
-            ? 'Push complete'
-            : `Pushed ${pushedCount} commit${pushedCount === 1 ? '' : 's'}`,
-          { id: toastId }
-        )
       } catch (error: unknown) {
-        toast.error(`Failed to push commits: ${extractErrorMessage(error)}`, {
-          id: toastId,
-        })
+        toast.error(`Failed to push commits: ${extractErrorMessage(error)}`)
       }
     },
     [pushWorkspace]
@@ -41,24 +33,13 @@ function useWorkspaceSyncActions() {
 
   const handlePull = useCallback(
     async (workspaceId: string) => {
-      const toastId = toast.loading('Pulling commits...')
-
       try {
-        const result = await pullWorkspace({
+        await pullWorkspace({
           payload: { workspaceId },
           reactivityKeys: workspaceSyncReactivityKeys(workspaceId),
         })
-        const pulledCount = result.behindCount ?? 0
-        toast.success(
-          pulledCount === 0
-            ? 'Pull complete'
-            : `Pulled ${pulledCount} commit${pulledCount === 1 ? '' : 's'}`,
-          { id: toastId }
-        )
       } catch (error: unknown) {
-        toast.error(`Failed to pull commits: ${extractErrorMessage(error)}`, {
-          id: toastId,
-        })
+        toast.error(`Failed to pull commits: ${extractErrorMessage(error)}`)
       }
     },
     [pullWorkspace]

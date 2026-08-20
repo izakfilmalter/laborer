@@ -7,6 +7,7 @@ interface SetupScriptItem {
 
 interface ResolvedConfigSnapshot {
   readonly agent: AgentProvider
+  readonly conflictPrompt: string
   readonly setupScripts: readonly string[]
   readonly shortName: string
   readonly worktreeDir: string
@@ -14,6 +15,7 @@ interface ResolvedConfigSnapshot {
 
 interface ConfigUpdates {
   agent?: AgentProvider
+  conflictPrompt?: string
   setupScripts?: string[]
   shortName?: string
   worktreeDir?: string
@@ -45,18 +47,27 @@ const areStringArraysEqual = (
 
 const buildConfigUpdates = ({
   agent,
+  conflictPrompt,
   resolvedConfig,
   shortName,
   setupScripts,
   worktreeDir,
 }: {
   agent: AgentProvider
+  conflictPrompt: string
   resolvedConfig: ResolvedConfigSnapshot
   shortName: string
   setupScripts: readonly SetupScriptItem[]
   worktreeDir: string
 }): ConfigUpdates => {
   const updates: ConfigUpdates = {}
+
+  // Unlike the worktree directory, an emptied prompt is a real instruction:
+  // it clears the conflict action rather than falling back to the old value.
+  const normalizedConflictPrompt = conflictPrompt.trim()
+  if (normalizedConflictPrompt !== resolvedConfig.conflictPrompt) {
+    updates.conflictPrompt = normalizedConflictPrompt
+  }
 
   const normalizedShortName = shortName.trim().toUpperCase()
   if (normalizedShortName !== resolvedConfig.shortName) {

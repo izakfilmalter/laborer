@@ -31,8 +31,10 @@ describe('project settings modal helpers', () => {
   it('builds update payload with only changed config fields', () => {
     const result = buildConfigUpdates({
       agent: 'opencode2',
+      conflictPrompt: 'Rebase onto dev.',
       resolvedConfig: {
         agent: 'claude',
+        conflictPrompt: '',
         shortName: 'OLD',
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
@@ -47,6 +49,7 @@ describe('project settings modal helpers', () => {
 
     expect(result).toEqual({
       agent: 'opencode2',
+      conflictPrompt: 'Rebase onto dev.',
       shortName: 'LAB',
       setupScripts: ['bun install', 'bun test'],
       worktreeDir: '~/worktrees',
@@ -56,8 +59,10 @@ describe('project settings modal helpers', () => {
   it('builds an OpenCode 2 agent update', () => {
     const result = buildConfigUpdates({
       agent: 'opencode2',
+      conflictPrompt: '',
       resolvedConfig: {
         agent: 'claude',
+        conflictPrompt: '',
         shortName: 'LAB',
         setupScripts: [],
         worktreeDir: '/tmp/worktrees',
@@ -73,8 +78,10 @@ describe('project settings modal helpers', () => {
   it('returns empty updates when normalized values match resolved config', () => {
     const result = buildConfigUpdates({
       agent: 'claude',
+      conflictPrompt: '  Rebase onto dev.  ',
       resolvedConfig: {
         agent: 'claude',
+        conflictPrompt: 'Rebase onto dev.',
         shortName: 'LAB',
         setupScripts: ['bun install'],
         worktreeDir: '/tmp/worktrees',
@@ -88,6 +95,25 @@ describe('project settings modal helpers', () => {
     })
 
     expect(result).toEqual({})
+  })
+
+  it('clears the conflict prompt when the operator empties the field', () => {
+    const result = buildConfigUpdates({
+      agent: 'claude',
+      conflictPrompt: '   ',
+      resolvedConfig: {
+        agent: 'claude',
+        conflictPrompt: 'Rebase onto dev.',
+        shortName: 'LAB',
+        setupScripts: [],
+        worktreeDir: '/tmp/worktrees',
+      },
+      setupScripts: [],
+      shortName: 'LAB',
+      worktreeDir: '/tmp/worktrees',
+    })
+
+    expect(result).toEqual({ conflictPrompt: '' })
   })
 
   it('maps malformed laborer.json parse failures to user-friendly copy', () => {

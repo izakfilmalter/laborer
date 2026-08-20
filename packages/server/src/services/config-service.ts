@@ -18,6 +18,7 @@
  *   "shortName": "LAB",
  *   "worktreeDir": "/path/to/my-project.worktrees",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
+ *   "conflictPrompt": "Rebase this branch on dev and resolve the conflicts.",
  * }
  * ```
  *
@@ -99,6 +100,8 @@ const VALID_AGENT_PROVIDERS: readonly AgentProvider[] = [
 interface LaborerConfig {
   /** Preferred AI coding agent. The value is also the CLI command to run. */
   readonly agent?: AgentProvider
+  /** Prompt run by a fresh agent when resolving this project's merge conflicts. */
+  readonly conflictPrompt?: string
   readonly setupScripts?: readonly string[]
   readonly shortName?: string
   readonly shortNameAliases?: readonly string[]
@@ -109,6 +112,7 @@ interface LaborerConfig {
 /** Partial updates accepted by writeProjectConfig() and writeGlobalConfig(). */
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
+  readonly conflictPrompt?: string | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly shortName?: string | undefined
   readonly shortNameAliases?: readonly string[] | undefined
@@ -134,6 +138,8 @@ interface ResolvedValue<T> {
 interface ResolvedLaborerConfig {
   /** Preferred AI coding agent CLI command (defaults to "opencode2"). */
   readonly agent: ResolvedValue<AgentProvider>
+  /** Conflict-resolution prompt, empty when the project has not set one. */
+  readonly conflictPrompt: ResolvedValue<string>
   readonly setupScripts: ResolvedValue<readonly string[]>
   readonly shortName: ResolvedValue<string>
   /** Historical project keys that continue to resolve existing task IDs. */
@@ -326,6 +332,10 @@ const applyConfigUpdates = (
     next.agent = updates.agent
   }
 
+  if (updates.conflictPrompt !== undefined) {
+    next.conflictPrompt = updates.conflictPrompt
+  }
+
   if (updates.shortName !== undefined) {
     next.shortName = updates.shortName
   }
@@ -469,6 +479,10 @@ const mergeConfigs = (
     value: 'opencode2',
     source: 'default',
   }
+  let conflictPrompt: ResolvedValue<string> = {
+    value: '',
+    source: 'default',
+  }
   let shortName: ResolvedValue<string> = {
     value: defaultProjectShortName(_projectName),
     source: 'default',
@@ -502,6 +516,13 @@ const mergeConfigs = (
     if (config.agent !== undefined) {
       agent = {
         value: config.agent,
+        source: path,
+      }
+    }
+
+    if (config.conflictPrompt !== undefined) {
+      conflictPrompt = {
+        value: config.conflictPrompt,
         source: path,
       }
     }
@@ -547,6 +568,7 @@ const mergeConfigs = (
 
   return {
     agent,
+    conflictPrompt,
     shortName,
     shortNameAliases,
     worktreeDir,

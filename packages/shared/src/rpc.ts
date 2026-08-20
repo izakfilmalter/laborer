@@ -414,6 +414,11 @@ const ConfigResolvedValueAgent = Schema.Struct({
 
 const ConfigResponse = Schema.Struct({
   agent: ConfigResolvedValueAgent,
+  /**
+   * Prompt handed to a fresh agent when an operator acts on the merge
+   * conflict mark. Empty means the project has not configured one.
+   */
+  conflictPrompt: ConfigResolvedValueString,
   shortName: ConfigResolvedValueString,
   shortNameAliases: ConfigResolvedValueStringArray,
   worktreeDir: ConfigResolvedValueString,
@@ -966,6 +971,7 @@ export class LaborerRpcs extends RpcGroup.make(
       projectId: Schema.String,
       config: Schema.Struct({
         agent: Schema.optional(AgentProviderSchema),
+        conflictPrompt: Schema.optional(Schema.String),
         shortName: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),

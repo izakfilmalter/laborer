@@ -193,6 +193,7 @@ export const handleConfigUpdate = ({
   projectId: string
   config: {
     agent?: AgentProvider | undefined
+    conflictPrompt?: string | undefined
     shortName?: string | undefined
     setupScripts?: readonly string[] | undefined
     worktreeDir?: string | undefined
@@ -216,13 +217,15 @@ export const handleConfigUpdate = ({
           isProjectShortName(config.shortName)) &&
         (config.worktreeDir === undefined ||
           typeof config.worktreeDir === 'string') &&
+        (config.conflictPrompt === undefined ||
+          typeof config.conflictPrompt === 'string') &&
         isValidSetupScripts
 
       if (!isValidConfig) {
         return yield* new RpcError({
           code: 'INVALID_INPUT',
           message:
-            'Invalid config payload. Expected optional shortName (1-10 uppercase letters/digits, starting with a letter), worktreeDir, agent (opencode2/claude/codex), and setupScripts as a string array.',
+            'Invalid config payload. Expected optional shortName (1-10 uppercase letters/digits, starting with a letter), worktreeDir, conflictPrompt, agent (opencode2/claude/codex), and setupScripts as a string array.',
         })
       }
 

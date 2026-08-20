@@ -20,4 +20,10 @@ jobs:
       - name: Check lint and formatting
         run: bun run format
       - name: Run tests
-        run: bun run test
+        # Hosted macOS runners have ~3 cores and ~7 GB of memory, far less than
+        # a development host. Package test suites run one at a time and the
+        # process-backed bot suite halves its worker pool so the peak footprint
+        # stays inside the runner instead of being killed for exhausting it.
+        env:
+          VITEST_MAX_WORKERS: 2
+        run: bun run test:ci

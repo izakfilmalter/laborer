@@ -31,6 +31,7 @@
     "typecheck": "turbo typecheck --ui=stream",
     "build:app": "tsx scripts/build-desktop-artifact.ts",
     "test": "bun test scripts/dev-runner.test.ts && turbo test --ui=stream --concurrency=3",
+    "test:ci": "bun test scripts/dev-runner.test.ts && turbo test --ui=stream --concurrency=1",
     "test:watch": "turbo test:watch --ui=stream --concurrency=3",
     "check": "turbo run //#format:fix typecheck test --ui=stream --concurrency=3 && bun run --cwd apps/bot check:secrets && bun run --cwd apps/bot test:acp-compatibility",
     "check:secrets": "bun run --cwd apps/bot check:secrets",

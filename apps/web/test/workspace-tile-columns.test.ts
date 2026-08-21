@@ -26,6 +26,7 @@ import {
   getWorkspaceColumns,
   MIN_WORKSPACE_COLUMN_WIDTH_PX,
   MIN_WORKSPACE_TILE_HEIGHT_PX,
+  moveWorkspaceTileBelow,
   moveWorkspaceTileToEdge,
 } from '../src/panels/workspace-tile-utils'
 
@@ -98,6 +99,22 @@ function columnsOf(tab: WindowTab): string[][] {
 // ---------------------------------------------------------------------------
 
 describe('moveWorkspaceTileToEdge', () => {
+  it('moves a sub-workspace below its parent without changing row sizes', () => {
+    const tab = makeStackTab(['ws-parent', 'ws-sibling', 'ws-child'])
+    const root = tab.workspaceLayout as WorkspaceTileSplit
+    const resized: WindowTab = {
+      ...tab,
+      workspaceLayout: { ...root, sizes: [50, 30, 20] },
+    }
+
+    const result = moveWorkspaceTileBelow(resized, 'ws-child', 'ws-parent')
+
+    expect(columnsOf(result)).toEqual([['ws-parent', 'ws-child', 'ws-sibling']])
+    expect((result.workspaceLayout as WorkspaceTileSplit).sizes).toEqual([
+      50, 20, 30,
+    ])
+  })
+
   it('creates a second column when dropping on another frame’s right edge', () => {
     const tab = makeStackTab(['ws-1', 'ws-2', 'ws-3'])
 

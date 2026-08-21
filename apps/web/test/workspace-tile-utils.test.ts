@@ -155,6 +155,75 @@ describe('addWorkspaceToTab', () => {
     }
   })
 
+  it('adds a sub-workspace directly below its open parent', () => {
+    const split = makeTileSplit('split-1', 'vertical', [
+      makeTile('tile-parent', 'ws-parent'),
+      makeTile('tile-sibling', 'ws-sibling'),
+    ])
+    const tab = makeTab('tab-1', split)
+
+    const result = addWorkspaceToTab(tab, 'ws-child', 'ws-parent')
+
+    expect(result.workspaceLayout?._tag).toBe('WorkspaceTileSplit')
+    expect(
+      getWorkspaceIds(result.workspaceLayout as WorkspaceTileSplit)
+    ).toEqual(['ws-parent', 'ws-child', 'ws-sibling'])
+  })
+
+  it('adds a sub-workspace below its parent in the parent column', () => {
+    const parentColumn = makeTileSplit(
+      'col-parent',
+      'vertical',
+      [
+        makeTile('tile-parent', 'ws-parent'),
+        makeTile('tile-sibling', 'ws-sibling'),
+      ],
+      [20, 80]
+    )
+    const otherColumn = makeTile('tile-other', 'ws-other')
+    const root = makeTileSplit(
+      'root',
+      'horizontal',
+      [parentColumn, otherColumn],
+      [70, 30]
+    )
+
+    const result = addWorkspaceToTab(
+      makeTab('tab-1', root),
+      'ws-child',
+      'ws-parent'
+    )
+
+    const newRoot = result.workspaceLayout as WorkspaceTileSplit
+    expect(newRoot.sizes).toEqual([70, 30])
+    expect(getWorkspaceIds(newRoot.children[0] as WorkspaceTileSplit)).toEqual([
+      'ws-parent',
+      'ws-child',
+      'ws-sibling',
+    ])
+    expect((newRoot.children[0] as WorkspaceTileSplit).sizes).toEqual([
+      10, 10, 80,
+    ])
+    expect(newRoot.children[1]).toBe(otherColumn)
+  })
+
+  it('falls back to the normal append when the parent is not open', () => {
+    const split = makeTileSplit('split-1', 'vertical', [
+      makeTile('tile-1', 'ws-1'),
+      makeTile('tile-2', 'ws-2'),
+    ])
+
+    const result = addWorkspaceToTab(
+      makeTab('tab-1', split),
+      'ws-child',
+      'ws-missing-parent'
+    )
+
+    expect(
+      getWorkspaceIds(result.workspaceLayout as WorkspaceTileSplit)
+    ).toEqual(['ws-1', 'ws-2', 'ws-child'])
+  })
+
   it('adds into the smallest column of a horizontal root split', () => {
     // Horizontal root = multi-column layout. The new workspace joins the
     // column with the fewest workspaces instead of wrapping the whole

@@ -94,6 +94,7 @@ import {
   addWorkspaceToTab,
   cleanUpWorkspaceTiles,
   getWorkspaceTileLeaves,
+  moveWorkspaceTileBelow,
   moveWorkspaceTileToEdge,
   removeWorkspaceFromTab,
   reorderWorkspaceTiles,
@@ -146,8 +147,7 @@ function measureTabContentArea(tabId: string): TabContentArea {
   return FALLBACK_TAB_CONTENT_AREA
 }
 
-interface PendingAgentSpawn {
-  readonly initialPrompt?: string | undefined
+interface PendingAgentSpawn extends AutoOpenAgentOptions {
   readonly paneId: string | null
 }
 
@@ -259,6 +259,50 @@ function ensureWorkspaceInActiveTab(
     removeWorkspaceFromTab,
     addWorkspaceToTab
   )
+}
+
+/** Reveal an open parent so a new sub-workspace can be placed below it. */
+function switchToParentWorkspaceTab(
+  windowLayout: WindowLayout,
+  parentWorkspaceId: string | undefined
+): WindowLayout {
+  if (parentWorkspaceId === undefined) {
+    return windowLayout
+  }
+  const parentLocation = findWorkspaceLocation(windowLayout, parentWorkspaceId)
+  if (
+    parentLocation === undefined ||
+    parentLocation.tabId === windowLayout.activeTabId
+  ) {
+    return windowLayout
+  }
+  return switchWindowTab(windowLayout, parentLocation.tabId)
+}
+
+/** Reposition an already-open sub-workspace directly below its parent. */
+function placeWorkspaceBelowParentInActiveTab(
+  windowLayout: WindowLayout,
+  workspaceId: string,
+  parentWorkspaceId: string
+): WindowLayout {
+  const activeTab = getActiveWindowTab(windowLayout)
+  if (activeTab === undefined) {
+    return windowLayout
+  }
+  const updatedTab = moveWorkspaceTileBelow(
+    activeTab,
+    workspaceId,
+    parentWorkspaceId
+  )
+  if (updatedTab === activeTab) {
+    return windowLayout
+  }
+  return {
+    ...windowLayout,
+    tabs: windowLayout.tabs.map((tab) =>
+      tab.id === activeTab.id ? updatedTab : tab
+    ),
+  }
 }
 
 /**
@@ -1989,6 +2033,7 @@ export function usePanelLayout() {
         terminalId?: string
         deferSpawn?: boolean
         initialPrompt?: string | undefined
+        parentWorkspaceId?: string | undefined
       }
     ): string | undefined => {
       let base = persistedWindowLayout ?? {
@@ -2003,8 +2048,12 @@ export function usePanelLayout() {
         commitWindowLayout('window-tab-created', base)
       }
 
-      // Ensure the workspace exists in the active window tab. If it
-      // doesn't (e.g. "Empty tab" state), add it first.
+      // If the parent is open, reveal its tab so the sub-workspace can join
+      // its column. Otherwise, use the current tab as usual.
+      base = switchToParentWorkspaceTab(base, options?.parentWorkspaceId)
+
+      // Ensure the workspace exists in the target window tab. If it doesn't
+      // (e.g. "Empty tab" state), add it first.
       const activeTab = getActiveWindowTab(base)
       if (!activeTab) {
         return
@@ -2016,9 +2065,19 @@ export function usePanelLayout() {
           workspaceId,
           activeTab.id,
           removeWorkspaceFromTab,
-          addWorkspaceToTab
+          (tab, id) => addWorkspaceToTab(tab, id, options?.parentWorkspaceId)
         )
         commitWindowLayout('ensure-workspace-in-tab', base)
+      } else if (options?.parentWorkspaceId !== undefined) {
+        const placedBelowParent = placeWorkspaceBelowParentInActiveTab(
+          base,
+          workspaceId,
+          options.parentWorkspaceId
+        )
+        if (placedBelowParent !== base) {
+          base = placedBelowParent
+          commitWindowLayout('sub-workspace-placed', base)
+        }
       }
 
       // Agent panes are terminals running the configured agent command.
@@ -2074,6 +2133,8 @@ export function usePanelLayout() {
     (workspaceId: string, options?: AutoOpenAgentOptions) => {
       const initialPrompt = options?.initialPrompt
       const workspace = workspaceList.find((ws) => ws.id === workspaceId)
+      const parentWorkspaceId =
+        options?.parentWorkspaceId ?? workspace?.parentTaskId ?? undefined
       if (
         workspace?.status === 'errored' ||
         workspace?.status === 'destroyed'
@@ -2081,7 +2142,10 @@ export function usePanelLayout() {
         return
       }
       if (workspace?.status === 'running') {
-        handleAddPanelTab(workspaceId, 'agent', { initialPrompt })
+        handleAddPanelTab(workspaceId, 'agent', {
+          initialPrompt,
+          parentWorkspaceId,
+        })
         return
       }
       if (!workspace) {
@@ -2089,6 +2153,7 @@ export function usePanelLayout() {
         // effect opens the pane as soon as the record appears.
         pendingAgentSpawnsRef.current.set(workspaceId, {
           initialPrompt,
+          parentWorkspaceId,
           paneId: null,
         })
         return
@@ -2098,9 +2163,11 @@ export function usePanelLayout() {
       // the terminal spawns once setup reaches 'running'.
       const paneId = handleAddPanelTab(workspaceId, 'agent', {
         deferSpawn: true,
+        parentWorkspaceId,
       })
       pendingAgentSpawnsRef.current.set(workspaceId, {
         initialPrompt,
+        parentWorkspaceId,
         paneId: paneId ?? null,
       })
     },
@@ -2134,17 +2201,23 @@ export function usePanelLayout() {
    * opens a placeholder pane and defers the spawn.
    */
   const openDeferredAgentPane = useCallback(
-    (workspaceId: string, status: string, initialPrompt?: string) => {
+    (workspaceId: string, status: string, options?: AutoOpenAgentOptions) => {
+      const { initialPrompt, parentWorkspaceId } = options ?? {}
       if (status === 'running') {
         pendingAgentSpawnsRef.current.delete(workspaceId)
-        handleAddPanelTab(workspaceId, 'agent', { initialPrompt })
+        handleAddPanelTab(workspaceId, 'agent', {
+          initialPrompt,
+          parentWorkspaceId,
+        })
         return
       }
       const openedPaneId = handleAddPanelTab(workspaceId, 'agent', {
         deferSpawn: true,
+        parentWorkspaceId,
       })
       pendingAgentSpawnsRef.current.set(workspaceId, {
         initialPrompt,
+        parentWorkspaceId,
         paneId: openedPaneId ?? null,
       })
     },
@@ -2157,7 +2230,7 @@ export function usePanelLayout() {
     }
 
     for (const [workspaceId, pendingSpawn] of pendingAgentSpawnsRef.current) {
-      const { initialPrompt, paneId } = pendingSpawn
+      const { initialPrompt, parentWorkspaceId, paneId } = pendingSpawn
       const workspace = workspaceList.find((ws) => ws.id === workspaceId)
       if (!workspace) {
         continue
@@ -2167,7 +2240,11 @@ export function usePanelLayout() {
         continue
       }
       if (paneId === null) {
-        openDeferredAgentPane(workspaceId, workspace.status, initialPrompt)
+        openDeferredAgentPane(workspaceId, workspace.status, {
+          initialPrompt,
+          parentWorkspaceId:
+            parentWorkspaceId ?? workspace.parentTaskId ?? undefined,
+        })
         continue
       }
       if (workspace.status === 'running') {

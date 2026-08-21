@@ -1,4 +1,4 @@
-import type { WindowLayout } from '@laborer/shared/types'
+import type { WindowLayout, WorkspaceTileNode } from '@laborer/shared/types'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { panelLayoutCollection } from '@/db/local-preferences'
@@ -190,6 +190,15 @@ const layoutContainsTerminal = (
   return Object.values(value).some((child) =>
     layoutContainsTerminal(child, terminalId)
   )
+}
+
+const workspaceIdsInActiveTab = (layout: WindowLayout): readonly string[] => {
+  const activeTab = layout.tabs.find((tab) => tab.id === layout.activeTabId)
+  const collect = (node: WorkspaceTileNode): readonly string[] =>
+    node._tag === 'WorkspaceTileLeaf'
+      ? [node.workspaceId]
+      : node.children.flatMap(collect)
+  return activeTab?.workspaceLayout ? collect(activeTab.workspaceLayout) : []
 }
 
 /**
@@ -503,6 +512,161 @@ describe('usePanelLayout', () => {
           'spawned-terminal'
         )
       ).toBe(true)
+    })
+  })
+
+  it('opens a sub-workspace directly below its open parent', async () => {
+    const parentLayout = makeWindowLayout('pane-parent', 'workspace-parent')
+    const parentTab = parentLayout.tabs[0]
+    const parentTile = parentTab?.workspaceLayout
+    if (!(parentTab && parentTile)) {
+      throw new Error('Expected parent layout fixture')
+    }
+    writeStoredWindowLayout('window-a', {
+      activeTabId: 'window-tab-other',
+      tabs: [
+        {
+          ...parentTab,
+          workspaceLayout: {
+            _tag: 'WorkspaceTileSplit',
+            children: [
+              parentTile,
+              {
+                _tag: 'WorkspaceTileLeaf',
+                activePanelTabId: undefined,
+                id: 'workspace-tile-sibling',
+                panelTabs: [],
+                workspaceId: 'workspace-sibling',
+              },
+              {
+                _tag: 'WorkspaceTileLeaf',
+                activePanelTabId: undefined,
+                id: 'workspace-tile-child',
+                panelTabs: [],
+                workspaceId: 'workspace-child',
+              },
+            ],
+            direction: 'vertical',
+            id: 'workspace-stack',
+            sizes: [50, 30, 20],
+          },
+        },
+        {
+          id: 'window-tab-other',
+          label: 'Other tab',
+          workspaceLayout: {
+            _tag: 'WorkspaceTileLeaf',
+            activePanelTabId: undefined,
+            id: 'workspace-tile-other',
+            panelTabs: [],
+            workspaceId: 'workspace-other',
+          },
+        },
+      ],
+    })
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-child',
+        parentTaskId: 'workspace-parent',
+        projectId: 'project-1',
+        branchName: 'feature/child',
+        worktreePath: '/tmp/workspace-child',
+        status: 'creating',
+        origin: 'laborer',
+        createdAt: '2026-04-20T00:00:00.000Z',
+      },
+    ]
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    act(() => {
+      result.current.panelActions.autoOpenAgentWhenWorkspaceReady?.(
+        'workspace-child'
+      )
+    })
+
+    await waitFor(() => {
+      const stored = readStoredWindowLayout('window-a') as WindowLayout
+      expect(stored.activeTabId).toBe(parentTab.id)
+      expect(workspaceIdsInActiveTab(stored)).toEqual([
+        'workspace-parent',
+        'workspace-child',
+        'workspace-sibling',
+      ])
+      const activeTab = stored.tabs.find((tab) => tab.id === stored.activeTabId)
+      const activeLayout = activeTab?.workspaceLayout
+      if (activeLayout?._tag !== 'WorkspaceTileSplit') {
+        throw new Error('Expected the parent workspace stack')
+      }
+      expect(activeLayout.sizes).toEqual([50, 20, 30])
+    })
+    expect(spawnTerminalMock).not.toHaveBeenCalled()
+  })
+
+  it('inserts a new sub-workspace below its parent instead of at the end', async () => {
+    const parentLayout = makeWindowLayout('pane-parent', 'workspace-parent')
+    const parentTab = parentLayout.tabs[0]
+    const parentTile = parentTab?.workspaceLayout
+    if (!(parentTab && parentTile)) {
+      throw new Error('Expected parent layout fixture')
+    }
+    writeStoredWindowLayout('window-a', {
+      activeTabId: parentTab.id,
+      tabs: [
+        {
+          ...parentTab,
+          workspaceLayout: {
+            _tag: 'WorkspaceTileSplit',
+            children: [
+              parentTile,
+              {
+                _tag: 'WorkspaceTileLeaf',
+                activePanelTabId: undefined,
+                id: 'workspace-tile-sibling',
+                panelTabs: [],
+                workspaceId: 'workspace-sibling',
+              },
+            ],
+            direction: 'vertical',
+            id: 'workspace-stack',
+            sizes: [70, 30],
+          },
+        },
+      ],
+    })
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-child',
+        parentTaskId: 'workspace-parent',
+        projectId: 'project-1',
+        branchName: 'feature/child',
+        worktreePath: '/tmp/workspace-child',
+        status: 'creating',
+        origin: 'laborer',
+        createdAt: '2026-04-20T00:00:00.000Z',
+      },
+    ]
+
+    const { result } = renderHook(() => usePanelLayout())
+    act(() => {
+      result.current.panelActions.autoOpenAgentWhenWorkspaceReady?.(
+        'workspace-child'
+      )
+    })
+
+    await waitFor(() => {
+      const stored = readStoredWindowLayout('window-a') as WindowLayout
+      expect(workspaceIdsInActiveTab(stored)).toEqual([
+        'workspace-parent',
+        'workspace-child',
+        'workspace-sibling',
+      ])
+      const activeTab = stored.tabs.find((tab) => tab.id === stored.activeTabId)
+      const activeLayout = activeTab?.workspaceLayout
+      if (activeLayout?._tag !== 'WorkspaceTileSplit') {
+        throw new Error('Expected the parent workspace stack')
+      }
+      expect(activeLayout.sizes).toEqual([35, 35, 30])
     })
   })
 })

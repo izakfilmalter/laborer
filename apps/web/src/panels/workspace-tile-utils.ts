@@ -187,7 +187,8 @@ function splitTileRecursive(
   node: WorkspaceTileNode,
   targetWorkspaceId: string,
   newWorkspaceId: string,
-  direction: SplitDirection
+  direction: SplitDirection,
+  preserveSiblingSizes = false
 ): WorkspaceTileNode {
   // Found the target leaf at root level — wrap in a new split
   if (node._tag === 'WorkspaceTileLeaf') {
@@ -218,8 +219,15 @@ function splitTileRecursive(
         newTile,
         ...node.children.slice(targetIndex + 1),
       ]
-      const equalSize = 100 / newChildren.length
-      const newSizes = newChildren.map(() => equalSize)
+      const targetSize = node.sizes[targetIndex] ?? 100 / node.children.length
+      const newSizes = preserveSiblingSizes
+        ? [
+            ...node.sizes.slice(0, targetIndex),
+            targetSize / 2,
+            targetSize / 2,
+            ...node.sizes.slice(targetIndex + 1),
+          ]
+        : newChildren.map(() => 100 / newChildren.length)
       return {
         ...node,
         children: newChildren,
@@ -230,7 +238,13 @@ function splitTileRecursive(
 
   // Recurse into children
   const newChildren = node.children.map((child) =>
-    splitTileRecursive(child, targetWorkspaceId, newWorkspaceId, direction)
+    splitTileRecursive(
+      child,
+      targetWorkspaceId,
+      newWorkspaceId,
+      direction,
+      preserveSiblingSizes
+    )
   )
 
   // Check if anything changed
@@ -258,15 +272,34 @@ function splitTileRecursive(
  *
  * @param tab - The window tab to add the workspace to
  * @param workspaceId - The workspace ID to add
+ * @param belowWorkspaceId - When this workspace is open, insert directly
+ * below it instead of using the normal append/balancing behavior
  * @returns A new WindowTab with the workspace added
  */
-function addWorkspaceToTab(tab: WindowTab, workspaceId: string): WindowTab {
+function addWorkspaceToTab(
+  tab: WindowTab,
+  workspaceId: string,
+  belowWorkspaceId?: string
+): WindowTab {
   const newTile = createWorkspaceTileLeaf(workspaceId)
 
   if (!tab.workspaceLayout) {
     return {
       ...tab,
       workspaceLayout: newTile,
+    }
+  }
+
+  if (belowWorkspaceId !== undefined) {
+    const placedBelowParent = splitTileRecursive(
+      tab.workspaceLayout,
+      belowWorkspaceId,
+      workspaceId,
+      'vertical',
+      true
+    )
+    if (placedBelowParent !== tab.workspaceLayout) {
+      return { ...tab, workspaceLayout: placedBelowParent }
     }
   }
 
@@ -905,6 +938,101 @@ function moveWorkspaceTileToEdge(
 }
 
 /**
+ * Move a workspace directly below another while retaining existing row sizes
+ * when both already share a column. Falls back to the general cross-column
+ * move when they do not.
+ */
+function moveWorkspaceTileBelow(
+  tab: WindowTab,
+  sourceWorkspaceId: string,
+  parentWorkspaceId: string
+): WindowTab {
+  const root = tab.workspaceLayout
+  if (root === undefined) {
+    return tab
+  }
+  const result = moveBelowInSharedColumn(
+    root,
+    sourceWorkspaceId,
+    parentWorkspaceId
+  )
+  if (result.handled) {
+    return result.node === root ? tab : { ...tab, workspaceLayout: result.node }
+  }
+  return moveWorkspaceTileToEdge(
+    tab,
+    sourceWorkspaceId,
+    parentWorkspaceId,
+    'bottom'
+  )
+}
+
+/** Reorder direct rows in one vertical column, carrying their sizes with them. */
+function moveBelowInSharedColumn(
+  node: WorkspaceTileNode,
+  sourceWorkspaceId: string,
+  parentWorkspaceId: string
+): { readonly handled: boolean; readonly node: WorkspaceTileNode } {
+  if (node._tag === 'WorkspaceTileLeaf') {
+    return { handled: false, node }
+  }
+  if (node.direction === 'vertical') {
+    const sourceIndex = node.children.findIndex(
+      (child) =>
+        child._tag === 'WorkspaceTileLeaf' &&
+        child.workspaceId === sourceWorkspaceId
+    )
+    const parentIndex = node.children.findIndex(
+      (child) =>
+        child._tag === 'WorkspaceTileLeaf' &&
+        child.workspaceId === parentWorkspaceId
+    )
+    if (sourceIndex !== -1 && parentIndex !== -1) {
+      if (sourceIndex === parentIndex + 1) {
+        return { handled: true, node }
+      }
+      const children = [...node.children]
+      const sizes = [...node.sizes]
+      const [source] = children.splice(sourceIndex, 1)
+      const [sourceSize] = sizes.splice(sourceIndex, 1)
+      const nextParentIndex = children.findIndex(
+        (child) =>
+          child._tag === 'WorkspaceTileLeaf' &&
+          child.workspaceId === parentWorkspaceId
+      )
+      if (source === undefined || sourceSize === undefined) {
+        return { handled: false, node }
+      }
+      children.splice(nextParentIndex + 1, 0, source)
+      sizes.splice(nextParentIndex + 1, 0, sourceSize)
+      return { handled: true, node: { ...node, children, sizes } }
+    }
+  }
+  for (const [index, child] of node.children.entries()) {
+    const result = moveBelowInSharedColumn(
+      child,
+      sourceWorkspaceId,
+      parentWorkspaceId
+    )
+    if (result.handled) {
+      if (result.node === child) {
+        return { handled: true, node }
+      }
+      return {
+        handled: true,
+        node: {
+          ...node,
+          children: node.children.map((candidate, childIndex) =>
+            childIndex === index ? result.node : candidate
+          ),
+        },
+      }
+    }
+  }
+  return { handled: false, node }
+}
+
+/**
  * Remove the source workspace's leaf from the working columns (mutating
  * them) and locate the column containing the target workspace.
  *
@@ -1091,6 +1219,7 @@ export {
   getWorkspaceTileLeaves,
   MIN_WORKSPACE_COLUMN_WIDTH_PX,
   MIN_WORKSPACE_TILE_HEIGHT_PX,
+  moveWorkspaceTileBelow,
   moveWorkspaceTileToEdge,
   removeWorkspaceFromTab,
   reorderWorkspaceTiles,

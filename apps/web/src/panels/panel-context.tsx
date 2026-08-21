@@ -26,6 +26,8 @@ type ResizeDirection = 'left' | 'right' | 'up' | 'down'
 interface AutoOpenAgentOptions {
   /** Prompt passed to OpenCode when the deferred agent terminal starts. */
   readonly initialPrompt?: string | undefined
+  /** Keep a newly created sub-workspace directly below this open parent. */
+  readonly parentWorkspaceId?: string | undefined
 }
 
 /**

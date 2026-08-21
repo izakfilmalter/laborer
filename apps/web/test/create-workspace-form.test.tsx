@@ -383,6 +383,46 @@ describe('CreateWorkspaceForm — branch name mask', () => {
     })
   })
 
+  it('keeps a new sub-workspace beside its parent when opening its agent', async () => {
+    const user = userEvent.setup()
+    createWorkspaceFn.mockResolvedValue({
+      id: 'ws-child',
+      projectId: 'project-1',
+      branchName: 'child-branch',
+      worktreePath: '/path/to/child',
+      status: 'creating',
+    })
+
+    render(
+      <ReadyPhaseWrapper>
+        <CreateWorkspaceForm
+          baseWorkspace={{ id: 'ws-parent', branchName: 'parent-branch' }}
+          projectId="project-1"
+          projectName="laborer"
+        />
+      </ReadyPhaseWrapper>
+    )
+
+    await user.type(getBranchInput(), 'child-branch')
+    await user.click(screen.getByRole('button', { name: CREATE_WORKSPACE_RE }))
+
+    await waitFor(() => {
+      expect(createWorkspaceFn).toHaveBeenCalledWith({
+        payload: {
+          baseWorkspaceId: 'ws-parent',
+          branchName: 'child-branch',
+          operationId: expect.any(String),
+          projectId: 'project-1',
+        },
+      })
+      expect(
+        panelActionsMock.autoOpenAgentWhenWorkspaceReady
+      ).toHaveBeenCalledWith('ws-child', {
+        parentWorkspaceId: 'ws-parent',
+      })
+    })
+  })
+
   it('keeps Slack URLs verbatim instead of masking them as a branch name', async () => {
     const user = userEvent.setup()
     const slackUrl =

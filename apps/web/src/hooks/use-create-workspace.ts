@@ -198,11 +198,14 @@ function useCreateWorkspace(
             }),
         })
 
-        if (initialPrompt === undefined) {
+        if (initialPrompt === undefined && baseWorkspaceId === undefined) {
           panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
         } else {
           panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id, {
-            initialPrompt,
+            ...(initialPrompt === undefined ? {} : { initialPrompt }),
+            ...(baseWorkspaceId === undefined
+              ? {}
+              : { parentWorkspaceId: baseWorkspaceId }),
           })
         }
 

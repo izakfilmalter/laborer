@@ -93,6 +93,7 @@ import type {
 import {
   addWorkspaceToTab,
   cleanUpWorkspaceTiles,
+  getWorkspaceColumns,
   getWorkspaceTileLeaves,
   moveWorkspaceTileBelow,
   moveWorkspaceTileToEdge,
@@ -279,11 +280,59 @@ function switchToParentWorkspaceTab(
   return switchWindowTab(windowLayout, parentLocation.tabId)
 }
 
-/** Reposition an already-open sub-workspace directly below its parent. */
-function placeWorkspaceBelowParentInActiveTab(
+/**
+ * Find the last open descendant in the parent's column so sibling
+ * sub-workspaces stay grouped in panel order.
+ */
+function resolveSubWorkspaceInsertionAnchor(
+  activeTab: WindowLayout['tabs'][number],
+  workspaceId: string,
+  parentWorkspaceId: string,
+  workspaces: readonly {
+    readonly id: string
+    readonly parentTaskId: string | null
+  }[]
+): string {
+  const root = activeTab.workspaceLayout
+  if (root === undefined) {
+    return parentWorkspaceId
+  }
+  const descendants = new Set([parentWorkspaceId])
+  let previousSize = 0
+  while (descendants.size !== previousSize) {
+    previousSize = descendants.size
+    for (const workspace of workspaces) {
+      if (
+        workspace.parentTaskId !== null &&
+        descendants.has(workspace.parentTaskId)
+      ) {
+        descendants.add(workspace.id)
+      }
+    }
+  }
+  const parentColumn = getWorkspaceColumns(root).find((column) =>
+    column.some((leaf) => leaf.workspaceId === parentWorkspaceId)
+  )
+  const parentIndex =
+    parentColumn?.findIndex((leaf) => leaf.workspaceId === parentWorkspaceId) ??
+    -1
+  if (!parentColumn || parentIndex === -1) {
+    return parentWorkspaceId
+  }
+  let anchorWorkspaceId = parentWorkspaceId
+  for (const leaf of parentColumn.slice(parentIndex + 1)) {
+    if (leaf.workspaceId !== workspaceId && descendants.has(leaf.workspaceId)) {
+      anchorWorkspaceId = leaf.workspaceId
+    }
+  }
+  return anchorWorkspaceId
+}
+
+/** Reposition an already-open sub-workspace below its sibling group. */
+function placeWorkspaceBelowAnchorInActiveTab(
   windowLayout: WindowLayout,
   workspaceId: string,
-  parentWorkspaceId: string
+  anchorWorkspaceId: string
 ): WindowLayout {
   const activeTab = getActiveWindowTab(windowLayout)
   if (activeTab === undefined) {
@@ -292,7 +341,7 @@ function placeWorkspaceBelowParentInActiveTab(
   const updatedTab = moveWorkspaceTileBelow(
     activeTab,
     workspaceId,
-    parentWorkspaceId
+    anchorWorkspaceId
   )
   if (updatedTab === activeTab) {
     return windowLayout
@@ -558,6 +607,13 @@ export function usePanelLayout() {
   const workspaceList = useMemo(
     () => workspaceViewsFromRows(tasks, projects),
     [projects, tasks]
+  )
+  const workspaceLineage = useMemo(
+    () => [
+      ...tasks.map(({ id, parentTaskId }) => ({ id, parentTaskId })),
+      ...workspaceList.map(({ id, parentTaskId }) => ({ id, parentTaskId })),
+    ],
+    [tasks, workspaceList]
   )
   // Agent panes opened optimistically while their workspace is still being
   // set up. Maps workspaceId -> placeholder paneId (null when the pane
@@ -2059,23 +2115,31 @@ export function usePanelLayout() {
         return
       }
       const existing = findWorkspaceLocation(base, workspaceId)
+      const insertionAnchor = options?.parentWorkspaceId
+        ? resolveSubWorkspaceInsertionAnchor(
+            activeTab,
+            workspaceId,
+            options.parentWorkspaceId,
+            workspaceLineage
+          )
+        : undefined
       if (existing?.tabId !== activeTab.id) {
         base = addWorkspaceToTabUnique(
           base,
           workspaceId,
           activeTab.id,
           removeWorkspaceFromTab,
-          (tab, id) => addWorkspaceToTab(tab, id, options?.parentWorkspaceId)
+          (tab, id) => addWorkspaceToTab(tab, id, insertionAnchor)
         )
         commitWindowLayout('ensure-workspace-in-tab', base)
-      } else if (options?.parentWorkspaceId !== undefined) {
-        const placedBelowParent = placeWorkspaceBelowParentInActiveTab(
+      } else if (insertionAnchor !== undefined) {
+        const placedBelowSiblings = placeWorkspaceBelowAnchorInActiveTab(
           base,
           workspaceId,
-          options.parentWorkspaceId
+          insertionAnchor
         )
-        if (placedBelowParent !== base) {
-          base = placedBelowParent
+        if (placedBelowSiblings !== base) {
+          base = placedBelowSiblings
           commitWindowLayout('sub-workspace-placed', base)
         }
       }
@@ -2126,6 +2190,7 @@ export function usePanelLayout() {
       commitPanelTabLayout,
       commitWindowLayout,
       spawnTerminalIntoPane,
+      workspaceLineage,
     ]
   )
 

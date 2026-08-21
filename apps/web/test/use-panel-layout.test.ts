@@ -10,6 +10,7 @@ const {
   reportWindowWorkspacesMock,
   reportWorkspacePresenceMock,
   spawnTerminalMock,
+  taskRowsRef,
   terminalListRef,
   upsertTerminalListItemMock,
   workspaceRowsRef,
@@ -27,6 +28,7 @@ const {
     status: 'running' as const,
     workspaceId: 'workspace-a',
   })),
+  taskRowsRef: { current: [] as Record<string, unknown>[] },
   terminalListRef: {
     current: {
       isLoading: false,
@@ -66,14 +68,14 @@ vi.mock('@tanstack/react-db', () => ({
         return { where: () => next }
       },
     })
-    return {
-      data:
-        'layout' in sources
-          ? Array.from(panelLayoutCollection.values()).filter(
-              ({ id }) => id === currentWindowIdRef.current
-            )
-          : [],
+    if ('layout' in sources) {
+      return {
+        data: Array.from(panelLayoutCollection.values()).filter(
+          ({ id }) => id === currentWindowIdRef.current
+        ),
+      }
     }
+    return { data: 'tasks' in sources ? taskRowsRef.current : [] }
   },
 }))
 
@@ -256,6 +258,7 @@ describe('usePanelLayout', () => {
     }
     initialLayoutRef.current = undefined
     workspaceRowsRef.current = []
+    taskRowsRef.current = []
     terminalListRef.current = { isLoading: false, terminals: [] }
     focusExistingWindowForWorkspaceMock.mockReset()
     focusExistingWindowForWorkspaceMock.mockResolvedValue(false)
@@ -515,7 +518,7 @@ describe('usePanelLayout', () => {
     })
   })
 
-  it('opens a sub-workspace directly below its open parent', async () => {
+  it('opens a sub-workspace below its last open sibling', async () => {
     const parentLayout = makeWindowLayout('pane-parent', 'workspace-parent')
     const parentTab = parentLayout.tabs[0]
     const parentTile = parentTab?.workspaceLayout
@@ -534,9 +537,16 @@ describe('usePanelLayout', () => {
               {
                 _tag: 'WorkspaceTileLeaf',
                 activePanelTabId: undefined,
-                id: 'workspace-tile-sibling',
+                id: 'workspace-tile-existing-child',
                 panelTabs: [],
-                workspaceId: 'workspace-sibling',
+                workspaceId: 'workspace-existing-child',
+              },
+              {
+                _tag: 'WorkspaceTileLeaf',
+                activePanelTabId: undefined,
+                id: 'workspace-tile-unrelated',
+                panelTabs: [],
+                workspaceId: 'workspace-unrelated',
               },
               {
                 _tag: 'WorkspaceTileLeaf',
@@ -548,7 +558,7 @@ describe('usePanelLayout', () => {
             ],
             direction: 'vertical',
             id: 'workspace-stack',
-            sizes: [50, 30, 20],
+            sizes: [40, 25, 20, 15],
           },
         },
         {
@@ -565,6 +575,10 @@ describe('usePanelLayout', () => {
       ],
     })
     workspaceRowsRef.current = [
+      {
+        id: 'workspace-existing-child',
+        parentTaskId: 'workspace-parent',
+      },
       {
         id: 'workspace-child',
         parentTaskId: 'workspace-parent',
@@ -590,20 +604,21 @@ describe('usePanelLayout', () => {
       expect(stored.activeTabId).toBe(parentTab.id)
       expect(workspaceIdsInActiveTab(stored)).toEqual([
         'workspace-parent',
+        'workspace-existing-child',
         'workspace-child',
-        'workspace-sibling',
+        'workspace-unrelated',
       ])
       const activeTab = stored.tabs.find((tab) => tab.id === stored.activeTabId)
       const activeLayout = activeTab?.workspaceLayout
       if (activeLayout?._tag !== 'WorkspaceTileSplit') {
         throw new Error('Expected the parent workspace stack')
       }
-      expect(activeLayout.sizes).toEqual([50, 20, 30])
+      expect(activeLayout.sizes).toEqual([40, 25, 15, 20])
     })
     expect(spawnTerminalMock).not.toHaveBeenCalled()
   })
 
-  it('inserts a new sub-workspace below its parent instead of at the end', async () => {
+  it('inserts a new sub-workspace below the last child instead of at the end', async () => {
     const parentLayout = makeWindowLayout('pane-parent', 'workspace-parent')
     const parentTab = parentLayout.tabs[0]
     const parentTile = parentTab?.workspaceLayout
@@ -622,19 +637,30 @@ describe('usePanelLayout', () => {
               {
                 _tag: 'WorkspaceTileLeaf',
                 activePanelTabId: undefined,
-                id: 'workspace-tile-sibling',
+                id: 'workspace-tile-existing-child',
                 panelTabs: [],
-                workspaceId: 'workspace-sibling',
+                workspaceId: 'workspace-existing-child',
+              },
+              {
+                _tag: 'WorkspaceTileLeaf',
+                activePanelTabId: undefined,
+                id: 'workspace-tile-unrelated',
+                panelTabs: [],
+                workspaceId: 'workspace-unrelated',
               },
             ],
             direction: 'vertical',
             id: 'workspace-stack',
-            sizes: [70, 30],
+            sizes: [50, 20, 30],
           },
         },
       ],
     })
     workspaceRowsRef.current = [
+      {
+        id: 'workspace-existing-child',
+        parentTaskId: 'workspace-closed-child',
+      },
       {
         id: 'workspace-child',
         parentTaskId: 'workspace-parent',
@@ -644,6 +670,16 @@ describe('usePanelLayout', () => {
         status: 'creating',
         origin: 'laborer',
         createdAt: '2026-04-20T00:00:00.000Z',
+      },
+    ]
+    taskRowsRef.current = [
+      {
+        id: 'workspace-closed-child',
+        parentTaskId: 'workspace-parent',
+      },
+      {
+        id: 'workspace-existing-child',
+        parentTaskId: 'workspace-closed-child',
       },
     ]
 
@@ -658,15 +694,16 @@ describe('usePanelLayout', () => {
       const stored = readStoredWindowLayout('window-a') as WindowLayout
       expect(workspaceIdsInActiveTab(stored)).toEqual([
         'workspace-parent',
+        'workspace-existing-child',
         'workspace-child',
-        'workspace-sibling',
+        'workspace-unrelated',
       ])
       const activeTab = stored.tabs.find((tab) => tab.id === stored.activeTabId)
       const activeLayout = activeTab?.workspaceLayout
       if (activeLayout?._tag !== 'WorkspaceTileSplit') {
         throw new Error('Expected the parent workspace stack')
       }
-      expect(activeLayout.sizes).toEqual([35, 35, 30])
+      expect(activeLayout.sizes).toEqual([50, 10, 10, 30])
     })
   })
 })

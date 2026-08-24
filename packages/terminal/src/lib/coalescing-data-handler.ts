@@ -40,7 +40,46 @@ interface CoalescingDataHandler {
 
 interface CoalescingOptions {
   readonly maxBufferBytes?: number
-  readonly windowMs?: number
+  /**
+   * Coalescing window in milliseconds, or a getter re-read every time a
+   * flush timer is armed. A getter makes the window runtime-switchable
+   * (battery-saver vs performance profiles): a pending flush scheduled
+   * under the old window simply completes; only subsequent scheduling
+   * uses the new window, so no data is lost or reordered.
+   */
+  readonly windowMs?: number | (() => number)
+}
+
+/**
+ * A mutable coalesce window shared by every coalescer in a pty host.
+ *
+ * `set` is ignored while an explicit environment override is present —
+ * operators pinning `TERMINAL_OUTPUT_COALESCE_MS` always win over
+ * profile switching.
+ */
+interface RuntimeCoalesceWindow {
+  readonly get: () => number
+  readonly set: (windowMs: number) => void
+}
+
+const createRuntimeCoalesceWindow = (options: {
+  readonly defaultMs?: number
+  readonly envOverrideMs?: number | undefined
+}): RuntimeCoalesceWindow => {
+  const envOverrideMs = options.envOverrideMs
+  let windowMs =
+    envOverrideMs ?? options.defaultMs ?? COALESCE_WINDOW_MS_DEFAULT
+  return {
+    get: () => windowMs,
+    set: (nextWindowMs: number) => {
+      if (envOverrideMs !== undefined) {
+        return
+      }
+      if (Number.isInteger(nextWindowMs) && nextWindowMs > 0) {
+        windowMs = nextWindowMs
+      }
+    },
+  }
 }
 
 /**
@@ -53,7 +92,9 @@ const createCoalescingDataHandler = (
   onFlush: (data: string) => void,
   options?: CoalescingOptions
 ): CoalescingDataHandler => {
-  const windowMs = options?.windowMs ?? COALESCE_WINDOW_MS_DEFAULT
+  const windowOption = options?.windowMs ?? COALESCE_WINDOW_MS_DEFAULT
+  const currentWindowMs =
+    typeof windowOption === 'function' ? windowOption : () => windowOption
   const maxBufferBytes =
     options?.maxBufferBytes ?? COALESCE_MAX_BUFFER_BYTES_DEFAULT
 
@@ -91,7 +132,7 @@ const createCoalescingDataHandler = (
     // Arm the timer on the first unflushed chunk only — later chunks
     // ride the same deadline so latency stays bounded by the window.
     if (timer === undefined) {
-      timer = setTimeout(flush, windowMs)
+      timer = setTimeout(flush, currentWindowMs())
     }
   }
 
@@ -102,5 +143,6 @@ export {
   COALESCE_MAX_BUFFER_BYTES_DEFAULT,
   COALESCE_WINDOW_MS_DEFAULT,
   createCoalescingDataHandler,
+  createRuntimeCoalesceWindow,
 }
-export type { CoalescingDataHandler }
+export type { CoalescingDataHandler, RuntimeCoalesceWindow }

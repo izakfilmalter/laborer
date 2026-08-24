@@ -111,6 +111,8 @@ const invoke = (socket: Socket, request: PtyHostRequest) => {
       )
     case 'setObservedWorkspaces':
       return manager.setObservedWorkspaces(new Set(first as string[]))
+    case 'setOutputCoalesceWindow':
+      return manager.setOutputCoalesceWindowMs(first as number)
     case 'reportWorkspacePresence':
       return manager.reportWorkspacePresence(
         first as string,

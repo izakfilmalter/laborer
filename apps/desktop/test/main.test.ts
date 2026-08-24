@@ -101,7 +101,7 @@ const createBrowserWindowMock = () => {
 
 const loadMainWithRecords = async (
   savedWindowRecords: MockWindowRecord[],
-  options: { readonly production?: boolean } = {}
+  options: { readonly onBattery?: boolean; readonly production?: boolean } = {}
 ) => {
   vi.resetModules()
 
@@ -118,6 +118,14 @@ const loadMainWithRecords = async (
   const track = vi.fn()
   const registerIpcHandlersMock = vi.fn()
   const launchDaemon = vi.fn(async () => 'http://127.0.0.1:2117')
+  const ipcMainHandle = vi.fn()
+  const powerMonitor = {
+    isOnBatteryPower: vi.fn(() => options.onBattery ?? false),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  }
+  const fetchMock = vi.fn(async () => ({ ok: true }))
+  vi.stubGlobal('fetch', fetchMock)
 
   vi.doMock('electron', () => ({
     app: {
@@ -140,14 +148,11 @@ const loadMainWithRecords = async (
       on: vi.fn(),
       once: vi.fn(),
       removeListener: vi.fn(),
-      handle: vi.fn(),
+      handle: ipcMainHandle,
       removeHandler: vi.fn(),
       removeAllListeners: vi.fn(),
     },
-    powerMonitor: {
-      on: vi.fn(),
-      removeListener: vi.fn(),
-    },
+    powerMonitor,
     shell: {
       openExternal: vi.fn(async () => undefined),
     },
@@ -239,6 +244,9 @@ const loadMainWithRecords = async (
     appOn,
     setName,
     launchDaemon,
+    fetchMock,
+    ipcMainHandle,
+    powerMonitor,
   }
 }
 
@@ -246,6 +254,7 @@ afterEach(() => {
   process.title = originalProcessTitle
   vi.resetModules()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
   vi.unmock('electron')
   vi.clearAllMocks()
 })
@@ -527,5 +536,101 @@ describe('main multi-window restore', () => {
 
     expect(BrowserWindow.instances).toHaveLength(2)
     expect(registerIpcHandlers).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('automatic battery-saver mode', () => {
+  const savedWindowRecords = [
+    {
+      windowId: 'window-alpha',
+      bounds: { x: 10, y: 20, width: 800, height: 600 },
+      isMaximized: false,
+    },
+  ]
+
+  /** Drain the pusher's serialized send queue (microtasks only). */
+  const flushSends = async (): Promise<void> => {
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve()
+    }
+  }
+
+  const powerStateCalls = (
+    fetchMock: ReturnType<typeof vi.fn>
+  ): Array<{ readonly body: unknown; readonly url: string }> =>
+    fetchMock.mock.calls
+      .filter((call) => String(call[0]).endsWith('/daemon/power-state'))
+      .map((call) => ({
+        body: JSON.parse(
+          (call[1] as { readonly body: string } | undefined)?.body ?? 'null'
+        ),
+        url: String(call[0]),
+      }))
+
+  it('pushes the initial power state to the ensured daemon on startup', async () => {
+    const { fetchMock } = await loadMainWithRecords(savedWindowRecords, {
+      onBattery: true,
+      production: true,
+    })
+    await flushSends()
+
+    expect(powerStateCalls(fetchMock)).toEqual([
+      {
+        body: { powerState: 'battery' },
+        url: 'http://127.0.0.1:2117/daemon/power-state',
+      },
+    ])
+  })
+
+  it('pushes transitions reported by powerMonitor and dedupes repeats', async () => {
+    const { fetchMock, powerMonitor } = await loadMainWithRecords(
+      savedWindowRecords,
+      { onBattery: false, production: true }
+    )
+    await flushSends()
+
+    const handlers = new Map(
+      powerMonitor.on.mock.calls.map((call) => [call[0], call[1]])
+    )
+    const onBattery = handlers.get('on-battery') as () => void
+    onBattery()
+    await flushSends()
+    // macOS can deliver duplicate events — only one push per transition.
+    onBattery()
+    await flushSends()
+
+    expect(powerStateCalls(fetchMock).map((call) => call.body)).toEqual([
+      { powerState: 'ac' },
+      { powerState: 'battery' },
+    ])
+  })
+
+  it('re-pushes the current power state after every daemon ensure', async () => {
+    const { fetchMock, ipcMainHandle } = await loadMainWithRecords(
+      savedWindowRecords,
+      { onBattery: false, production: true }
+    )
+    await flushSends()
+    expect(powerStateCalls(fetchMock)).toHaveLength(1)
+
+    const ensureDaemon = ipcMainHandle.mock.calls.find(
+      (call) => call[0] === 'desktop:ensure-daemon'
+    )?.[1] as () => Promise<void>
+    await ensureDaemon()
+    await flushSends()
+
+    // A restarted daemon holds the default battery-saver profile, so the
+    // unchanged 'ac' state is re-delivered rather than deduped away.
+    expect(powerStateCalls(fetchMock).map((call) => call.body)).toEqual([
+      { powerState: 'ac' },
+      { powerState: 'ac' },
+    ])
+  })
+
+  it('does not push power state in dev mode where no supervisor exists', async () => {
+    const { fetchMock } = await loadMainWithRecords(savedWindowRecords)
+    await flushSends()
+
+    expect(powerStateCalls(fetchMock)).toHaveLength(0)
   })
 })

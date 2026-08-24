@@ -9,7 +9,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBufferedDataHandler } from '../src/lib/buffered-data-handler.js'
-import { createCoalescingDataHandler } from '../src/lib/coalescing-data-handler.js'
+import {
+  createCoalescingDataHandler,
+  createRuntimeCoalesceWindow,
+} from '../src/lib/coalescing-data-handler.js'
 
 describe('createCoalescingDataHandler', () => {
   beforeEach(() => {
@@ -196,6 +199,52 @@ describe('createCoalescingDataHandler', () => {
     expect(emitted[1]).toBe('\x1b[31mworld\x1b[0m done')
   })
 
+  it('re-reads a windowMs getter each time a flush timer is armed', () => {
+    const onFlush = vi.fn()
+    let windowMs = 16
+    const handler = createCoalescingDataHandler(onFlush, {
+      windowMs: () => windowMs,
+    })
+
+    handler.write('slow')
+    vi.advanceTimersByTime(16)
+    expect(onFlush).toHaveBeenNthCalledWith(1, 'slow')
+
+    // Switch to the performance profile — the next armed timer uses 8ms.
+    windowMs = 8
+    handler.write('fast')
+    vi.advanceTimersByTime(8)
+    expect(onFlush).toHaveBeenNthCalledWith(2, 'fast')
+  })
+
+  it('completes a pending flush under the old window when the window changes mid-buffer, without loss or reorder', () => {
+    const emitted: string[] = []
+    let windowMs = 16
+    const handler = createCoalescingDataHandler((data) => emitted.push(data), {
+      windowMs: () => windowMs,
+    })
+
+    // Timer armed under the 16ms window.
+    handler.write('before ')
+    vi.advanceTimersByTime(4)
+
+    // Profile switch mid-buffer: the pending flush keeps its original
+    // 16ms deadline; buffered and subsequent chunks stay in order.
+    windowMs = 8
+    handler.write('after')
+
+    vi.advanceTimersByTime(7)
+    expect(emitted).toEqual([])
+
+    vi.advanceTimersByTime(5)
+    expect(emitted).toEqual(['before after'])
+
+    // The next write schedules under the new 8ms window.
+    handler.write('next')
+    vi.advanceTimersByTime(8)
+    expect(emitted).toEqual(['before after', 'next'])
+  })
+
   it('keeps a held-back escape fragment out of a valve flush', () => {
     const emitted: string[] = []
     const coalescer = createCoalescingDataHandler(
@@ -215,5 +264,37 @@ describe('createCoalescingDataHandler', () => {
     vi.advanceTimersByTime(16)
 
     expect(emitted.join('')).toBe('abcd\x1b[2K')
+  })
+})
+
+describe('createRuntimeCoalesceWindow', () => {
+  it('starts at the default and applies runtime changes', () => {
+    const window = createRuntimeCoalesceWindow({ defaultMs: 16 })
+
+    expect(window.get()).toBe(16)
+    window.set(8)
+    expect(window.get()).toBe(8)
+  })
+
+  it('ignores runtime changes while an env override is present', () => {
+    const window = createRuntimeCoalesceWindow({
+      defaultMs: 16,
+      envOverrideMs: 4,
+    })
+
+    expect(window.get()).toBe(4)
+    window.set(8)
+    expect(window.get()).toBe(4)
+  })
+
+  it('rejects non-positive and non-integer runtime values', () => {
+    const window = createRuntimeCoalesceWindow({ defaultMs: 16 })
+
+    window.set(0)
+    window.set(-5)
+    window.set(2.5)
+    window.set(Number.NaN)
+
+    expect(window.get()).toBe(16)
   })
 })

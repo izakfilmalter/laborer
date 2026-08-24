@@ -20,7 +20,8 @@ import {
   ptyHostProxyLayer,
   shutdownPtyHost,
 } from '@laborer/terminal/services/pty-host-proxy'
-import { Effect, Layer, SubscriptionRef } from 'effect'
+import { TerminalManager } from '@laborer/terminal/services/terminal-manager'
+import { Effect, Layer, Schema, SubscriptionRef } from 'effect'
 import {
   HttpRouter,
   HttpServerRequest,
@@ -37,6 +38,11 @@ import { LaborerRpcsLive } from './rpc/handlers.js'
 import { SlackDaemonRpcsLive } from './rpc/slack-daemon-handlers.js'
 import { DeferredServicesReady } from './services/deferred-service.js'
 import { FileWatcherClient } from './services/file-watcher-client.js'
+import {
+  coalesceWindowMsForProfile,
+  PowerProfileService,
+  PowerStatePayload,
+} from './services/power-profile.js'
 import { ProcessInspector } from './services/process-inspector.js'
 import { ProcessLauncher } from './services/process-launcher.js'
 import { SlackDaemonProcessControl } from './services/slack-daemon-process-control.js'
@@ -158,8 +164,46 @@ const stopResponse = Effect.gen(function* () {
   return yield* HttpServerResponse.json({ stopping: true }, { status: 202 })
 })
 
+/**
+ * Power-state signal from the desktop app (Electron `powerMonitor`).
+ *
+ * The desktop pushes on app start, on every on-ac/on-battery transition,
+ * and after every daemon ensure (launch/reconnect/version swap), so a
+ * restarted daemon never sits on the default battery-saver profile while
+ * the machine is on AC. The coalesce window is pushed to the pty-host on
+ * every accepted signal — not only on profile changes — so those
+ * re-pushes also refresh a pty-host that restarted since the last change.
+ */
+const powerStateResponse = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const body = yield* request.json.pipe(Effect.orElseSucceed(() => null))
+  const decoded = yield* Schema.decodeUnknownEffect(PowerStatePayload)(
+    body
+  ).pipe(Effect.result)
+  if (decoded._tag === 'Failure') {
+    return yield* HttpServerResponse.json(
+      { error: 'Expected powerState of ac or battery' },
+      { status: 400 }
+    )
+  }
+  const powerProfile = yield* PowerProfileService
+  const profile = yield* powerProfile.setPowerState(decoded.success.powerState)
+  const terminalManager = yield* TerminalManager
+  yield* terminalManager
+    .setOutputCoalesceWindowMs(coalesceWindowMsForProfile(profile))
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(
+          `[daemon] Could not push coalesce window to pty-host: ${error.message}`
+        )
+      )
+    )
+  return yield* HttpServerResponse.json({ profile })
+})
+
 const ControlRoutes = HttpRouter.addAll([
   HttpRouter.route('POST', '/daemon/stop', stopResponse),
+  HttpRouter.route('POST', '/daemon/power-state', powerStateResponse),
 ])
 
 const webDist = process.env[WEB_DIST_ENV]

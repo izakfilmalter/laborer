@@ -978,6 +978,17 @@ class TerminalManager extends Context.Service<
     ) => Effect.Effect<void>
 
     /**
+     * Set the PTY output coalesce window for all current and future
+     * terminals (power-profile switching). Explicit
+     * `TERMINAL_OUTPUT_COALESCE_MS` environment overrides win over this
+     * runtime setting. Buffered data already scheduled under the old
+     * window flushes as scheduled — nothing is lost or reordered.
+     */
+    readonly setOutputCoalesceWindowMs: (
+      windowMs: number
+    ) => Effect.Effect<void, TerminalRpcError>
+
+    /**
      * Get all terminal metadata without process detection.
      * Returns the raw ManagedTerminal data synchronously via an Effect.
      * Used for session persistence serialization on graceful shutdown.
@@ -2834,6 +2845,8 @@ class TerminalManager extends Context.Service<
         setAgentStatusFromHook,
         setObservedWorkspaces,
         reportWorkspacePresence,
+        setOutputCoalesceWindowMs: (windowMs: number) =>
+          Effect.sync(() => ptyHostClient.setOutputCoalesceWindowMs(windowMs)),
         getTerminals: () =>
           Effect.map(Ref.get(terminalsRef), (map) => [...map.values()]),
         setRevivedReplayEvent,

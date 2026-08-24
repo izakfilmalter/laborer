@@ -11,6 +11,7 @@ import { spawn } from '../src/lib/spawn.js'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
 import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PR_REVIEW_THREADS_TIMEOUT_MS } from '../src/services/polling-intervals.js'
+import { PowerProfileService } from '../src/services/power-profile.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 
@@ -125,6 +126,7 @@ const buildWatcher = (databaseContext: Context.Context<LaborerDatabase>) =>
   Effect.gen(function* () {
     const prWatcherContext = yield* Layer.build(
       PrWatcher.layer.pipe(
+        Layer.provide(PowerProfileService.layer),
         Layer.provide(PrTaskTransitions.noopLayer),
         Layer.provide(Layer.succeedContext(databaseContext))
       )
@@ -201,6 +203,7 @@ describe('PrWatcher fork origin PR lookup', () => {
 
       const prWatcherContext = yield* Layer.build(
         PrWatcher.layer.pipe(
+          Layer.provide(PowerProfileService.layer),
           Layer.provide(PrTaskTransitions.noopLayer),
           Layer.provide(Layer.succeedContext(databaseContext))
         )
@@ -262,6 +265,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         createWorkspace(database, worktreePath)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
+            Layer.provide(PowerProfileService.layer),
             Layer.provide(Layer.succeedContext(databaseContext)),
             Layer.provide(
               Layer.succeed(
@@ -347,6 +351,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         createWorkspace(database, worktreePath)
         const prWatcherContext = yield* Layer.build(
           PrWatcher.layer.pipe(
+            Layer.provide(PowerProfileService.layer),
             Layer.provide(PrTaskTransitions.noopLayer),
             Layer.provide(Layer.succeedContext(databaseContext))
           )
@@ -430,6 +435,7 @@ describe('PrWatcher fork origin PR lookup', () => {
       createWorkspace(database, worktreePath)
       const prWatcherContext = yield* Layer.build(
         PrWatcher.layer.pipe(
+          Layer.provide(PowerProfileService.layer),
           Layer.provide(PrTaskTransitions.noopLayer),
           Layer.provide(Layer.succeedContext(databaseContext))
         )

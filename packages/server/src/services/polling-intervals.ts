@@ -13,12 +13,14 @@
  * @see .reference/vscode/extensions/git/src/autofetch.ts — auto-fetch period
  */
 
+import type { PowerProfile } from './power-profile.js'
+
 // ---------------------------------------------------------------------------
 // PrWatcher — `gh pr view` polling
 // ---------------------------------------------------------------------------
 
 /**
- * Polling interval when the workspace has an open panel.
+ * Polling interval when the workspace has an open panel (battery-saver).
  *
  * Design reference: GitHub Desktop. Its CommitStatusStore refreshes check
  * status every 3 min, and the GitHub API serves PR reads with a 60 s
@@ -28,7 +30,7 @@
 export const PR_VISIBLE_POLL_INTERVAL_MS = 60_000
 
 /**
- * Polling interval when the workspace has no open panel.
+ * Polling interval when the workspace has no open panel (battery-saver).
  *
  * Design reference: GitHub Desktop's PullRequestUpdater polls every 30 min
  * (2 min enforced minimum) and is gated on window focus. PR state changes
@@ -36,6 +38,38 @@ export const PR_VISIBLE_POLL_INTERVAL_MS = 60_000
  * well inside those bounds.
  */
 export const PR_BACKGROUND_POLL_INTERVAL_MS = 300_000
+
+/**
+ * Visible-tier interval on AC power. Rate-limit and cache arguments carry
+ * less weight than perceived responsiveness while plugged in.
+ */
+export const PR_VISIBLE_POLL_INTERVAL_PERFORMANCE_MS = 5000
+
+/** Background-tier interval on AC power. */
+export const PR_BACKGROUND_POLL_INTERVAL_PERFORMANCE_MS = 60_000
+
+export interface PrPollIntervals {
+  readonly backgroundMs: number
+  readonly visibleMs: number
+}
+
+/**
+ * Profile-aware interval lookup. The PR watcher re-reads this every loop
+ * iteration, so a profile change naturally takes effect on the next tick
+ * without rebuilding any scheduling machinery.
+ */
+export const prPollIntervalsForProfile = (
+  profile: PowerProfile
+): PrPollIntervals =>
+  profile === 'performance'
+    ? {
+        backgroundMs: PR_BACKGROUND_POLL_INTERVAL_PERFORMANCE_MS,
+        visibleMs: PR_VISIBLE_POLL_INTERVAL_PERFORMANCE_MS,
+      }
+    : {
+        backgroundMs: PR_BACKGROUND_POLL_INTERVAL_MS,
+        visibleMs: PR_VISIBLE_POLL_INTERVAL_MS,
+      }
 
 /**
  * Bound on one `gh api graphql` read of a pull request's review threads.

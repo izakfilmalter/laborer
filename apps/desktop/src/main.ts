@@ -1,6 +1,13 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Notification,
+  powerMonitor,
+  shell,
+} from 'electron'
 import {
   AgentNotificationCoordinator,
   nativeNotificationScheduler,
@@ -15,6 +22,10 @@ import {
   triggerInstallUpdate,
 } from './auto-updater.js'
 import { DaemonAgentStatusSubscription } from './daemon-agent-status.js'
+import {
+  DaemonPowerStatePusher,
+  powerStateFromBattery,
+} from './daemon-power-state.js'
 import { DesktopDaemonSupervisor } from './daemon-supervisor.js'
 import {
   DaemonWindowReloadTracker,
@@ -176,6 +187,30 @@ let currentDaemonVersion: string | null = null
  * once per daemon transition.
  */
 const daemonWindowReloadTracker = new DaemonWindowReloadTracker<BrowserWindow>()
+
+/**
+ * Pushes the machine's power source (AC vs battery) to the daemon so it
+ * can switch between the performance and battery-saver profiles. Sends
+ * are best-effort: a failure is retried on the next power event or
+ * daemon ensure, and the daemon defaults to battery-saver meanwhile.
+ */
+const daemonPowerStatePusher = new DaemonPowerStatePusher(async (state) => {
+  const url = daemonSupervisor?.currentRegistration()?.url
+  if (!url) {
+    return false
+  }
+  try {
+    const response = await fetch(new URL('/daemon/power-state', url), {
+      body: JSON.stringify({ powerState: state }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+      signal: AbortSignal.timeout(2000),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+})
 
 /** Origin of a window's current document, or null when unavailable. */
 function windowDocumentOrigin(window: BrowserWindow): string | null {
@@ -496,6 +531,16 @@ app
       agentStatusSubscription.start(daemonOrigin)
     }
 
+    // Automatic battery-saver mode: push the current power source now and
+    // on every transition. powerMonitor is only usable after app ready.
+    daemonPowerStatePusher.update(
+      powerStateFromBattery(powerMonitor.isOnBatteryPower())
+    )
+    powerMonitor.on('on-ac', () => daemonPowerStatePusher.update('ac'))
+    powerMonitor.on('on-battery', () =>
+      daemonPowerStatePusher.update('battery')
+    )
+
     // Register x-github-desktop-dev-auth:// as a protocol handler so
     // the OAuth callback from GitHub lands back in this app.
     app.setAsDefaultProtocolClient(GITHUB_OAUTH_PROTOCOL)
@@ -531,6 +576,10 @@ app
       if (originChanged) {
         agentStatusSubscription?.start(daemonOrigin)
       }
+      // The ensured daemon may be a fresh process sitting on the default
+      // battery-saver profile — re-push the current power state so a
+      // restart/reconnect/version swap never loses the AC signal.
+      daemonPowerStatePusher.repush()
       reloadWindowsForDaemonTransition()
     })
 

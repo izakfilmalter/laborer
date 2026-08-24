@@ -12,7 +12,14 @@
  * @see Issue #7: Wire sidecar status events to lifecycle phase transitions
  */
 
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { RegistryProvider } from '@effect/atom-react/RegistryContext'
+import {
+  act,
+  cleanup,
+  render as rtlRender,
+  screen,
+} from '@testing-library/react'
+import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   LifecyclePhase,
@@ -57,11 +64,28 @@ function setInitStatusResult(result: {
   }
 }
 
-vi.mock('@effect/atom-react/Hooks', async () => {
+vi.mock('@effect/atom-react/Hooks', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@effect/atom-react/Hooks')>()
   const React = await import('react')
+  // Only the mocked init-status query atom is faked; every other atom (the
+  // shared sidecar status atoms) goes through the real hooks. The branch is
+  // stable per call site, so hook order stays consistent across renders.
+  const isInitStatusAtom = (atom: unknown) => atom === Symbol.for('initStatus')
   return {
-    useAtomValue: () => {
+    ...actual,
+    useAtomValue: (atom: unknown, ...rest: readonly unknown[]) => {
+      if (!isInitStatusAtom(atom)) {
+        return (
+          actual.useAtomValue as (
+            atom: unknown,
+            ...rest: readonly unknown[]
+          ) => unknown
+        )(atom, ...rest)
+      }
+      // biome-ignore lint/correctness/useHookAtTopLevel: the branch is keyed by atom identity, which is constant per call site, so hook order is stable.
       const [, forceRender] = React.useReducer((x: number) => x + 1, 0)
+      // biome-ignore lint/correctness/useHookAtTopLevel: the branch is keyed by atom identity, which is constant per call site, so hook order is stable.
       React.useEffect(() => {
         const notify = () => forceRender()
         subscribersRef.current.add(notify)
@@ -73,7 +97,15 @@ vi.mock('@effect/atom-react/Hooks', async () => {
     },
     // Pull-based stream atoms need useAtomSet to trigger subsequent pulls.
     // In tests, the mock is a no-op since we control the result directly.
-    useAtomSet: () => () => undefined,
+    useAtomSet: (atom: unknown, ...rest: readonly unknown[]) =>
+      isInitStatusAtom(atom)
+        ? () => undefined
+        : (
+            actual.useAtomSet as (
+              atom: unknown,
+              ...rest: readonly unknown[]
+            ) => unknown
+          )(atom, ...rest),
   }
 })
 
@@ -91,6 +123,25 @@ function PhaseDisplay() {
   return <span data-testid="phase">{phase}</span>
 }
 
+/**
+ * The default atom registry schedules work through React's real MessageChannel
+ * scheduler, which fake timers cannot advance. Route registry tasks through
+ * setTimeout so `vi.advanceTimersByTimeAsync` drives the shared poll atoms.
+ */
+const TimerDrivenRegistry = ({ children }: { children: React.ReactNode }) => (
+  <RegistryProvider
+    scheduleTask={(f) => {
+      const timer = setTimeout(f, 0)
+      return () => clearTimeout(timer)
+    }}
+  >
+    {children}
+  </RegistryProvider>
+)
+
+const render = (ui: React.ReactElement) =>
+  rtlRender(ui, { wrapper: TimerDrivenRegistry })
+
 describe('PhaseTransitionDriver', () => {
   const originalFetch = globalThis.fetch
 
@@ -104,8 +155,11 @@ describe('PhaseTransitionDriver', () => {
     subscribersRef.current.clear()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
+    // Drain the atom registry's scheduled tasks (shared poller disposal)
+    // so the next test builds a fresh poll loop instead of reusing state.
+    await vi.advanceTimersByTimeAsync(0)
     vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
@@ -133,8 +187,7 @@ describe('PhaseTransitionDriver', () => {
 
     // Let the initial poll complete (server healthy)
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Phase should advance to Ready
@@ -156,8 +209,7 @@ describe('PhaseTransitionDriver', () => {
 
     // Let microtasks flush
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Phase should remain Starting
@@ -167,9 +219,8 @@ describe('PhaseTransitionDriver', () => {
 
     // Even after a poll interval, still Starting
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(
@@ -193,8 +244,7 @@ describe('PhaseTransitionDriver', () => {
     )
 
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Terminal healthy but server not — should still be Starting
@@ -219,8 +269,7 @@ describe('PhaseTransitionDriver', () => {
     )
 
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // File-watcher healthy but server not — should still be Starting
@@ -258,8 +307,7 @@ describe('PhaseTransitionDriver', () => {
 
     // Initial poll — server healthy, others not
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(
@@ -272,9 +320,8 @@ describe('PhaseTransitionDriver', () => {
 
     // Wait for next poll interval
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(
@@ -310,8 +357,7 @@ describe('PhaseTransitionDriver', () => {
 
     // Initial poll — terminal + file-watcher healthy, server not
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Still Starting — server not healthy yet
@@ -323,9 +369,8 @@ describe('PhaseTransitionDriver', () => {
     serverHealthy = true
 
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Should jump to Restored since all three are healthy
@@ -362,8 +407,7 @@ describe('PhaseTransitionDriver', () => {
 
     // Initial poll — server + terminal healthy, file-watcher not
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Should be Ready (server healthy), not Restored (file-watcher not healthy)
@@ -375,9 +419,8 @@ describe('PhaseTransitionDriver', () => {
     fileWatcherHealthy = true
 
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Now Restored
@@ -418,8 +461,7 @@ describe('PhaseTransitionDriver', () => {
 
     // Initial poll — all sidecars healthy → Restored
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(
@@ -433,8 +475,7 @@ describe('PhaseTransitionDriver', () => {
         waiting: false,
         value: { items: [{ ready: false }] },
       })
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(
@@ -486,8 +527,7 @@ describe('PhaseTransitionDriver', () => {
 
     // Initial poll — server healthy, but sidecars not → Ready only
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(
@@ -496,9 +536,8 @@ describe('PhaseTransitionDriver', () => {
 
     // Advance several poll intervals — init-status should NOT be polled
     await act(async () => {
-      vi.advanceTimersByTime(10_000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(initStatusCalls).toHaveLength(0)
@@ -537,10 +576,8 @@ describe('PhaseTransitionDriver', () => {
 
     // All sidecars healthy → Restored, init-status ready → Eventually
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(
@@ -549,9 +586,8 @@ describe('PhaseTransitionDriver', () => {
 
     // Phase should remain Eventually after additional time
     await act(async () => {
-      vi.advanceTimersByTime(10_000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('phase').textContent).toBe(

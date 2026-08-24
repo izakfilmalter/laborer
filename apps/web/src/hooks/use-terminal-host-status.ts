@@ -1,11 +1,14 @@
 import { useAtomMount, useAtomValue } from '@effect/atom-react/Hooks'
+import { RegistryContext } from '@effect/atom-react/RegistryContext'
 import type { TerminalHostStatus } from '@laborer/shared/rpc'
 import { Effect } from 'effect'
-import { useCallback, useEffect, useState } from 'react'
-import { TerminalServiceClient } from '@/atoms/terminal-service-client'
+import { useCallback, useContext } from 'react'
 
-/** Health is advisory, so a modest poll keeps it off the terminal data path. */
-export const TERMINAL_HOST_STATUS_POLL_MS = 2000
+import {
+  terminalHostStatusAtom,
+  terminalHostStatusPollerAtom,
+} from '@/atoms/terminal-host-status'
+import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 
 /**
  * A failed restart must not leave the optimistic progress state stuck. Keep a
@@ -19,54 +22,23 @@ export function statusAfterRestartFailure(
   return current?.state === 'restarting' ? previous : current
 }
 
+/**
+ * Terminal host health shared across all consumers: N mounts share one poll
+ * loop via `terminalHostStatusPollerAtom`. The restart action updates the
+ * shared atom so every consumer sees the optimistic and final status.
+ */
 export function useTerminalHostStatus() {
-  useAtomMount(TerminalServiceClient.runtime)
+  useAtomMount(terminalHostStatusPollerAtom)
+  const status = useAtomValue(terminalHostStatusAtom)
+  const registry = useContext(RegistryContext)
   const runtimeResult = useAtomValue(TerminalServiceClient.runtime)
-  const [status, setStatus] = useState<TerminalHostStatus | undefined>()
-
-  useEffect(() => {
-    if (runtimeResult._tag !== 'Success') {
-      return
-    }
-    const runtime = runtimeResult.value
-    let active = true
-    let refreshInFlight = false
-    const refresh = async () => {
-      if (refreshInFlight) {
-        return
-      }
-      refreshInFlight = true
-      try {
-        const next = await Effect.runPromiseWith(runtime)(
-          Effect.gen(function* () {
-            const client = yield* TerminalServiceClient
-            return yield* client('terminal.hostStatus', undefined as never)
-          })
-        )
-        if (active) {
-          setStatus(next)
-        }
-      } catch {
-        // Connection health owns daemon-level failures. Preserve the last
-        // known host state rather than replacing it with transport noise.
-      } finally {
-        refreshInFlight = false
-      }
-    }
-    refresh().catch(() => undefined)
-    const interval = setInterval(refresh, TERMINAL_HOST_STATUS_POLL_MS)
-    return () => {
-      active = false
-      clearInterval(interval)
-    }
-  }, [runtimeResult])
 
   const restart = useCallback(async () => {
     if (runtimeResult._tag !== 'Success') {
       throw new Error('Terminal service is unavailable')
     }
-    const previousStatus = status
-    setStatus({
+    const previousStatus = registry.get(terminalHostStatusAtom)
+    registry.set(terminalHostStatusAtom, {
       expectedVersion: previousStatus?.expectedVersion ?? 'unknown',
       ...(previousStatus?.runningVersion === undefined
         ? {}
@@ -80,12 +52,18 @@ export function useTerminalHostStatus() {
           return yield* client('terminal.restartHost', undefined as never)
         })
       )
-      setStatus(next)
+      registry.set(terminalHostStatusAtom, next)
     } catch (error) {
-      setStatus((current) => statusAfterRestartFailure(current, previousStatus))
+      registry.set(
+        terminalHostStatusAtom,
+        statusAfterRestartFailure(
+          registry.get(terminalHostStatusAtom),
+          previousStatus
+        )
+      )
       throw error
     }
-  }, [runtimeResult, status])
+  }, [registry, runtimeResult])
 
   return { restart, status }
 }

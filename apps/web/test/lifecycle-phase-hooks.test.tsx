@@ -8,8 +8,15 @@
  * @see Issue #5: useWhenPhase hook and service status hook
  */
 
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { RegistryProvider } from '@effect/atom-react/RegistryContext'
+import {
+  act,
+  cleanup,
+  render as rtlRender,
+  screen,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   LifecyclePhase,
@@ -52,6 +59,25 @@ function WhenPhaseDisplay() {
     </div>
   )
 }
+
+/**
+ * The default atom registry schedules work through React's real MessageChannel
+ * scheduler, which fake timers cannot advance. Route registry tasks through
+ * setTimeout so `vi.advanceTimersByTimeAsync` drives the shared poll atoms.
+ */
+const TimerDrivenRegistry = ({ children }: { children: React.ReactNode }) => (
+  <RegistryProvider
+    scheduleTask={(f) => {
+      const timer = setTimeout(f, 0)
+      return () => clearTimeout(timer)
+    }}
+  >
+    {children}
+  </RegistryProvider>
+)
+
+const render = (ui: React.ReactElement) =>
+  rtlRender(ui, { wrapper: TimerDrivenRegistry })
 
 describe('useWhenPhase', () => {
   afterEach(() => {
@@ -141,8 +167,11 @@ describe('useServiceStatus', () => {
     vi.useFakeTimers()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
+    // Drain the atom registry's scheduled tasks (shared poller disposal)
+    // so the next test builds a fresh poll loop instead of reusing state.
+    await vi.advanceTimersByTimeAsync(0)
     vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
@@ -158,7 +187,7 @@ describe('useServiceStatus', () => {
     // useSidecarStatuses emits 'starting' for pollable services immediately
     // in dev mode, then polls. Since fetch never resolves, they stay starting.
     await act(async () => {
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('server-state').textContent).toBe('starting')
@@ -174,7 +203,7 @@ describe('useServiceStatus', () => {
     render(<ServiceStatusDisplay />)
 
     await act(async () => {
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('sync-state').textContent).toBe('starting')
@@ -193,8 +222,7 @@ describe('useServiceStatus', () => {
 
     // Let initial poll complete
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('server-state').textContent).toBe('healthy')
@@ -218,8 +246,7 @@ describe('useServiceStatus', () => {
 
     // Initial poll — server not healthy
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('server-state').textContent).toBe('starting')
@@ -229,9 +256,8 @@ describe('useServiceStatus', () => {
 
     // Advance timer to trigger next poll (3 second interval)
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('server-state').textContent).toBe('healthy')

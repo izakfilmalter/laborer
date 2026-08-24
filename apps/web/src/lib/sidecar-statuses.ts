@@ -78,6 +78,31 @@ function deriveSidecarStatuses(
   return statuses as SidecarStatuses
 }
 
+/** Structural equality for two service states. */
+function areServiceStatesEqual(a: ServiceState, b: ServiceState): boolean {
+  if (a.state !== b.state) {
+    return false
+  }
+  const errorA = 'error' in a ? a.error : undefined
+  const errorB = 'error' in b ? b.error : undefined
+  const delayA = 'delayMs' in a ? a.delayMs : undefined
+  const delayB = 'delayMs' in b ? b.delayMs : undefined
+  return errorA === errorB && delayA === delayB
+}
+
+/**
+ * Structural equality for two status maps, used to skip publishing updates
+ * (and the re-renders they cause) when a poll observed no change.
+ */
+function areSidecarStatusesEqual(
+  a: SidecarStatuses,
+  b: SidecarStatuses
+): boolean {
+  return ALL_SIDECAR_NAMES.every((name) =>
+    areServiceStatesEqual(a[name], b[name])
+  )
+}
+
 /** Human-readable display names for sidecar services. */
 const DISPLAY_NAMES: Record<SidecarName, string> = {
   server: 'Server',
@@ -190,6 +215,7 @@ function hasAnyCoreServiceCrashed(statuses: SidecarStatuses): boolean {
 export {
   ALL_SIDECAR_NAMES,
   areCoreServicesHealthy,
+  areSidecarStatusesEqual,
   CORE_SIDECAR_NAMES,
   deriveSidecarStatuses,
   getDisplayName,

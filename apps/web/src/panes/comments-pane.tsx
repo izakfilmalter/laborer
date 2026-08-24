@@ -31,7 +31,6 @@
  */
 
 import { useAtomRefresh, useAtomValue } from '@effect/atom-react/Hooks'
-import { RpcError } from '@laborer/shared/rpc'
 import { Button } from '@laborer/ui/components/button'
 import {
   Empty,
@@ -47,8 +46,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
-import { Cause, Effect, Option } from 'effect'
-import { Atom, AsyncResult as Result } from 'effect/unstable/reactivity'
+import { Cause, Option } from 'effect'
+import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import {
   ExternalLink,
   GitPullRequest,
@@ -58,13 +57,10 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { LaborerClient } from '@/atoms/laborer-client'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
+import { pullRequestConversationQuery } from './comments-pane/conversation-query'
 import { GitHubLink } from './comments-pane/external-links'
 import { CommentTimelineItem } from './comments-pane/timeline-item'
-
-/** How long a single conversation read may take before it is abandoned. */
-const COMMENTS_FETCH_TIMEOUT = '15 seconds'
 
 /**
  * How often the conversation is re-read while the pane is open and visible.
@@ -88,29 +84,6 @@ const pollIntervalFor = (consecutiveFailures: number) =>
 
 /** How often the rendered ages tick, so "just now" does not go stale. */
 const CLOCK_INTERVAL_MS = 60_000
-
-/**
- * Query atom keyed by workspace, so two open panes never interrupt each
- * other's in-flight request.
- */
-const commentsQuery = Atom.family((workspaceId: string) =>
-  LaborerClient.runtime.atom(
-    Effect.flatMap(LaborerClient, (client) =>
-      client('pullRequest.comments', { workspaceId })
-    ).pipe(
-      Effect.timeoutOrElse({
-        duration: COMMENTS_FETCH_TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            new RpcError({
-              message: 'Timed out reading the pull request conversation',
-              code: 'TIMEOUT',
-            })
-          ),
-      })
-    )
-  )
-)
 
 interface CommentsPaneProps {
   /** Callback to close the pane. */
@@ -377,7 +350,10 @@ function StaleConversationBanner({
 }
 
 export function CommentsPane({ onClose, workspaceId }: CommentsPaneProps) {
-  const commentsAtom = useMemo(() => commentsQuery(workspaceId), [workspaceId])
+  const commentsAtom = useMemo(
+    () => pullRequestConversationQuery(workspaceId),
+    [workspaceId]
+  )
   const result = useAtomValue(commentsAtom)
   const refresh = useAtomRefresh(commentsAtom)
   const now = useSlowClock()
@@ -491,13 +467,8 @@ export function CommentsPane({ onClose, workspaceId }: CommentsPaneProps) {
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1" ref={scrollRootRef}>
-          <div className="relative px-3 py-3">
-            {/* The timeline rail, running behind every avatar. */}
-            <span
-              aria-hidden="true"
-              className="absolute top-4 bottom-4 left-[23px] border-border border-l border-dashed"
-            />
-            <ol className="flex flex-col gap-4">
+          <div className="px-4 py-4">
+            <ol className="flex flex-col gap-3">
               {comments.map((comment) => (
                 <CommentTimelineItem
                   baseHref={conversation?.url ?? null}

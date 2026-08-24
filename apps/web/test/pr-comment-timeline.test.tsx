@@ -58,7 +58,7 @@ describe('timeline item', () => {
       />
     )
 
-    expect(screen.getByText('approved this pull request')).toBeTruthy()
+    expect(screen.getByText('Approved')).toBeTruthy()
   })
 
   it('renders a review with no body as a summary line alone', () => {
@@ -81,6 +81,19 @@ describe('timeline item', () => {
     )
 
     expect(screen.getByText('Ship it').tagName).toBe('STRONG')
+  })
+
+  it('uses the quiet card treatment from the pull request summary', () => {
+    const { container } = render(
+      <CommentTimelineItem comment={comment()} now={NOW} />
+    )
+
+    const card = container.querySelector('[data-slot="pr-comment-card"]')
+    const body = container.querySelector('[data-slot="pr-comment-body"]')
+
+    expect(card?.className).toContain('rounded-lg')
+    expect(card?.className).toContain('border-border/60')
+    expect(body?.className).not.toContain('border')
   })
 
   it('anchors a review comment to its file and line', () => {
@@ -109,7 +122,7 @@ describe('timeline item', () => {
       />
     )
 
-    expect(screen.getByText('replied')).toBeTruthy()
+    expect(screen.getByText('Replied')).toBeTruthy()
   })
 
   it('links the author and the comment back to GitHub', () => {

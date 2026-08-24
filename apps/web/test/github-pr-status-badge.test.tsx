@@ -59,6 +59,46 @@ describe('unresolved conversations on the pull request badge', () => {
     expect(clicked).toBe(false)
   })
 
+  it('turns the card segment into a conversation hover preview', () => {
+    render(
+      <GitHubPrStatusBadge
+        conversationWorkspaceId="ws-7"
+        onOpenConversation={vi.fn()}
+        prNumber={7}
+        prState="OPEN"
+        prTitle="Add the thing"
+        prUrl={PR_URL}
+        unresolvedThreads={2}
+      />
+    )
+
+    expect(
+      screen.getByLabelText(ANY_UNRESOLVED).getAttribute('data-slot')
+    ).toBe('hover-card-trigger')
+  })
+
+  it('uses one conversation preview when review and thread segments coexist', () => {
+    render(
+      <GitHubPrStatusBadge
+        conversationWorkspaceId="ws-7"
+        onOpenConversation={vi.fn()}
+        prNumber={7}
+        prState="OPEN"
+        prTitle="Add the thing"
+        prUrl={PR_URL}
+        reviewDecision="changesRequested"
+        unresolvedThreads={2}
+      />
+    )
+
+    expect(
+      document.querySelectorAll('[data-slot="hover-card-trigger"]')
+    ).toHaveLength(1)
+    expect(
+      screen.getByLabelText(ANY_UNRESOLVED).getAttribute('data-slot')
+    ).toBe('hover-card-trigger')
+  })
+
   it('leaves the modifier click to GitHub', () => {
     const onOpenConversation = vi.fn()
     renderBadge(2, onOpenConversation)

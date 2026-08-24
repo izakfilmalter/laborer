@@ -892,6 +892,7 @@ function WorkspaceCard({
             approvals={workspace.prApprovals}
             checkStatus={workspace.prCheckStatus}
             checks={workspace.prChecks}
+            conversationWorkspaceId={workspace.id}
             onOpenConversation={
               openCommentsPaneForWorkspace === undefined
                 ? undefined

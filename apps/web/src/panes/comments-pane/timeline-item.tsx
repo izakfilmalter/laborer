@@ -1,10 +1,9 @@
 /**
  * One entry in a pull request conversation.
  *
- * The shape is GitHub Desktop's comment-like dialog, rethought for a list
- * instead of a single notification: an avatar on a dashed timeline rail, a
- * one-line summary in the form "**author** {verb} · {age}", and — only when
- * there is something to read — a bubble carrying the markdown body.
+ * The shape follows t3code's pull request summary: each remark is its own
+ * quiet bordered card, with attribution and review state in a compact header
+ * and markdown flowing directly beneath it.
  *
  * Reviews are the reason the summary line carries its weight. "approved"
  * with no body is the entire message, so a review with an empty body still
@@ -20,72 +19,52 @@ import type {
 } from '@laborer/shared/rpc'
 import {
   Avatar,
-  AvatarBadge,
   AvatarFallback,
   AvatarImage,
 } from '@laborer/ui/components/avatar'
+import { Badge } from '@laborer/ui/components/badge'
 import { Markdown } from '@laborer/ui/components/markdown'
+import { cn } from '@laborer/ui/lib/utils'
+import { CircleCheck, CircleDashed, CircleX } from 'lucide-react'
+import type { ComponentType } from 'react'
 import { GitHubLink, resolveMarkdownLinks } from './external-links'
 import { formatAbsoluteTime, formatRelativeTime } from './relative-time'
 
 interface EntryPresentation {
-  /**
-   * The badge riding the avatar, which is color and nothing else. The design
-   * system hides a badge icon at this avatar size on purpose — an 8px glyph
-   * is not readable — and the verb beside it already names the state in
-   * words, so the color is reinforcement rather than the only telling.
-   */
-  readonly badgeClassName: string
-  /** What the author did, completing "<author> …". */
-  readonly verb: string
+  readonly icon: ComponentType<{ className?: string }>
+  readonly label: string
+  readonly tone: string
 }
 
 const REVIEW_PRESENTATION: Record<PullRequestReviewState, EntryPresentation> = {
   approved: {
-    badgeClassName: 'bg-success',
-    verb: 'approved this pull request',
+    icon: CircleCheck,
+    label: 'Approved',
+    tone: 'border-success/25 bg-success/10 text-success',
   },
   changesRequested: {
-    badgeClassName: 'bg-destructive',
-    verb: 'requested changes',
+    icon: CircleX,
+    label: 'Changes requested',
+    tone: 'border-destructive/25 bg-destructive/10 text-destructive',
   },
   commented: {
-    badgeClassName: 'bg-muted',
-    verb: 'reviewed this pull request',
+    icon: CircleDashed,
+    label: 'Reviewed',
+    tone: 'border-border/70 bg-muted/40 text-muted-foreground',
   },
   dismissed: {
-    badgeClassName: 'bg-muted',
-    verb: 'had a review dismissed',
+    icon: CircleDashed,
+    label: 'Review dismissed',
+    tone: 'border-border/70 bg-muted/40 text-muted-foreground',
   },
   // Unreachable in practice: the server's timeline reader drops pending
   // reviews, which are drafts only their author can see. Kept so this map
   // stays exhaustive over the schema's literals.
   pending: {
-    badgeClassName: 'bg-muted',
-    verb: 'has a pending review',
+    icon: CircleDashed,
+    label: 'Pending review',
+    tone: 'border-border/70 bg-muted/40 text-muted-foreground',
   },
-}
-
-const COMMENT_PRESENTATION: EntryPresentation = {
-  badgeClassName: 'bg-muted',
-  verb: 'commented',
-}
-
-const REPLY_PRESENTATION: EntryPresentation = {
-  ...COMMENT_PRESENTATION,
-  verb: 'replied',
-}
-
-function presentationFor(comment: PullRequestComment): EntryPresentation {
-  if (comment.kind === 'review' && comment.reviewState !== null) {
-    return REVIEW_PRESENTATION[comment.reviewState]
-  }
-  if (comment.kind === 'reviewComment') {
-    return comment.inReplyToId === null
-      ? COMMENT_PRESENTATION
-      : REPLY_PRESENTATION
-  }
-  return COMMENT_PRESENTATION
 }
 
 /** First letter of the login, for accounts whose avatar will not load. */
@@ -117,9 +96,24 @@ function FileAnchor({
   )
 }
 
+function ReviewBadge({ state }: { readonly state: PullRequestReviewState }) {
+  const presentation = REVIEW_PRESENTATION[state]
+
+  return (
+    <Badge
+      className={cn('h-5 gap-1 px-1.5 text-[10px]', presentation.tone)}
+      variant="outline"
+    >
+      <presentation.icon aria-hidden="true" className="size-3" />
+      {presentation.label}
+    </Badge>
+  )
+}
+
 export function CommentTimelineItem({
   baseHref,
   comment,
+  compact = false,
   now,
 }: {
   /**
@@ -128,59 +122,74 @@ export function CommentTimelineItem({
    */
   readonly baseHref?: string | null | undefined
   readonly comment: PullRequestComment
+  /** A bounded card body for the task-card hover preview. */
+  readonly compact?: boolean | undefined
   /** Rendering clock, so every entry in one pass agrees on "now". */
   readonly now: number
 }) {
-  const { badgeClassName, verb } = presentationFor(comment)
   const body = comment.body.trim()
   const relativeTime = formatRelativeTime(comment.createdAt, now)
+  const isReply =
+    comment.kind === 'reviewComment' && comment.inReplyToId !== null
 
   return (
-    <li className="relative pl-9" data-testid="pr-comment">
-      <div className="absolute top-0.5 left-0">
-        <Avatar className="ring-2 ring-background" size="sm">
+    <li
+      className={cn(
+        'group rounded-lg border border-border/60 bg-background p-3',
+        compact && 'p-2.5'
+      )}
+      data-slot="pr-comment-card"
+      data-testid="pr-comment"
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        <Avatar className="size-5 ring-1 ring-background">
           {comment.authorAvatarUrl === null ? null : (
             <AvatarImage
               alt=""
               src={`${comment.authorAvatarUrl}${comment.authorAvatarUrl.includes('?') ? '&' : '?'}s=48`}
             />
           )}
-          <AvatarFallback>{initialOf(comment.authorLogin)}</AvatarFallback>
-          <AvatarBadge aria-hidden="true" className={badgeClassName} />
+          <AvatarFallback className="text-[9px]">
+            {initialOf(comment.authorLogin)}
+          </AvatarFallback>
         </Avatar>
-      </div>
-
-      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs">
-        <GitHubLink
-          className="font-medium text-foreground hover:underline"
-          href={comment.authorUrl ?? comment.url}
-        >
-          {comment.authorLogin}
-        </GitHubLink>
-        <span className="text-muted-foreground">{verb}</span>
-        <GitHubLink
-          className="text-muted-foreground hover:underline"
-          href={comment.url}
-          title={formatAbsoluteTime(comment.createdAt)}
-        >
-          {relativeTime}
-        </GitHubLink>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+          <GitHubLink
+            className="max-w-full truncate font-medium text-foreground hover:underline"
+            href={comment.authorUrl ?? comment.url}
+          >
+            {comment.authorLogin}
+          </GitHubLink>
+          <GitHubLink
+            className="text-muted-foreground hover:underline"
+            href={comment.url}
+            title={formatAbsoluteTime(comment.createdAt)}
+          >
+            {relativeTime}
+          </GitHubLink>
+          {comment.kind === 'review' && comment.reviewState !== null ? (
+            <ReviewBadge state={comment.reviewState} />
+          ) : null}
+          {isReply ? (
+            <span className="text-muted-foreground">Replied</span>
+          ) : null}
+        </div>
       </div>
 
       {comment.filePath === null ? null : (
-        <div className="mt-1 flex min-w-0">
+        <div className="mt-1.5 flex min-w-0">
           <FileAnchor filePath={comment.filePath} line={comment.line} />
         </div>
       )}
 
       {body.length === 0 ? null : (
-        <div className="relative mt-1.5 rounded-md border bg-card px-2.5 py-2">
-          {/* The bubble's tail — a rotated square masking the border it
-              overlaps, the same two-triangle trick GitHub Desktop uses. */}
-          <span
-            aria-hidden="true"
-            className="absolute -top-[5px] left-3 size-2 rotate-45 border-t border-l bg-card"
-          />
+        <div
+          className={cn(
+            'mt-2',
+            compact && 'max-h-32 overflow-hidden [overflow-wrap:anywhere]'
+          )}
+          data-slot="pr-comment-body"
+        >
           <Markdown className="text-xs">
             {resolveMarkdownLinks(body, baseHref)}
           </Markdown>

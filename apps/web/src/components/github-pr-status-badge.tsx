@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import type { ComponentType, MouseEvent, ReactElement, ReactNode } from 'react'
 import { GitHubCheckRunsSegment } from '@/components/github-check-runs'
+import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
 import { localApi } from '@/lib/local-api'
 
 interface GitHubPrStatusBadgeProps {
@@ -43,6 +44,8 @@ interface GitHubPrStatusBadgeProps {
   readonly checkStatus?: 'pending' | 'success' | 'failure' | null | undefined
   readonly checks?: readonly PullRequestCheckRun[] | null | undefined
   readonly className?: string | undefined
+  /** Enables the lazy conversation preview on workspace-backed cards. */
+  readonly conversationWorkspaceId?: string | undefined
   /**
    * Opens the conversation where the operator already is, when the surface
    * has somewhere to open it. Absent on surfaces standing in for a workspace
@@ -186,12 +189,14 @@ function renderSegmentTrigger({
  */
 function ConversationSegment({
   body,
+  conversationWorkspaceId,
   description,
   onOpenConversation,
   segmentClass,
   segmentUrl,
 }: {
   readonly body: ReactNode
+  readonly conversationWorkspaceId: string | undefined
   readonly description: string
   readonly onOpenConversation: (() => void) | undefined
   readonly segmentClass: string
@@ -214,18 +219,27 @@ function ConversationSegment({
     onOpenConversation()
   }
 
+  const trigger = renderSegmentTrigger({
+    body,
+    className: segmentClass,
+    description,
+    onOpenConversation,
+    openConversation,
+    segmentUrl,
+  })
+
+  if (conversationWorkspaceId !== undefined) {
+    return (
+      <GitHubConversationHoverCard
+        trigger={trigger}
+        workspaceId={conversationWorkspaceId}
+      />
+    )
+  }
+
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={renderSegmentTrigger({
-          body,
-          className: segmentClass,
-          description,
-          onOpenConversation,
-          openConversation,
-          segmentUrl,
-        })}
-      />
+      <TooltipTrigger render={trigger} />
       <TooltipContent>
         {description}
         {actionHint === null ? null : (
@@ -296,11 +310,13 @@ const REVIEW_DECISION_PRESENTATION = {
  */
 function ReviewDecisionSegment({
   approvals,
+  conversationWorkspaceId,
   decision,
   onOpenConversation,
   prUrl,
 }: {
   readonly approvals: number | null
+  readonly conversationWorkspaceId: string | undefined
   readonly decision: PullRequestReviewDecision
   readonly onOpenConversation: (() => void) | undefined
   readonly prUrl: string | null
@@ -325,6 +341,7 @@ function ReviewDecisionSegment({
   return (
     <ConversationSegment
       body={body}
+      conversationWorkspaceId={conversationWorkspaceId}
       description={description}
       onOpenConversation={onOpenConversation}
       segmentClass={cn(SEGMENT_CLASS, presentation.tone)}
@@ -348,10 +365,12 @@ function ReviewDecisionSegment({
  */
 function UnresolvedThreadsSegment({
   count,
+  conversationWorkspaceId,
   onOpenConversation,
   prUrl,
 }: {
   readonly count: number
+  readonly conversationWorkspaceId: string | undefined
   readonly onOpenConversation: (() => void) | undefined
   readonly prUrl: string | null
 }) {
@@ -366,6 +385,7 @@ function UnresolvedThreadsSegment({
   return (
     <ConversationSegment
       body={body}
+      conversationWorkspaceId={conversationWorkspaceId}
       description={description}
       onOpenConversation={onOpenConversation}
       // Muted rather than amber, because an unresolved thread is a fact and
@@ -451,6 +471,7 @@ function GitHubPrStatusBadge({
   className,
   checkStatus,
   checks,
+  conversationWorkspaceId,
   onOpenConversation,
   prIsDraft = false,
   prNumber,
@@ -466,6 +487,8 @@ function GitHubPrStatusBadge({
 
   const isDraft = isDraftState(prState, prIsDraft)
   const handleClick = openInBrowser(prUrl ?? '')
+  const previewsOnUnresolvedThread =
+    unresolvedThreads != null && unresolvedThreads > 0
 
   const identityContent = (
     <>
@@ -521,6 +544,9 @@ function GitHubPrStatusBadge({
       {reviewDecision === null || isDraft || !isOpenState(prState) ? null : (
         <ReviewDecisionSegment
           approvals={approvals}
+          conversationWorkspaceId={
+            previewsOnUnresolvedThread ? undefined : conversationWorkspaceId
+          }
           decision={reviewDecision}
           onOpenConversation={onOpenConversation}
           prUrl={prUrl}
@@ -528,6 +554,7 @@ function GitHubPrStatusBadge({
       )}
       {unresolvedThreads != null && unresolvedThreads > 0 && (
         <UnresolvedThreadsSegment
+          conversationWorkspaceId={conversationWorkspaceId}
           count={unresolvedThreads}
           onOpenConversation={onOpenConversation}
           prUrl={prUrl}

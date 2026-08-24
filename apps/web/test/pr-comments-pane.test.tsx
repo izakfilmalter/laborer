@@ -42,6 +42,9 @@ vi.mock('@laborer/ui/lib/haptics', async () => {
 })
 
 const { CommentsPane, POLL_INTERVAL_MS } = await import('@/panes/comments-pane')
+const { GitHubConversationPreview } = await import(
+  '@/components/github-conversation-hover-card'
+)
 
 const conversation = (
   overrides: Partial<PullRequestConversation> = {}
@@ -136,6 +139,28 @@ describe('a read that succeeds', () => {
       screen.getByText('Restore the pull request conversation')
     ).toBeTruthy()
     expect(screen.getByText('#42')).toBeTruthy()
+  })
+})
+
+describe('the task-card conversation preview', () => {
+  it('shows the newest remarks first without mounting the full pane', () => {
+    const comments = Array.from({ length: 5 }, (_, index) => ({
+      ...conversation().comments[0],
+      body: `Comment ${index + 1}`,
+      id: index + 1,
+    }))
+    currentResult = Result.success(conversation({ comments }))
+
+    render(<GitHubConversationPreview now={Date.now()} workspaceId="ws-1" />)
+
+    const cards = screen.getAllByTestId('pr-comment')
+    expect(cards).toHaveLength(3)
+    expect(cards[0]?.textContent).toContain('Comment 5')
+    expect(cards[2]?.textContent).toContain('Comment 3')
+    expect(screen.queryByText('Comment 2')).toBeNull()
+    expect(
+      screen.getByText('5 comments · Click to open the panel')
+    ).toBeTruthy()
   })
 })
 

@@ -102,6 +102,11 @@ export class DesktopDaemonSupervisor {
     this.registration = await this.coordinatedEnsure(false)
   }
 
+  /** The registration of the daemon the last launch/reconnect settled on. */
+  currentRegistration(): DaemonRegistration | null {
+    return this.registration
+  }
+
   async shutdown(): Promise<void> {
     const registration =
       this.registration ?? readDaemonRegistration(this.registrationPath)

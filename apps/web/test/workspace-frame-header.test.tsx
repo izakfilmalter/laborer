@@ -58,6 +58,14 @@ vi.mock('@laborer/ui/components/tooltip', () => ({
   ),
 }))
 
+// The edit button reads the task backing the workspace from the shared
+// collection; the header only decides whether it belongs on the bar.
+vi.mock('@/components/edit-task-card-button', () => ({
+  EditTaskCardButton: ({ branchName }: { branchName: string }) => (
+    <button aria-label={`Edit card for ${branchName}`} type="button" />
+  ),
+}))
+
 import type { PanelActions } from '@/panels/panel-context'
 import { WorkspaceFrameHeader } from '../src/components/workspace-frame-header'
 
@@ -97,6 +105,8 @@ function mockActions(): PanelActions {
   }
 }
 
+const CREATE_SUB_WORKSPACE_RE = /create sub-workspace from/i
+const EDIT_CARD_RE = /edit card for/i
 const DIFF_VIEWER_RE = /diff viewer/i
 const MINIMIZE_RE = /minimize/i
 const FULLSCREEN_RE = /fullscreen/i
@@ -157,6 +167,42 @@ describe('WorkspaceFrameHeader', () => {
     )
 
     expect(screen.queryByText('LAB-7')).toBeNull()
+  })
+
+  // --- Card actions on the frame doing the card's work ---
+
+  it('offers branching and card editing for a task-backed workspace', () => {
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={mockActions()} />)
+
+    expect(screen.getByLabelText(CREATE_SUB_WORKSPACE_RE)).toBeTruthy()
+    expect(screen.getByLabelText(EDIT_CARD_RE)).toBeTruthy()
+  })
+
+  it('omits branching and card editing for a root workspace', () => {
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={mockActions()}
+        taskNumber={null}
+        workspaceId="root-project-1"
+      />
+    )
+
+    expect(screen.queryByLabelText(CREATE_SUB_WORKSPACE_RE)).toBeNull()
+    expect(screen.queryByLabelText(EDIT_CARD_RE)).toBeNull()
+  })
+
+  it('hides branching and card editing when minimized', () => {
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={mockActions()}
+        isMinimized={true}
+      />
+    )
+
+    expect(screen.queryByLabelText(CREATE_SUB_WORKSPACE_RE)).toBeNull()
+    expect(screen.queryByLabelText(EDIT_CARD_RE)).toBeNull()
   })
 
   // --- Diff viewer toggle ---

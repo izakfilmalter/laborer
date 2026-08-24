@@ -15,11 +15,13 @@
  * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
+import { isRootWorkspaceId } from '@laborer/shared/root-workspace'
 import type {
   PullRequestCheckRun,
   PullRequestReviewDecision,
 } from '@laborer/shared/rpc'
 import { Button } from '@laborer/ui/components/button'
+import { DialogTrigger } from '@laborer/ui/components/dialog'
 import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
 import {
   Tooltip,
@@ -30,6 +32,7 @@ import { cn } from '@laborer/ui/lib/utils'
 import {
   FileCode2,
   FolderTree,
+  GitBranchPlus,
   MessagesSquare,
   Minus,
   Plus,
@@ -38,6 +41,8 @@ import {
 } from 'lucide-react'
 import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
+import { CreateWorkspaceForm } from '@/components/create-workspace-form'
+import { EditTaskCardButton } from '@/components/edit-task-card-button'
 import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
@@ -278,6 +283,12 @@ function WorkspaceFrameHeader({
   workspacePath,
 }: WorkspaceFrameHeaderProps) {
   const hasActivePane = !!activePaneId
+  // Branching and card editing only mean something for a workspace backed by a
+  // task; the root workspace is a checkout with no card behind it.
+  const taskBackedWorkspaceId =
+    workspaceId !== undefined && !isRootWorkspaceId(workspaceId)
+      ? workspaceId
+      : null
   // The header stays quiet for at-rest states: an idle or unknown agent has
   // nothing to say at workspace level, while working, done, and needs input
   // do. The card in the sidebar answers this with the same predicate.
@@ -417,6 +428,44 @@ function WorkspaceFrameHeader({
       <div className="flex gap-0.5">
         {!isMinimized && (
           <>
+            {/* The card's own actions, on the frame doing its work: branch off
+                this workspace, and read or edit the card describing it. */}
+            {taskBackedWorkspaceId && projectId && projectName && branchName ? (
+              <>
+                <CreateWorkspaceForm
+                  baseWorkspace={{ id: taskBackedWorkspaceId, branchName }}
+                  projectId={projectId}
+                  projectName={projectName}
+                  trigger={
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <DialogTrigger
+                            render={
+                              <Button
+                                aria-label={`Create sub-workspace from ${branchName}`}
+                                size="icon-sm"
+                                variant="ghost"
+                              />
+                            }
+                          />
+                        }
+                      >
+                        <GitBranchPlus className="size-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Create sub-workspace from this branch
+                      </TooltipContent>
+                    </Tooltip>
+                  }
+                />
+                <EditTaskCardButton
+                  branchName={branchName}
+                  size="icon-sm"
+                  workspaceId={taskBackedWorkspaceId}
+                />
+              </>
+            ) : null}
             <TreeToggleButton
               disabled={!hasActivePane}
               onClick={withFocus((paneId) => actions?.toggleTreePane(paneId))}

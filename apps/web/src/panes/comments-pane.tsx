@@ -155,9 +155,15 @@ function CommentsPaneHeader({
               />
             }
           >
-            <RefreshCw
-              className={isRefreshing ? 'size-3 animate-spin' : 'size-3'}
-            />
+            <span
+              className={
+                isRefreshing
+                  ? 'inline-flex size-3 animate-spin'
+                  : 'inline-flex size-3'
+              }
+            >
+              <RefreshCw className="size-full" />
+            </span>
           </TooltipTrigger>
           <TooltipContent>Refresh comments</TooltipContent>
         </Tooltip>

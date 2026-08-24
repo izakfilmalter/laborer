@@ -430,7 +430,9 @@ export function AppSettingsModal() {
                         variant="default"
                       >
                         {isExchanging ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="inline-flex h-4 w-4 animate-spin">
+                            <Loader2 className="size-full" />
+                          </span>
                         ) : (
                           'Connect'
                         )}

@@ -178,7 +178,9 @@ function TreePaneLoading() {
   return (
     <div className="flex flex-col gap-1.5 p-2" data-testid="tree-pane-loading">
       <div className="flex items-center gap-2">
-        <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+        <span className="inline-flex size-3.5 animate-spin text-muted-foreground">
+          <Loader2 className="size-full" />
+        </span>
         <span className="text-muted-foreground text-xs">Loading files...</span>
       </div>
       {/* Skeleton lines to hint at tree structure */}

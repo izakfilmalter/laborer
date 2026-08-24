@@ -153,16 +153,22 @@ function BucketIcon({
 }) {
   const presentation = BUCKET_PRESENTATION[bucket]
   return (
-    <presentation.icon
+    // The spin rides the wrapper, never the glyph: Chromium cannot composite a
+    // transform on an `<svg>`, so a running check — which spins for the whole
+    // CI run — would otherwise recalc style and layout on the main thread at
+    // the display refresh rate for ten minutes at a stretch.
+    <span
       className={cn(
-        'shrink-0',
+        'inline-flex shrink-0',
         presentation.tone,
         // Motion earns its place only while something is actually moving:
         // a spinning glyph is how a running check differs from a settled one.
         presentation.spins && 'motion-safe:animate-spin',
         className
       )}
-    />
+    >
+      <presentation.icon className="size-full" />
+    </span>
   )
 }
 

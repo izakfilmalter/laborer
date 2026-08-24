@@ -1,6 +1,7 @@
 import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { WorkspaceActivationIntent } from '@laborer/shared/desktop-bridge'
 import type { LeafNode, PaneType } from '@laborer/shared/types'
+import { ResizeGrip } from '@laborer/ui/components/resizable'
 import { ScrollArea } from '@laborer/ui/components/scroll-area'
 import { cn } from '@laborer/ui/lib/utils'
 import { useLiveQuery } from '@tanstack/react-db'
@@ -1187,7 +1188,7 @@ function HomeComponent() {
           {!sidebarCollapsed && (
             <button
               aria-label="Resize sidebar"
-              className="relative z-10 flex w-px shrink-0 cursor-col-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              className="group relative z-10 flex w-px shrink-0 cursor-col-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               onPointerCancel={handleSidebarResizeEnd}
               onPointerDown={handleSidebarResizeStart}
               onPointerMove={handleSidebarResizeMove}
@@ -1195,7 +1196,7 @@ function HomeComponent() {
               tabIndex={-1}
               type="button"
             >
-              <div className="z-10 flex h-8 w-1.5 shrink-0 rounded-sm bg-border" />
+              <ResizeGrip />
             </button>
           )}
 
@@ -1259,7 +1260,7 @@ function HomeComponent() {
                   >
                     <button
                       aria-label="Resize board"
-                      className="relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                      className="group relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                       onPointerCancel={handleBoardResizeEnd}
                       onPointerDown={handleBoardResizeStart}
                       onPointerMove={handleBoardResizeMove}
@@ -1267,7 +1268,7 @@ function HomeComponent() {
                       tabIndex={-1}
                       type="button"
                     >
-                      <div className="z-10 flex h-1.5 w-8 shrink-0 rounded-sm bg-border" />
+                      <ResizeGrip className="rotate-90" />
                     </button>
                     <div className="min-h-0 flex-1">
                       <TaskBoard

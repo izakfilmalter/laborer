@@ -933,7 +933,9 @@ function TerminalPaneRenderer({
         brightCyan: '#22d3ee',
         brightWhite: '#ffffff',
       },
-      scrollback: 100_000,
+      // 10k matches comparable terminal apps (t3code/ghostty). Larger buffers
+      // multiply resize/reflow cost and per-pane memory with many panes open.
+      scrollback: 10_000,
       convertEol: false,
       allowProposedApi: true,
       fastScrollSensitivity: 5,

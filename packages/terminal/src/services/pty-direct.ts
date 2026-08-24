@@ -13,7 +13,7 @@
  * Key differences from `pty-host-client.ts`:
  * - No child process spawning (no `ELECTRON_RUN_AS_NODE=1`)
  * - node-pty is imported directly via `createRequire`
- * - Data coalescing uses a 5ms buffer
+ * - Data coalescing batches output into ~16ms (one frame) windows
  * - Flow control uses high/low watermarks
  * - Spawn-helper permission fix runs on layer construction
  *
@@ -24,6 +24,12 @@
 import { createRequire } from 'node:module'
 import { Effect, Layer } from 'effect'
 import type { IPty } from 'node-pty'
+import {
+  COALESCE_MAX_BUFFER_BYTES_DEFAULT,
+  COALESCE_WINDOW_MS_DEFAULT,
+  type CoalescingDataHandler,
+  createCoalescingDataHandler,
+} from '../lib/coalescing-data-handler.js'
 import type {
   CrashCallback,
   DataCallback,
@@ -32,29 +38,11 @@ import type {
   SpawnParams,
 } from './pty-host-client.js'
 import { PtyHostClient } from './pty-host-client.js'
-import {
-  positiveIntegerFromEnv,
-  splitByUtf8Bytes,
-  TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT,
-  utf8Bytes,
-} from './terminal-transport.js'
+import { positiveIntegerFromEnv } from './terminal-transport.js'
 
 // createRequire is needed because this runs as ESM where bare require()
 // is unavailable. node-pty is a native addon loaded via CJS.
 const require_ = createRequire(import.meta.url)
-
-// ---------------------------------------------------------------------------
-// Data coalescing (matches pty-host.ts)
-// ---------------------------------------------------------------------------
-
-/** Coalescing interval — batches data events over 5ms windows. */
-const COALESCE_INTERVAL_MS = 5
-
-interface CoalesceBuffer {
-  bytes: number
-  readonly chunks: string[]
-  readonly timer: ReturnType<typeof setTimeout>
-}
 
 // ---------------------------------------------------------------------------
 // Flow control (watermarks match VS Code's terminalProcess.ts)
@@ -146,7 +134,7 @@ const directLayer = Layer.effect(
     const exitCallbacks = new Map<string, ExitCallback>()
     const spawnedCallbacks = new Map<string, SpawnedCallback>()
     const crashCallbacks: CrashCallback[] = []
-    const coalesceBuffers = new Map<string, CoalesceBuffer>()
+    const coalescers = new Map<string, CoalescingDataHandler>()
     const flowControlStates = new Map<string, FlowControlState>()
     const ptyGenerations = new Map<string, number>()
     const highWatermarkChars = positiveIntegerFromEnv(
@@ -157,9 +145,13 @@ const directLayer = Layer.effect(
       'TERMINAL_FLOW_RESUME_CHARS',
       TERMINAL_FLOW_RESUME_CHARS_DEFAULT
     )
-    const coalesceBytes = positiveIntegerFromEnv(
-      'TERMINAL_OUTPUT_CHUNK_BYTES',
-      TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT
+    const coalesceWindowMs = positiveIntegerFromEnv(
+      'TERMINAL_OUTPUT_COALESCE_MS',
+      COALESCE_WINDOW_MS_DEFAULT
+    )
+    const coalesceMaxBufferBytes = positiveIntegerFromEnv(
+      'TERMINAL_OUTPUT_COALESCE_BYTES',
+      COALESCE_MAX_BUFFER_BYTES_DEFAULT
     )
     if (lowWatermarkChars >= highWatermarkChars) {
       return yield* Effect.die(
@@ -200,7 +192,13 @@ const directLayer = Layer.effect(
     yield* Effect.promise(() => fixSpawnHelperPermissions())
 
     // -------------------------------------------------------------------
-    // Data coalescing helpers (from pty-host.ts)
+    // Data coalescing helpers
+    //
+    // PTY output is batched per terminal into ~16ms (one frame) windows
+    // before it reaches the data callback, so every downstream consumer
+    // (journal, headless terminal, attach subscribers, persistence) and
+    // the per-chunk IPC hop toward the renderer pay the RPC + parse +
+    // draw cost at most ~60 times/sec instead of once per raw PTY chunk.
     // -------------------------------------------------------------------
 
     /**
@@ -230,44 +228,30 @@ const directLayer = Layer.effect(
       }
     }
 
-    function flushCoalesceBuffer(id: string): void {
-      const buf = coalesceBuffers.get(id)
-      if (buf === undefined) {
-        return
+    function coalescerFor(id: string): CoalescingDataHandler {
+      let coalescer = coalescers.get(id)
+      if (coalescer === undefined) {
+        coalescer = createCoalescingDataHandler(
+          (joined) => {
+            const dataCb = dataCallbacks.get(id)
+            if (dataCb !== undefined) {
+              dataCb(joined)
+            }
+            trackEmittedChars(id, joined.length)
+          },
+          {
+            maxBufferBytes: coalesceMaxBufferBytes,
+            windowMs: coalesceWindowMs,
+          }
+        )
+        coalescers.set(id, coalescer)
       }
-      clearTimeout(buf.timer)
-      coalesceBuffers.delete(id)
-
-      const joined = buf.chunks.join('')
-      if (joined.length > 0) {
-        const dataCb = dataCallbacks.get(id)
-        if (dataCb !== undefined) {
-          dataCb(joined)
-        }
-
-        trackEmittedChars(id, joined.length)
-      }
+      return coalescer
     }
 
-    function bufferData(id: string, data: string): void {
-      for (const chunk of splitByUtf8Bytes(data, coalesceBytes)) {
-        let existing = coalesceBuffers.get(id)
-        const bytes = utf8Bytes(chunk)
-        if (existing !== undefined && existing.bytes + bytes > coalesceBytes) {
-          flushCoalesceBuffer(id)
-          existing = undefined
-        }
-        if (existing !== undefined) {
-          existing.chunks.push(chunk)
-          existing.bytes += bytes
-          continue
-        }
-
-        const timer = setTimeout(() => {
-          flushCoalesceBuffer(id)
-        }, COALESCE_INTERVAL_MS)
-        coalesceBuffers.set(id, { bytes, chunks: [chunk], timer })
-      }
+    /** Synchronously flush any pending coalesced output for a terminal. */
+    function flushCoalesceBuffer(id: string): void {
+      coalescers.get(id)?.flush()
     }
 
     // -------------------------------------------------------------------
@@ -277,9 +261,10 @@ const directLayer = Layer.effect(
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         // Flush all coalescing buffers
-        for (const id of [...coalesceBuffers.keys()]) {
-          flushCoalesceBuffer(id)
+        for (const coalescer of coalescers.values()) {
+          coalescer.flush()
         }
+        coalescers.clear()
 
         // Kill all remaining PTYs
         for (const [id, pty] of ptys) {
@@ -358,7 +343,7 @@ const directLayer = Layer.effect(
             if (ptyGenerations.get(params.id) !== generation) {
               return
             }
-            bufferData(params.id, data)
+            coalescerFor(params.id).write(data)
           })
 
           // Forward PTY exit
@@ -370,10 +355,12 @@ const directLayer = Layer.effect(
             const code = exitCode ?? -1
             const sig = signal ?? -1
 
-            // Flush pending coalesced output before exit
+            // Flush pending coalesced output before exit so no trailing
+            // bytes are lost or delivered after the exit event.
             flushCoalesceBuffer(params.id)
 
             ptys.delete(params.id)
+            coalescers.delete(params.id)
             flowControlStates.delete(params.id)
             ptyGenerations.delete(params.id)
 

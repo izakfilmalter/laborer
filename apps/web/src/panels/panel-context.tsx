@@ -112,10 +112,10 @@ interface PanelActions {
    * Clean up the active window tab's workspace layout.
    *
    * Repacks the tab's workspaces into balanced columns: columns fill
-   * vertically down to the minimum frame height (352px) before another
-   * column opens, and no more columns are created than fit at the
-   * minimum column width (500px). Triggered by the header bar's
-   * clean-up button.
+   * vertically down to the minimum frame height (352px), up to four
+   * workspaces per column, and no more columns are created than fit at the
+   * minimum column width (500px). Triggered by the header bar's clean-up
+   * button.
    */
   readonly cleanUpWorkspaceLayout?: (() => void) | undefined
 

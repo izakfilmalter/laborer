@@ -3,10 +3,11 @@
  *
  * Covers dragging a workspace to a frame edge (`moveWorkspaceTileToEdge`)
  * — including creating a second column by dropping on a left/right edge —
- * the layout clean-up that fills columns to the minimum frame height and
- * caps them at the minimum column width (`cleanUpWorkspaceTiles`), adding workspaces to
- * column layouts (`addWorkspaceToTab`), and the pointer-to-edge mapping
- * used by the drop targets (`computeWorkspaceDropEdge`).
+ * the layout clean-up that fills columns to the minimum frame height (up to
+ * four rows) and caps them at the minimum column width
+ * (`cleanUpWorkspaceTiles`), adding workspaces to column layouts
+ * (`addWorkspaceToTab`), and the pointer-to-edge mapping used by the drop
+ * targets (`computeWorkspaceDropEdge`).
  *
  * @see apps/web/src/panels/workspace-tile-utils.ts
  * @see apps/web/src/panels/window-layout-utils.ts
@@ -99,7 +100,7 @@ function columnsOf(tab: WindowTab): string[][] {
 // ---------------------------------------------------------------------------
 
 describe('moveWorkspaceTileToEdge', () => {
-  it('moves a sub-workspace below its parent without changing row sizes', () => {
+  it('moves a sub-workspace below its parent and equalizes row sizes', () => {
     const tab = makeStackTab(['ws-parent', 'ws-sibling', 'ws-child'])
     const root = tab.workspaceLayout as WorkspaceTileSplit
     const resized: WindowTab = {
@@ -111,7 +112,9 @@ describe('moveWorkspaceTileToEdge', () => {
 
     expect(columnsOf(result)).toEqual([['ws-parent', 'ws-child', 'ws-sibling']])
     expect((result.workspaceLayout as WorkspaceTileSplit).sizes).toEqual([
-      50, 20, 30,
+      100 / 3,
+      100 / 3,
+      100 / 3,
     ])
   })
 
@@ -221,7 +224,7 @@ describe('moveWorkspaceTileToEdge', () => {
 })
 
 // ---------------------------------------------------------------------------
-// cleanUpWorkspaceTiles — columns capped by width, filled by height
+// cleanUpWorkspaceTiles — columns capped by width, height, and row count
 // ---------------------------------------------------------------------------
 
 /** Content area sized as a multiple of the minimum column and row. */
@@ -244,6 +247,36 @@ describe('cleanUpWorkspaceTiles', () => {
       ['ws-1', 'ws-2', 'ws-3'],
       ['ws-4', 'ws-5', 'ws-6'],
     ])
+  })
+
+  it.each([
+    [
+      5,
+      [
+        ['ws-1', 'ws-2', 'ws-3'],
+        ['ws-4', 'ws-5'],
+      ],
+    ],
+    [
+      6,
+      [
+        ['ws-1', 'ws-2', 'ws-3'],
+        ['ws-4', 'ws-5', 'ws-6'],
+      ],
+    ],
+  ])('organizes %i workspaces into two columns in a 2164px-tall window', (count, expected) => {
+    const workspaceIds = Array.from(
+      { length: count },
+      (_, index) => `ws-${index + 1}`
+    )
+    const tab = makeStackTab(workspaceIds)
+
+    const result = cleanUpWorkspaceTiles(tab, {
+      widthPx: MIN_WORKSPACE_COLUMN_WIDTH_PX * 2,
+      heightPx: 2164,
+    })
+
+    expect(columnsOf(result)).toEqual(expected)
   })
 
   it('spreads across the columns width allows when frames need height', () => {

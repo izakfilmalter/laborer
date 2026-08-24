@@ -1,4 +1,8 @@
-import type { WindowLayout, WorkspaceTileNode } from '@laborer/shared/types'
+import type {
+  WindowLayout,
+  WorkspaceTileNode,
+  WorkspaceTileSplit,
+} from '@laborer/shared/types'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { panelLayoutCollection } from '@/db/local-preferences'
@@ -194,13 +198,16 @@ const layoutContainsTerminal = (
   )
 }
 
+const workspaceIdsInNode = (node: WorkspaceTileNode): readonly string[] =>
+  node._tag === 'WorkspaceTileLeaf'
+    ? [node.workspaceId]
+    : node.children.flatMap(workspaceIdsInNode)
+
 const workspaceIdsInActiveTab = (layout: WindowLayout): readonly string[] => {
   const activeTab = layout.tabs.find((tab) => tab.id === layout.activeTabId)
-  const collect = (node: WorkspaceTileNode): readonly string[] =>
-    node._tag === 'WorkspaceTileLeaf'
-      ? [node.workspaceId]
-      : node.children.flatMap(collect)
-  return activeTab?.workspaceLayout ? collect(activeTab.workspaceLayout) : []
+  return activeTab?.workspaceLayout
+    ? workspaceIdsInNode(activeTab.workspaceLayout)
+    : []
 }
 
 /**
@@ -431,6 +438,67 @@ describe('usePanelLayout', () => {
     expect(panelTab?.panelLayout.paneType).toBe('terminal')
   })
 
+  it('organizes six workspaces into two columns using the rendered tab height', async () => {
+    const base = makeWindowLayout('pane-parent', 'workspace-1')
+    const tab = base.tabs[0]
+    const firstTile = tab?.workspaceLayout
+    if (!(tab && firstTile && firstTile._tag === 'WorkspaceTileLeaf')) {
+      throw new Error('Expected workspace leaf fixture')
+    }
+    const workspaceLayout: WorkspaceTileSplit = {
+      _tag: 'WorkspaceTileSplit',
+      id: 'workspace-stack',
+      direction: 'vertical',
+      children: Array.from({ length: 6 }, (_, index) => ({
+        ...firstTile,
+        id: `workspace-tile-${index + 1}`,
+        workspaceId: `workspace-${index + 1}`,
+      })),
+      sizes: Array.from({ length: 6 }, () => 100 / 6),
+    }
+    writeStoredWindowLayout('window-a', {
+      ...base,
+      tabs: [{ ...tab, workspaceLayout }],
+    })
+
+    const { result } = renderHook(() => usePanelLayout())
+    const container = document.createElement('div')
+    container.dataset.windowTabId = tab.id
+    Object.defineProperties(container, {
+      clientHeight: { configurable: true, value: 2164 },
+      clientWidth: { configurable: true, value: 1000 },
+    })
+    document.body.append(container)
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+
+    try {
+      act(() => {
+        result.current.panelActions.cleanUpWorkspaceLayout?.()
+      })
+
+      await waitFor(() => {
+        const stored = readStoredWindowLayout('window-a') as WindowLayout
+        const activeTab = stored.tabs.find(
+          (candidate) => candidate.id === stored.activeTabId
+        )
+        const activeLayout = activeTab?.workspaceLayout
+        if (
+          activeLayout?._tag !== 'WorkspaceTileSplit' ||
+          activeLayout.direction !== 'horizontal'
+        ) {
+          throw new Error('Expected organized workspace columns')
+        }
+        expect(activeLayout.children.map(workspaceIdsInNode)).toEqual([
+          ['workspace-1', 'workspace-2', 'workspace-3'],
+          ['workspace-4', 'workspace-5', 'workspace-6'],
+        ])
+      })
+    } finally {
+      container.remove()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('waits to auto-open a new workspace agent until the workspace is running', async () => {
     writeStoredWindowLayout('window-a', {
       tabs: [
@@ -613,12 +681,12 @@ describe('usePanelLayout', () => {
       if (activeLayout?._tag !== 'WorkspaceTileSplit') {
         throw new Error('Expected the parent workspace stack')
       }
-      expect(activeLayout.sizes).toEqual([40, 25, 15, 20])
+      expect(activeLayout.sizes).toEqual([25, 25, 25, 25])
     })
     expect(spawnTerminalMock).not.toHaveBeenCalled()
   })
 
-  it('inserts a new sub-workspace below the last child instead of at the end', async () => {
+  it('inserts a new sub-workspace below the last child and equalizes the stack', async () => {
     const parentLayout = makeWindowLayout('pane-parent', 'workspace-parent')
     const parentTab = parentLayout.tabs[0]
     const parentTile = parentTab?.workspaceLayout
@@ -703,7 +771,7 @@ describe('usePanelLayout', () => {
       if (activeLayout?._tag !== 'WorkspaceTileSplit') {
         throw new Error('Expected the parent workspace stack')
       }
-      expect(activeLayout.sizes).toEqual([50, 10, 10, 30])
+      expect(activeLayout.sizes).toEqual([25, 25, 25, 25])
     })
   })
 })

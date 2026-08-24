@@ -16,6 +16,10 @@ import {
 } from './auto-updater.js'
 import { DaemonAgentStatusSubscription } from './daemon-agent-status.js'
 import { DesktopDaemonSupervisor } from './daemon-supervisor.js'
+import {
+  DaemonWindowReloadTracker,
+  reloadTargetUrl,
+} from './daemon-window-reload.js'
 import { fixPath } from './fix-path.js'
 import {
   ACTIVATE_WORKSPACE_CHANNEL,
@@ -159,6 +163,62 @@ const isDev = Boolean(VITE_DEV_SERVER_URL)
 const desktopSmokeTestFile = process.env.LABORER_DESKTOP_SMOKE_TEST_FILE
 let daemonOrigin: string | null = VITE_DEV_SERVER_URL ?? null
 let daemonSupervisor: DesktopDaemonSupervisor | null = null
+
+/**
+ * Version of the daemon currently serving `daemonOrigin`; null in dev mode
+ * (Vite serves the bundle) or before the supervisor has ensured a daemon.
+ */
+let currentDaemonVersion: string | null = null
+
+/**
+ * Tracks which daemon version served each window's current document so that
+ * windows still running a replaced daemon's bundle can be reloaded exactly
+ * once per daemon transition.
+ */
+const daemonWindowReloadTracker = new DaemonWindowReloadTracker<BrowserWindow>()
+
+/** Origin of a window's current document, or null when unavailable. */
+function windowDocumentOrigin(window: BrowserWindow): string | null {
+  try {
+    const url = new URL(window.webContents.getURL())
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.origin
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Reload every open window whose document came from a different daemon than
+ * the one the supervisor just ensured. Preserves the window's in-app route.
+ */
+function reloadWindowsForDaemonTransition(): void {
+  if (!daemonOrigin || currentDaemonVersion === null) {
+    return
+  }
+  const currentOrigin = new URL(daemonOrigin).origin
+  for (const window of openWindows) {
+    if (window.isDestroyed()) {
+      continue
+    }
+    const stale = daemonWindowReloadTracker.shouldReload(window, {
+      currentOrigin,
+      currentVersion: currentDaemonVersion,
+      loadedOrigin: windowDocumentOrigin(window),
+    })
+    if (!stale) {
+      continue
+    }
+    console.info(
+      '[main] Reloading window served by a replaced daemon',
+      window.webContents.getURL()
+    )
+    window.webContents
+      .loadURL(reloadTargetUrl(window.webContents.getURL(), daemonOrigin))
+      .catch(console.error)
+  }
+}
 
 /**
  * Headless-style mode for E2E tests: keep windows hidden so Playwright can
@@ -309,6 +369,17 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   if (!daemonOrigin) {
     throw new Error('Cannot create a desktop window before the daemon is ready')
   }
+
+  // Record which daemon version served each main-frame document so the
+  // window can be reloaded when the daemon is later replaced. did-navigate
+  // covers the initial load, deep links, manual reloads, and our own
+  // transition reloads.
+  window.webContents.on('did-navigate', () => {
+    if (currentDaemonVersion !== null) {
+      daemonWindowReloadTracker.recordLoad(window, currentDaemonVersion)
+    }
+  })
+
   window.loadURL(daemonOrigin).catch(console.error)
 
   window.webContents.on('did-finish-load', () => {
@@ -341,6 +412,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
 
   window.on('closed', () => {
     openWindows.delete(window)
+    daemonWindowReloadTracker.forget(window)
     removeWindowPresence(window)
 
     // Remove the persisted record for windows the user intentionally closed.
@@ -387,6 +459,8 @@ app
         webDist: join(appRoot, 'apps', 'web', 'dist'),
       })
       daemonOrigin = await daemonSupervisor.launch()
+      currentDaemonVersion =
+        daemonSupervisor.currentRegistration()?.version ?? null
     }
 
     const workspaceRegistry = getWorkspaceWindowRegistry()
@@ -438,7 +512,26 @@ app
     // so they work correctly regardless of which window invokes them.
     registerIpcHandlers(() => getMainWindow())
     ipcMain.handle('desktop:ensure-daemon', async () => {
-      await daemonSupervisor?.reconnect()
+      if (!daemonSupervisor) {
+        return
+      }
+      await daemonSupervisor.reconnect()
+      const registration = daemonSupervisor.currentRegistration()
+      if (!registration) {
+        return
+      }
+      // The reconnect may have settled on a different daemon instance than
+      // the one open windows loaded their bundle from — either because the
+      // supervisor restarted it or because a newer daemon replaced the old
+      // one out from under us. Adopt its origin and reload stale windows so
+      // they never keep running a replaced daemon's JavaScript bundle.
+      const originChanged = daemonOrigin !== registration.url
+      daemonOrigin = registration.url
+      currentDaemonVersion = registration.version
+      if (originChanged) {
+        agentStatusSubscription?.start(daemonOrigin)
+      }
+      reloadWindowsForDaemonTransition()
     })
 
     // Wire tray workspace count updates from the renderer to the tray manager.

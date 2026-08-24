@@ -167,6 +167,13 @@ const loadMainWithRecords = async (
       launch = launchDaemon
       reconnect = vi.fn(async () => undefined)
       shutdown = vi.fn(async () => undefined)
+      currentRegistration = vi.fn(() => ({
+        id: 'daemon-1',
+        pid: 4321,
+        startedAt: new Date(0).toISOString(),
+        url: 'http://127.0.0.1:2117',
+        version: '1.2.3',
+      }))
     },
   }))
   vi.doMock('../src/ipc.js', () => ({

@@ -15,6 +15,11 @@ import { pullRequestConversationQuery } from '@/panes/comments-pane/conversation
 import { CommentTimelineItem } from '@/panes/comments-pane/timeline-item'
 
 const PREVIEW_COMMENT_COUNT = 3
+// The Base UI default is 600 ms, long enough for a small status icon to feel
+// inert before the preview appears. Keep enough intent delay to avoid opening
+// while the pointer merely crosses the card, but answer a deliberate hover
+// promptly.
+const PREVIEW_OPEN_DELAY_MS = 120
 
 /**
  * The newest remarks behind a task card's PR status segment.
@@ -120,7 +125,7 @@ function GitHubConversationHoverCard({
 }) {
   return (
     <HoverCard>
-      <HoverCardTrigger render={trigger} />
+      <HoverCardTrigger delay={PREVIEW_OPEN_DELAY_MS} render={trigger} />
       <HoverCardContent align="start" className="w-72 p-0">
         <GitHubConversationPreview workspaceId={workspaceId} />
       </HoverCardContent>

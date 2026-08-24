@@ -92,29 +92,6 @@ const opensElsewhere = (event: MouseEvent) =>
   event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
 
 /**
- * Where the click goes, said once.
- *
- * The trigger's name and its tooltip used to be the same sentence, so a
- * screen reader read the count and then read it again. The name keeps the
- * count — it is the only place the digit is spelled out — and the tooltip
- * earns its second line by naming the destination instead of repeating it.
- * Null when the segment has nowhere to go, which is also when it stops
- * being a control at all.
- */
-function getSegmentActionHint(
-  opensConversation: boolean,
-  segmentUrl: string | null
-): string | null {
-  if (opensConversation) {
-    return 'Open PR comments'
-  }
-  if (segmentUrl === null) {
-    return null
-  }
-  return 'Open on GitHub'
-}
-
-/**
  * The element the segment is, which follows from what it can do.
  *
  * A count that opens the pane is a button, a count that only points at
@@ -202,11 +179,6 @@ function ConversationSegment({
   readonly segmentClass: string
   readonly segmentUrl: string | null
 }) {
-  const actionHint = getSegmentActionHint(
-    onOpenConversation !== undefined,
-    segmentUrl
-  )
-
   const openConversation = async (event: MouseEvent) => {
     if (onOpenConversation === undefined) {
       return
@@ -237,17 +209,7 @@ function ConversationSegment({
     )
   }
 
-  return (
-    <Tooltip>
-      <TooltipTrigger render={trigger} />
-      <TooltipContent>
-        {description}
-        {actionHint === null ? null : (
-          <span className="text-tooltip-foreground/60">{actionHint}</span>
-        )}
-      </TooltipContent>
-    </Tooltip>
-  )
+  return trigger
 }
 
 // The seam every hung segment shares: neutral and barely there, so the pill

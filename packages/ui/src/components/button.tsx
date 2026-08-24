@@ -106,11 +106,16 @@ function Button({
     >
       {loading ? (
         <>
-          {/* Sized by the variant's own `[&_svg]` rules, so it tracks the button. */}
-          <Loader2Icon
+          {/* The wrapper spins so the compositor can own the animation; an
+              `<svg>` cannot be composited and would bill every frame to the
+              main thread. The glyph stays unsized so the variant's own
+              `[&_svg]` rules keep tracking the button. */}
+          <span
             aria-hidden="true"
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin"
-          />
+            className="absolute top-1/2 left-1/2 inline-flex -translate-x-1/2 -translate-y-1/2 animate-spin"
+          >
+            <Loader2Icon />
+          </span>
           <span className="inline-flex items-center justify-center gap-[inherit] opacity-30">
             {children}
           </span>

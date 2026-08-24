@@ -183,10 +183,15 @@ function DisconnectPill({
         type="button"
         variant="outline"
       >
-        <RotateCw
+        <span
           aria-hidden="true"
-          className={cn('size-3', inFlight && 'motion-safe:animate-spin')}
-        />
+          className={cn(
+            'inline-flex size-3',
+            inFlight && 'motion-safe:animate-spin'
+          )}
+        >
+          <RotateCw className="size-full" />
+        </span>
         Reconnect
       </Button>
     </StatusPill>

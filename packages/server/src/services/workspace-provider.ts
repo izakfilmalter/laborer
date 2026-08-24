@@ -91,6 +91,32 @@ interface WorkspaceRecord {
 }
 
 /**
+ * Build the environment variables injected into every terminal spawned in a
+ * workspace.
+ *
+ * File-watcher polling vars (`CHOKIDAR_USEPOLLING`, `TSC_WATCHFILE`,
+ * `TSC_WATCHDIRECTORY`) are intentionally absent. Forcing polling makes every
+ * dev server and tsc watcher busy-scan the worktree (~100ms stat loops), a
+ * large CPU and battery cost. On macOS, chokidar and tsc use native FSEvents
+ * (a single kernel stream, no per-file descriptors), so the file-descriptor
+ * exhaustion rationale from Issue #34 does not apply. On Linux, inotify watch
+ * limits are a user-level sysctl concern (`fs.inotify.max_user_watches`), not
+ * something to solve by forcing polling on all platforms. Reference apps
+ * (VS Code, opencode) inject no watcher env at all.
+ */
+const buildWorkspaceEnv = (
+  ws: Pick<WorkspaceRecord, 'branchName' | 'id' | 'worktreePath'>
+): Record<string, string> => ({
+  // Core workspace identification
+  LABORER_WORKSPACE_ID: ws.id,
+  LABORER_WORKSPACE_PATH: ws.worktreePath,
+  LABORER_BRANCH: ws.branchName,
+
+  // Watchman: constrain root to worktree directory (native watching, cheap)
+  WATCHMAN_ROOT: ws.worktreePath,
+})
+
+/**
  * Slugify a branch name for use as a directory name.
  * Replaces non-alphanumeric characters (except hyphens) with hyphens.
  */
@@ -1814,30 +1840,7 @@ class WorkspaceProvider extends Context.Service<
             })
           }
 
-          const ws = workspace
-
-          // Build the environment variables for this workspace.
-          // Includes file watcher scoping vars that constrain common tools
-          // (Watchman, chokidar, TypeScript) to watch only the worktree
-          // directory, preventing multiple workspaces from exhausting the
-          // OS file descriptor limit (Issue #34, User Story #23).
-          return {
-            // Core workspace identification
-            LABORER_WORKSPACE_ID: ws.id,
-            LABORER_WORKSPACE_PATH: ws.worktreePath,
-            LABORER_BRANCH: ws.branchName,
-
-            // File watcher scoping (Issue #34)
-            // Watchman: constrain root to worktree directory
-            WATCHMAN_ROOT: ws.worktreePath,
-            // chokidar (Vite, webpack, etc.): use polling instead of
-            // native watchers to avoid exhausting OS file descriptors
-            CHOKIDAR_USEPOLLING: 'true',
-            // TypeScript: use dynamic priority polling for file watching
-            // instead of native FS events (lower file descriptor usage)
-            TSC_WATCHFILE: 'DynamicPriorityPolling',
-            TSC_WATCHDIRECTORY: 'DynamicPriorityPolling',
-          } as Record<string, string>
+          return buildWorkspaceEnv(workspace)
         }
       )
 
@@ -1860,5 +1863,10 @@ class WorkspaceProvider extends Context.Service<
   )
 }
 
-export { buildValidationErrorMessage, validateWorktree, WorkspaceProvider }
+export {
+  buildValidationErrorMessage,
+  buildWorkspaceEnv,
+  validateWorktree,
+  WorkspaceProvider,
+}
 export type { WorktreeValidation }

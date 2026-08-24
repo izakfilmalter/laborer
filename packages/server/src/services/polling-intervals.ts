@@ -17,15 +17,25 @@
 // PrWatcher — `gh pr view` polling
 // ---------------------------------------------------------------------------
 
-/** Polling interval when the workspace has an open panel. */
-export const PR_VISIBLE_POLL_INTERVAL_MS = 5000
+/**
+ * Polling interval when the workspace has an open panel.
+ *
+ * Design reference: GitHub Desktop. Its CommitStatusStore refreshes check
+ * status every 3 min, and the GitHub API serves PR reads with a 60 s
+ * max-age, so polling faster than 60 s returns cached responses and only
+ * burns battery and rate limit.
+ */
+export const PR_VISIBLE_POLL_INTERVAL_MS = 60_000
 
 /**
  * Polling interval when the workspace has no open panel.
- * PR state changes on the order of minutes — 30 s is sufficient
- * for background freshness.
+ *
+ * Design reference: GitHub Desktop's PullRequestUpdater polls every 30 min
+ * (2 min enforced minimum) and is gated on window focus. PR state changes
+ * on the order of minutes; 5 min keeps background freshness while staying
+ * well inside those bounds.
  */
-export const PR_BACKGROUND_POLL_INTERVAL_MS = 30_000
+export const PR_BACKGROUND_POLL_INTERVAL_MS = 300_000
 
 /**
  * Bound on one `gh api graphql` read of a pull request's review threads.

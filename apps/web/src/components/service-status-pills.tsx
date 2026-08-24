@@ -49,7 +49,11 @@ const BORDER_COLOR_CLASSES: Record<StatusColor, string> = {
   gray: 'border-border',
 }
 
-/** Whether a service state should pulse the indicator dot. */
+/**
+ * Whether a service state should pulse the indicator dot. Only states that
+ * are on their way somewhere animate; a healthy service holds a solid dot, so
+ * a settled system leaves the compositor idle instead of repainting forever.
+ */
 function shouldPulse(state: ServiceState): boolean {
   return state.state === 'starting' || state.state === 'restarting'
 }
@@ -83,7 +87,7 @@ function ServicePill({
         {pulsing && (
           <span
             className={cn(
-              'absolute inline-flex size-full animate-ping rounded-full opacity-75',
+              'absolute inline-flex size-full animate-ping rounded-full opacity-75 motion-reduce:animate-none',
               DOT_COLOR_CLASSES[color]
             )}
           />

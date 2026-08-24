@@ -9,9 +9,11 @@
  * - Correct branch checkout
  * - Isolated git toplevel (worktree path, not main repo path)
  *
- * Also tests file watcher scoping env vars from `getWorkspaceEnv`.
+ * Also tests the workspace env built by `buildWorkspaceEnv` (used by
+ * `getWorkspaceEnv`), including a regression check that battery-draining
+ * file-watcher polling vars are never injected.
  *
- * Issue #34: WorkspaceProvider — worktree directory validation + file watcher scoping
+ * Issue #34: WorkspaceProvider — worktree directory validation + watcher env
  */
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -22,6 +24,7 @@ import { afterAll, beforeAll } from 'vitest'
 import type { WorktreeValidation } from '../src/services/workspace-provider.js'
 import {
   buildValidationErrorMessage,
+  buildWorkspaceEnv,
   validateWorktree,
 } from '../src/services/workspace-provider.js'
 import { createTempDir, git } from './helpers/git-helpers.js'
@@ -228,5 +231,36 @@ describe('buildValidationErrorMessage', () => {
     assert.include(msg, 'git toplevel')
     assert.include(msg, '/main/repo/path')
     assert.include(msg, '/path/to/worktree')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildWorkspaceEnv tests
+// ---------------------------------------------------------------------------
+
+describe('buildWorkspaceEnv', () => {
+  const env = buildWorkspaceEnv({
+    id: 'ws-123',
+    worktreePath: '/repo/.worktrees/feature-test',
+    branchName: 'feature/test',
+  })
+
+  it('should include workspace identification and Watchman root vars', () => {
+    assert.strictEqual(env.LABORER_WORKSPACE_ID, 'ws-123')
+    assert.strictEqual(
+      env.LABORER_WORKSPACE_PATH,
+      '/repo/.worktrees/feature-test'
+    )
+    assert.strictEqual(env.LABORER_BRANCH, 'feature/test')
+    assert.strictEqual(env.WATCHMAN_ROOT, '/repo/.worktrees/feature-test')
+  })
+
+  it('should not inject file-watcher polling vars (battery regression)', () => {
+    // Forcing polling makes every dev server/tsc watcher busy-scan the
+    // worktree, a large CPU/battery cost. Native watchers (FSEvents on
+    // macOS) are used instead.
+    assert.notProperty(env, 'CHOKIDAR_USEPOLLING')
+    assert.notProperty(env, 'TSC_WATCHFILE')
+    assert.notProperty(env, 'TSC_WATCHDIRECTORY')
   })
 })

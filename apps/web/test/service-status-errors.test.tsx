@@ -14,11 +14,37 @@
  * @see Issue #10: Header error state persistence and animations
  */
 
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { RegistryProvider } from '@effect/atom-react/RegistryContext'
+import {
+  act,
+  cleanup,
+  render as rtlRender,
+  screen,
+} from '@testing-library/react'
+import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LifecyclePhaseProvider } from '../src/components/lifecycle-phase-context'
 import { ServiceStatusDots } from '../src/components/service-status-dots'
 import { mockFetch } from './helpers/mock-fetch'
+
+/**
+ * The default atom registry schedules work through React's real MessageChannel
+ * scheduler, which fake timers cannot advance. Route registry tasks through
+ * setTimeout so `vi.advanceTimersByTimeAsync` drives the shared poll atoms.
+ */
+const TimerDrivenRegistry = ({ children }: { children: React.ReactNode }) => (
+  <RegistryProvider
+    scheduleTask={(f) => {
+      const timer = setTimeout(f, 0)
+      return () => clearTimeout(timer)
+    }}
+  >
+    {children}
+  </RegistryProvider>
+)
+
+const render = (ui: React.ReactElement) =>
+  rtlRender(ui, { wrapper: TimerDrivenRegistry })
 
 describe('ServiceStatusDots error states and animations', () => {
   const originalFetch = globalThis.fetch
@@ -41,8 +67,11 @@ describe('ServiceStatusDots error states and animations', () => {
     vi.useFakeTimers()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
+    // Drain the atom registry's scheduled tasks (shared poller disposal)
+    // so the next test builds a fresh poll loop instead of reusing state.
+    await vi.advanceTimersByTimeAsync(0)
     vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
@@ -71,9 +100,8 @@ describe('ServiceStatusDots error states and animations', () => {
 
     // Let initial polls resolve — all healthy
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Server crashes
@@ -81,9 +109,8 @@ describe('ServiceStatusDots error states and animations', () => {
 
     // Next health poll
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Error dot should show crashed state
@@ -95,9 +122,8 @@ describe('ServiceStatusDots error states and animations', () => {
 
     // Next health poll
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Error dot should STILL show error state (persisted) — not auto-cleared
@@ -129,25 +155,22 @@ describe('ServiceStatusDots error states and animations', () => {
 
     // All healthy initially
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Server crashes
     serverOk = false
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Server recovers, but error persists
     serverOk = true
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Find the dismiss button for the server error
@@ -191,17 +214,15 @@ describe('ServiceStatusDots error states and animations', () => {
 
     // All healthy initially
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Server crashes
     serverOk = false
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Find and click retry button
@@ -239,9 +260,8 @@ describe('ServiceStatusDots error states and animations', () => {
 
     // Server starts as 'starting' after initial poll
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     const serverDot = screen.getByTestId('service-dot-server')
@@ -251,9 +271,8 @@ describe('ServiceStatusDots error states and animations', () => {
     // Server becomes healthy — advance to next poll (3s interval)
     serverOk = true
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Live state should be 'healthy' but display state should STILL be 'starting'
@@ -275,7 +294,7 @@ describe('ServiceStatusDots error states and animations', () => {
     // The display state transition timer is set for 300ms after state change
     // Let's verify it's still held back, then advance past the 300ms threshold
     await act(async () => {
-      vi.advanceTimersByTime(300)
+      await vi.advanceTimersByTimeAsync(300)
       await Promise.resolve()
     })
 
@@ -295,9 +314,8 @@ describe('ServiceStatusDots error states and animations', () => {
     )
 
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Each dot wrapper should have a fixed-width class for no layout shifts
@@ -329,17 +347,15 @@ describe('ServiceStatusDots error states and animations', () => {
 
     // All healthy
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // Server crashes
     serverOk = false
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     const serverDot = screen.getByTestId('service-dot-server')
@@ -348,9 +364,8 @@ describe('ServiceStatusDots error states and animations', () => {
     // Server recovers
     serverOk = true
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // The live state should show healthy (even though error is persisted)

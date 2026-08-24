@@ -11,11 +11,37 @@
  * @see Issue #8: Header per-service status dots
  */
 
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { RegistryProvider } from '@effect/atom-react/RegistryContext'
+import {
+  act,
+  cleanup,
+  render as rtlRender,
+  screen,
+} from '@testing-library/react'
+import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LifecyclePhaseProvider } from '../src/components/lifecycle-phase-context'
 import { ServiceStatusDots } from '../src/components/service-status-dots'
 import { mockFetch, pendingPromise } from './helpers/mock-fetch'
+
+/**
+ * The default atom registry schedules work through React's real MessageChannel
+ * scheduler, which fake timers cannot advance. Route registry tasks through
+ * setTimeout so `vi.advanceTimersByTimeAsync` drives the shared poll atoms.
+ */
+const TimerDrivenRegistry = ({ children }: { children: React.ReactNode }) => (
+  <RegistryProvider
+    scheduleTask={(f) => {
+      const timer = setTimeout(f, 0)
+      return () => clearTimeout(timer)
+    }}
+  >
+    {children}
+  </RegistryProvider>
+)
+
+const render = (ui: React.ReactElement) =>
+  rtlRender(ui, { wrapper: TimerDrivenRegistry })
 
 describe('ServiceStatusDots', () => {
   const originalFetch = globalThis.fetch
@@ -24,8 +50,11 @@ describe('ServiceStatusDots', () => {
     vi.useFakeTimers()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
+    // Drain the atom registry's scheduled tasks (shared poller disposal)
+    // so the next test builds a fresh poll loop instead of reusing state.
+    await vi.advanceTimersByTimeAsync(0)
     vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
@@ -42,8 +71,7 @@ describe('ServiceStatusDots', () => {
     )
 
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     const serverDot = screen.getByTestId('service-dot-server')
@@ -65,8 +93,7 @@ describe('ServiceStatusDots', () => {
     )
 
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     const serverDot = screen.getByTestId('service-dot-server')
@@ -95,8 +122,7 @@ describe('ServiceStatusDots', () => {
 
     // Initial poll — server healthy
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('service-dot-server').dataset.state).toBe(
@@ -107,9 +133,8 @@ describe('ServiceStatusDots', () => {
     serverCrashed = true
 
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('service-dot-server').dataset.state).toBe(
@@ -137,8 +162,7 @@ describe('ServiceStatusDots', () => {
     )
 
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     const serverDot = screen.getByTestId('service-dot-server')
@@ -170,9 +194,8 @@ describe('ServiceStatusDots', () => {
     )
 
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     const summary = screen.getByTestId('service-status-summary')
@@ -207,18 +230,16 @@ describe('ServiceStatusDots', () => {
     )
 
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.queryByTestId('service-error-server')).toBeNull()
 
     serverOk = false
     await act(async () => {
-      vi.advanceTimersByTime(3000)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     // The row is visible without hovering anything, and so are its actions.
@@ -248,9 +269,8 @@ describe('ServiceStatusDots', () => {
     )
 
     await act(async () => {
-      vi.advanceTimersByTime(600)
-      await Promise.resolve()
-      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(0)
     })
 
     expect(screen.getByTestId('service-status-summary').textContent).toContain(

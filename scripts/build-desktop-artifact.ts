@@ -14,6 +14,7 @@
  *   bun run dist:desktop:dmg --verbose                # Stream subprocess stdout
  *   bun run dist:desktop:dmg --build-version 1.2.3    # Set artifact version
  *   bun run dist:desktop:dmg --signed                 # Enable code signing
+ *   bun run dist:desktop:dmg --sweep-only             # Only sweep leaked smoke processes/dirs
  *
  * Environment variables (override CLI flags):
  *   LABORER_DESKTOP_SKIP_BUILD=true
@@ -71,6 +72,9 @@ const GIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i
 /** Matches nightly release versions. */
 const NIGHTLY_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/
 
+/** Matches one `pid command` line of `ps -Axo pid=,comm=` output. */
+const PS_PROCESS_LINE_PATTERN = /^\s*(\d+)\s+(.+)$/
+
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
@@ -83,6 +87,7 @@ const { values: cliFlags } = parseArgs({
     signed: { type: 'boolean', default: false },
     'output-dir': { type: 'string' },
     'build-version': { type: 'string' },
+    'sweep-only': { type: 'boolean', default: false },
     arch: { type: 'string', default: 'arm64' },
   },
   strict: true,
@@ -96,6 +101,7 @@ const KEEP_STAGE =
 const VERBOSE =
   cliFlags.verbose || process.env.LABORER_DESKTOP_VERBOSE === 'true'
 const SIGNED = cliFlags.signed || process.env.LABORER_DESKTOP_SIGNED === 'true'
+const SWEEP_ONLY = cliFlags['sweep-only']
 const ARCH = cliFlags.arch ?? 'arm64'
 const BUILD_VERSION =
   cliFlags['build-version'] ??
@@ -294,6 +300,196 @@ function terminateProcessGroup(pid: number): void {
   } catch {
     // The packaged app and its subprocesses completed graceful shutdown.
   }
+}
+
+/** Escalating single-process termination: SIGTERM, bounded wait, SIGKILL. */
+function terminateProcessWithEscalation(pid: number, label: string): void {
+  if (!isProcessRunning(pid)) {
+    return
+  }
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {
+    return
+  }
+
+  const shutdownDeadline = Date.now() + 5000
+  while (Date.now() < shutdownDeadline) {
+    if (!isProcessRunning(pid)) {
+      log(`Terminated ${label} (pid ${String(pid)})`)
+      return
+    }
+    sleep(50)
+  }
+
+  try {
+    process.kill(pid, 'SIGKILL')
+    log(`Force-killed ${label} (pid ${String(pid)})`)
+  } catch {
+    // It exited between the final liveness check and the signal.
+  }
+}
+
+interface SmokeRegistration {
+  readonly pid?: number
+  readonly url?: string
+}
+
+/** Best-effort read of a daemon/pty-host registration file written under the smoke stateRoot. */
+function readSmokeRegistration(registrationPath: string): SmokeRegistration {
+  try {
+    const registration: unknown = JSON.parse(
+      readFileSync(registrationPath, 'utf8')
+    )
+    if (typeof registration !== 'object' || registration === null) {
+      return {}
+    }
+    const pid = Reflect.get(registration, 'pid')
+    const url = Reflect.get(registration, 'url')
+    return {
+      ...(Number.isInteger(pid) && Number(pid) > 0 ? { pid: Number(pid) } : {}),
+      ...(typeof url === 'string' && isLoopbackHttpUrl(url) ? { url } : {}),
+    }
+  } catch {
+    return {}
+  }
+}
+
+function isLoopbackHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === '[::1]')
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Gracefully stop the daemon that the packaged-app smoke run spawned.
+ *
+ * The daemon runs detached in its own process group (by design, so it can
+ * outlive app windows), which means terminateProcessGroup on the app never
+ * reaches it. Prefer the daemon's own shutdown RPC (which also stops its pty
+ * host), then escalate to SIGTERM/SIGKILL on the registered pids. Safe no-op
+ * when the daemon never started.
+ */
+function shutdownSmokeDaemon(stateRoot: string): void {
+  const laborerStateDir = join(stateRoot, 'laborer')
+  const daemon = readSmokeRegistration(join(laborerStateDir, 'daemon.json'))
+  const ptyHost = readSmokeRegistration(
+    join(laborerStateDir, 'pty-host', 'pty-host.json')
+  )
+
+  if (daemon.pid !== undefined && isProcessRunning(daemon.pid)) {
+    if (daemon.url !== undefined) {
+      // POST /daemon/stop {mode:'shutdown'} triggers the daemon's graceful
+      // shutdown, including its pty host, before it SIGTERMs itself.
+      spawnSync(
+        'curl',
+        [
+          '--silent',
+          '--max-time',
+          '5',
+          '--request',
+          'POST',
+          '--header',
+          'content-type: application/json',
+          '--data',
+          '{"mode":"shutdown"}',
+          new URL('/daemon/stop', daemon.url).toString(),
+        ],
+        { stdio: 'ignore' }
+      )
+      const shutdownDeadline = Date.now() + 5000
+      while (Date.now() < shutdownDeadline && isProcessRunning(daemon.pid)) {
+        sleep(50)
+      }
+      if (!isProcessRunning(daemon.pid)) {
+        log(`Smoke daemon shut down gracefully (pid ${String(daemon.pid)})`)
+      }
+    }
+    terminateProcessWithEscalation(daemon.pid, 'smoke daemon')
+  }
+
+  if (ptyHost.pid !== undefined) {
+    terminateProcessWithEscalation(ptyHost.pid, 'smoke pty host')
+  }
+}
+
+const SMOKE_TMP_DIR_PREFIXES = [
+  'laborer-desktop-mac-stage-',
+  'laborer-desktop-smoke-',
+  'laborer-mcp-package-smoke-',
+] as const
+
+/**
+ * Kill processes still executing out of leaked temporary stage/smoke
+ * directories from previous runs. Matching requires the stage-dir name (with
+ * a leading path separator) inside the executable path, so a real install
+ * like /Applications/Laborer.app can never match.
+ */
+function sweepLeakedSmokeProcesses(): void {
+  const result = spawnSync('ps', ['-Axo', 'pid=,comm='], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  if (result.status !== 0 || typeof result.stdout !== 'string') {
+    log('Unable to list processes; skipping leaked smoke-process sweep')
+    return
+  }
+
+  for (const line of result.stdout.split('\n')) {
+    const match = PS_PROCESS_LINE_PATTERN.exec(line)
+    const rawPid = match?.[1]
+    const command = match?.[2]?.trim()
+    if (rawPid === undefined || command === undefined) {
+      continue
+    }
+    const pid = Number(rawPid)
+    if (pid === process.pid) {
+      continue
+    }
+    if (
+      !SMOKE_TMP_DIR_PREFIXES.some((prefix) => command.includes(`/${prefix}`))
+    ) {
+      continue
+    }
+    log(`Sweeping leaked smoke process ${String(pid)}: ${command}`)
+    terminateProcessWithEscalation(pid, 'leaked smoke process')
+  }
+}
+
+/** Delete leftover stage/smoke temporary directories from previous runs. */
+function sweepLeakedSmokeDirectories(): void {
+  const tempRoot = tmpdir()
+  let entries: readonly string[]
+  try {
+    entries = readdirSync(tempRoot)
+  } catch {
+    return
+  }
+
+  for (const entry of entries) {
+    if (!SMOKE_TMP_DIR_PREFIXES.some((prefix) => entry.startsWith(prefix))) {
+      continue
+    }
+    const path = join(tempRoot, entry)
+    try {
+      rmSync(path, { force: true, recursive: true })
+      log(`Removed leftover smoke directory ${path}`)
+    } catch {
+      log(`Unable to remove leftover smoke directory ${path}`)
+    }
+  }
+}
+
+function sweepLeakedSmokeArtifacts(): void {
+  sweepLeakedSmokeProcesses()
+  sweepLeakedSmokeDirectories()
 }
 
 function hasValidSmokeMarker(markerPath: string): boolean {
@@ -749,6 +945,13 @@ function smokeTestPackagedApp(stageAppDir: string): void {
       `Packaged app did not load its renderer and shared database within ${String(PACKAGED_SMOKE_TIMEOUT_MS)}ms`
     )
   } finally {
+    // The daemon detaches into its own process group, so the group kill below
+    // never reaches it; stop it through its own shutdown path first.
+    try {
+      shutdownSmokeDaemon(stateRoot)
+    } catch {
+      // Cleanup must never mask a smoke-test failure.
+    }
     if (childPid !== undefined) {
       terminateProcessGroup(childPid)
     }
@@ -986,6 +1189,13 @@ function stage(stageRoot: string): void {
 
 function main(): void {
   log('Starting Laborer desktop build...')
+
+  // Step 0: Sweep zombies and leftovers leaked by earlier runs.
+  sweepLeakedSmokeArtifacts()
+  if (SWEEP_ONLY) {
+    log('Sweep-only run complete.')
+    return
+  }
 
   // Step 1: Build all packages (unless --skip-build).
   if (!SKIP_BUILD) {

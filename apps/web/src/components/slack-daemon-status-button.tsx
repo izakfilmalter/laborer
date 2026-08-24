@@ -56,11 +56,22 @@ const TONE_TRIGGER: Record<StatusTone, string> = {
     'border-warning/45 bg-warning/15 text-warning hover:bg-warning/25 hover:text-warning aria-expanded:bg-warning/25 aria-expanded:text-warning dark:border-warning/45 dark:bg-warning/15 dark:hover:bg-warning/25',
 }
 
+/**
+ * Only unsettled states animate. A running daemon is a steady, healthy fact
+ * and holds still — an endless ping on the happy path keeps the compositor
+ * awake for the entire session and buys no information the solid green dot
+ * does not already carry. `pending` covers checking, starting, and stopping,
+ * and `error` is a state the operator still has to answer for.
+ */
 const PULSING_TONES: ReadonlySet<StatusTone> = new Set<StatusTone>([
-  'running',
   'error',
   'pending',
 ])
+
+/** Whether a tone earns the pinging halo behind its dot. */
+function tonePulses(tone: StatusTone): boolean {
+  return PULSING_TONES.has(tone)
+}
 
 /** The dot itself, shared by the trigger badge and the popover status row. */
 function StatusDot({
@@ -75,7 +86,7 @@ function StatusDot({
       aria-hidden="true"
       className={cn('relative inline-flex shrink-0', className)}
     >
-      {PULSING_TONES.has(tone) ? (
+      {tonePulses(tone) ? (
         <span
           className={cn(
             'absolute inline-flex size-full animate-ping rounded-full opacity-75 motion-reduce:animate-none',
@@ -212,6 +223,9 @@ export function SlackDaemonStatusButton({
     </Popover>
   )
 }
+
+export { tonePulses }
+export type { StatusTone }
 
 export function ConnectedSlackDaemonStatusButton({
   anchor,

@@ -39,9 +39,7 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
-import { eq } from '@tanstack/db'
-import { useLiveQuery } from '@tanstack/react-db'
-import { GitBranch, GitBranchPlus, Pencil, Trash2 } from 'lucide-react'
+import { GitBranch, GitBranchPlus, Trash2 } from 'lucide-react'
 import {
   type FC,
   type KeyboardEvent,
@@ -57,16 +55,14 @@ import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CardShell } from '@/components/card-shell'
 import { CopyButton } from '@/components/copy-button'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
+import { EditTaskCardButton } from '@/components/edit-task-card-button'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
-import { boardTaskFromSharedRow } from '@/components/kanban/board-data'
-import { useTaskEditor } from '@/components/kanban/task-editor'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import { TaskIdentifier } from '@/components/task-identifier'
 import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import { destroyWorkspace as destroyWorkspaceOptimistically } from '@/db/shared-mutations'
-import { taskCollection } from '@/db/shared-state'
 import type { PendingWorkspaceCreationChangeHandler } from '@/hooks/use-create-workspace'
 import {
   type ActiveTerminal,
@@ -484,58 +480,6 @@ interface WorkspaceCardWorkspace {
   readonly taskSource: string | null
   readonly worktreePath: string
   readonly worktreeSetupStep: string | null
-}
-
-/**
- * Edit the card this workspace is doing the work of.
- *
- * A non-root workspace is projected from the task that owns its worktree, so
- * the two share an id and the card is one lookup away. The button is absent
- * for a root workspace, which is a checkout rather than a piece of work and
- * has no card to name.
- */
-function EditTaskCardButton({
-  branchName,
-  workspaceId,
-}: {
-  readonly branchName: string
-  readonly workspaceId: string
-}) {
-  const { data: taskRows } = useLiveQuery(
-    (query) =>
-      query
-        .from({ tasks: taskCollection })
-        .where(({ tasks }) => eq(tasks.id, workspaceId)),
-    [workspaceId]
-  )
-  const taskRow = taskRows[0]
-  const task = taskRow === undefined ? null : boardTaskFromSharedRow(taskRow)
-  const { openTaskEditor, taskEditor } = useTaskEditor(task ? [task] : [])
-
-  if (task === null) {
-    return null
-  }
-
-  return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              aria-label={`Edit card for ${branchName}`}
-              onClick={() => openTaskEditor(task)}
-              size="icon-xs"
-              variant="ghost"
-            />
-          }
-        >
-          <Pencil className="size-3.5 text-muted-foreground" />
-        </TooltipTrigger>
-        <TooltipContent>Edit card</TooltipContent>
-      </Tooltip>
-      {taskEditor}
-    </>
-  )
 }
 
 function DestroyWorkspaceButton({

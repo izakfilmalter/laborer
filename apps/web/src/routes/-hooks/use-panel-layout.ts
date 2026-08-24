@@ -1728,8 +1728,8 @@ export function usePanelLayout() {
 
   /**
    * Clean up the active tab's workspace layout: fill columns vertically
-   * to the minimum frame height and open new columns only while the
-   * measured content width still has room for them.
+   * to the minimum frame height, up to four workspaces per column, and open
+   * new columns only while the measured content width has room for them.
    */
   const handleCleanUpWorkspaceLayout = useCallback(() => {
     if (!persistedWindowLayout) {

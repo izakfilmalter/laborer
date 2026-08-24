@@ -57,6 +57,12 @@ const MIN_WORKSPACE_COLUMN_WIDTH_PX = 500
 const MIN_WORKSPACE_TILE_HEIGHT_PX = 352
 
 /**
+ * Keep an organized column scannable even on very tall displays. Once a
+ * column has four workspaces, additional workspaces flow into another column.
+ */
+const MAX_WORKSPACE_ROWS_PER_COLUMN = 4
+
+/**
  * Edge of a workspace frame that a dragged workspace can be dropped on.
  *
  * - `top` / `bottom` — stack the dragged workspace above/below the target
@@ -187,8 +193,7 @@ function splitTileRecursive(
   node: WorkspaceTileNode,
   targetWorkspaceId: string,
   newWorkspaceId: string,
-  direction: SplitDirection,
-  preserveSiblingSizes = false
+  direction: SplitDirection
 ): WorkspaceTileNode {
   // Found the target leaf at root level — wrap in a new split
   if (node._tag === 'WorkspaceTileLeaf') {
@@ -219,15 +224,7 @@ function splitTileRecursive(
         newTile,
         ...node.children.slice(targetIndex + 1),
       ]
-      const targetSize = node.sizes[targetIndex] ?? 100 / node.children.length
-      const newSizes = preserveSiblingSizes
-        ? [
-            ...node.sizes.slice(0, targetIndex),
-            targetSize / 2,
-            targetSize / 2,
-            ...node.sizes.slice(targetIndex + 1),
-          ]
-        : newChildren.map(() => 100 / newChildren.length)
+      const newSizes = newChildren.map(() => 100 / newChildren.length)
       return {
         ...node,
         children: newChildren,
@@ -238,13 +235,7 @@ function splitTileRecursive(
 
   // Recurse into children
   const newChildren = node.children.map((child) =>
-    splitTileRecursive(
-      child,
-      targetWorkspaceId,
-      newWorkspaceId,
-      direction,
-      preserveSiblingSizes
-    )
+    splitTileRecursive(child, targetWorkspaceId, newWorkspaceId, direction)
   )
 
   // Check if anything changed
@@ -295,8 +286,7 @@ function addWorkspaceToTab(
       tab.workspaceLayout,
       belowWorkspaceId,
       workspaceId,
-      'vertical',
-      true
+      'vertical'
     )
     if (placedBelowParent !== tab.workspaceLayout) {
       return { ...tab, workspaceLayout: placedBelowParent }
@@ -938,9 +928,9 @@ function moveWorkspaceTileToEdge(
 }
 
 /**
- * Move a workspace directly below another while retaining existing row sizes
- * when both already share a column. Falls back to the general cross-column
- * move when they do not.
+ * Move a workspace directly below another and equalize the resulting column.
+ * Falls back to the general cross-column move when they do not already share
+ * a column.
  */
 function moveWorkspaceTileBelow(
   tab: WindowTab,
@@ -967,7 +957,7 @@ function moveWorkspaceTileBelow(
   )
 }
 
-/** Reorder direct rows in one vertical column, carrying their sizes with them. */
+/** Reorder direct rows in one vertical column and equalize their sizes. */
 function moveBelowInSharedColumn(
   node: WorkspaceTileNode,
   sourceWorkspaceId: string,
@@ -989,23 +979,28 @@ function moveBelowInSharedColumn(
     )
     if (sourceIndex !== -1 && parentIndex !== -1) {
       if (sourceIndex === parentIndex + 1) {
-        return { handled: true, node }
+        const equalSize = 100 / node.children.length
+        return {
+          handled: true,
+          node: { ...node, sizes: node.children.map(() => equalSize) },
+        }
       }
       const children = [...node.children]
-      const sizes = [...node.sizes]
       const [source] = children.splice(sourceIndex, 1)
-      const [sourceSize] = sizes.splice(sourceIndex, 1)
       const nextParentIndex = children.findIndex(
         (child) =>
           child._tag === 'WorkspaceTileLeaf' &&
           child.workspaceId === parentWorkspaceId
       )
-      if (source === undefined || sourceSize === undefined) {
+      if (source === undefined) {
         return { handled: false, node }
       }
       children.splice(nextParentIndex + 1, 0, source)
-      sizes.splice(nextParentIndex + 1, 0, sourceSize)
-      return { handled: true, node: { ...node, children, sizes } }
+      const equalSize = 100 / children.length
+      return {
+        handled: true,
+        node: { ...node, children, sizes: children.map(() => equalSize) },
+      }
     }
   }
   for (const [index, child] of node.children.entries()) {
@@ -1125,8 +1120,8 @@ function usableSize(measuredPx: number, minimumPx: number): number {
  *
  * Columns are filled top to bottom before another column is opened: the
  * result is the fewest columns that still give every frame
- * `minTileHeightPx` of height, so 6 workspaces in a 3-row-tall area
- * become 2 columns of 3 rather than 3 columns of 2.
+ * `minTileHeightPx` of height, up to four rows per column, so 6 workspaces
+ * in a tall area still become 2 columns of 3 rather than one long stack.
  *
  * Width is the ceiling on that answer — no more columns than fit at
  * `minColumnWidthPx` — and there is never more than one column per
@@ -1141,7 +1136,13 @@ function computeCleanUpColumnCount(
   const width = usableSize(area.widthPx, minColumnWidthPx)
   const height = usableSize(area.heightPx, minTileHeightPx)
 
-  const rowsPerColumn = Math.max(1, Math.floor(height / minTileHeightPx))
+  const rowsPerColumn = Math.max(
+    1,
+    Math.min(
+      MAX_WORKSPACE_ROWS_PER_COLUMN,
+      Math.floor(height / minTileHeightPx)
+    )
+  )
   const columnsForHeight = Math.ceil(count / rowsPerColumn)
   const columnsForWidth = Math.max(1, Math.floor(width / minColumnWidthPx))
 
@@ -1152,8 +1153,8 @@ function computeCleanUpColumnCount(
  * Repack a window tab's workspaces into balanced columns that respect
  * both a minimum column width and a minimum frame height.
  *
- * Columns fill vertically first — a taller area means taller stacks, not
- * more columns — and the content width caps how many columns may exist.
+ * Columns fill vertically first, up to four workspaces per column, and the
+ * content width caps how many columns may exist.
  * Workspaces are distributed evenly in reading order (top to bottom,
  * left to right), with row heights and column widths equalized.
  *

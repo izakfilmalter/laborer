@@ -202,7 +202,9 @@ describe('addWorkspaceToTab', () => {
       'ws-sibling',
     ])
     expect((newRoot.children[0] as WorkspaceTileSplit).sizes).toEqual([
-      10, 10, 80,
+      100 / 3,
+      100 / 3,
+      100 / 3,
     ])
     expect(newRoot.children[1]).toBe(otherColumn)
   })

@@ -11,7 +11,7 @@
 
 import type { PullRequestConversation } from '@laborer/shared/rpc'
 import { RpcError } from '@laborer/shared/rpc'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { Option } from 'effect'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -44,6 +44,9 @@ vi.mock('@laborer/ui/lib/haptics', async () => {
 const { CommentsPane, POLL_INTERVAL_MS } = await import('@/panes/comments-pane')
 const { GitHubConversationPreview } = await import(
   '@/components/github-conversation-hover-card'
+)
+const { GitHubPrStatusBadge } = await import(
+  '@/components/github-pr-status-badge'
 )
 
 const conversation = (
@@ -143,6 +146,29 @@ describe('a read that succeeds', () => {
 })
 
 describe('the task-card conversation preview', () => {
+  it('opens promptly when the comment segment is hovered', () => {
+    vi.useFakeTimers()
+    currentResult = Result.success(conversation())
+
+    render(
+      <GitHubPrStatusBadge
+        conversationWorkspaceId="ws-1"
+        onOpenConversation={vi.fn()}
+        prNumber={42}
+        prState="OPEN"
+        prTitle="Restore the pull request conversation"
+        prUrl="https://github.com/o/r/pull/1"
+        unresolvedThreads={1}
+      />
+    )
+
+    fireEvent.mouseEnter(screen.getByLabelText('1 unresolved conversation'))
+    act(() => vi.advanceTimersByTime(200))
+    vi.useRealTimers()
+
+    expect(screen.getByText('Looks good to me.')).toBeTruthy()
+  })
+
   it('shows the newest remarks first without mounting the full pane', () => {
     const comments = Array.from({ length: 5 }, (_, index) => ({
       ...conversation().comments[0],

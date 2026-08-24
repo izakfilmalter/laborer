@@ -119,6 +119,14 @@ describe('unresolved conversations on the pull request badge', () => {
     expect(clicked).toBe(true)
   })
 
+  it('does not cover the comment segment with a tooltip', () => {
+    renderBadge(2)
+
+    expect(
+      screen.getByLabelText(ANY_UNRESOLVED).getAttribute('data-slot')
+    ).not.toBe('tooltip-trigger')
+  })
+
   it('does not leak the referrer to the pages it opens', () => {
     renderBadge(2)
 

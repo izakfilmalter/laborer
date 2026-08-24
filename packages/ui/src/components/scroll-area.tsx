@@ -28,7 +28,11 @@ export function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         className={cn(
-          'h-full rounded-[inherit] outline-none transition-shadows focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+          // `max-h-[inherit]` lets a caller cap the root with `max-h-*` and
+          // have the viewport — the element that actually scrolls — respect
+          // that cap. Without it the viewport grows past the clipped root and
+          // the overflow is unreachable.
+          'h-full max-h-[inherit] rounded-[inherit] outline-none transition-shadows focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
           overscrollContain &&
             'data-has-overflow-y:overscroll-y-contain data-has-overflow-x:overscroll-x-contain',
           scrollFade &&

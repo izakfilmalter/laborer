@@ -38,6 +38,7 @@ import {
 } from 'lucide-react'
 import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
+import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { TaskIdentifier } from '@/components/task-identifier'
@@ -194,37 +195,49 @@ function TreeToggleButton({
  * Disabled without a pull request, because the conversation it opens does
  * not exist yet — the tooltip says so rather than letting the pane explain
  * it after the fact.
+ *
+ * Once a pull request exists the hover shows the conversation itself instead
+ * of a tooltip naming the button, matching the PR status badge: the same
+ * preview answers "anything new?" without opening the pane, and the label
+ * still lives on the button for assistive technology.
  */
 function CommentsToggleButton({
   commentsIsOpen,
   disabled,
   hasPullRequest,
   onClick,
+  workspaceId,
 }: {
   readonly commentsIsOpen: boolean
   readonly disabled: boolean
   readonly hasPullRequest: boolean
   readonly onClick: () => void
+  readonly workspaceId: string | undefined
 }) {
   const label = commentsIsOpen ? 'Close PR comments' : 'Open PR comments'
+  const button = (
+    <Button
+      aria-label={label}
+      aria-pressed={commentsIsOpen}
+      className={commentsIsOpen ? 'bg-accent text-foreground' : ''}
+      disabled={disabled || !hasPullRequest}
+      onClick={onClick}
+      size="icon-sm"
+      variant="ghost"
+    >
+      <MessagesSquare className="size-3.5" />
+    </Button>
+  )
+
+  if (hasPullRequest && workspaceId !== undefined) {
+    return (
+      <GitHubConversationHoverCard trigger={button} workspaceId={workspaceId} />
+    )
+  }
 
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={label}
-            aria-pressed={commentsIsOpen}
-            className={commentsIsOpen ? 'bg-accent text-foreground' : ''}
-            disabled={disabled || !hasPullRequest}
-            onClick={onClick}
-            size="icon-sm"
-            variant="ghost"
-          />
-        }
-      >
-        <MessagesSquare className="size-3.5" />
-      </TooltipTrigger>
+      <TooltipTrigger render={button} />
       <TooltipContent>
         {hasPullRequest ? label : 'No pull request yet'}
       </TooltipContent>
@@ -445,6 +458,7 @@ function WorkspaceFrameHeader({
               onClick={withFocus((paneId) =>
                 actions?.toggleCommentsPane?.(paneId)
               )}
+              workspaceId={workspaceId}
             />
             <Tooltip>
               <TooltipTrigger

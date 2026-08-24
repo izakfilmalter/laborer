@@ -20,7 +20,7 @@ export function TaskIdentifier({
   const identifier = formatTaskIdentifier(projectShortName, taskNumber)
   return (
     <Badge
-      className="shrink-0 font-mono text-[10px] text-muted-foreground"
+      className="h-6 shrink-0 font-mono text-[10px] text-muted-foreground"
       data-task-identifier={identifier}
       data-task-project-id={projectId}
       variant="outline"

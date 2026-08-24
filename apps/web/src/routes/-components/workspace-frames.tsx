@@ -1307,6 +1307,7 @@ function WorkspaceTileSplitGroup({
   }, [])
 
   // Apply layout changes whenever minimize state changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `minimizedIds` is the trigger, not a value the body reads — the layout is applied from refs whenever minimize state changes.
   useEffect(() => {
     applyMinimizedLayout()
   }, [applyMinimizedLayout, minimizedIds])

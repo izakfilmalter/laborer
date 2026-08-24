@@ -157,6 +157,7 @@ export function ResizablePanelGroup({
   // Rebuild the layout from panel defaults whenever the panel set changes.
   // This mirrors react-resizable-panels: layouts are cached per panel-id-set,
   // so a new set falls back to defaultSize props.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `version` is the trigger, not a value the body reads — it forces a recheck of panelsRef after each render.
   useEffect(() => {
     const panels = panelsRef.current
     const key = panels.map((p) => p.id).join(',')

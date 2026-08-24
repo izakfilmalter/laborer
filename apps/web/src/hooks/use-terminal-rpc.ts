@@ -370,6 +370,7 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
     attachHistoryRef.current = createAttachHistory()
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `screenRebuilds` is the trigger, not a value the body reads — a rebuilt screen needs a fresh attach to redraw onto the new canvas.
   useEffect(() => {
     if (runtimeResult._tag !== 'Success') {
       return

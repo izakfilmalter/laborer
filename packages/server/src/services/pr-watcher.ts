@@ -7,8 +7,9 @@
  * (no API tokens needed in the app).
  *
  * Adaptive polling based on panel visibility:
- * - 5s when workspace has an open panel (responsive)
- * - 30s when workspace has no open panel (background)
+ * - 60s when workspace has an open panel (GitHub's API max-age is 60s,
+ *   so faster polls only re-read cached responses)
+ * - 5min when workspace has no open panel (background)
  *
  * Responsibilities:
  * - Read PR identity, mergeability, and check-rollup facts through `gh`
@@ -376,7 +377,7 @@ const loadLocalMergeData = Effect.fn('PrWatcher.loadLocalMergeData')(function* (
  * read did not produce an answer.
  *
  * A failure is a value here rather than an error because the caller holds the
- * last known counts: on a five-second poll, one refused request would
+ * last known counts: on a recurring poll, one refused request would
  * otherwise make the badge blink out and back. It is logged at debug because
  * the same request repeats every tick, so a lasting fault — a revoked token,
  * an exhausted GraphQL budget — would fill the log with one line per attempt
@@ -473,8 +474,8 @@ class PrWatcher extends Context.Service<
     /**
      * Start polling PR status for a workspace.
      *
-     * Uses adaptive polling: 5s when workspace has an open panel,
-     * 30s when running in background (no open panel).
+     * Uses adaptive polling: 60s when workspace has an open panel,
+     * 5min when running in background (no open panel).
      * Calling on an already-polled workspace is a no-op.
      *
      * @param workspaceId - ID of the workspace to poll
@@ -529,8 +530,8 @@ class PrWatcher extends Context.Service<
       // Last review facts read per workspace, keyed by the PR revision they
       // were read for. GraphQL spends from a budget of its own and honours no
       // conditional request, so unlike `gh pr view` there is no cheap way to
-      // ask again; a visible workspace polling every five seconds would spend
-      // 720 of the 5 000 hourly points on questions whose answer cannot have
+      // ask again; a visible workspace polling every minute would spend 60 of
+      // the 5 000 hourly points on questions whose answer cannot have
       // changed. `updatedAt` moves whenever anything on the pull request
       // does, including a review comment, so an unchanged one means the
       // previous count still stands. Kept in memory rather than persisted:

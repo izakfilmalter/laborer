@@ -14,7 +14,12 @@ import {
 } from './native-laborer-database.js'
 import { inspectTaskWorktree } from './task-worktree.js'
 
-export const SHARED_STATE_POLL_INTERVAL_MS = 350
+/**
+ * Cross-process safety net only. Same-process writes wake readers
+ * immediately via `onLaborerDatabaseWrite`, so this interval only bounds
+ * how stale another process's write can appear; 2 s keeps the timer cheap.
+ */
+export const SHARED_STATE_POLL_INTERVAL_MS = 2000
 
 const readError = (cause: unknown) =>
   new RpcError({

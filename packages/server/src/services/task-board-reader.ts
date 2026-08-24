@@ -5,7 +5,13 @@ import { Duration, Effect, Result, Schedule, Stream } from 'effect'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import { inspectTaskWorktree } from './task-worktree.js'
 
-const DEFAULT_POLL_INTERVAL = Duration.millis(350)
+/**
+ * Safety-net cadence, not the interactive path. Same-process writes reach
+ * clients immediately through the wakeup-driven shared-state stream
+ * (`subscribeToSharedState`); this ledger tail only bounds how stale a
+ * cross-process write can appear, so 2 s keeps the timer cheap.
+ */
+const DEFAULT_POLL_INTERVAL = Duration.millis(2000)
 
 const boardReadError = (cause: unknown) =>
   new RpcError({

@@ -163,10 +163,12 @@ function BrowserServerGate({ children }: { readonly children: ReactNode }) {
         aria-live="polite"
         className="flex flex-col items-center gap-3 text-center"
       >
-        <Loader2
+        <span
           aria-hidden="true"
-          className="size-8 animate-spin text-muted-foreground motion-reduce:animate-none"
-        />
+          className="inline-flex size-8 animate-spin text-muted-foreground motion-reduce:animate-none"
+        >
+          <Loader2 className="size-full" />
+        </span>
         <h2 className="font-medium text-lg">
           {unreachable ? 'Can’t reach the daemon' : 'Starting daemon'}
         </h2>

@@ -736,7 +736,9 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
 
       {isTransitionPending && (
         <div className="absolute top-10 left-2 z-10 flex items-center gap-1.5 rounded-md bg-muted/90 px-2 py-1 text-muted-foreground text-xs backdrop-blur-sm">
-          <RefreshCw className="h-3 w-3 animate-spin" />
+          <span className="inline-flex h-3 w-3 animate-spin">
+            <RefreshCw className="size-full" />
+          </span>
           Updating...
         </div>
       )}

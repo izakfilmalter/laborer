@@ -6,10 +6,10 @@
  * authentication is handled by the user's existing GitHub login
  * (no API tokens needed in the app).
  *
- * Adaptive polling based on panel visibility:
- * - 60s when workspace has an open panel (GitHub's API max-age is 60s,
- *   so faster polls only re-read cached responses)
- * - 5min when workspace has no open panel (background)
+ * Adaptive polling based on panel visibility and power profile
+ * (see polling-intervals.ts and power-profile.ts):
+ * - battery-saver (default): 60s visible / 5min background
+ * - performance (on AC power): 5s visible / 60s background
  *
  * Responsibilities:
  * - Read PR identity, mergeability, and check-rollup facts through `gh`
@@ -36,8 +36,9 @@ import {
 import {
   PR_BACKGROUND_POLL_INTERVAL_MS,
   PR_REVIEW_THREADS_TIMEOUT_MS,
-  PR_VISIBLE_POLL_INTERVAL_MS,
+  prPollIntervalsForProfile,
 } from './polling-intervals.js'
+import { PowerProfileService } from './power-profile.js'
 import { PrTaskTransitions } from './pr-task-transitions.js'
 import { fetchPullRequestReviewSummary } from './pull-request-comments.js'
 import { getVisibleWorkspaceIds } from './visible-workspaces.js'
@@ -517,6 +518,7 @@ class PrWatcher extends Context.Service<
     Effect.gen(function* () {
       const laborerDatabase = yield* LaborerDatabase
       const taskTransitions = yield* PrTaskTransitions
+      const powerProfile = yield* PowerProfileService
 
       // Track active polling fibers per workspace.
       const pollingFibers = yield* Ref.make<
@@ -856,14 +858,18 @@ class PrWatcher extends Context.Service<
           return
         }
 
-        // Adaptive polling: check visibility on each tick and sleep
-        // for the appropriate interval.
+        // Adaptive polling: check visibility and power profile on each
+        // tick and sleep for the appropriate interval. Reading the
+        // profile per iteration means a profile change takes effect on
+        // the next tick without touching the scheduling machinery.
         const pollEffect = Effect.gen(function* () {
           const visibleWorkspaces = getVisibleWorkspaceIds()
           const isVisible = visibleWorkspaces.has(workspaceId)
+          const profile = yield* powerProfile.getProfile
+          const intervals = prPollIntervalsForProfile(profile)
           const interval = isVisible
-            ? PR_VISIBLE_POLL_INTERVAL_MS
-            : PR_BACKGROUND_POLL_INTERVAL_MS
+            ? intervals.visibleMs
+            : intervals.backgroundMs
 
           yield* checkPr(workspaceId).pipe(
             Effect.catchCause((cause) =>
@@ -889,7 +895,7 @@ class PrWatcher extends Context.Service<
         })
 
         yield* Effect.log(
-          `[PrWatcher] started polling for workspace ${workspaceId} (adaptive: ${PR_VISIBLE_POLL_INTERVAL_MS}ms visible / ${PR_BACKGROUND_POLL_INTERVAL_MS}ms background)`
+          `[PrWatcher] started polling for workspace ${workspaceId} (adaptive by panel visibility and power profile)`
         )
       })
 

@@ -4,6 +4,7 @@ import { TestClock } from 'effect/testing'
 import { LaborerDatabase } from '../src/services/laborer-database.js'
 import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PR_BACKGROUND_POLL_INTERVAL_MS } from '../src/services/polling-intervals.js'
+import { PowerProfileService } from '../src/services/power-profile.js'
 import { PrTaskTransitions } from '../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
 import { waitFor } from './helpers/timing-helpers.js'
@@ -59,6 +60,7 @@ const buildPrWatcher = (databaseContext: Context.Context<LaborerDatabase>) =>
   Effect.gen(function* () {
     const prWatcherContext = yield* Layer.build(
       PrWatcher.layer.pipe(
+        Layer.provide(PowerProfileService.layer),
         Layer.provide(PrTaskTransitions.noopLayer),
         Layer.provide(Layer.succeedContext(databaseContext))
       )

@@ -27,6 +27,7 @@ import {
   LaborerDatabase,
   LaborerDatabaseLive,
 } from './services/laborer-database.js'
+import { PowerProfileService } from './services/power-profile.js'
 import { PrTaskTransitions } from './services/pr-task-transitions.js'
 import { PrWatcher } from './services/pr-watcher.js'
 import { ProjectRegistry } from './services/project-registry.js'
@@ -123,12 +124,14 @@ const makeDeferredServicesProxyLayer = <
         const config = yield* ConfigService
         const repoId = yield* RepositoryIdentity
         const ready = yield* DeferredServicesReady
+        const powerProfile = yield* PowerProfileService
 
         const CoreDeps = Layer.mergeAll(
           Layer.succeed(LaborerDatabase, laborerDatabase),
           Layer.succeed(ConfigService, config),
           Layer.succeed(RepositoryIdentity, repoId),
-          Layer.succeed(DeferredServicesReady, ready)
+          Layer.succeed(DeferredServicesReady, ready),
+          Layer.succeed(PowerProfileService, powerProfile)
         )
 
         yield* Effect.logInfo('[deferred-init] Building leaf layers...')
@@ -227,6 +230,7 @@ const provideInfrastructureCore = <ROut, RIn>(
 ) =>
   layer.pipe(
     Layer.provideMerge(DeferredServicesReadyLayer),
+    Layer.provideMerge(PowerProfileService.layer),
     Layer.provideMerge(ConfigService.layer),
     Layer.provideMerge(RepositoryIdentity.layer),
     Layer.provideMerge(LaborerDatabaseLive.pipe(Layer.orDie))

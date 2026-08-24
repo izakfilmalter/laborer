@@ -29,6 +29,7 @@ import {
   COALESCE_WINDOW_MS_DEFAULT,
   type CoalescingDataHandler,
   createCoalescingDataHandler,
+  createRuntimeCoalesceWindow,
 } from '../lib/coalescing-data-handler.js'
 import type {
   CrashCallback,
@@ -145,10 +146,19 @@ const directLayer = Layer.effect(
       'TERMINAL_FLOW_RESUME_CHARS',
       TERMINAL_FLOW_RESUME_CHARS_DEFAULT
     )
-    const coalesceWindowMs = positiveIntegerFromEnv(
-      'TERMINAL_OUTPUT_COALESCE_MS',
-      COALESCE_WINDOW_MS_DEFAULT
+    // Runtime-switchable coalesce window (power profiles). An explicit
+    // TERMINAL_OUTPUT_COALESCE_MS override always wins over profile
+    // switching, so `set` becomes a no-op when the env var is present.
+    const envCoalesceWindowValue = Number(
+      process.env.TERMINAL_OUTPUT_COALESCE_MS
     )
+    const coalesceWindow = createRuntimeCoalesceWindow({
+      defaultMs: COALESCE_WINDOW_MS_DEFAULT,
+      envOverrideMs:
+        Number.isInteger(envCoalesceWindowValue) && envCoalesceWindowValue > 0
+          ? envCoalesceWindowValue
+          : undefined,
+    })
     const coalesceMaxBufferBytes = positiveIntegerFromEnv(
       'TERMINAL_OUTPUT_COALESCE_BYTES',
       COALESCE_MAX_BUFFER_BYTES_DEFAULT
@@ -241,7 +251,7 @@ const directLayer = Layer.effect(
           },
           {
             maxBufferBytes: coalesceMaxBufferBytes,
-            windowMs: coalesceWindowMs,
+            windowMs: coalesceWindow.get,
           }
         )
         coalescers.set(id, coalescer)
@@ -485,6 +495,10 @@ const directLayer = Layer.effect(
         } else {
           flowControlConsumerCounts.set(id, next)
         }
+      },
+
+      setOutputCoalesceWindowMs: (windowMs: number) => {
+        coalesceWindow.set(windowMs)
       },
 
       onCrash: (callback: CrashCallback) => {

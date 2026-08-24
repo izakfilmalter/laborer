@@ -388,6 +388,12 @@ export const ptyHostProxyLayer = Layer.effect(
       let heartbeatUnresponsiveTimer: ProcessTimeTimeout | undefined
       let recoveryPromise: Promise<void> | undefined
       let disposed = false
+      /**
+       * Last runtime coalesce window pushed through this proxy. A freshly
+       * respawned host starts from its env/default window, so recovery
+       * re-pushes the daemon's power-profile choice after reattaching.
+       */
+      let lastCoalesceWindowMs: number | undefined
 
       const cancelHeartbeatTimers = (): void => {
         heartbeatWarnTimer?.cancel()
@@ -632,6 +638,11 @@ export const ptyHostProxyLayer = Layer.effect(
               const ensured = await ensurePtyHost(expectedVersion)
               await attachSocket(ensured)
               await reattach()
+              if (lastCoalesceWindowMs !== undefined) {
+                await request('setOutputCoalesceWindow', [
+                  lastCoalesceWindowMs,
+                ]).catch(() => undefined)
+              }
               return
             } catch (error) {
               lastError = error
@@ -768,6 +779,11 @@ export const ptyHostProxyLayer = Layer.effect(
           remote('setObservedWorkspaces', [[...workspaceIds]]).pipe(
             Effect.orElseSucceed(() => undefined)
           ),
+        setOutputCoalesceWindowMs: (windowMs) =>
+          Effect.suspend(() => {
+            lastCoalesceWindowMs = windowMs
+            return remote<void>('setOutputCoalesceWindow', [windowMs])
+          }),
         reportWorkspacePresence: (clientId, sequence, workspaceIds) =>
           remote('reportWorkspacePresence', [
             clientId,

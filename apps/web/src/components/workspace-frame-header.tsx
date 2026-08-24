@@ -250,6 +250,136 @@ function CommentsToggleButton({
   )
 }
 
+/**
+ * Action buttons shown only while the frame is expanded: card actions
+ * (sub-workspace, edit card), pane toggles, and close-workspace.
+ */
+function ExpandedFrameActions({
+  actions,
+  branchName,
+  commentsIsOpen,
+  diffIsOpen,
+  hasActivePane,
+  prNumber,
+  projectId,
+  projectName,
+  taskBackedWorkspaceId,
+  treeIsOpen,
+  withFocus,
+  workspaceId,
+}: {
+  readonly actions: PanelActions | null
+  readonly branchName: string | undefined
+  readonly commentsIsOpen: boolean
+  readonly diffIsOpen: boolean
+  readonly hasActivePane: boolean
+  readonly prNumber: number | null
+  readonly projectId: string | undefined
+  readonly projectName: string | undefined
+  readonly taskBackedWorkspaceId: string | null
+  readonly treeIsOpen: boolean
+  readonly withFocus: (fn: (paneId: string) => void) => () => void
+  readonly workspaceId: string | undefined
+}) {
+  return (
+    <>
+      {/* The card's own actions, on the frame doing its work: branch off
+          this workspace, and read or edit the card describing it. */}
+      {taskBackedWorkspaceId && projectId && projectName && branchName ? (
+        <>
+          <CreateWorkspaceForm
+            baseWorkspace={{ id: taskBackedWorkspaceId, branchName }}
+            projectId={projectId}
+            projectName={projectName}
+            trigger={
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <DialogTrigger
+                      render={
+                        <Button
+                          aria-label={`Create sub-workspace from ${branchName}`}
+                          size="icon-sm"
+                          variant="ghost"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <GitBranchPlus className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  Create sub-workspace from this branch
+                </TooltipContent>
+              </Tooltip>
+            }
+          />
+          <EditTaskCardButton
+            branchName={branchName}
+            size="icon-sm"
+            workspaceId={taskBackedWorkspaceId}
+          />
+        </>
+      ) : null}
+      <TreeToggleButton
+        disabled={!hasActivePane}
+        onClick={withFocus((paneId) => actions?.toggleTreePane(paneId))}
+        treeIsOpen={treeIsOpen}
+      />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label={diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
+              aria-pressed={diffIsOpen}
+              className={diffIsOpen ? 'bg-accent text-foreground' : ''}
+              disabled={!hasActivePane}
+              onClick={withFocus((paneId) => actions?.toggleDiffPane(paneId))}
+              size="icon-sm"
+              variant="ghost"
+            />
+          }
+        >
+          <FileCode2 className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipContent>
+          {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
+          <KbdGroup>
+            <Kbd>^</Kbd>
+            <Kbd>B</Kbd>
+            <Kbd>D</Kbd>
+          </KbdGroup>
+        </TooltipContent>
+      </Tooltip>
+      <CommentsToggleButton
+        commentsIsOpen={commentsIsOpen}
+        disabled={!hasActivePane}
+        hasPullRequest={prNumber !== null && prNumber !== undefined}
+        onClick={withFocus((paneId) => actions?.toggleCommentsPane?.(paneId))}
+        workspaceId={workspaceId}
+      />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="Close workspace"
+              disabled={!workspaceId}
+              onClick={() =>
+                workspaceId && actions?.closeWorkspace(workspaceId)
+              }
+              size="icon-sm"
+              variant="ghost"
+            />
+          }
+        >
+          <X className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipContent>Close workspace</TooltipContent>
+      </Tooltip>
+    </>
+  )
+}
+
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
@@ -427,107 +557,20 @@ function WorkspaceFrameHeader({
       </div>
       <div className="flex gap-0.5">
         {!isMinimized && (
-          <>
-            {/* The card's own actions, on the frame doing its work: branch off
-                this workspace, and read or edit the card describing it. */}
-            {taskBackedWorkspaceId && projectId && projectName && branchName ? (
-              <>
-                <CreateWorkspaceForm
-                  baseWorkspace={{ id: taskBackedWorkspaceId, branchName }}
-                  projectId={projectId}
-                  projectName={projectName}
-                  trigger={
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <DialogTrigger
-                            render={
-                              <Button
-                                aria-label={`Create sub-workspace from ${branchName}`}
-                                size="icon-sm"
-                                variant="ghost"
-                              />
-                            }
-                          />
-                        }
-                      >
-                        <GitBranchPlus className="size-3.5" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Create sub-workspace from this branch
-                      </TooltipContent>
-                    </Tooltip>
-                  }
-                />
-                <EditTaskCardButton
-                  branchName={branchName}
-                  size="icon-sm"
-                  workspaceId={taskBackedWorkspaceId}
-                />
-              </>
-            ) : null}
-            <TreeToggleButton
-              disabled={!hasActivePane}
-              onClick={withFocus((paneId) => actions?.toggleTreePane(paneId))}
-              treeIsOpen={treeIsOpen}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label={
-                      diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'
-                    }
-                    aria-pressed={diffIsOpen}
-                    className={diffIsOpen ? 'bg-accent text-foreground' : ''}
-                    disabled={!hasActivePane}
-                    onClick={withFocus((paneId) =>
-                      actions?.toggleDiffPane(paneId)
-                    )}
-                    size="icon-sm"
-                    variant="ghost"
-                  />
-                }
-              >
-                <FileCode2 className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>
-                {diffIsOpen ? 'Close diff viewer' : 'Open diff viewer'}
-                <KbdGroup>
-                  <Kbd>^</Kbd>
-                  <Kbd>B</Kbd>
-                  <Kbd>D</Kbd>
-                </KbdGroup>
-              </TooltipContent>
-            </Tooltip>
-            <CommentsToggleButton
-              commentsIsOpen={commentsIsOpen}
-              disabled={!hasActivePane}
-              hasPullRequest={prNumber !== null && prNumber !== undefined}
-              onClick={withFocus((paneId) =>
-                actions?.toggleCommentsPane?.(paneId)
-              )}
-              workspaceId={workspaceId}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Close workspace"
-                    disabled={!workspaceId}
-                    onClick={() =>
-                      workspaceId && actions?.closeWorkspace(workspaceId)
-                    }
-                    size="icon-sm"
-                    variant="ghost"
-                  />
-                }
-              >
-                <X className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipContent>Close workspace</TooltipContent>
-            </Tooltip>
-          </>
+          <ExpandedFrameActions
+            actions={actions}
+            branchName={branchName}
+            commentsIsOpen={commentsIsOpen}
+            diffIsOpen={diffIsOpen}
+            hasActivePane={hasActivePane}
+            prNumber={prNumber}
+            projectId={projectId}
+            projectName={projectName}
+            taskBackedWorkspaceId={taskBackedWorkspaceId}
+            treeIsOpen={treeIsOpen}
+            withFocus={withFocus}
+            workspaceId={workspaceId}
+          />
         )}
         <Tooltip>
           <TooltipTrigger

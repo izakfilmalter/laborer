@@ -15,6 +15,7 @@ export type PtyHostMethod =
   | 'shutdownIfEmpty'
   | 'setAgentStatusFromHook'
   | 'setObservedWorkspaces'
+  | 'setOutputCoalesceWindow'
   | 'reportWorkspacePresence'
   | 'spawn'
   | 'terminalExists'

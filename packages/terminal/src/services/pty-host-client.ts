@@ -90,6 +90,15 @@ class PtyHostClient extends Context.Service<
     readonly detachFlowControlConsumer: (id: string) => void
 
     /**
+     * Set the output coalesce window for all current and future
+     * terminals. Ignored while an explicit `TERMINAL_OUTPUT_COALESCE_MS`
+     * environment override is present. A pending flush scheduled under
+     * the old window completes as scheduled; only subsequent scheduling
+     * uses the new window.
+     */
+    readonly setOutputCoalesceWindowMs: (windowMs: number) => void
+
+    /**
      * Register a callback that is invoked when the PTY host
      * crashes or exits unexpectedly.
      */

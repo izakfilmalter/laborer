@@ -139,10 +139,11 @@ interface PanelActions {
   readonly closeTerminalPane: (terminalId: string) => void
 
   /**
-   * Close the active window tab.
-   * Triggered by Cmd+Shift+W.
+   * Close a window tab. Defaults to the active tab for keyboard shortcuts.
+   *
+   * @param tabId - The window tab to close, or the active tab when omitted
    */
-  readonly closeWindowTab: (() => void) | undefined
+  readonly closeWindowTab: ((tabId?: string) => void) | undefined
   /**
    * Close all panes belonging to a workspace, killing their terminals.
    *

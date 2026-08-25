@@ -18,7 +18,7 @@ import { useCallback, useMemo } from 'react'
 import { CloseWindowTabShortcutHint } from '@/components/close-shortcut-hint'
 
 interface WindowTabBarProps {
-  readonly onCloseTab: (() => void) | undefined
+  readonly onCloseTab: ((tabId: string) => void) | undefined
   readonly onNewTab: (() => void) | undefined
   readonly onRenameTab: ((tabId: string, label: string) => void) | undefined
   readonly onReorderTabs:
@@ -71,9 +71,12 @@ function WindowTabBar({
     })
   }, [windowLayout])
 
-  const handleClose = useCallback(() => {
-    onCloseTab?.()
-  }, [onCloseTab])
+  const handleClose = useCallback(
+    (tabId: string) => {
+      onCloseTab?.(tabId)
+    },
+    [onCloseTab]
+  )
 
   const handleNew = useCallback(() => {
     onNewTab?.()
@@ -157,7 +160,7 @@ export function PanelHeaderBar({
   readonly sidebarCollapsed?: boolean
   readonly windowLayout?: WindowLayout | undefined
   readonly onSelectWindowTab?: ((tabId: string) => void) | undefined
-  readonly onCloseWindowTab?: (() => void) | undefined
+  readonly onCloseWindowTab?: ((tabId: string) => void) | undefined
   readonly onNewWindowTab?: (() => void) | undefined
   readonly onRenameWindowTab?:
     | ((tabId: string, label: string) => void)

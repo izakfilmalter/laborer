@@ -165,6 +165,22 @@ const makeWindowLayout = (
   ],
 })
 
+const makeTwoWindowTabLayout = (): WindowLayout => ({
+  activeTabId: 'window-tab-active',
+  tabs: [
+    {
+      ...makeWindowLayout('pane-active', 'workspace-active').tabs[0],
+      id: 'window-tab-active',
+      label: 'Active',
+    },
+    {
+      ...makeWindowLayout('pane-inactive', 'workspace-inactive').tabs[0],
+      id: 'window-tab-inactive',
+      label: 'Inactive',
+    },
+  ],
+})
+
 const readStoredWindowLayout = (windowId: string): unknown =>
   panelLayoutCollection.get(windowId)?.windowLayout
 
@@ -344,6 +360,26 @@ describe('usePanelLayout', () => {
       expect(
         (readStoredWindowLayout('window-a') as WindowLayout).activeTabId
       ).toBe('window-tab-pane-window-a')
+    })
+  })
+
+  it('closes a requested inactive window tab without closing the active tab', async () => {
+    writeStoredWindowLayout('window-a', makeTwoWindowTabLayout())
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    await waitFor(() => {
+      expect(result.current.panelActions.windowLayout?.tabs).toHaveLength(2)
+    })
+
+    act(() => {
+      result.current.panelActions.closeWindowTab?.('window-tab-inactive')
+    })
+
+    await waitFor(() => {
+      const stored = readStoredWindowLayout('window-a') as WindowLayout
+      expect(stored.activeTabId).toBe('window-tab-active')
+      expect(stored.tabs.map(({ id }) => id)).toEqual(['window-tab-active'])
     })
   })
 

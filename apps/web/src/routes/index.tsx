@@ -35,9 +35,7 @@ import { localApi } from '@/lib/local-api'
 import { DiffScrollProvider } from '@/panels/diff-scroll-context'
 import {
   PanelActionsProvider,
-  type PendingClosePanelTabState,
   type PendingCloseState,
-  type PendingCloseWindowTabState,
   type PendingCloseWorkspaceState,
   type PendingDestroyOnCloseWorkspaceState,
   type PendingPickerState,
@@ -54,8 +52,6 @@ import {
   getActiveTabLeafNodes,
   getActiveWindowTab,
   resolveActiveWorkspaceId,
-  shouldConfirmClosePanelTab,
-  shouldConfirmCloseWindowTab,
 } from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
 import {
@@ -66,6 +62,7 @@ import { PanelContent } from './-components/panel-content'
 import { PanelHeaderBar } from './-components/panel-header-bar'
 import { WelcomeEmptyState } from './-components/welcome-empty-state'
 import { usePanelLayout } from './-hooks/use-panel-layout'
+import { useTabCloseConfirmations } from './-hooks/use-tab-close-confirmations'
 import { useWorkspacePanelVisibility } from './-hooks/use-workspace-panel-visibility'
 
 /**
@@ -549,98 +546,12 @@ function HomeComponent() {
     setPendingCloseWorkspaceId(null)
   }, [])
 
-  // Close-panel-tab confirmation state — shown when the progressive
-  // close chain attempts to close a panel tab that has running processes.
-  const [pendingClosePanelTab, setPendingClosePanelTab] = useState<{
-    workspaceId: string
-    tabId: string
-  } | null>(null)
-
-  /**
-   * Gated removePanelTab that checks if any terminal in the panel tab has
-   * a running child process. Shows a confirmation dialog when there are
-   * active processes.
-   */
-  const gatedRemovePanelTab = useCallback(
-    (workspaceId: string, tabId: string) => {
-      const windowLayout = panelActions.windowLayout
-      if (!windowLayout) {
-        panelActions.removePanelTab?.(workspaceId, tabId)
-        return
-      }
-      // Find the workspace tile leaf and panel tab
-      const activeTab = getActiveWindowTab(windowLayout)
-      if (!activeTab?.workspaceLayout) {
-        panelActions.removePanelTab?.(workspaceId, tabId)
-        return
-      }
-      const leaves = getWorkspaceTileLeaves(activeTab.workspaceLayout)
-      const leaf = leaves.find((l) => l.workspaceId === workspaceId)
-      const panelTab = leaf?.panelTabs.find((t) => t.id === tabId)
-      if (panelTab && shouldConfirmClosePanelTab(panelTab, liveTerminals)) {
-        setPendingClosePanelTab({ workspaceId, tabId })
-        return
-      }
-      panelActions.removePanelTab?.(workspaceId, tabId)
-    },
-    [panelActions, liveTerminals]
-  )
-
-  const handleConfirmClosePanelTab = useCallback(() => {
-    if (!pendingClosePanelTab) {
-      return
-    }
-
-    panelActions.removePanelTab?.(
-      pendingClosePanelTab.workspaceId,
-      pendingClosePanelTab.tabId
-    )
-    setPendingClosePanelTab(null)
-  }, [panelActions, pendingClosePanelTab])
-
-  const handleCancelClosePanelTab = useCallback(() => {
-    setPendingClosePanelTab(null)
-  }, [])
-
-  // Close-window-tab confirmation state — shown when closing a
-  // window tab that has terminals with running processes.
-  const [pendingCloseWindowTabId, setPendingCloseWindowTabId] = useState<
-    string | null
-  >(null)
-
-  /**
-   * Gated closeWindowTab that checks if any terminal across all workspaces
-   * in the window tab has a running child process.
-   */
-  const gatedCloseWindowTab = useCallback(() => {
-    const windowLayout = panelActions.windowLayout
-    if (!windowLayout) {
-      panelActions.closeWindowTab?.()
-      return
-    }
-    const activeTab = getActiveWindowTab(windowLayout)
-    if (activeTab && shouldConfirmCloseWindowTab(activeTab, liveTerminals)) {
-      setPendingCloseWindowTabId(activeTab.id)
-      return
-    }
-    panelActions.closeWindowTab?.()
-  }, [panelActions, liveTerminals])
-
-  const handleConfirmCloseWindowTab = useCallback(() => {
-    if (!pendingCloseWindowTabId) {
-      return
-    }
-
-    if (panelActions.windowLayout?.activeTabId !== pendingCloseWindowTabId) {
-      panelActions.switchWindowTab?.(pendingCloseWindowTabId)
-    }
-    panelActions.closeWindowTab?.()
-    setPendingCloseWindowTabId(null)
-  }, [panelActions, pendingCloseWindowTabId])
-
-  const handleCancelCloseWindowTab = useCallback(() => {
-    setPendingCloseWindowTabId(null)
-  }, [])
+  const {
+    closeWindowTab: gatedCloseWindowTab,
+    pendingClosePanelTab: pendingClosePanelTabState,
+    pendingCloseWindowTab: pendingCloseWindowTabState,
+    removePanelTab: gatedRemovePanelTab,
+  } = useTabCloseConfirmations(panelActions, liveTerminals)
 
   const pendingCloseWorkspaceState: PendingCloseWorkspaceState = useMemo(
     () => ({
@@ -652,33 +563,6 @@ function HomeComponent() {
       pendingCloseWorkspaceId,
       handleConfirmCloseWorkspace,
       handleCancelCloseWorkspace,
-    ]
-  )
-
-  const pendingClosePanelTabState: PendingClosePanelTabState = useMemo(
-    () => ({
-      workspaceId: pendingClosePanelTab?.workspaceId ?? null,
-      tabId: pendingClosePanelTab?.tabId ?? null,
-      onConfirm: handleConfirmClosePanelTab,
-      onCancel: handleCancelClosePanelTab,
-    }),
-    [
-      pendingClosePanelTab,
-      handleConfirmClosePanelTab,
-      handleCancelClosePanelTab,
-    ]
-  )
-
-  const pendingCloseWindowTabState: PendingCloseWindowTabState = useMemo(
-    () => ({
-      tabId: pendingCloseWindowTabId,
-      onConfirm: handleConfirmCloseWindowTab,
-      onCancel: handleCancelCloseWindowTab,
-    }),
-    [
-      pendingCloseWindowTabId,
-      handleConfirmCloseWindowTab,
-      handleCancelCloseWindowTab,
     ]
   )
 

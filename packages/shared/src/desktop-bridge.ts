@@ -1,3 +1,5 @@
+import { Option, Schema } from 'effect'
+
 /**
  * Context menu item definition for native context menus.
  */
@@ -123,9 +125,34 @@ export interface BeforeQuitPayload {
 }
 
 /** Main-to-renderer intent used for workspace and terminal click routing. */
-export interface WorkspaceActivationIntent {
-  readonly terminalId?: string
-  readonly workspaceId: string
+export const WorkspaceActivationIntentSchema = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literals(['open-agent-pane']),
+    initialPrompt: Schema.optional(Schema.String),
+    workspaceId: Schema.String,
+  }),
+  Schema.Struct({
+    terminalId: Schema.optional(Schema.String),
+    workspaceId: Schema.String,
+  }),
+])
+
+export type WorkspaceActivationIntent =
+  typeof WorkspaceActivationIntentSchema.Type
+
+export interface WorkspaceActivationRequest {
+  readonly action: 'open-agent-pane'
+  readonly initialPrompt?: string | undefined
+}
+
+const decodeWorkspaceActivation = Schema.decodeUnknownOption(
+  WorkspaceActivationIntentSchema
+)
+
+export function decodeWorkspaceActivationIntent(
+  value: unknown
+): WorkspaceActivationIntent | undefined {
+  return Option.getOrUndefined(decodeWorkspaceActivation(value))
 }
 
 /** Renderer-reported workspace metadata used only as notification context. */
@@ -165,7 +192,10 @@ export interface DesktopBridge {
    * Returns false when the workspace is only in the requesting window
    * or is not open in any window.
    */
-  focusWindowForWorkspace: (workspaceId: string) => Promise<boolean>
+  focusWindowForWorkspace: (
+    workspaceId: string,
+    intent?: WorkspaceActivationRequest
+  ) => Promise<boolean>
 
   /** Returns the current auto-update state. */
   getUpdateState: () => Promise<DesktopUpdateState>

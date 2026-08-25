@@ -8,10 +8,10 @@
  * carries its full sentence in a tooltip.
  *
  * When the project has saved a conflict prompt, the mark becomes the button
- * that clears the obstacle: it opens the workspace and starts a fresh agent on
- * that prompt, the same path a card takes when it is dragged into In Progress.
- * Without a prompt there is nothing to run, so the mark stays a plain status
- * mark rather than a button that does nothing.
+ * that clears the obstacle: it opens a fresh agent pane in the workspace's
+ * active panel tab and starts it on that prompt. Without a prompt there is
+ * nothing to run, so the mark stays a plain status mark rather than a button
+ * that does nothing.
  */
 
 import {
@@ -51,9 +51,9 @@ function ConflictActionMark({
 }) {
   const conflictPrompt = useProjectConflictPrompt(projectId)
   const panelActions = usePanelActions()
-  const openAgent = panelActions?.autoOpenAgentWhenWorkspaceReady
+  const openAgentPane = panelActions?.openAgentPaneForWorkspace
 
-  if (conflictPrompt === null || openAgent === undefined) {
+  if (conflictPrompt === null || openAgentPane === undefined) {
     return <ConflictStatusMark label={label} />
   }
 
@@ -71,7 +71,7 @@ function ConflictActionMark({
               // The mark lives inside cards and headers that activate on
               // click; running the prompt should not also move focus for us.
               event.stopPropagation()
-              openAgent(workspaceId, { initialPrompt: conflictPrompt })
+              openAgentPane(workspaceId, { initialPrompt: conflictPrompt })
             }}
             type="button"
           />
@@ -80,7 +80,7 @@ function ConflictActionMark({
         <GitCompareArrows aria-hidden="true" className="size-3" />
       </TooltipTrigger>
       <TooltipContent>
-        {`${label}. Run the project's conflict prompt in a new agent.`}
+        {`${label}. Run the project's conflict prompt in a new agent pane.`}
       </TooltipContent>
     </Tooltip>
   )

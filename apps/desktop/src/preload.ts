@@ -1,4 +1,7 @@
-import type { DesktopBridge } from '@laborer/shared/desktop-bridge'
+import {
+  type DesktopBridge,
+  decodeWorkspaceActivationIntent,
+} from '@laborer/shared/desktop-bridge'
 import { contextBridge, ipcRenderer } from 'electron'
 
 import { parseWindowBootstrapArgs } from './window-identity.js'
@@ -52,8 +55,8 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
 
-  focusWindowForWorkspace: (workspaceId) =>
-    ipcRenderer.invoke(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL, workspaceId),
+  focusWindowForWorkspace: (workspaceId, intent) =>
+    ipcRenderer.invoke(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL, workspaceId, intent),
 
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items, position),
@@ -69,22 +72,13 @@ contextBridge.exposeInMainWorld('desktopBridge', {
         listener({ workspaceId: payload })
         return
       }
-      if (
-        typeof payload !== 'object' ||
-        payload === null ||
-        !('workspaceId' in payload) ||
-        typeof payload.workspaceId !== 'string'
-      ) {
+      if (typeof payload !== 'object' || payload === null) {
         return
       }
-      const terminalId =
-        'terminalId' in payload && typeof payload.terminalId === 'string'
-          ? payload.terminalId
-          : undefined
-      listener({
-        ...(terminalId === undefined ? {} : { terminalId }),
-        workspaceId: payload.workspaceId,
-      })
+      const intent = decodeWorkspaceActivationIntent(payload)
+      if (intent !== undefined) {
+        listener(intent)
+      }
     }
 
     ipcRenderer.on(ACTIVATE_WORKSPACE_CHANNEL, wrappedListener)

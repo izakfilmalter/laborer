@@ -30,6 +30,11 @@ interface AutoOpenAgentOptions {
   readonly parentWorkspaceId?: string | undefined
 }
 
+interface OpenAgentPaneOptions {
+  /** Prompt passed to OpenCode when the agent terminal starts. */
+  readonly initialPrompt?: string | undefined
+}
+
 /**
  * Mode for the panel type picker — determines what happens after a type
  * is selected.
@@ -193,6 +198,22 @@ interface PanelActions {
         edge: WorkspaceDropEdge
       ) => void)
     | undefined
+
+  /**
+   * Reveal a workspace and open a new agent pane in its active panel tab.
+   *
+   * Unlike `autoOpenAgentWhenWorkspaceReady`, this splits the workspace's
+   * current panel tab instead of creating another panel tab. It is intended
+   * for actions on workspaces that already exist, such as resolving merge
+   * conflicts.
+   *
+   * @param workspaceId - The workspace that should contain the new pane
+   * @param options - Optional initial prompt for the agent
+   */
+  readonly openAgentPaneForWorkspace?: (
+    workspaceId: string,
+    options?: OpenAgentPaneOptions
+  ) => void
 
   /**
    * Reveal a workspace and open its pull request conversation.
@@ -807,6 +828,7 @@ export {
 }
 export type {
   AutoOpenAgentOptions,
+  OpenAgentPaneOptions,
   PanelActions,
   PendingCloseState,
   PendingClosePanelTabState,

@@ -18,18 +18,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // ---------------------------------------------------------------------------
 
 const {
-  autoOpenAgentFn,
   conflictPromptRef,
   destroyFn,
   mutationMap,
+  openAgentPaneForWorkspaceFn,
   openCommentsForWorkspaceFn,
   tasksByIdRef,
   workspaceRowsRef,
 } = vi.hoisted(() => ({
-  autoOpenAgentFn: vi.fn(),
   conflictPromptRef: { current: '' },
   destroyFn: vi.fn(),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  openAgentPaneForWorkspaceFn: vi.fn(),
   openCommentsForWorkspaceFn: vi.fn(),
   tasksByIdRef: { current: new Map<string, unknown>() },
   workspaceRowsRef: { current: [] as unknown[] },
@@ -113,9 +113,9 @@ vi.mock('sonner', () => ({
 vi.mock('@/panels/panel-context', () => ({
   useActiveWorkspaceId: () => null,
   usePanelActions: () => ({
-    autoOpenAgentWhenWorkspaceReady: autoOpenAgentFn,
     closeWorkspace: vi.fn(),
     forceCloseWorkspace: vi.fn(),
+    openAgentPaneForWorkspace: openAgentPaneForWorkspaceFn,
     openCommentsPaneForWorkspace: openCommentsForWorkspaceFn,
   }),
 }))
@@ -534,7 +534,7 @@ describe('Workspace card layout — status row', () => {
     })
     await userEvent.click(action)
 
-    expect(autoOpenAgentFn).toHaveBeenCalledWith('ws-1', {
+    expect(openAgentPaneForWorkspaceFn).toHaveBeenCalledWith('ws-1', {
       initialPrompt: 'Rebase onto dev and resolve the conflicts.',
     })
   })

@@ -1,6 +1,7 @@
 import type {
   ContextMenuItem,
   DesktopBridge,
+  WorkspaceActivationRequest,
 } from '@laborer/shared/desktop-bridge'
 import {
   focusExistingWindowForWorkspace as focusExistingDesktopWindowForWorkspace,
@@ -62,7 +63,9 @@ class LocalApi {
 
 export const localApi = new LocalApi()
 
-export const focusExistingWindowForWorkspace = (workspaceId: string) =>
-  focusExistingDesktopWindowForWorkspace(workspaceId)
+export const focusExistingWindowForWorkspace = (
+  workspaceId: string,
+  intent?: WorkspaceActivationRequest
+) => focusExistingDesktopWindowForWorkspace(workspaceId, intent)
 
 export const getCurrentWindowId = () => getDesktopWindowId()

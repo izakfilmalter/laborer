@@ -843,6 +843,12 @@ function HomeComponent() {
 
   const handleWorkspaceActivation = useCallback(
     (intent: WorkspaceActivationIntent) => {
+      if ('action' in intent && intent.action === 'open-agent-pane') {
+        panelActions.openAgentPaneForWorkspace?.(intent.workspaceId, {
+          initialPrompt: intent.initialPrompt,
+        })
+        return
+      }
       setPendingActivation(intent)
       // This is also the open-if-absent path. The layout action moves an
       // existing workspace into the active tab or adds it when absent.
@@ -860,7 +866,11 @@ function HomeComponent() {
     )
     const target =
       workspaceLeaves.find(
-        (leaf) => leaf.terminalId === pendingActivation.terminalId
+        (leaf) =>
+          leaf.terminalId ===
+          ('terminalId' in pendingActivation
+            ? pendingActivation.terminalId
+            : undefined)
       ) ?? workspaceLeaves[0]
     if (target) {
       panelActions.setActivePaneId(target.id)

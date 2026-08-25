@@ -258,6 +258,52 @@ describe('workspace-to-window targeting', () => {
     )
   })
 
+  it('forwards an agent-pane activation intent to the window that owns the workspace', async () => {
+    const {
+      ACTIVATE_WORKSPACE_CHANNEL,
+      FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL,
+      registerIpcHandlers,
+      REPORT_VISIBLE_WORKSPACES_CHANNEL,
+    } = await import('../src/ipc.js')
+
+    const windowA = createMockWindow(110)
+    const windowB = createMockWindow(111)
+    registerIpcHandlers(
+      () =>
+        null as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+
+    fromWebContentsMock.mockReturnValue(windowB)
+    ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)?.(
+      { sender: windowB.webContents },
+      ['workspace-conflicts']
+    )
+
+    fromWebContentsMock.mockReturnValue(windowA)
+    const result = ipcHandlers.get(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL)?.(
+      { sender: windowA.webContents },
+      'workspace-conflicts',
+      {
+        action: 'open-agent-pane',
+        initialPrompt: 'Resolve the merge conflicts.',
+      }
+    )
+
+    expect(result).toBe(true)
+    expect(windowB.webContents.send).toHaveBeenCalledWith(
+      ACTIVATE_WORKSPACE_CHANNEL,
+      {
+        action: 'open-agent-pane',
+        initialPrompt: 'Resolve the merge conflicts.',
+        workspaceId: 'workspace-conflicts',
+      }
+    )
+  })
+
   it('returns false when the workspace is only in the requesting window itself', async () => {
     const {
       registerIpcHandlers,

@@ -1771,38 +1771,46 @@ export function usePanelLayout() {
     [persistedWindowLayout, commitWindowLayout]
   )
 
-  const handleCloseWindowTab = useCallback(() => {
-    if (!persistedWindowLayout) {
-      return
-    }
-    const activeId = persistedWindowLayout.activeTabId
-    if (!activeId) {
-      return
-    }
+  const handleCloseWindowTab = useCallback(
+    (tabId?: string) => {
+      if (!persistedWindowLayout) {
+        return
+      }
+      const closingTabId = tabId ?? persistedWindowLayout.activeTabId
+      if (!closingTabId) {
+        return
+      }
 
-    // Kill terminal processes belonging to the tab being closed.
-    const closingTab = getActiveWindowTab(persistedWindowLayout)
-    if (closingTab?.workspaceLayout) {
-      const terminalIds = collectTerminalIdsFromTileTree(
-        closingTab.workspaceLayout
+      // Kill terminal processes belonging to the tab being closed.
+      const closingTab = persistedWindowLayout.tabs.find(
+        (tab) => tab.id === closingTabId
       )
-      for (const terminalId of terminalIds) {
-        removeTerminalOptimistically(terminalId, '[close-window-tab]')
+      if (!closingTab) {
+        return
       }
-    }
+      if (closingTab?.workspaceLayout) {
+        const terminalIds = collectTerminalIdsFromTileTree(
+          closingTab.workspaceLayout
+        )
+        for (const terminalId of terminalIds) {
+          removeTerminalOptimistically(terminalId, '[close-window-tab]')
+        }
+      }
 
-    const newLayout = removeWindowTab(persistedWindowLayout, activeId)
-    // Save focus to the new active tab's last-focused pane
-    const newActiveTab = getActiveWindowTab(newLayout)
-    let finalLayout = newLayout
-    if (newActiveTab) {
-      const paneId = resolveActivePaneForWindowTab(newActiveTab)
-      if (paneId) {
-        finalLayout = saveFocusedPaneId(finalLayout, paneId)
+      const newLayout = removeWindowTab(persistedWindowLayout, closingTabId)
+      // Save focus to the new active tab's last-focused pane
+      const newActiveTab = getActiveWindowTab(newLayout)
+      let finalLayout = newLayout
+      if (newActiveTab) {
+        const paneId = resolveActivePaneForWindowTab(newActiveTab)
+        if (paneId) {
+          finalLayout = saveFocusedPaneId(finalLayout, paneId)
+        }
       }
-    }
-    commitWindowLayout('window-tab-closed', finalLayout)
-  }, [persistedWindowLayout, commitWindowLayout, removeTerminalOptimistically])
+      commitWindowLayout('window-tab-closed', finalLayout)
+    },
+    [persistedWindowLayout, commitWindowLayout, removeTerminalOptimistically]
+  )
 
   /**
    * Commit a window tab switch and restore `activePaneId` to the

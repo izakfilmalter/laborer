@@ -1,8 +1,10 @@
-import type {
-  BeforeQuitPayload,
-  ContextMenuItem,
-  DesktopUpdateActionResult,
-  DesktopUpdateState,
+import {
+  type BeforeQuitPayload,
+  type ContextMenuItem,
+  type DesktopUpdateActionResult,
+  type DesktopUpdateState,
+  decodeWorkspaceActivationIntent,
+  type WorkspaceActivationIntent,
 } from '@laborer/shared/desktop-bridge'
 import {
   BrowserWindow,
@@ -65,6 +67,24 @@ function getSafeExternalUrl(rawUrl: unknown): string | null {
   }
 
   return parsedUrl.toString()
+}
+
+function resolveWorkspaceActivationIntent(
+  workspaceId: string,
+  activation: unknown
+): string | WorkspaceActivationIntent {
+  if (
+    typeof activation !== 'object' ||
+    activation === null ||
+    !('action' in activation)
+  ) {
+    return workspaceId
+  }
+  const decoded = decodeWorkspaceActivationIntent({
+    ...activation,
+    workspaceId,
+  })
+  return decoded ?? workspaceId
 }
 
 const CONFIRM_BUTTON_INDEX = 1
@@ -455,7 +475,7 @@ export function registerIpcHandlers(
   ipcMain.removeHandler(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL)
   ipcMain.handle(
     FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL,
-    (event, workspaceId: unknown) => {
+    (event, workspaceId: unknown, activation: unknown) => {
       if (typeof workspaceId !== 'string' || workspaceId.length === 0) {
         return false
       }
@@ -474,7 +494,8 @@ export function registerIpcHandlers(
 
       targetWindow.show()
       targetWindow.focus()
-      targetWindow.webContents.send(ACTIVATE_WORKSPACE_CHANNEL, workspaceId)
+      const intent = resolveWorkspaceActivationIntent(workspaceId, activation)
+      targetWindow.webContents.send(ACTIVATE_WORKSPACE_CHANNEL, intent)
       return true
     }
   )

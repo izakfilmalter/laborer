@@ -31,7 +31,10 @@ import {
   localApi,
 } from '@/lib/local-api'
 
-import type { AutoOpenAgentOptions } from '@/panels/panel-context'
+import type {
+  AutoOpenAgentOptions,
+  OpenAgentPaneOptions,
+} from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
   addPanelTab,
@@ -150,6 +153,7 @@ function measureTabContentArea(tabId: string): TabContentArea {
 
 interface PendingAgentSpawn extends AutoOpenAgentOptions {
   readonly paneId: string | null
+  readonly placement?: 'panel-tab' | 'pane'
 }
 
 /**
@@ -623,6 +627,7 @@ export function usePanelLayout() {
   const pendingAgentSpawnsRef = useRef<Map<string, PendingAgentSpawn>>(
     new Map()
   )
+  const [pendingAgentSpawnRevision, setPendingAgentSpawnRevision] = useState(0)
   const hasPersistedLayout = storedWindowLayout !== null
 
   // Derive the active pane ID exclusively from the hierarchical layout.
@@ -880,10 +885,7 @@ export function usePanelLayout() {
       return
     }
 
-    const activeTab = getActiveWindowTab(persistedWindowLayout)
-    const allLeaves = activeTab?.workspaceLayout
-      ? getWorkspaceTileLeaves(activeTab.workspaceLayout)
-      : []
+    const allLeaves = getAllWorkspaceTileLeaves(persistedWindowLayout)
     const workspaceIds = [
       ...new Set(
         allLeaves
@@ -1981,6 +1983,26 @@ export function usePanelLayout() {
     [persistWindowLayout]
   )
 
+  const resolveAgentCommand = useCallback(
+    async (workspaceId: string): Promise<string> => {
+      const workspace = workspaceList.find(
+        (candidate) => candidate.id === workspaceId
+      )
+      if (!workspace?.projectId) {
+        return 'opencode2'
+      }
+      try {
+        const config = await getConfig({
+          payload: { projectId: workspace.projectId },
+        })
+        return config.agent.value ?? 'opencode2'
+      } catch {
+        return 'opencode2'
+      }
+    },
+    [getConfig, workspaceList]
+  )
+
   /**
    * Spawn a terminal (for agent panes, running the workspace's configured
    * agent command) and assign it to an existing pane.
@@ -1994,28 +2016,9 @@ export function usePanelLayout() {
       workspaceId: string,
       paneId: string,
       panelType: 'terminal' | 'agent',
-      initialPrompt?: string
+      initialPrompt?: string,
+      resolvedCommand?: string
     ): void => {
-      // Resolve the spawn command: for agents, look up the workspace's
-      // project config to determine which agent provider to use.
-      const resolveCommand = async (): Promise<string | undefined> => {
-        if (panelType !== 'agent') {
-          return undefined
-        }
-        const ws = workspaceList.find((w) => w.id === workspaceId)
-        if (!ws?.projectId) {
-          return 'opencode2'
-        }
-        try {
-          const config = await getConfig({
-            payload: { projectId: ws.projectId },
-          })
-          return config.agent.value ?? 'opencode2'
-        } catch {
-          return 'opencode2'
-        }
-      }
-
       // Use the spawn guard to prevent concurrent spawns for the same
       // pane. Follows VS Code's _isTerminalBeingCreated pattern.
       // The requested command is captured so it can be persisted on the
@@ -2023,7 +2026,10 @@ export function usePanelLayout() {
       let requestedCommand: string | undefined
       paneSpawnGuard
         .run(paneId, async () => {
-          requestedCommand = await resolveCommand()
+          requestedCommand =
+            panelType === 'agent'
+              ? (resolvedCommand ?? (await resolveAgentCommand(workspaceId)))
+              : undefined
           return retryOnInitializing(() =>
             spawnTerminal({
               payload: {
@@ -2080,12 +2086,11 @@ export function usePanelLayout() {
         })
     },
     [
-      workspaceList,
-      getConfig,
       spawnTerminal,
       getCurrentWindowLayout,
       commitPanelTabLayout,
       removeTerminalOptimistically,
+      resolveAgentCommand,
     ]
   )
 
@@ -2248,6 +2253,143 @@ export function usePanelLayout() {
   )
 
   /**
+   * Open an agent beside the workspace's currently active pane rather than in
+   * a new panel tab. The layout is committed before spawning so the placeholder
+   * appears immediately and the guarded spawn can safely adopt it.
+   */
+  const handleOpenAgentPaneForWorkspace = useCallback(
+    async (workspaceId: string, options?: OpenAgentPaneOptions) => {
+      const workspace = workspaceList.find(
+        (candidate) => candidate.id === workspaceId
+      )
+      if (
+        workspace?.status === 'errored' ||
+        workspace?.status === 'destroyed'
+      ) {
+        return
+      }
+
+      const focusedElsewhere = await focusExistingWindowForWorkspace(
+        workspaceId,
+        {
+          action: 'open-agent-pane',
+          ...(options?.initialPrompt === undefined
+            ? {}
+            : { initialPrompt: options.initialPrompt }),
+        }
+      )
+      if (focusedElsewhere) {
+        return
+      }
+
+      if (workspace?.status !== 'running') {
+        pendingAgentSpawnsRef.current.set(workspaceId, {
+          initialPrompt: options?.initialPrompt,
+          paneId: null,
+          placement: 'pane',
+        })
+        setPendingAgentSpawnRevision((revision) => revision + 1)
+        return
+      }
+
+      const command = await resolveAgentCommand(workspaceId)
+      let base = getCurrentWindowLayout() ??
+        persistedWindowLayout ?? {
+          tabs: [] as WindowLayout['tabs'],
+          activeTabId: undefined,
+        }
+
+      if (base.tabs.length === 0) {
+        base = addWindowTab(base)
+      }
+
+      const existing = findWorkspaceLocation(base, workspaceId)
+      if (existing) {
+        base = switchWindowTab(base, existing.tabId)
+      } else {
+        const activeTab = getActiveWindowTab(base)
+        if (!activeTab) {
+          return
+        }
+        base = addWorkspaceToTabUnique(
+          base,
+          workspaceId,
+          activeTab.id,
+          removeWorkspaceFromTab,
+          addWorkspaceToTab
+        )
+      }
+
+      let newPaneId: string | undefined
+      let updated = updateWorkspaceTileLeaf(base, workspaceId, (leaf) => {
+        const activePanelTab = leaf.panelTabs.find(
+          (tab) => tab.id === leaf.activePanelTabId
+        )
+
+        if (!activePanelTab) {
+          const withPanelTab = addPanelTab(leaf, 'terminal', { command })
+          const newPanelTab = withPanelTab.panelTabs.at(-1)
+          if (newPanelTab?.panelLayout._tag === 'LeafNode') {
+            newPaneId = newPanelTab.panelLayout.id
+          }
+          return withPanelTab
+        }
+
+        const targetPaneId = resolveActivePaneForPanelTab(activePanelTab)
+        if (!targetPaneId) {
+          return leaf
+        }
+        const panelLayout = splitPaneInTree(
+          activePanelTab.panelLayout,
+          targetPaneId,
+          'horizontal',
+          { command, paneType: 'terminal', workspaceId }
+        )
+        const newPane = findNewLeafAfterSplit(
+          activePanelTab.panelLayout,
+          panelLayout
+        )
+        newPaneId = newPane?.id
+
+        return {
+          ...leaf,
+          panelTabs: leaf.panelTabs.map((tab) =>
+            tab.id === activePanelTab.id
+              ? {
+                  ...tab,
+                  focusedPaneId: newPane?.id ?? tab.focusedPaneId,
+                  panelLayout,
+                }
+              : tab
+          ),
+        }
+      })
+
+      if (!newPaneId) {
+        return
+      }
+
+      updated = saveFocusedPaneId(updated, newPaneId)
+      commitPanelTabLayout('agent-pane-opened', updated)
+      spawnTerminalIntoPane(
+        workspaceId,
+        newPaneId,
+        'agent',
+        options?.initialPrompt,
+        command
+      )
+    },
+    [
+      commitPanelTabLayout,
+      getCurrentWindowLayout,
+      persistedWindowLayout,
+      resolveAgentCommand,
+      spawnTerminalIntoPane,
+      workspaceList,
+    ]
+  )
+
+  /**
    * Spawn the agent terminal into a placeholder pane that was opened
    * while its workspace was still being set up. Skips the spawn if the
    * pane was closed in the meantime.
@@ -2297,35 +2439,61 @@ export function usePanelLayout() {
     [handleAddPanelTab]
   )
 
-  useEffect(() => {
-    if (pendingAgentSpawnsRef.current.size === 0) {
-      return
-    }
-
-    for (const [workspaceId, pendingSpawn] of pendingAgentSpawnsRef.current) {
-      const { initialPrompt, parentWorkspaceId, paneId } = pendingSpawn
+  const advancePendingAgentSpawn = useCallback(
+    (workspaceId: string, pendingSpawn: PendingAgentSpawn) => {
+      const { initialPrompt, parentWorkspaceId, paneId, placement } =
+        pendingSpawn
       const workspace = workspaceList.find((ws) => ws.id === workspaceId)
       if (!workspace) {
-        continue
+        return
       }
       if (workspace.status === 'errored' || workspace.status === 'destroyed') {
         pendingAgentSpawnsRef.current.delete(workspaceId)
-        continue
+        return
       }
       if (paneId === null) {
+        if (placement === 'pane') {
+          if (workspace.status === 'running') {
+            pendingAgentSpawnsRef.current.delete(workspaceId)
+            handleOpenAgentPaneForWorkspace(workspaceId, { initialPrompt })
+          }
+          return
+        }
         openDeferredAgentPane(workspaceId, workspace.status, {
           initialPrompt,
           parentWorkspaceId:
             parentWorkspaceId ?? workspace.parentTaskId ?? undefined,
         })
-        continue
+        return
       }
       if (workspace.status === 'running') {
         pendingAgentSpawnsRef.current.delete(workspaceId)
         spawnAgentIntoPlaceholderPane(workspaceId, paneId, initialPrompt)
       }
+    },
+    [
+      handleOpenAgentPaneForWorkspace,
+      openDeferredAgentPane,
+      spawnAgentIntoPlaceholderPane,
+      workspaceList,
+    ]
+  )
+
+  const advanceAllPendingAgentSpawns = useCallback(() => {
+    for (const [workspaceId, pendingSpawn] of pendingAgentSpawnsRef.current) {
+      advancePendingAgentSpawn(workspaceId, pendingSpawn)
     }
-  }, [workspaceList, openDeferredAgentPane, spawnAgentIntoPlaceholderPane])
+  }, [advancePendingAgentSpawn])
+
+  useEffect(() => {
+    advanceAllPendingAgentSpawns()
+  }, [advanceAllPendingAgentSpawns])
+
+  useEffect(() => {
+    if (pendingAgentSpawnRevision > 0) {
+      advanceAllPendingAgentSpawns()
+    }
+  }, [advanceAllPendingAgentSpawns, pendingAgentSpawnRevision])
 
   /**
    * When removing a panel tab leaves the workspace empty (zero tabs),
@@ -2495,6 +2663,7 @@ export function usePanelLayout() {
       addPanelTab: handleAddPanelTab,
       autoOpenAgentWhenWorkspaceReady: handleAutoOpenAgentWhenWorkspaceReady,
       assignTerminalToPane: handleAssignTerminalToPane,
+      openAgentPaneForWorkspace: handleOpenAgentPaneForWorkspace,
       splitPane: handleSplitPane,
       updatePaneType: handleUpdatePaneType,
       closePane: handleClosePane,
@@ -2530,6 +2699,7 @@ export function usePanelLayout() {
       handleAddPanelTab,
       handleAutoOpenAgentWhenWorkspaceReady,
       handleAssignTerminalToPane,
+      handleOpenAgentPaneForWorkspace,
       handleSplitPane,
       handleUpdatePaneType,
       handleClosePane,

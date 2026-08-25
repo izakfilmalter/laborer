@@ -8,7 +8,10 @@
  * @see apps/desktop/src/preload.ts — preload script implementation
  */
 
-import type { DesktopBridge } from '@laborer/shared/desktop-bridge'
+import type {
+  DesktopBridge,
+  WorkspaceActivationRequest,
+} from '@laborer/shared/desktop-bridge'
 
 /**
  * Access the DesktopBridge injected by the Electron preload script.
@@ -38,14 +41,15 @@ export function getCurrentWindowId(): string | null {
  * In non-Electron contexts, always returns false.
  */
 export async function focusExistingWindowForWorkspace(
-  workspaceId: string
+  workspaceId: string,
+  intent?: WorkspaceActivationRequest
 ): Promise<boolean> {
   const bridge = getDesktopBridge()
   if (!bridge?.focusWindowForWorkspace) {
     return false
   }
   try {
-    return await bridge.focusWindowForWorkspace(workspaceId)
+    return await bridge.focusWindowForWorkspace(workspaceId, intent)
   } catch {
     return false
   }

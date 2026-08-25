@@ -111,8 +111,13 @@ vi.mock('@/hooks/use-terminal-list', () => ({
 }))
 
 vi.mock('@/lib/local-api', () => ({
-  focusExistingWindowForWorkspace: (workspaceId: string) =>
-    focusExistingWindowForWorkspaceMock(workspaceId),
+  focusExistingWindowForWorkspace: (
+    workspaceId: string,
+    intent?: Record<string, unknown>
+  ) =>
+    intent === undefined
+      ? focusExistingWindowForWorkspaceMock(workspaceId)
+      : focusExistingWindowForWorkspaceMock(workspaceId, intent),
   getCurrentWindowId: vi.fn(() => currentWindowIdRef.current),
   localApi: {
     get desktopBridge() {
@@ -344,6 +349,29 @@ describe('usePanelLayout', () => {
     hasFocus.mockRestore()
   })
 
+  it('reports workspaces in inactive window tabs for cross-window routing', async () => {
+    const first = makeWindowLayout('pane-active', 'workspace-active')
+    const inactive = makeWindowLayout('pane-inactive', 'workspace-inactive')
+      .tabs[0]
+    if (!inactive) {
+      throw new Error('Expected inactive tab fixture')
+    }
+    writeStoredWindowLayout('window-a', {
+      ...first,
+      tabs: [...first.tabs, inactive],
+    })
+
+    renderHook(() => usePanelLayout())
+
+    await waitFor(() => {
+      expect(reportWindowWorkspacesMock).toHaveBeenCalled()
+    })
+    expect(reportWindowWorkspacesMock.mock.calls.at(-1)?.[0]).toEqual([
+      'workspace-active',
+      'workspace-inactive',
+    ])
+  })
+
   it('repairs and persists stale current-window layout pointers', async () => {
     const repairableLayout = {
       ...makeWindowLayout('pane-window-a', 'workspace-a'),
@@ -472,6 +500,142 @@ describe('usePanelLayout', () => {
     expect(panelTab?.panelLayout._tag).toBe('LeafNode')
     expect(panelTab?.panelLayout.terminalId).toBe('terminal-1')
     expect(panelTab?.panelLayout.paneType).toBe('terminal')
+  })
+
+  it('opens a prompted agent as a new pane in the workspace panel tab', async () => {
+    writeStoredWindowLayout(
+      'window-a',
+      makeWindowLayout('pane-existing', 'workspace-a')
+    )
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-a',
+        projectId: 'project-1',
+        branchName: 'feature/conflicts',
+        worktreePath: '/tmp/workspace-a',
+        status: 'running',
+        origin: 'laborer',
+        createdAt: '2026-04-20T00:00:00.000Z',
+      },
+    ]
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    act(() => {
+      result.current.panelActions.openAgentPaneForWorkspace?.('workspace-a', {
+        initialPrompt: 'Resolve the merge conflicts.',
+      })
+    })
+
+    await waitFor(() => {
+      expect(spawnTerminalMock).toHaveBeenCalledWith({
+        payload: {
+          workspaceId: 'workspace-a',
+          command: 'opencode2',
+          initialPrompt: 'Resolve the merge conflicts.',
+        },
+      })
+    })
+
+    await waitFor(() => {
+      const stored = readStoredWindowLayout('window-a') as WindowLayout
+      const workspace = stored.tabs[0]?.workspaceLayout
+      if (workspace?._tag !== 'WorkspaceTileLeaf') {
+        throw new Error('Expected workspace leaf')
+      }
+      expect(workspace.panelTabs).toHaveLength(1)
+      const panelLayout = workspace.panelTabs[0]?.panelLayout
+      expect(panelLayout?._tag).toBe('SplitNode')
+      if (panelLayout?._tag !== 'SplitNode') {
+        throw new Error('Expected split panel layout')
+      }
+      expect(panelLayout.direction).toBe('horizontal')
+      expect(panelLayout.children).toHaveLength(2)
+      expect(layoutContainsTerminal(panelLayout, 'spawned-terminal')).toBe(true)
+    })
+  })
+
+  it('routes a conflict agent pane to the window that owns the workspace', async () => {
+    const originalLayout = makeWindowLayout('pane-local', 'workspace-local')
+    writeStoredWindowLayout('window-a', originalLayout)
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-remote',
+        projectId: 'project-1',
+        status: 'running',
+      },
+    ]
+    focusExistingWindowForWorkspaceMock.mockResolvedValue(true)
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    await act(async () => {
+      await result.current.panelActions.openAgentPaneForWorkspace?.(
+        'workspace-remote',
+        { initialPrompt: 'Resolve the merge conflicts.' }
+      )
+    })
+
+    expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledWith(
+      'workspace-remote',
+      {
+        action: 'open-agent-pane',
+        initialPrompt: 'Resolve the merge conflicts.',
+      }
+    )
+    expect(readStoredWindowLayout('window-a')).toEqual(originalLayout)
+    expect(spawnTerminalMock).not.toHaveBeenCalled()
+  })
+
+  it('defers a conflict agent pane until the workspace is ready', async () => {
+    const originalLayout = makeWindowLayout('pane-existing', 'workspace-a')
+    writeStoredWindowLayout('window-a', originalLayout)
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-a',
+        projectId: 'project-1',
+        status: 'creating',
+      },
+    ]
+
+    const { result, rerender } = renderHook(() => usePanelLayout())
+
+    await act(async () => {
+      await result.current.panelActions.openAgentPaneForWorkspace?.(
+        'workspace-a',
+        { initialPrompt: 'Resolve the merge conflicts.' }
+      )
+    })
+
+    expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledOnce()
+    expect(readStoredWindowLayout('window-a')).toEqual(originalLayout)
+    expect(spawnTerminalMock).not.toHaveBeenCalled()
+
+    workspaceRowsRef.current = [
+      {
+        id: 'workspace-a',
+        projectId: 'project-1',
+        status: 'running',
+      },
+    ]
+    act(() => rerender())
+
+    await waitFor(() => {
+      expect(spawnTerminalMock).toHaveBeenCalledWith({
+        payload: {
+          command: 'opencode2',
+          initialPrompt: 'Resolve the merge conflicts.',
+          workspaceId: 'workspace-a',
+        },
+      })
+    })
+    const stored = readStoredWindowLayout('window-a') as WindowLayout
+    const workspace = stored.tabs[0]?.workspaceLayout
+    if (workspace?._tag !== 'WorkspaceTileLeaf') {
+      throw new Error('Expected workspace leaf')
+    }
+    expect(workspace.panelTabs).toHaveLength(1)
+    expect(workspace.panelTabs[0]?.panelLayout._tag).toBe('SplitNode')
   })
 
   it('organizes six workspaces into two columns using the rendered tab height', async () => {

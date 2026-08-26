@@ -8,6 +8,10 @@ export const LOCAL_COLLECTIONS = {
     id: 'laborer.local.board-overlay-height.v1',
     storageKey: 'laborer:db:board-overlay-height:v1',
   },
+  diffView: {
+    id: 'laborer.local.diff-view.v1',
+    storageKey: 'laborer:db:diff-view:v1',
+  },
   panelLayouts: {
     id: 'laborer.local.panel-layouts.v1',
     storageKey: 'laborer:db:panel-layouts:v1',
@@ -45,6 +49,23 @@ const expansionSchema = z.object({
   expanded: z.boolean(),
 })
 export type ExpansionPreference = z.infer<typeof expansionSchema>
+
+/**
+ * What one workspace's diff pane is comparing, keyed by workspace id so
+ * closing and reopening the pane — or opening a second one — lands back on
+ * the same question.
+ *
+ * The target is stored as its key string rather than a nested union: the
+ * key is already the pane's cache key and its menu value, and
+ * `parseDiffTargetKey` is the one decoder that has to be tolerant of a
+ * stale or hand-edited row.
+ */
+const diffViewSchema = z.object({
+  id: z.string().min(1),
+  ignoreWhitespace: z.boolean(),
+  targetKey: z.string().min(1),
+})
+export type DiffViewPreference = z.infer<typeof diffViewSchema>
 
 export const panelLayoutSchema = z.object({
   id: z.string().min(1),
@@ -101,6 +122,14 @@ export const panelLayoutCollection = createCollection(
     schema: panelLayoutSchema,
   })
 )
+export const diffViewCollection = createCollection(
+  localStorageCollectionOptions({
+    ...LOCAL_COLLECTIONS.diffView,
+    getKey: (row: DiffViewPreference) => row.id,
+    parser: makeValidatedLocalStorageParser(diffViewSchema),
+    schema: diffViewSchema,
+  })
+)
 export const sidebarWidthCollection = createCollection(
   localStorageCollectionOptions({
     ...LOCAL_COLLECTIONS.sidebarWidth,
@@ -151,6 +180,20 @@ export const setBoardOverlayHeightPreference = (fraction: number): void => {
     })
   } else {
     boardOverlayHeightCollection.insert({ fraction, id: 'current' })
+  }
+}
+
+export const setDiffViewPreference = (
+  workspaceId: string,
+  preference: Omit<DiffViewPreference, 'id'>
+): void => {
+  if (diffViewCollection.has(workspaceId)) {
+    diffViewCollection.update(workspaceId, (draft) => {
+      draft.ignoreWhitespace = preference.ignoreWhitespace
+      draft.targetKey = preference.targetKey
+    })
+  } else {
+    diffViewCollection.insert({ ...preference, id: workspaceId })
   }
 }
 

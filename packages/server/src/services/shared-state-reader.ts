@@ -56,6 +56,11 @@ const snapshotUpdate = (
     rows: snapshot.projects,
     type: 'snapshot',
   },
+  reviewComments: {
+    cursor: snapshot.stateCursor,
+    rows: snapshot.reviewComments,
+    type: 'snapshot',
+  },
   settings: {
     cursor: snapshot.stateCursor,
     rows: snapshot.settings,

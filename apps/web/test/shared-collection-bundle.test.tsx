@@ -1,4 +1,5 @@
 import type {
+  ReviewCommentThread,
   SharedLabelRow,
   SharedProjectRow,
   SharedSettingRow,
@@ -11,8 +12,21 @@ import { StrictMode, useEffect } from 'react'
 import { describe, expect, it } from 'vitest'
 import {
   createSharedCollectionBundle,
+  type SharedCollectionName,
   type SharedStateSource,
 } from '../src/db/shared-state'
+
+/**
+ * Collections the daemon always publishes, and whose readiness is therefore
+ * owned by a snapshot. `reviewComments` is deliberately not here — see
+ * `OPTIONAL_TABLES` in `shared-state.ts`.
+ */
+const REQUIRED_COLLECTIONS: readonly SharedCollectionName[] = [
+  'labels',
+  'projects',
+  'settings',
+  'tasks',
+]
 
 const label = (id: string, revision = 1): SharedLabelRow => ({
   color: 'blue',
@@ -82,6 +96,29 @@ const task = (id: string, revision = 1): SharedTaskRow => ({
   worktreeStatus: null,
 })
 
+const reviewComment = (id: string, revision = 1): ReviewCommentThread => ({
+  createdAt: 1,
+  endLine: 2,
+  filePath: 'src/a.ts',
+  id,
+  replies: [
+    {
+      author: 'human',
+      body: 'look here',
+      createdAt: 1,
+      id: `${id}-reply`,
+      threadId: id,
+    },
+  ],
+  revision,
+  side: 'additions',
+  startLine: 1,
+  status: 'open',
+  updatedAt: revision,
+  workspaceId: 'workspace-one',
+})
+
+/** A daemon without the review-comment slice omits `reviewComments` entirely. */
 const snapshots = (cursor = 1): SharedStateUpdate => ({
   labels: { cursor, rows: [], type: 'snapshot' },
   projects: { cursor, rows: [], type: 'snapshot' },
@@ -128,8 +165,8 @@ describe('shared collection bundle synchronization', () => {
     const source = new ControlledSource()
     source.onStart = () => {
       expect(
-        Object.values(bundle.collections).every(
-          (collection) => collection.status === 'loading'
+        REQUIRED_COLLECTIONS.every(
+          (name) => bundle.collections[name].status === 'loading'
         )
       ).toBe(true)
     }
@@ -152,14 +189,45 @@ describe('shared collection bundle synchronization', () => {
 
     source.emit(snapshots())
     expect(
-      Object.values(bundle.collections).every((collection) =>
-        collection.isReady()
-      )
+      REQUIRED_COLLECTIONS.every((name) => bundle.collections[name].isReady())
     ).toBe(true)
 
     release()
     await tick()
     expect(source.active).toBe(0)
+  })
+
+  // `SharedStateUpdate.reviewComments` is optional on the wire, so a daemon
+  // without the review-comment slice publishes snapshots that never mention
+  // it. Gating readiness on a field the server may omit would leave every
+  // reader of that collection pending forever, which costs far more than the
+  // comments themselves.
+  it('opens optional collections ready so an omitted field cannot stall a reader', async () => {
+    const bundle = createSharedCollectionBundle('optional-collection-test')
+    const source = new ControlledSource()
+    const release = bundle.activate(source)
+
+    expect(bundle.collections.reviewComments.isReady()).toBe(true)
+    expect(bundle.collections.reviewComments.size).toBe(0)
+
+    // A snapshot that never carries the field leaves it ready and empty
+    // rather than reverting it to loading.
+    source.emit(snapshots())
+    expect(bundle.collections.reviewComments.isReady()).toBe(true)
+    expect(bundle.collections.reviewComments.size).toBe(0)
+
+    // A daemon that does publish them still replaces membership normally.
+    source.emit({
+      reviewComments: {
+        cursor: 2,
+        rows: [reviewComment('thread-one')],
+        type: 'snapshot',
+      },
+    })
+    expect(bundle.collections.reviewComments.has('thread-one')).toBe(true)
+
+    release()
+    await tick()
   })
 
   it('keeps cursors independent and replaces membership on reconnect snapshots', async () => {

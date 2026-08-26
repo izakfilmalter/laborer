@@ -20,14 +20,21 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { extname, join, normalize, relative, resolve } from 'node:path'
 import type {
+  DiffContentsChangeType,
+  DiffTarget,
   FileContent,
+  FileDiffContents,
   FileDiffEntry,
   FileInfo,
   FileNode,
   FileWatcherEvent,
   WatchFileEvent,
 } from '@laborer/shared/rpc'
-import { RpcError } from '@laborer/shared/rpc'
+import {
+  DiffContentsUnavailable,
+  DiffTargetUnresolved,
+  RpcError,
+} from '@laborer/shared/rpc'
 import { formatPatch, structuredPatch } from 'diff'
 import {
   Array as Arr,
@@ -40,6 +47,7 @@ import {
   Stream,
 } from 'effect'
 import ignore from 'ignore'
+import { type GitProbeResult, resolveBaseRef } from '../lib/base-ref.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import {
@@ -386,24 +394,52 @@ const STATUS_GIT_FLAGS = [
 ]
 
 /**
- * Run the three git commands needed for `file.status` in parallel.
- * Returns `[numstat, untracked, deleted]` results.
+ * A resolved answer to "what is this diff measured against?".
+ *
+ * `baseRev` is a concrete revision every git invocation below is pointed at:
+ * `HEAD` for the working target, a merge-base sha for the branch and ref
+ * targets. `whitespaceFlags` is either empty or `['-w']`, applied to the
+ * stat commands and the patch commands alike so line counts and patches
+ * cannot disagree about what changed — with `-w` git omits a whitespace-only
+ * file from `--numstat` entirely, so such a file never reaches the response
+ * as an entry with an empty patch.
  */
-const runStatusGitCommands = (worktreeRoot: string) =>
-  Effect.all(
+interface DiffScope {
+  readonly baseRev: string
+  readonly whitespaceFlags: readonly string[]
+}
+
+/** The working target: the worktree against its own last commit. */
+const WORKING_SCOPE: DiffScope = { baseRev: 'HEAD', whitespaceFlags: [] }
+
+/**
+ * Run the four git commands needed for `file.status` in parallel.
+ * Returns `[numstat, untracked, deleted, added]` results.
+ */
+const runStatusGitCommands = (worktreeRoot: string, scope: DiffScope) => {
+  const runDiff = (args: readonly string[], label: string) =>
+    Effect.tryPromise({
+      try: () =>
+        spawnGit(
+          [
+            ...STATUS_GIT_FLAGS,
+            'diff',
+            ...scope.whitespaceFlags,
+            ...args,
+            scope.baseRev,
+          ],
+          { cwd: worktreeRoot, readOnly: true }
+        ),
+      catch: () =>
+        new RpcError({
+          message: `Failed to run git diff ${label}`,
+          code: 'GIT_COMMAND_FAILED',
+        }),
+    })
+
+  return Effect.all(
     [
-      Effect.tryPromise({
-        try: () =>
-          spawnGit([...STATUS_GIT_FLAGS, 'diff', '--numstat', 'HEAD'], {
-            cwd: worktreeRoot,
-            readOnly: true,
-          }),
-        catch: () =>
-          new RpcError({
-            message: 'Failed to run git diff --numstat',
-            code: 'GIT_COMMAND_FAILED',
-          }),
-      }),
+      runDiff(['--numstat'], '--numstat'),
       Effect.tryPromise({
         try: () =>
           spawnGit(
@@ -416,27 +452,12 @@ const runStatusGitCommands = (worktreeRoot: string) =>
             code: 'GIT_COMMAND_FAILED',
           }),
       }),
-      Effect.tryPromise({
-        try: () =>
-          spawnGit(
-            [
-              ...STATUS_GIT_FLAGS,
-              'diff',
-              '--name-only',
-              '--diff-filter=D',
-              'HEAD',
-            ],
-            { cwd: worktreeRoot, readOnly: true }
-          ),
-        catch: () =>
-          new RpcError({
-            message: 'Failed to run git diff --diff-filter=D',
-            code: 'GIT_COMMAND_FAILED',
-          }),
-      }),
+      runDiff(['--name-only', '--diff-filter=D'], '--diff-filter=D'),
+      runDiff(['--name-only', '--diff-filter=A'], '--diff-filter=A'),
     ],
-    { concurrency: 3 }
+    { concurrency: 4 }
   )
+}
 
 /**
  * Parse `git diff --numstat HEAD` output into FileInfo entries.
@@ -510,45 +531,53 @@ const parseUntrackedOutput = (
   )
 }
 
-/**
- * Parse `git diff --name-only --diff-filter=D HEAD` output into FileInfo entries.
- */
-const parseDeletedOutput = (stdout: string): FileInfo[] => {
+/** Parse a `git diff --name-only` listing into paths. */
+const parseNameOnlyOutput = (stdout: string): string[] => {
   const trimmed = stdout.trim()
   if (!trimmed) {
     return []
   }
-  return trimmed
-    .split('\n')
-    .filter((p) => p.length > 0)
-    .map(
+  return trimmed.split('\n').filter((p) => p.length > 0)
+}
+
+/**
+ * Fold the four git listings into one status per file.
+ *
+ * `--numstat` reports every tracked difference, deletions and creations
+ * included, so its entries are corrected against the name-only listings
+ * rather than trusted as "modified". This matters far more under a branch
+ * target than a working one: every file the branch created in a commit is a
+ * tracked difference from the merge-base, and calling those "modified" would
+ * have the pane claim the branch edited files that did not exist before.
+ */
+const classifyChangedFiles = (
+  trackedStats: readonly FileInfo[],
+  untracked: readonly FileInfo[],
+  deletedPaths: readonly string[],
+  addedPaths: readonly string[]
+): readonly FileInfo[] => {
+  const deleted = new Set(deletedPaths)
+  const added = new Set(addedPaths)
+  const tracked = pipe(
+    trackedStats,
+    Arr.filter((file) => !deleted.has(file.path)),
+    Arr.map(
+      (file): FileInfo =>
+        added.has(file.path) ? { ...file, status: 'added' } : file
+    )
+  )
+  return [
+    ...tracked,
+    ...untracked,
+    ...deletedPaths.map(
       (filePath): FileInfo => ({
         path: filePath,
         added: 0,
         removed: 0,
         status: 'deleted',
       })
-    )
-}
-
-/**
- * Remove deleted files from the modified list — `git diff --numstat` includes
- * deleted files, so they'd appear in both the modified and deleted lists.
- */
-const deduplicateStatusResults = (
-  results: readonly FileInfo[]
-): readonly FileInfo[] => {
-  const deletedPaths = new Set(
-    pipe(
-      results,
-      Arr.filter((f) => f.status === 'deleted'),
-      Arr.map((f) => f.path)
-    )
-  )
-  return pipe(
-    results,
-    Arr.filter((f) => f.status !== 'modified' || !deletedPaths.has(f.path))
-  )
+    ),
+  ]
 }
 
 // ── Batched workspace diff computation ──────────────────────────
@@ -630,18 +659,27 @@ const fileFromPatchChunk = (chunk: string): string | null => {
 }
 
 /**
- * Run one batched `git diff --patch HEAD` for all tracked changes and
+ * Run one batched `git diff --patch <base>` for all tracked changes and
  * return a map of relative path → patch chunk. Returns an empty map
  * when the repo has no HEAD (fresh repo) or the command fails — the
  * caller degrades to entries without patches.
  */
 const buildBatchedPatchMap = (
-  worktreeRoot: string
+  worktreeRoot: string,
+  scope: DiffScope
 ): Effect.Effect<Map<string, string>> =>
   Effect.tryPromise({
     try: () =>
       spawnGit(
-        [...STATUS_GIT_FLAGS, 'diff', ...PATCH_GIT_FLAGS, 'HEAD', '--', '.'],
+        [
+          ...STATUS_GIT_FLAGS,
+          'diff',
+          ...PATCH_GIT_FLAGS,
+          ...scope.whitespaceFlags,
+          scope.baseRev,
+          '--',
+          '.',
+        ],
         { cwd: worktreeRoot, readOnly: true }
       ),
     catch: () => null,
@@ -670,7 +708,8 @@ const buildBatchedPatchMap = (
  */
 const buildUntrackedPatch = (
   worktreeRoot: string,
-  filePath: string
+  filePath: string,
+  scope: DiffScope
 ): Effect.Effect<string | null> =>
   Effect.tryPromise({
     try: () =>
@@ -680,6 +719,7 @@ const buildUntrackedPatch = (
           'diff',
           '--no-index',
           ...PATCH_GIT_FLAGS,
+          ...scope.whitespaceFlags,
           '--',
           '/dev/null',
           filePath,
@@ -695,11 +735,290 @@ const buildUntrackedPatch = (
     Effect.catch(() => Effect.succeed(null))
   )
 
+// ── Diff target resolution ──────────────────────────────────────
+// Turns the caller's `DiffTarget` into the concrete revision every git
+// command above is pointed at.
+
+/** A never-failing read-only git probe rooted at a worktree. */
+const gitProbe =
+  (worktreeRoot: string) =>
+  (args: readonly string[]): Effect.Effect<GitProbeResult> =>
+    Effect.tryPromise({
+      try: () =>
+        spawnGit([...STATUS_GIT_FLAGS, ...args], {
+          cwd: worktreeRoot,
+          readOnly: true,
+        }),
+      catch: () => null,
+    }).pipe(
+      Effect.map((result) => ({
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+      })),
+      Effect.catch(() => Effect.succeed({ exitCode: -1, stdout: '' }))
+    )
+
+/**
+ * Resolve the fork point between `ref` and the worktree's `HEAD`.
+ *
+ * This is where the two-dot/three-dot choice lives. `git diff base...HEAD`
+ * is defined as `git diff $(git merge-base base HEAD) HEAD`, and git refuses
+ * three-dot syntax when either side is the working tree — so it can never
+ * answer "everything this branch did, including what is not committed yet".
+ * Resolving the merge-base here and diffing from it to the worktree gives the
+ * three-dot meaning (only this branch's work; commits that landed on the base
+ * after the fork are simply not in the range) with the working tree on the
+ * right-hand side. A plain two-dot `git diff base` would instead render every
+ * base-branch commit inverted, as though the branch had deleted them.
+ */
+const resolveMergeBase = (
+  worktreeRoot: string,
+  ref: string
+): Effect.Effect<string, DiffTargetUnresolved> =>
+  Effect.gen(function* () {
+    const probe = gitProbe(worktreeRoot)
+
+    const verified = yield* probe([
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `${ref}^{commit}`,
+    ])
+    if (verified.exitCode !== 0) {
+      return yield* new DiffTargetUnresolved({
+        message: `This repository has no ref named ${ref}.`,
+        reason: 'REF_NOT_FOUND',
+        ref,
+      })
+    }
+
+    const mergeBase = yield* probe(['merge-base', ref, 'HEAD'])
+    const sha = mergeBase.stdout.trim()
+    if (mergeBase.exitCode !== 0 || sha.length === 0) {
+      return yield* new DiffTargetUnresolved({
+        message: `This branch shares no history with ${ref}, so there is nothing to diff it against.`,
+        reason: 'MERGE_BASE_FAILED',
+        ref,
+      })
+    }
+
+    return sha
+  })
+
+/**
+ * Resolve a request's `DiffTarget` and whitespace preference into the
+ * {@link DiffScope} every git invocation is run under.
+ */
+const resolveDiffScope = (
+  worktreeRoot: string,
+  target: DiffTarget,
+  storedBaseBranch: string | null,
+  ignoreWhitespace: boolean
+): Effect.Effect<DiffScope, DiffTargetUnresolved> =>
+  Effect.gen(function* () {
+    const whitespaceFlags = ignoreWhitespace ? ['-w'] : []
+
+    if (target._tag === 'working') {
+      return { baseRev: 'HEAD', whitespaceFlags }
+    }
+
+    if (target._tag === 'ref') {
+      return {
+        baseRev: yield* resolveMergeBase(worktreeRoot, target.ref),
+        whitespaceFlags,
+      }
+    }
+
+    const baseRef = yield* resolveBaseRef(
+      gitProbe(worktreeRoot),
+      storedBaseBranch
+    )
+    if (baseRef === null) {
+      return yield* new DiffTargetUnresolved({
+        message:
+          'No base branch is recorded for this workspace and the repository has no origin/HEAD, so the branch diff has nothing to fork from.',
+        reason: 'NO_BASE_BRANCH',
+        ref: null,
+      })
+    }
+
+    return {
+      baseRev: yield* resolveMergeBase(worktreeRoot, baseRef),
+      whitespaceFlags,
+    }
+  })
+
+// ── Whole-file contents for hunk expansion ──────────────────────
+// Backs `file.diffContents`. The diff viewer can only expand unchanged
+// context past a hunk if it holds both files in full, and the old side is
+// a blob at the revision the patch was cut against — never the worktree.
+
+/**
+ * Per-side byte cap for `file.diffContents`.
+ *
+ * Deliberately well under `MAX_PATCH_BYTES`: that budget covers one
+ * whole-workspace batch, while this is paid per expansion, per file, on a
+ * round trip a reader is waiting on.
+ */
+const MAX_DIFF_CONTENTS_BYTES = 2_000_000
+
+/** A side of a file plus whether the cap cut it short. */
+interface CappedSide {
+  readonly contents: string
+  readonly truncated: boolean
+}
+
+/**
+ * Cut `text` down to `maxBytes`, on a line boundary.
+ *
+ * Cutting mid-line would hand the viewer a line the file does not have, and
+ * cutting mid-codepoint would hand it a replacement character, so the cut
+ * lands at the last newline inside the budget. A single line longer than the
+ * budget has no such boundary and is dropped entirely rather than halved.
+ */
+const capToBytes = (text: string, maxBytes: number): CappedSide => {
+  const buffer = Buffer.from(text, 'utf-8')
+  if (buffer.byteLength <= maxBytes) {
+    return { contents: text, truncated: false }
+  }
+  const lastNewline = buffer.lastIndexOf(0x0a, maxBytes - 1)
+  const end = lastNewline === -1 ? 0 : lastNewline + 1
+  return {
+    contents: buffer.subarray(0, end).toString('utf-8'),
+    truncated: true,
+  }
+}
+
+/** True when the decoded text cannot honestly be treated as lines of text. */
+const looksBinary = (text: string): boolean =>
+  text.includes('\u0000') || text.includes('\uFFFD')
+
+/**
+ * Reject a path that could reach outside the repository through `git show`,
+ * which takes `<rev>:<path>` and so has no `--` to hide behind.
+ */
+const validateRepoRelativePath = (
+  filePath: string
+): Effect.Effect<void, RpcError> => {
+  const segments = filePath.split('/')
+  if (
+    filePath.length === 0 ||
+    filePath.startsWith('/') ||
+    segments.includes('..')
+  ) {
+    return new RpcError({
+      message: `Path escapes worktree root: ${filePath}`,
+      code: 'PATH_TRAVERSAL',
+    })
+  }
+  return Effect.void
+}
+
+/**
+ * Read the old side of a file: the blob at `baseRev`.
+ *
+ * A non-zero exit is the base revision simply not having that path, which is
+ * `OLD_PATH_ABSENT` — a different answer from the blob being empty, which
+ * exits zero with empty stdout.
+ */
+const readBaseBlob = (
+  worktreeRoot: string,
+  baseRev: string,
+  oldPath: string,
+  maxBytes: number
+): Effect.Effect<CappedSide, RpcError | DiffContentsUnavailable> =>
+  Effect.gen(function* () {
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        spawnGit(
+          [
+            ...STATUS_GIT_FLAGS,
+            'show',
+            '--no-textconv',
+            `${baseRev}:${oldPath}`,
+          ],
+          { cwd: worktreeRoot, readOnly: true }
+        ),
+      catch: () =>
+        new RpcError({
+          message: `Failed to read ${oldPath} at ${baseRev}`,
+          code: 'GIT_COMMAND_FAILED',
+        }),
+    })
+
+    if (result.exitCode !== 0) {
+      return yield* new DiffContentsUnavailable({
+        message: `${oldPath} does not exist at ${baseRev}.`,
+        reason: 'OLD_PATH_ABSENT',
+        path: oldPath,
+      })
+    }
+
+    if (looksBinary(result.stdout)) {
+      return yield* new DiffContentsUnavailable({
+        message: `${oldPath} is not a text file.`,
+        reason: 'BINARY_FILE',
+        path: oldPath,
+      })
+    }
+
+    return capToBytes(result.stdout, maxBytes)
+  })
+
+/**
+ * Read the new side of a file: the worktree file, verbatim.
+ *
+ * Unlike {@link FileService.read} this does not `trimEnd()`. The viewer
+ * counts lines from what it is given, so dropping a trailing newline would
+ * leave its line count one short of the file's and put the end of the diff
+ * outside the reachable scroll range.
+ */
+const readWorktreeFile = (
+  worktreeRoot: string,
+  newPath: string,
+  maxBytes: number
+): Effect.Effect<CappedSide, RpcError | DiffContentsUnavailable> =>
+  Effect.gen(function* () {
+    const fullPath = resolve(worktreeRoot, newPath)
+    yield* validatePathContainment(fullPath, worktreeRoot, newPath)
+
+    const buffer = yield* Effect.tryPromise({
+      try: () => readFile(fullPath),
+      catch: () => null,
+    }).pipe(Effect.catch(() => Effect.succeed(null)))
+
+    if (buffer === null) {
+      return yield* new DiffContentsUnavailable({
+        message: `${newPath} does not exist in the worktree.`,
+        reason: 'NEW_PATH_ABSENT',
+        path: newPath,
+      })
+    }
+
+    const text = buffer.toString('utf-8')
+    if (looksBinary(text)) {
+      return yield* new DiffContentsUnavailable({
+        message: `${newPath} is not a text file.`,
+        reason: 'BINARY_FILE',
+        path: newPath,
+      })
+    }
+
+    return capToBytes(text, maxBytes)
+  })
+
 /**
  * Assemble `FileDiffEntry[]` from the status file list and the patch
  * map, enforcing per-file and total byte budgets. Once the total
  * budget is exhausted, remaining patches are omitted with
  * `truncated: true` (opencode's "capped" behavior).
+ *
+ * The budget is deliberately target-blind: it reads the assembled patch map,
+ * so a branch diff — which can be orders of magnitude larger than a
+ * working-tree diff — is capped by exactly the same rule. When a branch diff
+ * blows the budget the response still lists every changed file with its line
+ * counts; the files past the cap simply arrive with `truncated: true` and no
+ * patch text, which is what the pane renders a placeholder for.
  */
 const assembleDiffEntries = (
   files: readonly FileInfo[],
@@ -871,16 +1190,66 @@ class FileService extends Context.Service<
      * single batched call.
      *
      * Tracked changes (modified + deleted, staged or unstaged) come from
-     * one `git diff --patch HEAD` invocation split per file; untracked
+     * one `git diff --patch <base>` invocation split per file; untracked
      * files are diffed against `/dev/null` via `git diff --no-index`
      * with bounded concurrency. Patches exceeding the size budget are
      * omitted with `truncated: true`.
      *
+     * `<base>` is `HEAD` for the default `working` target and the merge-base
+     * with the workspace's base branch for `branch` — see
+     * {@link resolveMergeBase} for why that is a resolved merge-base rather
+     * than three-dot syntax.
+     *
      * @param workspaceId - ID of the workspace
+     * @param options - diff target (default `working`) and whitespace handling
      */
     readonly diff: (
-      workspaceId: string
-    ) => Effect.Effect<readonly FileDiffEntry[], RpcError>
+      workspaceId: string,
+      options?: {
+        readonly ignoreWhitespace?: boolean | undefined
+        readonly target?: DiffTarget | undefined
+      }
+    ) => Effect.Effect<
+      readonly FileDiffEntry[],
+      RpcError | DiffTargetUnresolved
+    >
+
+    /**
+     * Return both sides of one changed file in full, for hunk expansion.
+     *
+     * The old side is `git show <base>:<oldPath>` where `<base>` is the
+     * revision {@link resolveDiffScope} resolves the caller's target to —
+     * `HEAD` for `working`, a merge-base sha for `branch` and `ref`. Reusing
+     * that resolution is the point: the old side of a branch diff is a blob
+     * at the fork point, and serving the worktree instead would show the
+     * wrong code with no sign that it was wrong.
+     *
+     * The new side is the worktree file verbatim — no `trimEnd()`, unlike
+     * {@link read}. Each side is capped independently and reports whether
+     * the cap cut it short.
+     *
+     * Whitespace handling is not a parameter here. `-w` decides which lines
+     * git puts inside hunks; it does not change what the files contain, so
+     * whitespace-only lines reappear as plain context inside an expanded
+     * region. That is the intended reading of "ignore whitespace" — keep
+     * those changes out of the summary, do not deny they exist.
+     *
+     * @param workspaceId - ID of the workspace
+     * @param request - target, change type, and both paths for one file
+     */
+    readonly diffContents: (
+      workspaceId: string,
+      request: {
+        readonly target: DiffTarget
+        readonly changeType: DiffContentsChangeType
+        readonly oldPath: string
+        readonly newPath: string
+        readonly maxBytes?: number | undefined
+      }
+    ) => Effect.Effect<
+      FileDiffContents,
+      RpcError | DiffTargetUnresolved | DiffContentsUnavailable
+    >
 
     /**
      * Subscribe to file change events for a workspace's worktree.
@@ -987,21 +1356,26 @@ class FileService extends Context.Service<
         })
 
       const computeStatus = (
-        worktreeRoot: string
+        worktreeRoot: string,
+        scope: DiffScope
       ): Effect.Effect<readonly FileInfo[], RpcError> =>
         Effect.gen(function* () {
-          // Run three git commands in parallel
-          const [numstatResult, untrackedResult, deletedResult] =
-            yield* runStatusGitCommands(worktreeRoot)
+          // Run four git commands in parallel
+          const [numstatResult, untrackedResult, deletedResult, addedResult] =
+            yield* runStatusGitCommands(worktreeRoot, scope)
 
-          const modified = parseNumstatOutput(numstatResult.stdout)
-          const added = yield* parseUntrackedOutput(
+          const trackedStats = parseNumstatOutput(numstatResult.stdout)
+          const untracked = yield* parseUntrackedOutput(
             untrackedResult.stdout,
             worktreeRoot
           )
-          const deleted = parseDeletedOutput(deletedResult.stdout)
 
-          return deduplicateStatusResults([...modified, ...added, ...deleted])
+          return classifyChangedFiles(
+            trackedStats,
+            untracked,
+            parseNameOnlyOutput(deletedResult.stdout),
+            parseNameOnlyOutput(addedResult.stdout)
+          )
         })
 
       const status = (
@@ -1009,24 +1383,44 @@ class FileService extends Context.Service<
       ): Effect.Effect<readonly FileInfo[], RpcError> =>
         Effect.gen(function* () {
           const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
-          return yield* computeStatus(workspace.worktreePath)
+          return yield* computeStatus(workspace.worktreePath, WORKING_SCOPE)
         })
 
       const diff = (
-        workspaceId: string
-      ): Effect.Effect<readonly FileDiffEntry[], RpcError> =>
+        workspaceId: string,
+        options?: {
+          readonly ignoreWhitespace?: boolean | undefined
+          readonly target?: DiffTarget | undefined
+        }
+      ): Effect.Effect<
+        readonly FileDiffEntry[],
+        RpcError | DiffTargetUnresolved
+      > =>
         Effect.gen(function* () {
           const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
           const worktreeRoot = workspace.worktreePath
 
+          // The base a branch diff forks from is whatever already names it:
+          // the branch this workspace's PR targets, else the branch the task
+          // was cut from. `resolveBaseRef` owns every fallback past that.
+          const scope = yield* resolveDiffScope(
+            worktreeRoot,
+            options?.target ?? { _tag: 'working' },
+            workspace.prBaseBranch ?? workspace.baseBranch,
+            options?.ignoreWhitespace ?? false
+          )
+
           // File list with line stats + batched tracked-change patches,
           // computed concurrently.
           const [files, patchMap] = yield* Effect.all(
-            [computeStatus(worktreeRoot), buildBatchedPatchMap(worktreeRoot)],
+            [
+              computeStatus(worktreeRoot, scope),
+              buildBatchedPatchMap(worktreeRoot, scope),
+            ],
             { concurrency: 2 }
           )
 
-          // Untracked files are absent from `git diff HEAD` — diff each
+          // Untracked files are absent from `git diff <base>` — diff each
           // against /dev/null with bounded concurrency.
           const untrackedFiles = files.filter(
             (file) => file.status === 'added' && !patchMap.has(file.path)
@@ -1034,7 +1428,7 @@ class FileService extends Context.Service<
           const untrackedPatches = yield* Effect.forEach(
             untrackedFiles,
             (file) =>
-              buildUntrackedPatch(worktreeRoot, file.path).pipe(
+              buildUntrackedPatch(worktreeRoot, file.path, scope).pipe(
                 Effect.map((patch) => [file.path, patch] as const)
               ),
             { concurrency: UNTRACKED_DIFF_CONCURRENCY }
@@ -1046,6 +1440,87 @@ class FileService extends Context.Service<
           }
 
           return assembleDiffEntries(files, patchMap)
+        })
+
+      const diffContents = (
+        workspaceId: string,
+        request: {
+          readonly target: DiffTarget
+          readonly changeType: DiffContentsChangeType
+          readonly oldPath: string
+          readonly newPath: string
+          readonly maxBytes?: number | undefined
+        }
+      ): Effect.Effect<
+        FileDiffContents,
+        RpcError | DiffTargetUnresolved | DiffContentsUnavailable
+      > =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
+          const worktreeRoot = workspace.worktreePath
+
+          yield* validateRepoRelativePath(request.oldPath)
+          yield* validateRepoRelativePath(request.newPath)
+
+          // A binary file has no lines to expand into, and decoding one as
+          // UTF-8 would hand the viewer mangled text that looks like source.
+          if (
+            isBinaryByExtension(request.newPath) ||
+            isImageByExtension(request.newPath)
+          ) {
+            return yield* new DiffContentsUnavailable({
+              message: `${request.newPath} is not a text file.`,
+              reason: 'BINARY_FILE',
+              path: request.newPath,
+            })
+          }
+
+          // `maxBytes` may lower the cap but never raise it.
+          const maxBytes = Math.min(
+            request.maxBytes ?? MAX_DIFF_CONTENTS_BYTES,
+            MAX_DIFF_CONTENTS_BYTES
+          )
+
+          // Whitespace handling is intentionally fixed: file contents are
+          // file contents, and `-w` only ever shaped the hunks.
+          const scope = yield* resolveDiffScope(
+            worktreeRoot,
+            request.target,
+            workspace.prBaseBranch ?? workspace.baseBranch,
+            false
+          )
+
+          const newSide = yield* readWorktreeFile(
+            worktreeRoot,
+            request.newPath,
+            maxBytes
+          )
+
+          // A pure rename's old side is byte-identical to its new side, so
+          // reading the blob would spend a git process to learn nothing;
+          // the viewer's loader wants `oldFile: null` there anyway.
+          if (request.changeType === 'rename-pure') {
+            return {
+              oldContents: '',
+              newContents: newSide.contents,
+              oldTruncated: false,
+              newTruncated: newSide.truncated,
+            }
+          }
+
+          const oldSide = yield* readBaseBlob(
+            worktreeRoot,
+            scope.baseRev,
+            request.oldPath,
+            maxBytes
+          )
+
+          return {
+            oldContents: oldSide.contents,
+            newContents: newSide.contents,
+            oldTruncated: oldSide.truncated,
+            newTruncated: newSide.truncated,
+          }
         })
 
       const watcherSubscribe = (
@@ -1112,7 +1587,14 @@ class FileService extends Context.Service<
           })
         )
 
-      return FileService.of({ list, read, status, diff, watcherSubscribe })
+      return FileService.of({
+        list,
+        read,
+        status,
+        diff,
+        diffContents,
+        watcherSubscribe,
+      })
     })
   )
 }

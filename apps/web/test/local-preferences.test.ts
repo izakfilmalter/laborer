@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   boardOverlayHeightCollection,
+  diffViewCollection,
   LOCAL_COLLECTIONS,
   makeValidatedLocalStorageParser,
   projectExpansionCollection,
@@ -15,7 +16,7 @@ const preferenceSchema = z.object({
 })
 
 describe('local preference persistence boundary', () => {
-  it('uses the versioned identities assigned to the four preferences', () => {
+  it('uses the versioned identities assigned to each preference', () => {
     expect(LOCAL_COLLECTIONS.sidebarWidth).toEqual({
       id: 'laborer.local.sidebar-width.v1',
       storageKey: 'laborer:db:sidebar-width:v1',
@@ -32,6 +33,11 @@ describe('local preference persistence boundary', () => {
       id: 'laborer.local.workspace-group-expansion.v1',
       storageKey: 'laborer:db:workspace-group-expansion:v1',
     })
+    expect(LOCAL_COLLECTIONS.diffView).toEqual({
+      id: 'laborer.local.diff-view.v1',
+      storageKey: 'laborer:db:diff-view:v1',
+    })
+    expect(diffViewCollection.id).toBe(LOCAL_COLLECTIONS.diffView.id)
     expect(sidebarWidthCollection.id).toBe(LOCAL_COLLECTIONS.sidebarWidth.id)
     expect(boardOverlayHeightCollection.id).toBe(
       LOCAL_COLLECTIONS.boardOverlayHeight.id
@@ -91,6 +97,11 @@ describe('local preference persistence boundary', () => {
     expect(
       workspaceGroupExpansionCollection.config.parser?.parse(
         persisted({ expanded: 'collapsed', id: 'workspace-1' })
+      )
+    ).toEqual({})
+    expect(
+      diffViewCollection.config.parser?.parse(
+        persisted({ id: 'workspace-1', ignoreWhitespace: 'yes', targetKey: '' })
       )
     ).toEqual({})
   })

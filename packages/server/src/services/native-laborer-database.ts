@@ -8,6 +8,22 @@ import { DatabaseSync } from '@laborer/task-db/database-sync'
 import { taskDbMigrations } from '@laborer/task-db/migrations'
 import { createTaskUlid } from '@laborer/task-db/ulid'
 import { notifyLaborerDatabaseWrite } from './laborer-database-wakeup.js'
+import {
+  decodeReviewCommentReplyRow,
+  decodeReviewCommentThreadRow,
+  MAX_REVIEW_COMMENT_REPLIES,
+  type NewReviewCommentReply,
+  type NewReviewCommentThread,
+  type ReviewCommentAuthor,
+  ReviewCommentAuthorMismatchError,
+  ReviewCommentInvalidError,
+  ReviewCommentNotFoundError,
+  type ReviewCommentReply,
+  type ReviewCommentStatus,
+  type ReviewCommentThread,
+  reviewCommentBody,
+  validateNewReviewCommentThread,
+} from './review-comments.js'
 
 export type TaskStatus =
   | 'todo'
@@ -288,17 +304,24 @@ export interface StateChange {
   readonly tableName: StateChangeTable
 }
 
-export type StateChangeTable = 'projects' | 'app_settings' | 'labels'
+export type StateChangeTable =
+  | 'projects'
+  | 'app_settings'
+  | 'labels'
+  | 'review_comment_threads'
 
 const STATE_CHANGE_TABLES = [
   'projects',
   'app_settings',
   'labels',
+  'review_comment_threads',
 ] as const satisfies readonly StateChangeTable[]
 
 export interface LaborerDatabaseSnapshot {
   readonly labels: readonly Label[]
   readonly projects: readonly Project[]
+  /** Every review conversation, each carrying its whole reply chain. */
+  readonly reviewComments: readonly ReviewCommentThread[]
   readonly settings: readonly AppSetting[]
   readonly stateCursor: number
   readonly taskCursor: number
@@ -316,6 +339,7 @@ export interface NativeTableUpdate<Row> {
 export interface NativeStateUpdates {
   readonly labels: NativeTableUpdate<Label>
   readonly projects: NativeTableUpdate<Project>
+  readonly reviewComments: NativeTableUpdate<ReviewCommentThread>
   readonly settings: NativeTableUpdate<AppSetting>
 }
 
@@ -355,6 +379,8 @@ export type LaborerDatabaseTable =
   | 'projects'
   | 'app_settings'
   | 'labels'
+  | 'review_comment_threads'
+  | 'review_comment_replies'
 
 /** A label name already taken, case-insensitively, app-wide. */
 export class LaborerDatabaseLabelNameConflictError extends Error {
@@ -422,6 +448,9 @@ const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
 const LABEL_COLUMNS = `id, name, color, created_at, updated_at,
   revision`
+const REVIEW_COMMENT_THREAD_COLUMNS = `id, workspace_id, file_path, side,
+  start_line, end_line, status, created_at, updated_at, revision`
+const REVIEW_COMMENT_REPLY_COLUMNS = 'id, thread_id, author, body, created_at'
 /** Row-size bound. A task carrying more labels than this is a client defect. */
 export const MAX_TASK_LABELS = 32
 export const MAX_LABEL_NAME_LENGTH = 60
@@ -1621,11 +1650,326 @@ export class NativeLaborerDatabase {
     })
   }
 
+  /**
+   * A review conversation with its whole reply chain, oldest reply first.
+   *
+   * Replies are append-only children rather than fields of the thread row, so
+   * answering a thread deliberately leaves the thread's revision alone: an
+   * agent's reply must never invalidate the revision a human is holding to
+   * resolve or delete that same thread.
+   */
+  findReviewCommentThread(id: string): ReviewCommentThread | null {
+    const row = this.#database
+      .prepare(
+        `SELECT ${REVIEW_COMMENT_THREAD_COLUMNS} FROM review_comment_threads
+         WHERE id = ?`
+      )
+      .get(id)
+    return row === undefined || row === null
+      ? null
+      : decodeReviewCommentThreadRow(row, this.#reviewCommentReplies(id))
+  }
+
+  /** Every thread in the database, for a snapshot the ledger then tails. */
+  listAllReviewCommentThreads(): readonly ReviewCommentThread[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT ${REVIEW_COMMENT_THREAD_COLUMNS} FROM review_comment_threads
+         ORDER BY created_at, id LIMIT ?`
+      )
+      .all(MAX_TABLE_ROWS + 1)
+    return boundedRows(rows, 'review_comment_threads').map((row) =>
+      decodeReviewCommentThreadRow(
+        row,
+        this.#reviewCommentReplies(
+          string(sqliteRow(row).id, 'review_comment_threads.id')
+        )
+      )
+    )
+  }
+
+  /** Every thread anchored in one workspace, newest thread last. */
+  listReviewCommentThreads(
+    workspaceId: string,
+    options: { readonly includeResolved?: boolean } = {}
+  ): readonly ReviewCommentThread[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT ${REVIEW_COMMENT_THREAD_COLUMNS} FROM review_comment_threads
+         WHERE workspace_id = ?
+           AND (? = 1 OR status = 'open')
+         ORDER BY created_at, id LIMIT ?`
+      )
+      .all(
+        workspaceId,
+        options.includeResolved === true ? 1 : 0,
+        MAX_TABLE_ROWS + 1
+      )
+    return boundedRows(rows, 'review_comment_threads').map((row) =>
+      decodeReviewCommentThreadRow(
+        row,
+        this.#reviewCommentReplies(
+          string(sqliteRow(row).id, 'review_comment_threads.id')
+        )
+      )
+    )
+  }
+
+  /**
+   * A workspace's conversations and the state-ledger position they reflect,
+   * captured in one read transaction, so a client can start tailing
+   * `state.subscribe` from exactly where its first read ended.
+   */
+  reviewCommentsAt(
+    workspaceId: string,
+    options: { readonly includeResolved?: boolean } = {}
+  ): {
+    readonly cursor: number
+    readonly rows: readonly ReviewCommentThread[]
+  } {
+    return this.#readTransaction(() => ({
+      cursor: this.#stateCursor(),
+      rows: this.listReviewCommentThreads(workspaceId, options),
+    }))
+  }
+
+  /**
+   * Opens a thread and writes its first message in one transaction, so a
+   * thread never exists without the words that opened it. A stored id is an
+   * idempotent retry that returns the thread as it stands.
+   *
+   * The author is the boundary's, not the caller's: web RPC handlers pass
+   * `HUMAN_AUTHOR` and MCP tools pass `AGENT_AUTHOR`.
+   */
+  createReviewCommentThread(
+    input: NewReviewCommentThread,
+    author: ReviewCommentAuthor,
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<ReviewCommentThread> {
+    const draft = validateNewReviewCommentThread(input)
+    const id = draft.id ?? createTaskUlid()
+    const replyId = draft.replyId ?? createTaskUlid()
+    const createdAt = draft.createdAt ?? changedAt
+    return this.#writeTransaction(() => {
+      const existing = this.findReviewCommentThread(id)
+      if (existing !== null) {
+        return { cursor: this.#stateCursor(), row: existing }
+      }
+      this.#database
+        .prepare(`INSERT INTO review_comment_threads (
+          id, workspace_id, file_path, side, start_line, end_line, status,
+          created_at, updated_at, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, 1)`)
+        .run(
+          id,
+          draft.workspaceId,
+          draft.filePath,
+          draft.side,
+          draft.startLine,
+          draft.endLine,
+          createdAt,
+          createdAt
+        )
+      this.#insertReviewCommentReply(replyId, id, author, draft.body, createdAt)
+      const cursor = this.#publishReviewCommentThread(
+        id,
+        createdAt,
+        operationId
+      )
+      return { cursor, row: this.#requireReviewCommentThread(id) }
+    })
+  }
+
+  /** Appends one message to an existing thread. See the authorship note on
+   * {@link findReviewCommentThread} for why the thread row is untouched. */
+  appendReviewCommentReply(
+    input: NewReviewCommentReply,
+    author: ReviewCommentAuthor,
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<ReviewCommentThread> {
+    const body = reviewCommentBody(input.body)
+    const id = input.id ?? createTaskUlid()
+    return this.#writeTransaction(() => {
+      const thread = this.findReviewCommentThread(input.threadId)
+      if (thread === null) {
+        throw new ReviewCommentNotFoundError({
+          id: input.threadId,
+          message: `Review comment thread not found: ${input.threadId}`,
+        })
+      }
+      if (thread.replies.some((reply) => reply.id === id)) {
+        return { cursor: this.#stateCursor(), row: thread }
+      }
+      if (thread.replies.length >= MAX_REVIEW_COMMENT_REPLIES) {
+        throw new ReviewCommentInvalidError({
+          message: `A review comment thread holds at most ${MAX_REVIEW_COMMENT_REPLIES} replies`,
+        })
+      }
+      // Replies read back ordered by time then id, and ids carry random
+      // entropy inside one millisecond. An answer written in the same
+      // millisecond as the message it answers would otherwise be free to sort
+      // ahead of it, so an appended reply is stamped after the last one.
+      const previous = thread.replies.at(-1)?.createdAt ?? thread.createdAt
+      const createdAt = input.createdAt ?? Math.max(changedAt, previous + 1)
+      this.#insertReviewCommentReply(
+        id,
+        input.threadId,
+        author,
+        body,
+        createdAt
+      )
+      const cursor = this.#publishReviewCommentThread(
+        input.threadId,
+        createdAt,
+        operationId
+      )
+      return {
+        cursor,
+        row: this.#requireReviewCommentThread(input.threadId),
+      }
+    })
+  }
+
+  /**
+   * Edits the body of a reply the given boundary wrote. A boundary may only
+   * rewrite its own words, so a human cannot edit the agent's answer and the
+   * agent cannot edit the request it was given.
+   */
+  updateReviewCommentReply(
+    replyId: string,
+    body: string,
+    author: ReviewCommentAuthor,
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<ReviewCommentThread> {
+    const nextBody = reviewCommentBody(body)
+    return this.#writeTransaction(() => {
+      const reply = this.#findReviewCommentReply(replyId)
+      if (reply === null) {
+        throw new ReviewCommentNotFoundError({
+          id: replyId,
+          message: `Review comment reply not found: ${replyId}`,
+        })
+      }
+      if (reply.author !== author) {
+        throw new ReviewCommentAuthorMismatchError({
+          author: reply.author,
+          id: replyId,
+          message: `Review comment reply ${replyId} was written by ${reply.author}`,
+        })
+      }
+      this.#database
+        .prepare('UPDATE review_comment_replies SET body = ? WHERE id = ?')
+        .run(nextBody, replyId)
+      this.#touchReviewCommentThread(reply.threadId, changedAt)
+      const cursor = this.#publishReviewCommentThread(
+        reply.threadId,
+        changedAt,
+        operationId
+      )
+      return {
+        cursor,
+        row: this.#requireReviewCommentThread(reply.threadId),
+      }
+    })
+  }
+
+  /** Revision-CAS status write: resolving records that a request was met. */
+  setReviewCommentThreadStatus(
+    id: string,
+    expectedRevision: number,
+    status: ReviewCommentStatus,
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<ReviewCommentThread> {
+    return this.#writeTransaction(() => {
+      const result = this.#database
+        .prepare(`UPDATE review_comment_threads
+          SET status = ?, updated_at = ?, revision = revision + 1
+          WHERE id = ? AND revision = ?`)
+        .run(status, changedAt, id, expectedRevision)
+      if (result.changes === 0) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'review_comment_threads',
+          id,
+          expectedRevision,
+          this.findReviewCommentThread(id)
+        )
+      }
+      const cursor = this.#publishReviewCommentThread(
+        id,
+        changedAt,
+        operationId
+      )
+      return { cursor, row: this.#requireReviewCommentThread(id) }
+    })
+  }
+
+  /** Hard-deletes a thread under revision CAS; its replies cascade with it. */
+  deleteReviewCommentThread(
+    id: string,
+    expectedRevision: number,
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<ReviewCommentThread> {
+    return this.#writeTransaction(() => {
+      const row = this.findReviewCommentThread(id)
+      const result = this.#database
+        .prepare(
+          'DELETE FROM review_comment_threads WHERE id = ? AND revision = ?'
+        )
+        .run(id, expectedRevision)
+      if (result.changes === 0 || row === null) {
+        throw new LaborerDatabaseStaleRevisionError(
+          'review_comment_threads',
+          id,
+          expectedRevision,
+          this.findReviewCommentThread(id)
+        )
+      }
+      const cursor = this.#publishReviewCommentThread(
+        id,
+        changedAt,
+        operationId
+      )
+      return { cursor, row }
+    })
+  }
+
+  /**
+   * Deletes every conversation anchored in one workspace, publishing each so
+   * subscribers retire the rows. Used when a worktree is destroyed: a comment
+   * anchors to a line range of that worktree's diff, so the anchor cannot
+   * outlive it.
+   */
+  deleteReviewCommentThreadsForWorkspace(
+    workspaceId: string,
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): readonly ReviewCommentThread[] {
+    return this.#writeTransaction(() => {
+      const rows = this.listReviewCommentThreads(workspaceId, {
+        includeResolved: true,
+      })
+      const remove = this.#database.prepare(
+        'DELETE FROM review_comment_threads WHERE id = ?'
+      )
+      for (const row of rows) {
+        remove.run(row.id)
+        this.#publishReviewCommentThread(row.id, changedAt, operationId)
+      }
+      return rows
+    })
+  }
+
   /** Rows and both durable ledger cursors captured in one read transaction. */
   snapshot(): LaborerDatabaseSnapshot {
     return this.#readTransaction(() => ({
       labels: this.listLabels(),
       projects: this.listProjects(),
+      reviewComments: this.listAllReviewCommentThreads(),
       settings: this.listSettings(),
       stateCursor: this.#ledgerBounds('state_changes').maximum ?? 0,
       taskCursor: this.#ledgerBounds('task_changes').maximum ?? 0,
@@ -1681,7 +2025,9 @@ export class NativeLaborerDatabase {
         changes.map(({ sequence }) => sequence)
       )
       const cursor = changes.at(-1)?.sequence ?? sequence
-      const update = <Row extends Project | AppSetting | Label>(
+      const update = <
+        Row extends Project | AppSetting | Label | ReviewCommentThread,
+      >(
         tableName: StateChangeTable,
         find: (id: string) => Row | null
       ): NativeTableUpdate<Row> => {
@@ -1706,6 +2052,9 @@ export class NativeLaborerDatabase {
       return {
         labels: update('labels', (id) => this.findLabel(id)),
         projects: update('projects', (id) => this.findProject(id)),
+        reviewComments: update('review_comment_threads', (id) =>
+          this.findReviewCommentThread(id)
+        ),
         settings: update('app_settings', (key) => this.findSetting(key)),
       }
     })
@@ -1879,6 +2228,80 @@ export class NativeLaborerDatabase {
       throw new Error(`Label ${id} could not be read after mutation`)
     }
     return row
+  }
+
+  #requireReviewCommentThread(id: string): ReviewCommentThread {
+    const row = this.findReviewCommentThread(id)
+    if (row === null) {
+      throw new Error(
+        `Review comment thread ${id} could not be read after mutation`
+      )
+    }
+    return row
+  }
+
+  /** Oldest first, with the id breaking ties inside one millisecond. */
+  #reviewCommentReplies(threadId: string): readonly ReviewCommentReply[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT ${REVIEW_COMMENT_REPLY_COLUMNS} FROM review_comment_replies
+         WHERE thread_id = ? ORDER BY created_at, id LIMIT ?`
+      )
+      .all(threadId, MAX_TABLE_ROWS + 1)
+    return boundedRows(rows, 'review_comment_replies').map(
+      decodeReviewCommentReplyRow
+    )
+  }
+
+  #findReviewCommentReply(id: string): ReviewCommentReply | null {
+    const row = this.#database
+      .prepare(
+        `SELECT ${REVIEW_COMMENT_REPLY_COLUMNS} FROM review_comment_replies
+         WHERE id = ?`
+      )
+      .get(id)
+    return row === undefined || row === null
+      ? null
+      : decodeReviewCommentReplyRow(row)
+  }
+
+  #insertReviewCommentReply(
+    id: string,
+    threadId: string,
+    author: ReviewCommentAuthor,
+    body: string,
+    createdAt: number
+  ): void {
+    this.#database
+      .prepare(`INSERT INTO review_comment_replies (
+        id, thread_id, author, body, created_at
+      ) VALUES (?, ?, ?, ?, ?)`)
+      .run(id, threadId, author, body, createdAt)
+  }
+
+  /**
+   * Publishes a thread on the shared state ledger. Replies are children of
+   * the thread row, so an appended or edited reply publishes as a change to
+   * the thread that carries it — one cursor, one row identity, whatever moved.
+   */
+  #publishReviewCommentThread(
+    threadId: string,
+    changedAt: number,
+    operationId: string | null
+  ): number {
+    return this.#appendStateChange(
+      'review_comment_threads',
+      threadId,
+      changedAt,
+      operationId
+    )
+  }
+
+  /** Records that the conversation moved without disturbing its revision. */
+  #touchReviewCommentThread(id: string, changedAt: number): void {
+    this.#database
+      .prepare('UPDATE review_comment_threads SET updated_at = ? WHERE id = ?')
+      .run(changedAt, id)
   }
 
   #stateCursor(): number {

@@ -162,8 +162,17 @@ const openDiff = async (page: Page, journey: DiffJourney): Promise<Locator> => {
   return diff
 }
 
-const diffFile = (diff: Locator, path: string): Locator =>
+/**
+ * The viewer owns and pools the element for each file, so a file is
+ * identified by the per-file control the app contributes to its header
+ * rather than by a wrapper the app no longer renders.
+ */
+const diffFileHeader = (diff: Locator, path: string): Locator =>
   diff.locator(`[data-diff-file-path="${path}"]`)
+
+/** Diff lines live in the viewer's shadow roots, which Playwright pierces. */
+const diffText = (diff: Locator, text: string): Locator =>
+  diff.getByText(text, { exact: false })
 
 test.describe('diff and git view journeys', () => {
   test('shows seeded diffs and git status decorations', async ({
@@ -184,12 +193,12 @@ test.describe('diff and git view journeys', () => {
       )
 
       const diff = await openDiff(page, journey)
-      await expect(diffFile(diff, 'README.md')).toContainText(
-        'visible changed line'
-      )
-      await expect(diffFile(diff, 'added.ts')).toContainText(
-        'export const seeded = true'
-      )
+      await expect(diffFileHeader(diff, 'README.md')).toBeVisible()
+      await expect(diffText(diff, 'visible changed line').first()).toBeVisible()
+      await expect(diffFileHeader(diff, 'added.ts')).toBeVisible()
+      await expect(
+        diffText(diff, 'export const seeded = true').first()
+      ).toBeVisible()
 
       const frame = page.locator(
         `[data-testid="workspace-frame"][data-workspace-id="${journey.workspaceId}"]`
@@ -225,18 +234,20 @@ test.describe('diff and git view journeys', () => {
         '# watcher journey\ninitial external state\n'
       )
       const diff = await openDiff(page, journey)
-      await expect(diffFile(diff, 'README.md')).toContainText(
-        'initial external state'
-      )
+      await expect(diffFileHeader(diff, 'README.md')).toBeVisible()
+      await expect(
+        diffText(diff, 'initial external state').first()
+      ).toBeVisible()
 
       await writeFile(
         `${journey.worktreePath}/watcher-added.ts`,
         'export const watcherUpdate = "arrived"\n'
       )
 
-      const added = diffFile(diff, 'watcher-added.ts')
-      await expect(added).toBeVisible({ timeout: 30_000 })
-      await expect(added).toContainText('watcherUpdate')
+      await expect(diffFileHeader(diff, 'watcher-added.ts')).toBeVisible({
+        timeout: 30_000,
+      })
+      await expect(diffText(diff, 'watcherUpdate').first()).toBeVisible()
       await expect(page.getByTestId('mission-control')).toBeVisible()
     } finally {
       await cleanDiffJourney(daemon, journey)

@@ -53,7 +53,8 @@ const cleanupTempRoots = () => {
 const seedWorkspace = (
   database: NativeLaborerDatabase,
   repoPath: string,
-  status = 'running'
+  status = 'running',
+  baseBranch: string | null = null
 ) => {
   const workspaceId = crypto.randomUUID()
   const projectId = crypto.randomUUID()
@@ -66,6 +67,7 @@ const seedWorkspace = (
     rootPath: repoPath,
   })
   database.insertTask({
+    baseBranch,
     branchName: status === 'destroyed' ? null : 'main',
     id: workspaceId,
     rootPath: repoPath,
@@ -77,6 +79,30 @@ const seedWorkspace = (
   })
 
   return workspaceId
+}
+
+/**
+ * A repo whose branch has both committed and uncommitted work, which is the
+ * shape the branch-vs-working distinction is about: `committed.txt` and the
+ * README edit live in a branch commit, `uncommitted.txt` and the `staged.txt`
+ * edit do not.
+ */
+const initBranchRepo = (prefix: string) => {
+  const repoPath = initRepo(prefix, tempRoots)
+  writeFileSync(join(repoPath, 'staged.txt'), 'before\n')
+  git('add staged.txt', repoPath)
+  git('commit -m "base commit"', repoPath)
+
+  git('checkout -b feature', repoPath)
+  writeFileSync(join(repoPath, 'committed.txt'), 'committed on the branch\n')
+  writeFileSync(join(repoPath, 'README.md'), '# test\nbranch edit\n')
+  git('add .', repoPath)
+  git('commit -m "branch work"', repoPath)
+
+  writeFileSync(join(repoPath, 'uncommitted.txt'), 'not committed yet\n')
+  writeFileSync(join(repoPath, 'staged.txt'), 'after\n')
+
+  return repoPath
 }
 
 describe('FileService', () => {
@@ -1104,8 +1130,333 @@ describe('FileService.diff', () => {
       if (result === 'success') {
         assert.fail('Expected NOT_FOUND error')
       }
-      assert.strictEqual(result._tag, 'RpcError')
+      if (result._tag !== 'RpcError') {
+        assert.fail(`Expected RpcError, got ${result._tag}`)
+      }
       assert.strictEqual(result.code, 'NOT_FOUND')
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+})
+
+// =================================================================
+// FileService.diff() — diff targets and whitespace
+// =================================================================
+
+describe('FileService.diff targets', () => {
+  it.effect('working (the default) shows only uncommitted work', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-target-working')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId)
+
+      const paths = entries.map((entry) => entry.path).sort()
+      assert.deepStrictEqual(paths, ['staged.txt', 'uncommitted.txt'])
+
+      // Explicitly asking for `working` is the same request.
+      const explicit = yield* fileService.diff(workspaceId, {
+        target: { _tag: 'working' },
+      })
+      assert.deepStrictEqual(
+        explicit.map((entry) => entry.path).sort(),
+        paths,
+        'omitting the target must mean the working target'
+      )
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('branch shows committed branch work alongside uncommitted', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-target-branch')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId, {
+        target: { _tag: 'branch' },
+      })
+
+      const paths = entries.map((entry) => entry.path).sort()
+      assert.deepStrictEqual(paths, [
+        'README.md',
+        'committed.txt',
+        'staged.txt',
+        'uncommitted.txt',
+      ])
+
+      // A file the branch created in a commit is an addition, not a
+      // modification, and carries its whole content as a patch.
+      const committed = entries.find((e) => e.path === 'committed.txt')
+      assert.strictEqual(committed?.status, 'added')
+      assert.include(committed?.patch ?? '', '+committed on the branch')
+
+      // The uncommitted edit is still in the range.
+      const staged = entries.find((e) => e.path === 'staged.txt')
+      assert.include(staged?.patch ?? '', '+after')
+      assert.include(staged?.patch ?? '', '-before')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect(
+    'branch excludes commits that landed on the base after the fork',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initBranchRepo('file-svc-target-three-dot')
+
+        // Base moves on after the fork. A two-dot `git diff main` would show
+        // this file as deleted by the branch; merge-base semantics must not.
+        git('checkout main', repoPath)
+        writeFileSync(join(repoPath, 'landed-on-main.txt'), 'from main\n')
+        git('add landed-on-main.txt', repoPath)
+        git('commit -m "main moves on"', repoPath)
+        git('checkout feature', repoPath)
+
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
+
+        const fileService = yield* FileService
+        const entries = yield* fileService.diff(workspaceId, {
+          target: { _tag: 'branch' },
+        })
+
+        assert.isUndefined(
+          entries.find((e) => e.path === 'landed-on-main.txt'),
+          'base-branch commits must not appear as the branch deleting them'
+        )
+        assert.isDefined(entries.find((e) => e.path === 'committed.txt'))
+
+        cleanupTempRoots()
+      }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('branch uses the base branch recorded on the task', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-target-stored-base')
+
+      // Fork a second base off the branch tip, then record it. Its merge-base
+      // with HEAD is the branch tip, so nothing committed is in range —
+      // proving the recorded base was used rather than `main`.
+      git('branch release feature', repoPath)
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(
+        database,
+        repoPath,
+        'running',
+        'release'
+      )
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId, {
+        target: { _tag: 'branch' },
+      })
+
+      assert.deepStrictEqual(
+        entries.map((entry) => entry.path).sort(),
+        ['staged.txt', 'uncommitted.txt'],
+        'the recorded base branch must win over the conventional guesses'
+      )
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('ref diffs against the merge-base with a named ref', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-target-ref')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const entries = yield* fileService.diff(workspaceId, {
+        target: { _tag: 'ref', ref: 'main' },
+      })
+
+      assert.deepStrictEqual(entries.map((entry) => entry.path).sort(), [
+        'README.md',
+        'committed.txt',
+        'staged.txt',
+        'uncommitted.txt',
+      ])
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('an unknown ref fails with REF_NOT_FOUND, not a crash', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-target-bad-ref')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService
+        .diff(workspaceId, { target: { _tag: 'ref', ref: 'no-such-branch' } })
+        .pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed('success' as const),
+            onFailure: (error) => Effect.succeed(error),
+          })
+        )
+
+      if (result === 'success' || result._tag !== 'DiffTargetUnresolved') {
+        assert.fail('Expected DiffTargetUnresolved')
+      }
+      assert.strictEqual(result.reason, 'REF_NOT_FOUND')
+      assert.strictEqual(result.ref, 'no-such-branch')
+      assert.isTrue(result.message.length > 0, 'the UI needs something to say')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('a repo with no base branch fails with NO_BASE_BRANCH', () =>
+    Effect.gen(function* () {
+      // No origin, and none of dev/main/master exist.
+      const repoPath = createTempDir('file-svc-target-no-base', tempRoots)
+      git('init -b solo', repoPath)
+      git('config user.email test@example.com', repoPath)
+      git('config user.name Test User', repoPath)
+      writeFileSync(join(repoPath, 'only.txt'), 'alone\n')
+      git('add only.txt', repoPath)
+      git('commit -m "only"', repoPath)
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService
+        .diff(workspaceId, { target: { _tag: 'branch' } })
+        .pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed('success' as const),
+            onFailure: (error) => Effect.succeed(error),
+          })
+        )
+
+      if (result === 'success' || result._tag !== 'DiffTargetUnresolved') {
+        assert.fail('Expected DiffTargetUnresolved')
+      }
+      assert.strictEqual(result.reason, 'NO_BASE_BRANCH')
+      assert.isNull(result.ref)
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('an unrelated history fails with MERGE_BASE_FAILED', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-target-orphan', tempRoots)
+      git('checkout --orphan orphan-branch', repoPath)
+      writeFileSync(join(repoPath, 'orphan.txt'), 'no shared history\n')
+      git('add orphan.txt', repoPath)
+      git('commit -m "orphan"', repoPath)
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* fileService
+        .diff(workspaceId, { target: { _tag: 'branch' } })
+        .pipe(
+          Effect.matchEffect({
+            onSuccess: () => Effect.succeed('success' as const),
+            onFailure: (error) => Effect.succeed(error),
+          })
+        )
+
+      if (result === 'success' || result._tag !== 'DiffTargetUnresolved') {
+        assert.fail('Expected DiffTargetUnresolved')
+      }
+      assert.strictEqual(result.reason, 'MERGE_BASE_FAILED')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('ignoreWhitespace drops a reindent but keeps a real change', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-ignore-whitespace', tempRoots)
+      writeFileSync(join(repoPath, 'reindented.txt'), 'alpha\nbeta\n')
+      writeFileSync(join(repoPath, 'edited.txt'), 'one\n')
+      git('add .', repoPath)
+      git('commit -m "add files"', repoPath)
+
+      writeFileSync(join(repoPath, 'reindented.txt'), '  alpha\n\tbeta\n')
+      writeFileSync(join(repoPath, 'edited.txt'), 'two\n')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const withWhitespace = yield* fileService.diff(workspaceId)
+      assert.deepStrictEqual(withWhitespace.map((entry) => entry.path).sort(), [
+        'edited.txt',
+        'reindented.txt',
+      ])
+
+      const ignored = yield* fileService.diff(workspaceId, {
+        ignoreWhitespace: true,
+      })
+      assert.deepStrictEqual(
+        ignored.map((entry) => entry.path),
+        ['edited.txt'],
+        'a whitespace-only change must not reach the pane at all'
+      )
+      assert.include(
+        ignored.find((entry) => entry.path === 'edited.txt')?.patch ?? '',
+        '+two'
+      )
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('ignoreWhitespace composes with the branch target', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-branch-whitespace', tempRoots)
+      writeFileSync(join(repoPath, 'reindented.txt'), 'alpha\nbeta\n')
+      git('add .', repoPath)
+      git('commit -m "add file"', repoPath)
+
+      git('checkout -b feature', repoPath)
+      writeFileSync(join(repoPath, 'reindented.txt'), '  alpha\n\tbeta\n')
+      git('add .', repoPath)
+      git('commit -m "reindent"', repoPath)
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const branchEntries = yield* fileService.diff(workspaceId, {
+        target: { _tag: 'branch' },
+      })
+      assert.deepStrictEqual(
+        branchEntries.map((entry) => entry.path),
+        ['reindented.txt']
+      )
+
+      const ignored = yield* fileService.diff(workspaceId, {
+        ignoreWhitespace: true,
+        target: { _tag: 'branch' },
+      })
+      assert.deepStrictEqual(
+        ignored.map((entry) => entry.path),
+        [],
+        'a branch whose only commit was a reindent has nothing to review'
+      )
+
+      cleanupTempRoots()
     }).pipe(Effect.provide(TestFileServiceLayer))
   )
 })
@@ -1249,5 +1600,324 @@ describe('assembleDiffEntries', () => {
       assert.isUndefined(entries[2]?.patch)
       assert.strictEqual(entries[2]?.truncated, true)
     })
+  )
+})
+
+/**
+ * `file.diffContents` — both full sides of one file, for hunk expansion.
+ *
+ * The behaviour under test is which revision each side is read from. A
+ * viewer that expands unchanged context is showing code no patch contained,
+ * so a wrong revision here is invisible: it renders as plausible source that
+ * is not what the diff was cut against.
+ */
+describe('FileService.diffContents', () => {
+  const expectFailure = <A, E>(effect: Effect.Effect<A, E>) =>
+    effect.pipe(
+      Effect.matchEffect({
+        onSuccess: () => Effect.succeed('success' as const),
+        onFailure: (error) => Effect.succeed(error),
+      })
+    )
+
+  it.effect('working reads the old side from HEAD', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-contents-working')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const contents = yield* fileService.diffContents(workspaceId, {
+        changeType: 'change',
+        newPath: 'staged.txt',
+        oldPath: 'staged.txt',
+        target: { _tag: 'working' },
+      })
+
+      assert.strictEqual(contents.oldContents, 'before\n')
+      assert.strictEqual(contents.newContents, 'after\n')
+      assert.isFalse(contents.oldTruncated)
+      assert.isFalse(contents.newTruncated)
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('branch reads the old side from the merge-base, not HEAD', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-contents-branch')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+
+      // The branch committed `# test\nbranch edit\n` over `# test\n`. Under
+      // the branch target the old side is the pre-fork blob; under working
+      // it is that same branch commit, which is already the new side.
+      const branch = yield* fileService.diffContents(workspaceId, {
+        changeType: 'change',
+        newPath: 'README.md',
+        oldPath: 'README.md',
+        target: { _tag: 'branch' },
+      })
+      assert.strictEqual(branch.oldContents, '# test\n')
+
+      const working = yield* fileService.diffContents(workspaceId, {
+        changeType: 'change',
+        newPath: 'README.md',
+        oldPath: 'README.md',
+        target: { _tag: 'working' },
+      })
+      assert.strictEqual(working.oldContents, '# test\nbranch edit\n')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('the new side is verbatim — trailing newlines survive', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-contents-verbatim', tempRoots)
+      writeFileSync(join(repoPath, 'lines.txt'), 'one\n')
+      git('add lines.txt', repoPath)
+      git('commit -m "add lines"', repoPath)
+      // Three trailing newlines: a `trimEnd()` would cost the viewer three
+      // lines and push the end of the file past the reachable scroll range.
+      writeFileSync(join(repoPath, 'lines.txt'), 'one\ntwo\n\n\n')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const contents = yield* fileService.diffContents(workspaceId, {
+        changeType: 'change',
+        newPath: 'lines.txt',
+        oldPath: 'lines.txt',
+        target: { _tag: 'working' },
+      })
+
+      assert.strictEqual(contents.newContents, 'one\ntwo\n\n\n')
+      assert.strictEqual(contents.oldContents, 'one\n')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('a rename resolves the old path at the base revision', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-contents-rename', tempRoots)
+      writeFileSync(join(repoPath, 'old-name.txt'), 'original\n')
+      git('add old-name.txt', repoPath)
+      git('commit -m "add old-name"', repoPath)
+
+      git('mv old-name.txt new-name.txt', repoPath)
+      writeFileSync(join(repoPath, 'new-name.txt'), 'original\nedited\n')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const changed = yield* fileService.diffContents(workspaceId, {
+        changeType: 'rename-changed',
+        newPath: 'new-name.txt',
+        oldPath: 'old-name.txt',
+        target: { _tag: 'working' },
+      })
+
+      assert.strictEqual(changed.oldContents, 'original\n')
+      assert.strictEqual(changed.newContents, 'original\nedited\n')
+
+      // A pure rename has no old side to fetch: the loader wants
+      // `oldFile: null`, so the blob is never read.
+      const pure = yield* fileService.diffContents(workspaceId, {
+        changeType: 'rename-pure',
+        newPath: 'new-name.txt',
+        oldPath: 'old-name.txt',
+        target: { _tag: 'working' },
+      })
+      assert.strictEqual(pure.oldContents, '')
+      assert.strictEqual(pure.newContents, 'original\nedited\n')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('an empty file is distinguishable from an absent one', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-contents-empty', tempRoots)
+      writeFileSync(join(repoPath, 'empty.txt'), '')
+      git('add empty.txt', repoPath)
+      git('commit -m "add empty"', repoPath)
+      writeFileSync(join(repoPath, 'empty.txt'), 'now has content\n')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+
+      // Empty: a success carrying an empty string.
+      const empty = yield* fileService.diffContents(workspaceId, {
+        changeType: 'change',
+        newPath: 'empty.txt',
+        oldPath: 'empty.txt',
+        target: { _tag: 'working' },
+      })
+      assert.strictEqual(empty.oldContents, '')
+
+      // Absent at the base revision: a failure that names the reason.
+      const absentOld = yield* expectFailure(
+        fileService.diffContents(workspaceId, {
+          changeType: 'change',
+          newPath: 'empty.txt',
+          oldPath: 'never-existed.txt',
+          target: { _tag: 'working' },
+        })
+      )
+      if (
+        absentOld === 'success' ||
+        absentOld._tag !== 'DiffContentsUnavailable'
+      ) {
+        assert.fail('Expected DiffContentsUnavailable')
+      }
+      assert.strictEqual(absentOld.reason, 'OLD_PATH_ABSENT')
+      assert.strictEqual(absentOld.path, 'never-existed.txt')
+
+      // Absent in the worktree: a different reason again.
+      unlinkSync(join(repoPath, 'empty.txt'))
+      const absentNew = yield* expectFailure(
+        fileService.diffContents(workspaceId, {
+          changeType: 'change',
+          newPath: 'empty.txt',
+          oldPath: 'empty.txt',
+          target: { _tag: 'working' },
+        })
+      )
+      if (
+        absentNew === 'success' ||
+        absentNew._tag !== 'DiffContentsUnavailable'
+      ) {
+        assert.fail('Expected DiffContentsUnavailable')
+      }
+      assert.strictEqual(absentNew.reason, 'NEW_PATH_ABSENT')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('the byte cap truncates on a line boundary and reports it', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-contents-cap', tempRoots)
+      const body = `${Array.from({ length: 200 }, (_, i) => `line ${String(i)}`).join('\n')}\n`
+      writeFileSync(join(repoPath, 'big.txt'), body)
+      git('add big.txt', repoPath)
+      git('commit -m "add big"', repoPath)
+      writeFileSync(join(repoPath, 'big.txt'), `${body}tail\n`)
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const contents = yield* fileService.diffContents(workspaceId, {
+        changeType: 'change',
+        maxBytes: 64,
+        newPath: 'big.txt',
+        oldPath: 'big.txt',
+        target: { _tag: 'working' },
+      })
+
+      assert.isTrue(contents.newTruncated)
+      assert.isTrue(contents.oldTruncated)
+      assert.isBelow(Buffer.byteLength(contents.newContents, 'utf-8'), 65)
+      assert.isTrue(
+        contents.newContents.endsWith('\n'),
+        'a cut side must still end on a whole line'
+      )
+      assert.isTrue(body.startsWith(contents.newContents))
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('a binary file is refused rather than returned as text', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-contents-binary', tempRoots)
+      writeFileSync(join(repoPath, 'blob.bin'), Buffer.from([0, 1, 2, 3]))
+      git('add blob.bin', repoPath)
+      git('commit -m "add blob"', repoPath)
+      writeFileSync(join(repoPath, 'blob.bin'), Buffer.from([0, 9, 9, 9]))
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* expectFailure(
+        fileService.diffContents(workspaceId, {
+          changeType: 'change',
+          newPath: 'blob.bin',
+          oldPath: 'blob.bin',
+          target: { _tag: 'working' },
+        })
+      )
+
+      if (result === 'success' || result._tag !== 'DiffContentsUnavailable') {
+        assert.fail('Expected DiffContentsUnavailable')
+      }
+      assert.strictEqual(result.reason, 'BINARY_FILE')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('a traversing path is refused before git ever sees it', () =>
+    Effect.gen(function* () {
+      const repoPath = initRepo('file-svc-contents-traversal', tempRoots)
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* expectFailure(
+        fileService.diffContents(workspaceId, {
+          changeType: 'change',
+          newPath: 'README.md',
+          oldPath: '../outside.txt',
+          target: { _tag: 'working' },
+        })
+      )
+
+      if (result === 'success' || result._tag !== 'RpcError') {
+        assert.fail('Expected RpcError')
+      }
+      assert.strictEqual(result.code, 'PATH_TRAVERSAL')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
+  )
+
+  it.effect('an unresolvable target fails before any file is read', () =>
+    Effect.gen(function* () {
+      const repoPath = initBranchRepo('file-svc-contents-bad-ref')
+
+      const { database } = yield* LaborerDatabase
+      const workspaceId = seedWorkspace(database, repoPath)
+
+      const fileService = yield* FileService
+      const result = yield* expectFailure(
+        fileService.diffContents(workspaceId, {
+          changeType: 'change',
+          newPath: 'staged.txt',
+          oldPath: 'staged.txt',
+          target: { _tag: 'ref', ref: 'no-such-branch' },
+        })
+      )
+
+      if (result === 'success' || result._tag !== 'DiffTargetUnresolved') {
+        assert.fail('Expected DiffTargetUnresolved')
+      }
+      assert.strictEqual(result.reason, 'REF_NOT_FOUND')
+
+      cleanupTempRoots()
+    }).pipe(Effect.provide(TestFileServiceLayer))
   )
 })

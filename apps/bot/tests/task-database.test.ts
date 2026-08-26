@@ -30,6 +30,7 @@ const migrationNames = [
   '0013_correlated_operations',
   '0014_pr_unresolved_threads',
   '0015_pr_review_decision',
+  '0016_review_comments',
 ]
 
 const temporaryDatabasePath = (): string => {
@@ -326,6 +327,10 @@ describe('NativeTaskDatabase', () => {
       [
         '0015_pr_review_decision',
         'a5effc306d0066844d973079980e94e47b2c676332f6e5bba415fbc8fc44b8c0',
+      ],
+      [
+        '0016_review_comments',
+        '3be39b957218d30d7ff98c1366d8835ab5b3ac8a7224c8bbb66270faf4003ec8',
       ],
     ])
   })

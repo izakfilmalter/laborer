@@ -1717,6 +1717,25 @@ class WorkspaceProvider extends Context.Service<
                 },
                 operationId
               )
+              // A review comment anchors to a line range of this worktree's
+              // diff. With the worktree gone the anchor names nothing that can
+              // be shown or answered, and the task id it is keyed by outlives
+              // the worktree, so leaving the threads behind would resurface
+              // them against an unrelated future diff.
+              yield* laborerDatabase
+                .run('retire workspace review comments', (database) =>
+                  database.deleteReviewCommentThreadsForWorkspace(
+                    workspaceId,
+                    operationId
+                  )
+                )
+                .pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      `Failed to retire review comments for workspace ${workspaceId}: ${String(error)}`
+                    ).pipe(Effect.annotateLogs('module', logPrefix))
+                  )
+                )
             } else if (workspaceTask !== null) {
               yield* updateServerTaskFacts(
                 laborerDatabase,

@@ -22,6 +22,7 @@
 
 import { existsSync } from 'node:fs'
 import { Context, Duration, Effect, Fiber, Layer, Ref, Schema } from 'effect'
+import { resolveBaseRef, shortBranchName } from '../lib/base-ref.js'
 import { spawn } from '../lib/spawn.js'
 import {
   parsePullRequestRepoSlug,
@@ -166,7 +167,6 @@ const FAILURE_CONCLUSIONS = new Set([
   'TIMED_OUT',
 ])
 const SUCCESS_CONCLUSIONS = new Set(['NEUTRAL', 'SKIPPED', 'SUCCESS'])
-const REMOTE_BRANCH_PREFIX = /^refs\/remotes\/[^/]+\//
 
 const singleCheckStatus = (
   check: typeof GhCheck.Type
@@ -318,38 +318,16 @@ const runGit = Effect.fn('PrWatcher.runGit')(function* (
   })
 })
 
-const shortBranchName = (ref: string): string =>
-  ref.replace(REMOTE_BRANCH_PREFIX, '')
-
 /** GitHub Desktop's advisory merge check, kept local so branches without a PR
  * still say when they conflict with their base branch. */
 const loadLocalMergeData = Effect.fn('PrWatcher.loadLocalMergeData')(function* (
   worktreePath: string,
   storedBaseBranch: string | null
 ) {
-  let baseRef = storedBaseBranch
-  if (baseRef === null) {
-    const remoteHead = yield* runGit(worktreePath, [
-      'symbolic-ref',
-      'refs/remotes/origin/HEAD',
-    ])
-    if (remoteHead.exitCode === 0 && remoteHead.stdout.trim().length > 0) {
-      baseRef = remoteHead.stdout.trim()
-    }
-  }
-  if (baseRef === null) {
-    for (const candidate of ['dev', 'main', 'master']) {
-      const exists = yield* runGit(worktreePath, [
-        'rev-parse',
-        '--verify',
-        candidate,
-      ])
-      if (exists.exitCode === 0) {
-        baseRef = candidate
-        break
-      }
-    }
-  }
+  const baseRef = yield* resolveBaseRef(
+    (args) => runGit(worktreePath, args),
+    storedBaseBranch
+  )
   if (baseRef === null) {
     return EMPTY_PR
   }

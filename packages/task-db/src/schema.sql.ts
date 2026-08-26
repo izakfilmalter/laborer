@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import {
   check,
+  index,
   integer,
   sqliteTable,
   text,
@@ -78,6 +79,76 @@ export const labels = sqliteTable(
     ),
     check('labels_revision_check', sql`${table.revision} >= 1`),
     uniqueIndex('labels_name_unique').on(sql`lower(${table.name})`),
+  ]
+)
+
+/**
+ * A review conversation anchored to a line range of a changed file in a
+ * workspace. The coding agent reads and answers these through the
+ * per-workspace MCP server, so the anchor and the back-and-forth are durable
+ * rather than transient chat state.
+ */
+export const reviewCommentThreads = sqliteTable(
+  'review_comment_threads',
+  {
+    id: text().primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    /** Path relative to the worktree root, as the diff viewer reports it. */
+    filePath: text('file_path').notNull(),
+    /** Which half of the diff the line range names. */
+    side: text().notNull(),
+    startLine: integer('start_line').notNull(),
+    endLine: integer('end_line').notNull(),
+    status: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    revision: integer().notNull().default(1),
+  },
+  (table) => [
+    check(
+      'review_comment_threads_side_check',
+      sql`${table.side} IN ('additions', 'deletions')`
+    ),
+    check(
+      'review_comment_threads_status_check',
+      sql`${table.status} IN ('open', 'resolved')`
+    ),
+    check(
+      'review_comment_threads_line_range_check',
+      sql`${table.startLine} >= 1 AND ${table.endLine} >= ${table.startLine}`
+    ),
+    check('review_comment_threads_revision_check', sql`${table.revision} >= 1`),
+    index('review_comment_threads_workspace_id_idx').on(table.workspaceId),
+  ]
+)
+
+/**
+ * One message in a review conversation. Replies are append-only and ordered
+ * by `created_at` then `id`, so the chain reads the same way everywhere even
+ * when two messages land in the same millisecond.
+ */
+export const reviewCommentReplies = sqliteTable(
+  'review_comment_replies',
+  {
+    id: text().primaryKey(),
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => reviewCommentThreads.id, { onDelete: 'cascade' }),
+    /** Set by the boundary that wrote it, never claimed by its payload. */
+    author: text().notNull(),
+    body: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    check(
+      'review_comment_replies_author_check',
+      sql`${table.author} IN ('human', 'agent')`
+    ),
+    index('review_comment_replies_thread_id_idx').on(
+      table.threadId,
+      table.createdAt,
+      table.id
+    ),
   ]
 )
 

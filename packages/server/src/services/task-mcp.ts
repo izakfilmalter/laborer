@@ -1,4 +1,8 @@
-import { LabelColor, PositiveInt } from '@laborer/shared/rpc'
+import {
+  LabelColor,
+  PositiveInt,
+  ReviewCommentThread,
+} from '@laborer/shared/rpc'
 import { Effect, Layer, Schema } from 'effect'
 import { McpProtocol, McpServer, Tool, Toolkit } from 'effect/unstable/ai'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
@@ -173,6 +177,38 @@ const SetTaskLabels = Tool.make('set_task_labels', {
   failure: AgentTaskError,
 })
 
+const ListReviewComments = Tool.make('list_review_comments', {
+  description:
+    "Read the human's review comments on this workspace's diff: each is a conversation anchored to a file and line range, with every reply so far. This is how you find out what you have been asked to change. Answer each thread you act on with reply_to_review_comment, and call resolve_review_comment only once the request is actually addressed in the code — resolving means done, not read. Defaults to the workspace containing `path`, or the current working directory, and to unresolved threads only.",
+  parameters: Schema.Struct({
+    include_resolved: Schema.optional(Schema.Boolean),
+    path: Schema.optional(Schema.String),
+    workspace_id: Schema.optional(Schema.String),
+  }),
+  success: Schema.Struct({ comments: Schema.Array(ReviewCommentThread) }),
+  failure: AgentTaskError,
+})
+const ReplyToReviewComment = Tool.make('reply_to_review_comment', {
+  description:
+    'Append your answer to a review comment thread and return the whole conversation. The reply is recorded as written by the agent; you cannot post as the human.',
+  parameters: Schema.Struct({
+    body: Schema.String,
+    thread_id: Schema.String,
+  }),
+  success: ReviewCommentThread,
+  failure: AgentTaskError,
+})
+const ResolveReviewComment = Tool.make('resolve_review_comment', {
+  description:
+    'Mark a review comment thread resolved using revision CAS, once its request is addressed in the code. The revision comes from list_review_comments; a stale revision means the thread moved, so re-read it before retrying.',
+  parameters: Schema.Struct({
+    expected_revision: PositiveInt,
+    thread_id: Schema.String,
+  }),
+  success: ReviewCommentThread,
+  failure: AgentTaskError,
+})
+
 export const TaskToolkit = Toolkit.make(
   ListProjects,
   CreateTask,
@@ -184,7 +220,10 @@ export const TaskToolkit = Toolkit.make(
   CreateLabel,
   UpdateLabel,
   DeleteLabel,
-  SetTaskLabels
+  SetTaskLabels,
+  ListReviewComments,
+  ReplyToReviewComment,
+  ResolveReviewComment
 )
 
 const exposeErrorCode = <A>(effect: Effect.Effect<A, AgentTaskError>) =>
@@ -259,6 +298,26 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
         ),
       delete_label: ({ expected_revision, id }) =>
         exposeErrorCode(service.deleteLabel(id, expected_revision)),
+      list_review_comments: ({ include_resolved, path, workspace_id }) =>
+        exposeErrorCode(
+          service.listReviewComments({
+            ...(include_resolved === undefined
+              ? {}
+              : { includeResolved: include_resolved }),
+            ...(path === undefined ? {} : { path }),
+            ...(workspace_id === undefined
+              ? {}
+              : { workspaceId: workspace_id }),
+          })
+        ).pipe(Effect.map((comments) => ({ comments }))),
+      reply_to_review_comment: ({ body, thread_id }) =>
+        exposeErrorCode(
+          service.replyToReviewComment({ body, threadId: thread_id })
+        ),
+      resolve_review_comment: ({ expected_revision, thread_id }) =>
+        exposeErrorCode(
+          service.resolveReviewComment(thread_id, expected_revision)
+        ),
       set_task_labels: ({ expected_revision, id, label_ids }) =>
         exposeErrorCode(
           service.setTaskLabels({

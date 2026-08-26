@@ -380,6 +380,81 @@ export const SharedLabelRow = Schema.Struct({
 })
 export type SharedLabelRow = typeof SharedLabelRow.Type
 
+// ---------------------------------------------------------------------------
+// Review Comment Schemas
+// ---------------------------------------------------------------------------
+
+/** Longest review comment body accepted at every boundary. */
+export const REVIEW_COMMENT_BODY_MAX_LENGTH = 10_000
+
+/** Which half of the diff a review comment's line range names. */
+export const ReviewCommentSide = Schema.Literals(['additions', 'deletions'])
+
+export type ReviewCommentSide = typeof ReviewCommentSide.Type
+
+/**
+ * Where a review conversation stands. `resolved` means the request it carries
+ * has actually been addressed, not merely read.
+ */
+export const ReviewCommentStatus = Schema.Literals(['open', 'resolved'])
+
+export type ReviewCommentStatus = typeof ReviewCommentStatus.Type
+
+/**
+ * Who wrote a reply. This is a fact about the boundary that persisted it, not
+ * a claim any payload makes: no request schema carries an author. Web clients
+ * write `human` through the `reviewComment.*` RPCs; the coding agent writes
+ * `agent` through the per-workspace MCP server.
+ */
+export const ReviewCommentAuthor = Schema.Literals(['human', 'agent'])
+
+export type ReviewCommentAuthor = typeof ReviewCommentAuthor.Type
+
+/** One message in a review conversation. */
+export const ReviewCommentReply = Schema.Struct({
+  /** Set by the boundary that wrote it, never claimed by its payload. */
+  author: ReviewCommentAuthor,
+  /** Markdown text. */
+  body: Schema.String,
+  createdAt: Schema.Int,
+  id: Schema.String,
+  threadId: Schema.String,
+})
+
+export type ReviewCommentReply = typeof ReviewCommentReply.Type
+
+/**
+ * A review conversation anchored to a line range of a changed file in a
+ * workspace — the in-app equivalent of a GitHub review thread.
+ *
+ * The thread is durable because the coding agent reads it, and answers it,
+ * through the per-workspace `laborer-current` MCP server rather than through
+ * any chat transcript.
+ */
+export const ReviewCommentThread = Schema.Struct({
+  createdAt: Schema.Int,
+  /** Last line of the anchor, inclusive. Equals `startLine` for one line. */
+  endLine: PositiveInt,
+  /** Path relative to the worktree root, as the diff viewer reports it. */
+  filePath: Schema.String,
+  id: Schema.String,
+  /** Every message so far, oldest first. Never empty. */
+  replies: Schema.Array(ReviewCommentReply),
+  revision: PositiveInt,
+  side: ReviewCommentSide,
+  startLine: PositiveInt,
+  status: ReviewCommentStatus,
+  updatedAt: Schema.Int,
+  workspaceId: Schema.String,
+})
+
+export type ReviewCommentThread = typeof ReviewCommentThread.Type
+
+const ReviewCommentBody = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(REVIEW_COMMENT_BODY_MAX_LENGTH)
+)
+
 const tableUpdate = <Row extends Schema.Top>(row: Row) =>
   Schema.Union([
     Schema.Struct({
@@ -405,11 +480,19 @@ export const SettingTableUpdate = tableUpdate(SharedSettingRow)
 export type SettingTableUpdate = typeof SettingTableUpdate.Type
 export const LabelTableUpdate = tableUpdate(SharedLabelRow)
 export type LabelTableUpdate = typeof LabelTableUpdate.Type
+/**
+ * Review conversations travel whole: a thread row carries its reply chain, so
+ * an appended reply publishes as an updated thread rather than as a row of a
+ * second, separately-cursored table.
+ */
+export const ReviewCommentTableUpdate = tableUpdate(ReviewCommentThread)
+export type ReviewCommentTableUpdate = typeof ReviewCommentTableUpdate.Type
 
 /** One stream, with task_changes and state_changes advancing independently. */
 export const SharedStateUpdate = Schema.Struct({
   labels: Schema.optional(LabelTableUpdate),
   projects: Schema.optional(ProjectTableUpdate),
+  reviewComments: Schema.optional(ReviewCommentTableUpdate),
   settings: Schema.optional(SettingTableUpdate),
   tasks: Schema.optional(TaskTableUpdate),
 })
@@ -676,6 +759,147 @@ export const FileDiffEntry = Schema.Struct({
 })
 
 export type FileDiffEntry = typeof FileDiffEntry.Type
+
+/**
+ * What `file.diff` measures the worktree against.
+ *
+ * A worktree holds two different stories at once: what the agent has not
+ * committed yet, and everything the branch has done since it forked. The
+ * diff pane needs both, so the target is part of the request rather than a
+ * property of the server.
+ *
+ * - `working` — the worktree against `HEAD`. Uncommitted work only. This is
+ *   the default so existing callers keep the behaviour they were written for.
+ * - `branch` — the worktree against the merge-base of the branch and its base
+ *   branch. Everything the branch changed, committed and uncommitted alike.
+ * - `ref` — the same merge-base treatment against a caller-chosen ref, for a
+ *   base-ref menu (`origin/main`, a tag, a sha).
+ *
+ * `branch` and `ref` deliberately resolve the merge-base themselves instead of
+ * asking git for `base...HEAD`: three-dot syntax needs two commits on both
+ * sides, so it can never include the working tree. Diffing from the merge-base
+ * to the worktree gives three-dot *semantics* — only what this branch did,
+ * never base-branch commits shown inverted — with uncommitted work included.
+ */
+export const DiffTarget = Schema.Union([
+  Schema.TaggedStruct('working', {}),
+  Schema.TaggedStruct('branch', {}),
+  Schema.TaggedStruct('ref', {
+    /** Any revision git can resolve: branch, tag, sha, `origin/main`. */
+    ref: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+  }),
+])
+
+export type DiffTarget = typeof DiffTarget.Type
+
+/**
+ * `file.diff` could not work out what to measure against.
+ *
+ * These are the ordinary ways a repository declines to answer, not faults:
+ * a worktree whose project never recorded a base branch and has no
+ * `origin/HEAD`, a branch grafted onto an unrelated history, or a ref the
+ * caller named that this repository does not have. Each carries the ref it
+ * was working with so the pane can say which base failed.
+ */
+export class DiffTargetUnresolved extends Schema.TaggedError<DiffTargetUnresolved>()(
+  'DiffTargetUnresolved',
+  {
+    message: Schema.String,
+    /**
+     * - `NO_BASE_BRANCH` — nothing names a base branch for this worktree.
+     * - `REF_NOT_FOUND` — the requested ref does not resolve here.
+     * - `MERGE_BASE_FAILED` — no common ancestor with the base.
+     */
+    reason: Schema.Literals([
+      'NO_BASE_BRANCH',
+      'REF_NOT_FOUND',
+      'MERGE_BASE_FAILED',
+    ]),
+    /** The ref that was being resolved, when one was known. */
+    ref: Schema.NullOr(Schema.String),
+  }
+) {}
+
+/**
+ * The change types `file.diffContents` will serve.
+ *
+ * These are the three the diff viewer's hunk-expansion loader can actually
+ * use. `new` and `deleted` are deliberately absent: a patch for either
+ * already carries its whole existing side, so there is no unchanged context
+ * to expand into and nothing for a loader to fetch.
+ */
+export const DiffContentsChangeType = Schema.Literals([
+  'change',
+  'rename-pure',
+  'rename-changed',
+])
+
+export type DiffContentsChangeType = typeof DiffContentsChangeType.Type
+
+/**
+ * Both sides of one file in full, returned by `file.diffContents`.
+ *
+ * The old side is the blob at the revision the patch was cut against; the
+ * new side is the worktree file, byte-for-byte. Neither is trimmed: a
+ * viewer counts lines from these strings, and silently dropping a trailing
+ * newline would leave its line count short of the file's.
+ *
+ * `oldContents` is empty exactly when the change type is `rename-pure`
+ * — there the old side is the new side, so it is not read at all — and
+ * an empty string otherwise means the file really is empty. A file that
+ * is not there at all is a {@link DiffContentsUnavailable} failure, never
+ * an empty string.
+ *
+ * The `truncated` flags are the server admitting it cut a side off at the
+ * byte cap. A truncated side has fewer lines than the file, so a client
+ * that hydrates with it will disagree with the real file; the flags exist
+ * so the client can decline to hydrate rather than discover the shortfall
+ * after rendering.
+ */
+export const FileDiffContents = Schema.Struct({
+  /** Full contents of the old side at the diff's base revision. */
+  oldContents: Schema.String,
+  /** Full contents of the new side as it is in the worktree. */
+  newContents: Schema.String,
+  /** True when the old side was cut short by the per-side byte cap. */
+  oldTruncated: Schema.Boolean,
+  /** True when the new side was cut short by the per-side byte cap. */
+  newTruncated: Schema.Boolean,
+})
+
+export type FileDiffContents = typeof FileDiffContents.Type
+
+/**
+ * `file.diffContents` will not serve this file's contents.
+ *
+ * Distinct from {@link RpcError} because none of these are faults: they are
+ * the honest answers to "give me both sides of this file", and each one
+ * tells the client to keep rendering the patch it already has rather than
+ * enable hunk expansion.
+ *
+ * `OLD_PATH_ABSENT` and `NEW_PATH_ABSENT` are what make "the file is not
+ * there" distinguishable from "the file is empty", which `file.read` cannot
+ * express — it answers both with empty content.
+ */
+export class DiffContentsUnavailable extends Schema.TaggedError<DiffContentsUnavailable>()(
+  'DiffContentsUnavailable',
+  {
+    message: Schema.String,
+    /**
+     * - `OLD_PATH_ABSENT` — the base revision has no blob at the old path.
+     * - `NEW_PATH_ABSENT` — the worktree has no file at the new path.
+     * - `BINARY_FILE` — the file is not text, so there are no lines to
+     *   expand into and returning it as a string would mangle it.
+     */
+    reason: Schema.Literals([
+      'OLD_PATH_ABSENT',
+      'NEW_PATH_ABSENT',
+      'BINARY_FILE',
+    ]),
+    /** The path that could not be served. */
+    path: Schema.String,
+  }
+) {}
 
 // ---------------------------------------------------------------------------
 // File Tree Schemas
@@ -1317,19 +1541,78 @@ export class LaborerRpcs extends RpcGroup.make(
    * Return all changed files in a workspace with their unified diff patches
    * in a single batched call.
    *
-   * Tracked changes are computed with one `git diff --patch HEAD` invocation
+   * Tracked changes are computed with one `git diff --patch <base>` invocation
    * whose output is split per file; untracked files are diffed against
    * `/dev/null` via `git diff --no-index`. Patches that exceed the size
    * budget are omitted with `truncated: true`.
+   *
+   * `target` chooses what `<base>` is — see {@link DiffTarget}. It defaults to
+   * `{ _tag: 'working' }`, the diff against `HEAD`. `ignoreWhitespace` adds
+   * `-w`, so a reindent stops drowning the change that matters.
    *
    * This is the diff viewer's data source — one round-trip per refresh
    * instead of one `file.read` per changed file.
    */
   Rpc.make('file.diff', {
     success: Schema.Array(FileDiffEntry),
-    error: RpcError,
+    error: Schema.Union([RpcError, DiffTargetUnresolved]),
     payload: {
       workspaceId: Schema.String,
+      target: Schema.optional(DiffTarget),
+      ignoreWhitespace: Schema.optional(Schema.Boolean),
+    },
+  }),
+
+  /**
+   * Return both full sides of one changed file so the diff viewer can
+   * expand unchanged context around a hunk.
+   *
+   * A patch carries only the lines inside its hunks, so expanding past them
+   * needs the files themselves. The old side is read with
+   * `git show <base>:<oldPath>` where `<base>` is the exact revision the
+   * patch was cut against — `HEAD` for the `working` target, the resolved
+   * merge-base for `branch` and `ref`. That resolution is the whole reason
+   * this RPC exists: `file.read` only ever sees the worktree, so using it
+   * for the old side would render the wrong code without saying so.
+   * `target` is therefore required, not defaulted — the client must name the
+   * same target it asked `file.diff` for.
+   *
+   * The new side is the worktree file verbatim, including any trailing
+   * newline. Each side is capped at 2 MB and reports its own `truncated`
+   * flag; the cap sits well under `file.diff`'s 10 MB patch budget because
+   * this is a per-expansion round trip rather than one whole-workspace
+   * batch. `maxBytes` may lower that cap but never raise it.
+   *
+   * A file `file.diff` returned with `truncated: true` cannot reach here:
+   * that entry has no patch text, so nothing parses into a diff, no hunks
+   * render, and there is no expansion control to press.
+   *
+   * `ignoreWhitespace` is deliberately not a parameter. `-w` shapes which
+   * lines git puts in the hunks; it says nothing about what the files
+   * contain. Whitespace-only lines the flag suppressed from the hunks
+   * reappear as ordinary context once a region is expanded, which is the
+   * intended reading of "ignore whitespace": hide those changes from the
+   * summary, do not pretend the file does not contain them.
+   */
+  Rpc.make('file.diffContents', {
+    success: FileDiffContents,
+    error: Schema.Union([
+      RpcError,
+      DiffTargetUnresolved,
+      DiffContentsUnavailable,
+    ]),
+    payload: {
+      workspaceId: Schema.String,
+      /** The target the patch being expanded was produced under. */
+      target: DiffTarget,
+      /** The viewer's change type for this file. */
+      changeType: DiffContentsChangeType,
+      /** Path at the base revision. Equal to `newPath` when unrenamed. */
+      oldPath: Schema.String,
+      /** Path in the worktree. */
+      newPath: Schema.String,
+      /** Optional lower per-side byte cap. */
+      maxBytes: Schema.optional(PositiveInt),
     },
   }),
 
@@ -1372,6 +1655,138 @@ export class LaborerRpcs extends RpcGroup.make(
     stream: true,
     payload: {
       workspaceId: Schema.String,
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Review Comment RPCs
+  // -----------------------------------------------------------------------
+
+  /**
+   * List every review conversation anchored in a workspace, oldest thread
+   * first, each with its full reply chain.
+   *
+   * Resolved threads are omitted unless `includeResolved` asks for them, so
+   * the diff viewer's default is the work still outstanding.
+   *
+   * This is a first read, not a poll: `state.subscribe` publishes every later
+   * change — including the agent's replies over MCP — as a `reviewComments`
+   * table update carrying the whole thread. `cursor` is the state-ledger
+   * position this read reflects.
+   */
+  Rpc.make('reviewComment.list', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      rows: Schema.Array(ReviewCommentThread),
+    }),
+    error: RpcError,
+    payload: {
+      includeResolved: Schema.optional(Schema.Boolean),
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Open a review conversation on a line range, with the human's first
+   * message. The thread and its opening reply are written together, so a
+   * thread never exists without the words that opened it.
+   *
+   * The renderer may mint `id` and `replyId` so an optimistic thread and the
+   * stored row share one identity; re-sending a stored id is an idempotent
+   * retry. The reply is authored `human` because this is the web boundary —
+   * no payload carries an author. `operationId` correlates the optimistic
+   * write with the authoritative row when it arrives on `state.subscribe`.
+   */
+  Rpc.make('reviewComment.create', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      row: ReviewCommentThread,
+    }),
+    error: RpcError,
+    payload: {
+      body: ReviewCommentBody,
+      endLine: PositiveInt,
+      filePath: Schema.String,
+      id: Schema.optional(Schema.String),
+      operationId: OperationId,
+      replyId: Schema.optional(Schema.String),
+      side: ReviewCommentSide,
+      startLine: PositiveInt,
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Append a human message to an existing conversation and return the whole
+   * thread as it now stands.
+   *
+   * Appending deliberately takes no expected revision: a reply is an
+   * append-only child of the thread, so it never invalidates the revision
+   * another client is holding to resolve or delete that thread.
+   */
+  Rpc.make('reviewComment.reply', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      row: ReviewCommentThread,
+    }),
+    error: RpcError,
+    payload: {
+      body: ReviewCommentBody,
+      id: Schema.optional(Schema.String),
+      operationId: OperationId,
+      threadId: Schema.String,
+    },
+  }),
+
+  /**
+   * Edit the body of a human-authored reply and return the whole thread.
+   *
+   * A boundary may only rewrite its own words, so this fails with
+   * `AUTHOR_MISMATCH` when `replyId` names a reply the agent wrote.
+   */
+  Rpc.make('reviewComment.update', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      row: ReviewCommentThread,
+    }),
+    error: RpcError,
+    payload: {
+      body: ReviewCommentBody,
+      operationId: OperationId,
+      replyId: Schema.String,
+    },
+  }),
+
+  /**
+   * Resolve or reopen a conversation under revision CAS, so the human can
+   * close out a thread the agent has answered — the same write the agent's
+   * `resolve_review_comment` MCP tool performs.
+   */
+  Rpc.make('reviewComment.setStatus', {
+    success: Schema.Struct({
+      cursor: NonNegativeInt,
+      row: ReviewCommentThread,
+    }),
+    error: RpcError,
+    payload: {
+      expectedRevision: PositiveInt,
+      operationId: OperationId,
+      status: ReviewCommentStatus,
+      threadId: Schema.String,
+    },
+  }),
+
+  /**
+   * Hard-delete a conversation and every reply in it under revision CAS,
+   * for a comment the human decides they never meant to leave.
+   */
+  Rpc.make('reviewComment.delete', {
+    success: Schema.Struct({ cursor: NonNegativeInt }),
+    error: RpcError,
+    payload: {
+      expectedRevision: PositiveInt,
+      operationId: OperationId,
+      threadId: Schema.String,
     },
   })
 ) {}

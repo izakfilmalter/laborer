@@ -36,11 +36,37 @@
 /*
  * The host custom element draws its own card chrome; the pane already
  * provides the frame, so flatten it onto the code surface.
+ *
+ * Deliberately says nothing about overflow. This element is the viewer's
+ * own scroll container — CodeView measures it, virtualizes against it, and
+ * sizes the scroll content to the total height of every file. Clipping it
+ * here used to win over the `overflow-auto` the pane asks for, which left
+ * anything past the first viewport unreachable. Hunk expansion is what made
+ * that reachable in practice: it turns a diff that fitted on screen into one
+ * several times taller.
  */
 .diff-render-surface {
-  overflow: clip;
   color: var(--code-foreground);
   background: var(--code-background);
   border: 0;
   border-radius: 0;
+}
+
+/*
+ * The viewer owns this scroller — it listens for `scroll` on this element to
+ * drive virtualization, so it cannot be a ScrollArea. Match ScrollBar's look
+ * instead: thin, `foreground/20`, no track, revealed on hover.
+ *
+ * These are the standard properties rather than `::-webkit-scrollbar`, which
+ * is ignored wherever the platform draws overlay scrollbars — the default on
+ * macOS, and measurably inert here.
+ */
+.diff-render-surface {
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.diff-render-surface:hover {
+  scrollbar-color: color-mix(in srgb, transparent 80%, var(--foreground))
+    transparent;
 }

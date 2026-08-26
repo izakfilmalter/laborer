@@ -1,6 +1,9 @@
 import { labelColorForName } from '@laborer/shared/labels'
 import type {
   LabelColor,
+  ReviewCommentSide,
+  ReviewCommentStatus,
+  ReviewCommentThread,
   SharedLabelRow,
   SharedProjectRow,
   SharedSettingRow,
@@ -14,10 +17,16 @@ import {
   queueStrategy,
   type Transaction,
 } from '@tanstack/db'
+import {
+  pendingReviewCommentThread,
+  withPendingReviewCommentReply,
+} from './pending-review-comment'
 import { pendingTaskRow } from './pending-task-row'
+import type { SharedCollectionName } from './shared-state'
 import {
   labelCollection,
   projectCollection,
+  reviewCommentCollection,
   settingCollection,
   sharedCollectionBundle,
   taskCollection,
@@ -59,7 +68,7 @@ export const isDefinitiveSharedMutationFailure = (error: unknown): boolean =>
   isRpcError(error)
 
 interface Persistence<Result> {
-  readonly affected: readonly ('labels' | 'projects' | 'settings' | 'tasks')[]
+  readonly affected: readonly SharedCollectionName[]
   readonly operationId: string
   readonly outcome: Deferred<Result>
   readonly send: () => Promise<Result>
@@ -750,6 +759,228 @@ export const setSetting = <Result>(input: SetSettingInput<Result>) => {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Review comments
+// ---------------------------------------------------------------------------
+//
+// Review-comment writes are optimistic, like every other shared write here.
+// Three things make that the right default rather than a risk:
+//
+// 1. The `reviewComment.create` contract lets the client mint `id` and
+//    `replyId`, so the optimistic thread and the stored row share one
+//    identity and the ledger echo replaces it by key instead of appearing
+//    beside it.
+// 2. `operationId` correlates the write with the delta that confirms it, so
+//    optimism ends on an authoritative event rather than on a timer.
+// 3. A definitive `RpcError` rolls the row back; the caller is handed the
+//    rejection so the words the human typed can be put back in the composer.
+
+const authoritativeReviewComment = (id: string) =>
+  reviewCommentCollection._state.syncedData.get(id)
+
+const reviewCommentKey = (threadId: string) => `reviewComment:${threadId}`
+
+const missingThread = () =>
+  new RpcError({
+    code: 'NOT_FOUND',
+    message: 'Review comment no longer exists',
+  })
+
+export interface CreateReviewCommentInput<Result> {
+  readonly body: string
+  readonly endLine: number
+  readonly filePath: string
+  readonly id: string
+  readonly now: number
+  readonly operationId: string
+  readonly replyId: string
+  readonly send: Send<
+    {
+      readonly body: string
+      readonly endLine: number
+      readonly filePath: string
+      readonly id: string
+      readonly operationId: string
+      readonly replyId: string
+      readonly side: ReviewCommentSide
+      readonly startLine: number
+      readonly workspaceId: string
+    },
+    Result
+  >
+  readonly side: ReviewCommentSide
+  readonly startLine: number
+  readonly workspaceId: string
+}
+
+const createReviewCommentOptimistically = createOptimisticAction<
+  CreateReviewCommentInput<unknown> & { readonly outcome: Deferred<unknown> }
+>({
+  mutationFn: (input) =>
+    persist({
+      affected: ['reviewComments'],
+      operationId: input.operationId,
+      outcome: input.outcome,
+      send: () =>
+        input.send({
+          body: input.body,
+          endLine: input.endLine,
+          filePath: input.filePath,
+          id: input.id,
+          operationId: input.operationId,
+          replyId: input.replyId,
+          side: input.side,
+          startLine: input.startLine,
+          workspaceId: input.workspaceId,
+        }),
+    }),
+  onMutate: (input) => {
+    reviewCommentCollection.insert(pendingReviewCommentThread(input))
+  },
+})
+
+export const createReviewComment = <Result>(
+  input: CreateReviewCommentInput<Result>
+) => {
+  const outcome = deferred<Result>()
+  return start(
+    createReviewCommentOptimistically({
+      ...input,
+      outcome: outcome as Deferred<unknown>,
+    }),
+    outcome
+  )
+}
+
+export interface ReplyToReviewCommentInput<Result> {
+  readonly body: string
+  readonly id: string
+  readonly now: number
+  readonly operationId: string
+  readonly send: Send<
+    {
+      readonly body: string
+      readonly id: string
+      readonly operationId: string
+      readonly threadId: string
+    },
+    Result
+  >
+  readonly threadId: string
+}
+
+/**
+ * Appending takes no expected revision on purpose: a reply is an append-only
+ * child, so it never invalidates a revision another client is holding in order
+ * to resolve or delete the same thread.
+ */
+export const replyToReviewComment = <Result>(
+  input: ReplyToReviewCommentInput<Result>
+) => {
+  const outcome = deferred<Result>()
+  return runPaced(reviewCommentKey(input.threadId), {
+    affected: ['reviewComments'],
+    operationId: input.operationId,
+    optimistic: () => {
+      reviewCommentCollection.update(input.threadId, (draft) => {
+        const appended = withPendingReviewCommentReply(
+          draft as ReviewCommentThread,
+          { body: input.body, id: input.id, now: input.now }
+        )
+        draft.replies = [...appended.replies]
+        draft.updatedAt = appended.updatedAt
+      })
+    },
+    outcome,
+    send: () =>
+      input.send({
+        body: input.body,
+        id: input.id,
+        operationId: input.operationId,
+        threadId: input.threadId,
+      }),
+  })
+}
+
+export interface SetReviewCommentStatusInput<Result> {
+  readonly operationId: string
+  readonly send: Send<
+    {
+      readonly expectedRevision: number
+      readonly operationId: string
+      readonly status: ReviewCommentStatus
+      readonly threadId: string
+    },
+    Result
+  >
+  readonly status: ReviewCommentStatus
+  readonly threadId: string
+}
+
+export const setReviewCommentStatus = <Result>(
+  input: SetReviewCommentStatusInput<Result>
+) => {
+  const outcome = deferred<Result>()
+  return runPaced(reviewCommentKey(input.threadId), {
+    affected: ['reviewComments'],
+    operationId: input.operationId,
+    optimistic: () => {
+      reviewCommentCollection.update(input.threadId, (draft) => {
+        draft.status = input.status
+      })
+    },
+    outcome,
+    send: () => {
+      const row = authoritativeReviewComment(input.threadId)
+      if (row === undefined) {
+        throw missingThread()
+      }
+      return input.send({
+        expectedRevision: row.revision,
+        operationId: input.operationId,
+        status: input.status,
+        threadId: input.threadId,
+      })
+    },
+  })
+}
+
+export interface DeleteReviewCommentInput<Result> {
+  readonly operationId: string
+  readonly send: Send<
+    {
+      readonly expectedRevision: number
+      readonly operationId: string
+      readonly threadId: string
+    },
+    Result
+  >
+  readonly threadId: string
+}
+
+export const deleteReviewComment = <Result>(
+  input: DeleteReviewCommentInput<Result>
+) => {
+  const outcome = deferred<Result>()
+  return runPaced(reviewCommentKey(input.threadId), {
+    affected: ['reviewComments'],
+    operationId: input.operationId,
+    optimistic: () => reviewCommentCollection.delete(input.threadId),
+    outcome,
+    send: () => {
+      const row = authoritativeReviewComment(input.threadId)
+      if (row === undefined) {
+        throw missingThread()
+      }
+      return input.send({
+        expectedRevision: row.revision,
+        operationId: input.operationId,
+        threadId: input.threadId,
+      })
+    },
+  })
+}
+
 /** Workspace creation stays transient but observes the same confirmation rule. */
 export const confirmWorkspaceCreation = async <Result>(input: {
   readonly operationId: string
@@ -781,6 +1012,7 @@ export const confirmWorkspaceCreation = async <Result>(input: {
 
 // Keep canonical row types visible at this boundary for callers and tests.
 export type SharedMutationRows =
+  | ReviewCommentThread
   | SharedLabelRow
   | SharedProjectRow
   | SharedSettingRow

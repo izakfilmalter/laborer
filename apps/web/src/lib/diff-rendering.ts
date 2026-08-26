@@ -112,6 +112,9 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 [data-diffs-header] {
+  /* The row collapses the file, so it reads as a target; the chevron is
+     the keyboard equivalent. See the click-capture handler in the pane. */
+  cursor: pointer;
   position: sticky !important;
   top: 0;
   z-index: 4;
@@ -151,6 +154,23 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   font-size: 11px !important;
   font-variant-numeric: tabular-nums;
   line-height: 1 !important;
+}
+
+/* The viewer paints the counts removed-first; the pane's toolbar total and
+   its placeholders print added-first, the way git diff --shortstat and every
+   host that shows a "+24 -1" pair do. [data-metadata] is a flex row, so the
+   order is a presentation detail this can reverse without touching the
+   viewer's markup. The metadata slot (the app's Open button) stays last. */
+[data-diffs-header] [data-additions-count] {
+  order: 1;
+}
+
+[data-diffs-header] [data-deletions-count] {
+  order: 2;
+}
+
+[data-diffs-header] [data-metadata] > slot {
+  order: 3;
 }
 
 [data-diffs-header] [data-change-icon],
@@ -215,6 +235,43 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   cursor: pointer;
 }
 
+/* What the hunk-context loader is doing, painted where the reader pressed.
+   The pane writes --diff-expansion-note onto the file's host node and custom
+   properties inherit through the shadow boundary, so this is the one way to
+   put app state inside a row the library owns.
+
+   It hangs off the separator's wrapper, which spans the whole row, so the
+   note is never squeezed into the text column beside the line count. The
+   [data-content] ancestor is what keeps it to one copy: the library repeats
+   each separator in every column it paints, and the gutter copies are ~50px
+   wide, where an unscoped note showed the first few letters of itself down
+   the left of each side of the diff.
+
+   Out of flow, so an empty note costs nothing and a present one costs
+   nothing either: the separator has to stay exactly the 24px
+   DIFF_VIEW_ITEM_METRICS claims for it, or every expanded file's virtual
+   height drifts from what is painted and the end of the list stops being
+   reachable. A CSS string is not reliably announced, so the whole sentence
+   behind this marker also goes to a live region in the pane. */
+[data-content]
+  :is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-separator-wrapper]::after {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 12px;
+  display: flex;
+  align-items: center;
+  max-width: 50%;
+  overflow: hidden;
+  content: var(--diff-expansion-note, "");
+  background-color: var(--code-background);
+  color: color-mix(in srgb, var(--code-foreground) 68%, var(--code-background));
+  font-family: var(--font-sans) !important;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 :is([data-separator="line-info"], [data-separator="line-info-basic"])
   [data-unmodified-lines]::before,
 :is([data-separator="line-info"], [data-separator="line-info-basic"])
@@ -226,29 +283,42 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   background-color: color-mix(in srgb, var(--code-background) 92%, var(--code-foreground));
 }
 
-:is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
-  [data-separator-wrapper] {
-  grid-template-columns: 0 minmax(0, 1fr) !important;
-}
-
-:is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
-  [data-separator-content] {
-  grid-column: 2 !important;
-}
-
-/* Visually hidden rather than display: none so the expand action stays
-   keyboard-reachable. */
+/* The expand control is visible now that it does something: it is the only
+   affordance for the unchanged lines a patch leaves out, and a control the
+   reader cannot see is a feature nobody finds. It sits in the library's own
+   32px separator column, matching the gutter beside it. The pane gives each
+   one a tab stop and a name in onPostRender, because the library paints it
+   as a div with neither. */
 :is([data-separator="line-info"], [data-separator="line-info-basic"])
   [data-expand-button] {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  margin: -1px !important;
-  padding: 0 !important;
-  overflow: hidden !important;
-  clip-path: inset(50%) !important;
-  border: 0 !important;
-  white-space: nowrap !important;
+  min-width: 32px !important;
+  align-self: stretch;
+  border-right: 0 !important;
+  color: color-mix(in srgb, var(--code-foreground) 52%, var(--code-background)) !important;
+  background-color: transparent !important;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-expand-button]:hover {
+  background-color: color-mix(in srgb, var(--code-background) 88%, var(--code-foreground)) !important;
+  color: var(--code-foreground) !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-expand-button]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  color: var(--code-foreground) !important;
+}
+
+:is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-expand-button] [data-icon] {
+  width: 12px;
+  height: 12px;
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"]):has([data-expand-button])
@@ -266,6 +336,27 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 :is([data-separator="line-info"], [data-separator="line-info-basic"]):has([data-expand-button]):is(:hover, :focus-within)
   [data-unmodified-lines]::after {
   background-color: color-mix(in srgb, var(--code-background) 84%, var(--code-foreground));
+}
+
+/*
+ * Each file's code grid is its own horizontal scroller when word wrap is off.
+ * Match ScrollBar's thumb here too, so the viewer has one scrollbar language
+ * throughout rather than the app's outside and the browser's default inside.
+ *
+ * The library keeps \`scrollbar-gutter: stable\` on this element and measures
+ * the gutter from a probe that also carries \`data-code\`, so whatever width
+ * \`scrollbar-width: thin\` resolves to is the width it measures — reserved
+ * space and painted bar stay in step, and fading the thumb out to transparent
+ * costs no layout shift.
+ */
+[data-code] {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+[data-code]:hover {
+  scrollbar-color: color-mix(in srgb, transparent 80%, var(--code-foreground))
+    transparent;
 }
 `
 

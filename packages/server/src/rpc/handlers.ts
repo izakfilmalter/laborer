@@ -19,6 +19,8 @@ import {
   type BoardTask,
   type LabelColor,
   LaborerRpcs,
+  type ReviewCommentSide,
+  type ReviewCommentStatus,
   RpcError,
 } from '@laborer/shared/rpc'
 import type { Task, TaskStatus } from '@laborer/task-db'
@@ -46,6 +48,12 @@ import {
   withProjectIdentifierNamespaceLock,
 } from '../services/project-task-identifiers.js'
 import { fetchPullRequestComments } from '../services/pull-request-comments.js'
+import {
+  HUMAN_AUTHOR,
+  ReviewCommentAuthorMismatchError,
+  ReviewCommentInvalidError,
+  ReviewCommentNotFoundError,
+} from '../services/review-comments.js'
 import { subscribeToSharedState } from '../services/shared-state-reader.js'
 import { planSlackWorkspace } from '../services/slack-workspace-planner.js'
 import { subscribeToTaskBoard } from '../services/task-board-reader.js'
@@ -1066,6 +1074,223 @@ export const handleTaskLabelsSet = (payload: {
     }
   })
 
+/**
+ * Maps a review comment failure onto the RPC code vocabulary. The database
+ * layer wraps unexpected causes, so the original error is unwrapped before it
+ * is classified.
+ */
+const reviewCommentError = (
+  cause: unknown,
+  code: string,
+  fallback: string
+): RpcError => {
+  const original =
+    cause instanceof Error && cause.cause !== undefined ? cause.cause : cause
+  if (original instanceof LaborerDatabaseStaleRevisionError) {
+    return new RpcError({ code: 'CAS_CONFLICT', message: original.message })
+  }
+  if (original instanceof ReviewCommentNotFoundError) {
+    return new RpcError({ code: 'NOT_FOUND', message: original.message })
+  }
+  if (original instanceof ReviewCommentAuthorMismatchError) {
+    return new RpcError({ code: 'AUTHOR_MISMATCH', message: original.message })
+  }
+  if (original instanceof ReviewCommentInvalidError) {
+    return new RpcError({ code: 'INVALID_INPUT', message: original.message })
+  }
+  return new RpcError({
+    code,
+    message: original instanceof Error ? original.message : fallback,
+  })
+}
+
+export const handleReviewCommentList = (payload: {
+  readonly includeResolved?: boolean | undefined
+  readonly workspaceId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('list review comments', (native) =>
+        native.reviewCommentsAt(payload.workspaceId, {
+          ...(payload.includeResolved === undefined
+            ? {}
+            : { includeResolved: payload.includeResolved }),
+        })
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          reviewCommentError(
+            cause,
+            'REVIEW_COMMENT_READ_FAILED',
+            'Unable to read review comments'
+          )
+        )
+      )
+  })
+
+/**
+ * Opens a thread from the web boundary, so its first reply is authored
+ * `human`. No payload carries an author.
+ */
+export const handleReviewCommentCreate = (payload: {
+  readonly body: string
+  readonly endLine: number
+  readonly filePath: string
+  readonly id?: string | undefined
+  readonly replyId?: string | undefined
+  readonly operationId: string
+  readonly side: ReviewCommentSide
+  readonly startLine: number
+  readonly workspaceId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('create review comment', (native) =>
+        native.createReviewCommentThread(
+          {
+            ...(payload.id === undefined ? {} : { id: payload.id }),
+            ...(payload.replyId === undefined
+              ? {}
+              : { replyId: payload.replyId }),
+            body: payload.body,
+            endLine: payload.endLine,
+            filePath: payload.filePath,
+            side: payload.side,
+            startLine: payload.startLine,
+            workspaceId: payload.workspaceId,
+          },
+          HUMAN_AUTHOR,
+          payload.operationId
+        )
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          reviewCommentError(
+            cause,
+            'REVIEW_COMMENT_WRITE_FAILED',
+            'Unable to open review comment'
+          )
+        )
+      )
+  })
+
+/** Answers a thread from the web boundary, so the reply is authored `human`. */
+export const handleReviewCommentReply = (payload: {
+  readonly body: string
+  readonly id?: string | undefined
+  readonly operationId: string
+  readonly threadId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('reply to review comment', (native) =>
+        native.appendReviewCommentReply(
+          {
+            ...(payload.id === undefined ? {} : { id: payload.id }),
+            body: payload.body,
+            threadId: payload.threadId,
+          },
+          HUMAN_AUTHOR,
+          payload.operationId
+        )
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          reviewCommentError(
+            cause,
+            'REVIEW_COMMENT_WRITE_FAILED',
+            'Unable to reply to review comment'
+          )
+        )
+      )
+  })
+
+/** Edits a human-authored reply. The agent's words are not the web's to edit. */
+export const handleReviewCommentUpdate = (payload: {
+  readonly body: string
+  readonly operationId: string
+  readonly replyId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('update review comment', (native) =>
+        native.updateReviewCommentReply(
+          payload.replyId,
+          payload.body,
+          HUMAN_AUTHOR,
+          payload.operationId
+        )
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          reviewCommentError(
+            cause,
+            'REVIEW_COMMENT_WRITE_FAILED',
+            'Unable to edit review comment'
+          )
+        )
+      )
+  })
+
+export const handleReviewCommentSetStatus = (payload: {
+  readonly expectedRevision: number
+  readonly operationId: string
+  readonly status: ReviewCommentStatus
+  readonly threadId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    return yield* database
+      .run('set review comment status', (native) =>
+        native.setReviewCommentThreadStatus(
+          payload.threadId,
+          payload.expectedRevision,
+          payload.status,
+          payload.operationId
+        )
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          reviewCommentError(
+            cause,
+            'REVIEW_COMMENT_WRITE_FAILED',
+            'Unable to change review comment status'
+          )
+        )
+      )
+  })
+
+export const handleReviewCommentDelete = (payload: {
+  readonly expectedRevision: number
+  readonly operationId: string
+  readonly threadId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    const result = yield* database
+      .run('delete review comment', (native) =>
+        native.deleteReviewCommentThread(
+          payload.threadId,
+          payload.expectedRevision,
+          payload.operationId
+        )
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          reviewCommentError(
+            cause,
+            'REVIEW_COMMENT_DELETE_FAILED',
+            'Unable to delete review comment'
+          )
+        )
+      )
+    return { cursor: result.cursor }
+  })
+
 export const handleTaskUpdate = (
   {
     description,
@@ -1284,6 +1509,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'label.update': handleLabelUpdate,
     'label.delete': handleLabelDelete,
     'task.labels.set': handleTaskLabelsSet,
+
+    // -------------------------------------------------------------------
+    // Review Comment RPCs — the web boundary, which always writes `human`
+    // -------------------------------------------------------------------
+    'reviewComment.list': handleReviewCommentList,
+    'reviewComment.create': handleReviewCommentCreate,
+    'reviewComment.reply': handleReviewCommentReply,
+    'reviewComment.update': handleReviewCommentUpdate,
+    'reviewComment.setStatus': handleReviewCommentSetStatus,
+    'reviewComment.delete': handleReviewCommentDelete,
 
     'task.terminal.attach': (payload) => handleTaskTerminalAttach(payload),
 
@@ -1538,10 +1773,32 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         return yield* fileService.status(workspaceId)
       }),
 
-    'file.diff': ({ workspaceId }) =>
+    'file.diff': ({ workspaceId, target, ignoreWhitespace }) =>
       Effect.gen(function* () {
         const fileService = yield* FileService
-        return yield* fileService.diff(workspaceId)
+        return yield* fileService.diff(workspaceId, {
+          ignoreWhitespace,
+          target,
+        })
+      }),
+
+    'file.diffContents': ({
+      workspaceId,
+      target,
+      changeType,
+      oldPath,
+      newPath,
+      maxBytes,
+    }) =>
+      Effect.gen(function* () {
+        const fileService = yield* FileService
+        return yield* fileService.diffContents(workspaceId, {
+          changeType,
+          maxBytes,
+          newPath,
+          oldPath,
+          target,
+        })
       }),
 
     // -------------------------------------------------------------------

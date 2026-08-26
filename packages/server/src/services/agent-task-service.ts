@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { labelColorForName } from '@laborer/shared/labels'
+import { rootWorkspaceId } from '@laborer/shared/root-workspace'
 import { LABEL_NAME_MAX_LENGTH, type LabelColor } from '@laborer/shared/rpc'
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
@@ -19,10 +20,18 @@ import {
 } from './native-laborer-database.js'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import {
+  AGENT_AUTHOR,
+  ReviewCommentAuthorMismatchError,
+  ReviewCommentInvalidError,
+  ReviewCommentNotFoundError,
+  type ReviewCommentThread,
+} from './review-comments.js'
+import {
   findTaskByReference,
   nearestTaskProject,
   type TaskIdentifierProject,
 } from './task-identifier-resolver.js'
+import { listWorkspaceRecords } from './workspace-records.js'
 
 const MAX_TITLE_LENGTH = 100
 const MAX_DESCRIPTION_LENGTH = 100_000
@@ -150,6 +159,47 @@ const labelFailure = (failure: unknown): AgentTaskError => {
   })
 }
 
+/**
+ * Maps a review comment failure onto the agent-facing code vocabulary. The
+ * database layer wraps unexpected causes, so the original error is unwrapped
+ * before it is classified.
+ */
+const reviewCommentFailure = (failure: unknown): AgentTaskError => {
+  const cause =
+    failure instanceof Error && failure.cause !== undefined
+      ? failure.cause
+      : failure
+  if (cause instanceof ReviewCommentNotFoundError) {
+    return new AgentTaskError({ code: 'NOT_FOUND', message: cause.message })
+  }
+  if (cause instanceof ReviewCommentAuthorMismatchError) {
+    return new AgentTaskError({
+      code: 'AUTHOR_MISMATCH',
+      message: cause.message,
+    })
+  }
+  if (cause instanceof ReviewCommentInvalidError) {
+    return new AgentTaskError({ code: 'INVALID_INPUT', message: cause.message })
+  }
+  if (cause instanceof LaborerDatabaseStaleRevisionError) {
+    return new AgentTaskError({
+      code: 'CAS_CONFLICT',
+      message: `${cause.message}. Re-read the thread with list_review_comments and retry with its latest revision.`,
+    })
+  }
+  return new AgentTaskError({
+    code: 'REVIEW_COMMENT_ERROR',
+    message:
+      cause instanceof Error
+        ? cause.message
+        : 'Review comment operation failed',
+  })
+}
+
+const pathContains = (parent: string, child: string): boolean =>
+  parent === child ||
+  child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+
 const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
   Effect.try({
     try: operation,
@@ -199,9 +249,28 @@ export class AgentTaskService extends Context.Service<
       readonly AgentTaskProject[],
       AgentTaskError
     >
+    /**
+     * Review conversations anchored on a workspace's diff. An omitted
+     * workspace resolves from `path`, defaulting to the process's working
+     * directory — the worktree the per-workspace MCP server runs in.
+     */
+    readonly listReviewComments: (input: {
+      readonly includeResolved?: boolean
+      readonly path?: string
+      readonly workspaceId?: string
+    }) => Effect.Effect<readonly ReviewCommentThread[], AgentTaskError>
     readonly listTasks: (
       filters: AgentTaskListFilters
     ) => Effect.Effect<readonly AgentTask[], AgentTaskError>
+    /** Appends the agent's answer. Authorship is this boundary's, not input. */
+    readonly replyToReviewComment: (input: {
+      readonly body: string
+      readonly threadId: string
+    }) => Effect.Effect<ReviewCommentThread, AgentTaskError>
+    readonly resolveReviewComment: (
+      threadId: string,
+      expectedRevision: number
+    ) => Effect.Effect<ReviewCommentThread, AgentTaskError>
     readonly setTaskLabels: (input: {
       readonly expectedRevision: number
       readonly id: string
@@ -329,8 +398,110 @@ export class AgentTaskService extends Context.Service<
             return exposeTask(task, projects)
           })
 
+        /**
+         * The workspace a path sits in: the deepest worktree containing it,
+         * or the project's main checkout when no worktree claims it.
+         */
+        const resolveWorkspaceId = (input: {
+          readonly path?: string
+          readonly workspaceId?: string
+        }) =>
+          Effect.gen(function* () {
+            if (input.workspaceId !== undefined) {
+              return input.workspaceId
+            }
+            const candidate = input.path ?? process.cwd()
+            const canonical = yield* Effect.try({
+              try: () => realpathSync(candidate),
+              catch: () =>
+                new AgentTaskError({
+                  code: 'UNKNOWN_WORKSPACE',
+                  message: `Path does not belong to a Laborer workspace: ${candidate}`,
+                }),
+            })
+            const workspaceId = yield* laborerDatabase.read(
+              'find workspace for review comments',
+              (database) => {
+                const worktree = [...listWorkspaceRecords(database)]
+                  .filter((record) =>
+                    pathContains(record.worktreePath, canonical)
+                  )
+                  .sort(
+                    (left, right) =>
+                      right.worktreePath.length - left.worktreePath.length
+                  )[0]
+                if (worktree !== undefined) {
+                  return worktree.id
+                }
+                const project = [...database.listProjects()]
+                  .filter((row) => pathContains(row.rootPath, canonical))
+                  .sort(
+                    (left, right) =>
+                      right.rootPath.length - left.rootPath.length
+                  )[0]
+                return project === undefined
+                  ? null
+                  : rootWorkspaceId(project.id)
+              }
+            )
+            if (workspaceId === null) {
+              return yield* new AgentTaskError({
+                code: 'UNKNOWN_WORKSPACE',
+                message: `Path does not belong to a Laborer workspace: ${candidate}`,
+              })
+            }
+            return workspaceId
+          })
+
         return AgentTaskService.of({
           listProjects,
+          listReviewComments: ({ includeResolved, path: candidate, ...rest }) =>
+            Effect.gen(function* () {
+              const workspaceId = yield* resolveWorkspaceId({
+                ...(candidate === undefined ? {} : { path: candidate }),
+                ...(rest.workspaceId === undefined
+                  ? {}
+                  : { workspaceId: rest.workspaceId }),
+              })
+              return yield* laborerDatabase
+                .run('list agent review comments', (database) =>
+                  database.listReviewCommentThreads(workspaceId, {
+                    ...(includeResolved === undefined
+                      ? {}
+                      : { includeResolved }),
+                  })
+                )
+                .pipe(Effect.mapError(reviewCommentFailure))
+            }),
+          // Both agent writes publish on the shared state ledger, so the
+          // human watching the diff pane sees the answer without a refetch.
+          replyToReviewComment: ({ body, threadId }) =>
+            laborerDatabase
+              .run('reply to agent review comment', (database) =>
+                database.appendReviewCommentReply(
+                  { body, threadId },
+                  AGENT_AUTHOR,
+                  createTaskUlid()
+                )
+              )
+              .pipe(
+                Effect.map(({ row }) => row),
+                Effect.mapError(reviewCommentFailure)
+              ),
+          resolveReviewComment: (threadId, expectedRevision) =>
+            laborerDatabase
+              .run('resolve agent review comment', (database) =>
+                database.setReviewCommentThreadStatus(
+                  threadId,
+                  expectedRevision,
+                  'resolved',
+                  createTaskUlid()
+                )
+              )
+              .pipe(
+                Effect.map(({ row }) => row),
+                Effect.mapError(reviewCommentFailure)
+              ),
           createTask: ({ description, path: candidate, title }) =>
             Effect.gen(function* () {
               const project = yield* resolveProject(candidate)

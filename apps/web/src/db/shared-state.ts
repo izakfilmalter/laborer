@@ -5,6 +5,7 @@ import {
 import type {
   PullRequestCheckRun,
   PullRequestReviewDecision,
+  ReviewCommentThread,
   SharedLabelRow,
   SharedProjectRow,
   SharedSettingRow,
@@ -12,6 +13,7 @@ import type {
   SharedTaskRow,
 } from '@laborer/shared/rpc'
 import {
+  ReviewCommentThread as ReviewCommentThreadSchema,
   SharedLabelRow as SharedLabelRowSchema,
   SharedProjectRow as SharedProjectRowSchema,
   SharedSettingRow as SharedSettingRowSchema,
@@ -20,7 +22,12 @@ import {
 import { createCollection, type SyncConfig } from '@tanstack/db'
 import { Schema } from 'effect'
 
-export type SharedCollectionName = 'labels' | 'projects' | 'settings' | 'tasks'
+export type SharedCollectionName =
+  | 'labels'
+  | 'projects'
+  | 'reviewComments'
+  | 'settings'
+  | 'tasks'
 type TableUpdate<Row> = NonNullable<SharedStateUpdate[SharedCollectionName]> & {
   readonly rows: readonly Row[]
 }
@@ -45,9 +52,34 @@ export interface OperationReceipt {
 const TABLE_ORDER: readonly SharedCollectionName[] = [
   'labels',
   'projects',
+  'reviewComments',
   'settings',
   'tasks',
 ]
+
+/**
+ * Collections a daemon is allowed to never mention.
+ *
+ * Every field of `SharedStateUpdate` is optional so a delta can carry only
+ * what moved, but for these the *initial snapshot* may be absent too: a
+ * daemon older than the review-comment slice publishes a snapshot with no
+ * `reviewComments` field at all, forever.
+ *
+ * Readiness is otherwise snapshot-owned, and that is right for a collection
+ * the server always sends — "loading" means "the client has not been told
+ * yet". For a collection the server may never send, the same rule turns a
+ * missing feature into a permanently loading one: every live query reading
+ * it would stay pending and never resolve, and the diff pane would sit on a
+ * spinner against a daemon that simply does not have comments.
+ *
+ * So an optional collection is ready the moment its controls are registered,
+ * carrying the only membership the client can honestly claim — the empty set.
+ * A snapshot that does arrive still replaces that membership through the
+ * ordinary path, so a supporting daemon loses nothing.
+ */
+const OPTIONAL_TABLES: ReadonlySet<SharedCollectionName> = new Set([
+  'reviewComments',
+])
 
 const MAX_RETAINED_OPERATION_IDS = 2048
 
@@ -191,6 +223,7 @@ class SharedStateCoordinator {
   private readonly cursors: Record<SharedCollectionName, number> = {
     labels: 0,
     projects: 0,
+    reviewComments: 0,
     settings: 0,
     tasks: 0,
   }
@@ -237,6 +270,9 @@ class SharedStateCoordinator {
       throw new Error(`Shared collection ${name} registered more than once`)
     }
     this.tables.set(name, registration)
+    if (OPTIONAL_TABLES.has(name)) {
+      controls.markReady()
+    }
     return () => {
       if (this.tables.get(name) === registration) {
         this.tables.delete(name)
@@ -252,6 +288,7 @@ class SharedStateCoordinator {
     // Cross-collection publication is intentionally ordinary and deterministic.
     this.applyTable('labels', update.labels)
     this.applyTable('projects', update.projects)
+    this.applyTable('reviewComments', update.reviewComments)
     this.applyTable('settings', update.settings)
     this.applyTable('tasks', update.tasks)
   }
@@ -305,6 +342,18 @@ export const createSharedCollectionBundle = (idSuffix = 'v1') => {
       SharedProjectRowSchema
     )
   )
+  // Threads travel whole — a row carries its reply chain — so an agent reply
+  // written over MCP arrives here as an updated thread rather than as a row of
+  // a separate replies table.
+  const reviewCommentCollection = createCollection(
+    makeSharedOptions<ReviewCommentThread>(
+      coordinator,
+      `laborer.shared.reviewComments.${idSuffix}`,
+      'reviewComments',
+      ({ id }) => id,
+      ReviewCommentThreadSchema
+    )
+  )
   const settingCollection = createCollection(
     makeSharedOptions<SharedSettingRow>(
       coordinator,
@@ -326,6 +375,7 @@ export const createSharedCollectionBundle = (idSuffix = 'v1') => {
   const collections = {
     labels: labelCollection,
     projects: projectCollection,
+    reviewComments: reviewCommentCollection,
     settings: settingCollection,
     tasks: taskCollection,
   } as const
@@ -408,6 +458,7 @@ export const sharedCollectionBundle = createSharedCollectionBundle()
 export const {
   labels: labelCollection,
   projects: projectCollection,
+  reviewComments: reviewCommentCollection,
   settings: settingCollection,
   tasks: taskCollection,
 } = sharedCollectionBundle.collections

@@ -131,4 +131,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       'utf8'
     ),
   },
+  {
+    name: '0016_review_comments',
+    sql: readFileSync(
+      new URL('./migrations/0016_review_comments.sql', import.meta.url),
+      'utf8'
+    ),
+  },
 ]

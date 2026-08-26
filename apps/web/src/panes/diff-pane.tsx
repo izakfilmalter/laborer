@@ -27,23 +27,22 @@
  * rendered to the DOM and highlighted on the main thread. Three layers
  * now bound the work:
  *
- * 1. **Virtualization** — the file list is wrapped in Pierre's
- *    `Virtualizer`, which switches every `FileDiff` to
- *    `VirtualizedFileDiff` (IntersectionObserver windowing; off-screen
- *    content becomes sized buffer placeholders)
+ * 1. **Virtualization** — every file is an item of a single Pierre
+ *    `CodeView`, which owns the scroll container and windows both the
+ *    file list and the lines within a file
  * 2. **Worker pool** — `DiffWorkerPoolProvider` moves shiki syntax
  *    highlighting off the main thread
- * 3. **Per-file gates** — files with more than
- *    {@link MAX_DIFF_CHANGED_LINES} changed lines render a placeholder
- *    with a "Render anyway" button (opencode-style); files whose patch
- *    exceeds {@link LARGE_PATCH_BYTES} render without intra-line word
- *    diffs; server-truncated entries render an inert notice instead of
- *    being silently dropped
+ * 3. **Gates** — files with more than {@link MAX_DIFF_CHANGED_LINES}
+ *    changed lines start collapsed, so the header is there to expand
+ *    but the body costs nothing; a total patch payload beyond
+ *    {@link LARGE_PATCH_BYTES} drops intra-line word diffs, which are
+ *    O(n*m) per changed line pair; server-truncated entries render an
+ *    inert notice instead of being silently dropped
  *
  * ## Click-to-open file (Issue #112)
  *
  * Each file has a clickable "Open" button in its header that calls the
- * `editor.open` RPC mutation.
+ * `editor.open` RPC mutation. The header chevron collapses the file.
  *
  * The pane is purely visual: it never modifies the diff or the worktree.
  * The only interactive affordances are navigational (open-in-editor,
@@ -70,17 +69,21 @@ import {
   EmptyTitle,
 } from '@laborer/ui/components/empty'
 import { Spinner } from '@laborer/ui/components/spinner'
-import type { FileDiffMetadata } from '@pierre/diffs'
-import { FileDiff, Virtualizer } from '@pierre/diffs/react'
+import type { CodeViewItem, FileDiffMetadata } from '@pierre/diffs'
+import type { CodeViewHandle } from '@pierre/diffs/react'
 import { Cause, Effect, Option } from 'effect'
 import { Atom, AsyncResult as Result } from 'effect/unstable/reactivity'
 import {
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   FileCode2,
   RefreshCw,
   TriangleAlert,
   X,
 } from 'lucide-react'
+import { useTheme } from 'next-themes'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import {
   useCallback,
   useEffect,
@@ -93,9 +96,11 @@ import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { DiffWorkerPoolProvider } from '@/components/diff-worker-pool-provider'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { StyledDiffCodeView } from '@/components/styled-diff-code-view'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { extractErrorMessage } from '@/lib/errors'
 import { parseFileDiffEntry } from '@/lib/file-diff'
+import { fnv1a32 } from '@/lib/fnv1a32'
 import { toast } from '@/lib/toast'
 import { useOnDiffScrollRequest } from '@/panels/diff-scroll-context'
 
@@ -139,61 +144,36 @@ const fileDiffQuery = Atom.family((workspaceId: string) =>
 // Constants
 // ---------------------------------------------------------------------------
 
-const FILE_DIFF_OPTIONS_SPLIT = {
-  diffStyle: 'split' as const,
-  theme: { dark: 'pierre-dark' as const, light: 'pierre-light' as const },
-  themeType: 'dark' as const,
-  diffIndicators: 'bars' as const,
-  lineDiffType: 'word-alt' as const,
-  overflow: 'wrap' as const,
-}
-
-const FILE_DIFF_OPTIONS_UNIFIED = {
-  diffStyle: 'unified' as const,
-  theme: { dark: 'pierre-dark' as const, light: 'pierre-light' as const },
-  themeType: 'dark' as const,
-  diffIndicators: 'bars' as const,
-  lineDiffType: 'word-alt' as const,
-  overflow: 'wrap' as const,
-}
-
 /**
- * Degraded options for huge patches: intra-line word diffing is O(n*m)
- * per changed line pair and dominates render cost on large files.
- * Mirrors opencode's `largeOptions` (`lineDiffType: "none"`).
+ * Options shared by both diff styles. `stickyHeaders` keeps the current
+ * file's header pinned while scrolling its body, which is what the 32px
+ * header in the injected stylesheet is sized for.
  */
-const FILE_DIFF_OPTIONS_SPLIT_PLAIN = {
-  ...FILE_DIFF_OPTIONS_SPLIT,
-  lineDiffType: 'none' as const,
-}
-
-const FILE_DIFF_OPTIONS_UNIFIED_PLAIN = {
-  ...FILE_DIFF_OPTIONS_UNIFIED,
-  lineDiffType: 'none' as const,
+const DIFF_OPTIONS_BASE = {
+  theme: { dark: 'pierre-dark' as const, light: 'pierre-light' as const },
+  diffIndicators: 'bars' as const,
+  lineDiffType: 'word-alt' as const,
+  overflow: 'wrap' as const,
+  hunkSeparators: 'line-info' as const,
+  stickyHeaders: true,
 }
 
 /**
- * Files with more changed lines than this render a placeholder with a
- * "Render anyway" button instead of the diff. Same threshold opencode
- * uses (`MAX_DIFF_CHANGED_LINES = 500` in session-review.tsx).
+ * Files with more changed lines than this start collapsed: the header
+ * is still there to expand from, but nothing is parsed or highlighted
+ * until it is. Same threshold opencode uses
+ * (`MAX_DIFF_CHANGED_LINES = 500` in session-review.tsx).
  */
 const MAX_DIFF_CHANGED_LINES = 500
 
 /**
- * Patches larger than this render without intra-line word diffs.
- * Matches opencode's 500KB degradation threshold.
+ * Once the whole payload passes this, intra-line word diffs are dropped
+ * for the view. Word diffing is O(n*m) per changed line pair and
+ * dominates render cost. Matches opencode's 500KB threshold — the
+ * viewer takes one set of options for every item, so the degradation is
+ * view-wide rather than per file.
  */
 const LARGE_PATCH_BYTES = 500_000
-
-/**
- * Virtualizer windowing config, borrowed from t3code's DiffPanel:
- * observe 1200px beyond the viewport and keep 600px of overscroll
- * rendered so fast scrolling doesn't flash empty buffers.
- */
-const VIRTUALIZER_CONFIG = {
-  overscrollSize: 600,
-  intersectionObserverMargin: 1200,
-}
 
 const UNIFIED_DIFF_THRESHOLD = 500
 const UPDATE_FLASH_DURATION = 1500
@@ -333,33 +313,6 @@ function DiffPlaceholderStats({ entry }: { readonly entry: FileDiffEntry }) {
         <span className="text-green-500">+{entry.added}</span>{' '}
         <span className="text-red-500">-{entry.removed}</span>
       </span>
-    </div>
-  )
-}
-
-/**
- * Rendered instead of a FileDiff when the file has more than
- * {@link MAX_DIFF_CHANGED_LINES} changed lines. Opting in via "Render
- * anyway" is per-file and survives watcher-driven refreshes.
- */
-function LargeDiffPlaceholder({
-  entry,
-  onRender,
-}: {
-  readonly entry: FileDiffEntry
-  readonly onRender: () => void
-}) {
-  return (
-    <div className="m-2 flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <DiffPlaceholderStats entry={entry} />
-        <span className="text-muted-foreground text-xs">
-          Large diff — skipped to keep the app responsive.
-        </span>
-      </div>
-      <Button onClick={onRender} size="sm" variant="outline">
-        Render anyway
-      </Button>
     </div>
   )
 }
@@ -539,12 +492,13 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     return () => observer.disconnect()
   }, [])
 
-  const diffOptions = useUnified
-    ? FILE_DIFF_OPTIONS_UNIFIED
-    : FILE_DIFF_OPTIONS_SPLIT
-  const plainDiffOptions = useUnified
-    ? FILE_DIFF_OPTIONS_UNIFIED_PLAIN
-    : FILE_DIFF_OPTIONS_SPLIT_PLAIN
+  // --- Theme ---
+  // The viewer picks its syntax palette from `themeType`; the surrounding
+  // chrome follows the app's tokens through `unsafeCSS`. Both have to
+  // track the active theme or the code body fights the pane around it.
+  const { resolvedTheme } = useTheme()
+  const themeType =
+    resolvedTheme === 'light' ? ('light' as const) : ('dark' as const)
 
   // --- Deferred rendering ---
   const [isTransitionPending, startTransition] = useTransition()
@@ -556,18 +510,80 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     })
   }, [orderedFileDiffs])
 
-  // --- Per-file "Render anyway" opt-ins for large diffs ---
-  const [forcedPaths, setForcedPaths] = useState<ReadonlySet<string>>(
-    () => new Set<string>()
+  const totalPatchBytes = deferredFileDiffs.reduce(
+    (total, { entry }) => total + (entry.patch?.length ?? 0),
+    0
   )
 
-  const forceRenderPath = useCallback((path: string) => {
-    setForcedPaths((prev) => {
-      const next = new Set(prev)
-      next.add(path)
+  const diffOptions = useMemo(
+    () => ({
+      ...DIFF_OPTIONS_BASE,
+      diffStyle: useUnified ? ('unified' as const) : ('split' as const),
+      lineDiffType:
+        totalPatchBytes > LARGE_PATCH_BYTES
+          ? ('none' as const)
+          : DIFF_OPTIONS_BASE.lineDiffType,
+      themeType,
+    }),
+    [useUnified, themeType, totalPatchBytes]
+  )
+
+  // --- Per-file collapse ---
+  // Large files start collapsed and expanding one is the "render anyway"
+  // opt-in; every file can also be collapsed from its header chevron.
+  const [collapseOverrides, setCollapseOverrides] = useState<
+    ReadonlyMap<string, boolean>
+  >(() => new Map())
+
+  const isCollapsed = useCallback(
+    (entry: FileDiffEntry) =>
+      collapseOverrides.get(entry.path) ??
+      entry.added + entry.removed > MAX_DIFF_CHANGED_LINES,
+    [collapseOverrides]
+  )
+
+  const toggleCollapsed = useCallback((path: string, collapsed: boolean) => {
+    setCollapseOverrides((previous) => {
+      const next = new Map(previous)
+      next.set(path, !collapsed)
       return next
     })
   }, [])
+
+  // --- Viewer items ---
+  // The viewer only re-reads an item whose `version` changed, so the
+  // version has to cover everything the item carries: the patch itself
+  // and whether it is collapsed.
+  const items = useMemo<CodeViewItem[]>(
+    () =>
+      deferredFileDiffs.flatMap(({ entry, fileDiff }) => {
+        if (fileDiff === null) {
+          return []
+        }
+        const collapsed = isCollapsed(entry)
+        return [
+          {
+            id: entry.path,
+            type: 'diff' as const,
+            fileDiff,
+            collapsed,
+            version: fnv1a32(`${collapsed ? '1' : '0'}:${entry.patch ?? ''}`),
+          },
+        ]
+      }),
+    [deferredFileDiffs, isCollapsed]
+  )
+
+  /** Files whose patch never left the server — nothing to render. */
+  const truncatedEntries = useMemo(
+    () =>
+      deferredFileDiffs.flatMap(({ entry, fileDiff }) =>
+        fileDiff === null ? [entry] : []
+      ),
+    [deferredFileDiffs]
+  )
+
+  const viewerRef = useRef<CodeViewHandle<undefined>>(null)
 
   // --- "Updated" flash indicator ---
   const [showUpdateFlash, setShowUpdateFlash] = useState(false)
@@ -614,20 +630,48 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     [workspaceId]
   )
 
-  const renderHeaderMetadata = useCallback(
-    (fileDiff: FileDiffMetadata) => {
-      const fileName = fileDiff.name
-      if (!fileName) {
-        return null
+  /**
+   * Clicking a file's name opens it, the way t3code's diff panel does.
+   * The name is painted by the viewer inside its shadow root, so the
+   * click is caught on the way down and resolved through the composed
+   * path; the header's own controls keep their actions.
+   */
+  const handleHeaderClickCapture = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const composedPath = event.nativeEvent.composedPath()
+      for (const node of composedPath) {
+        if (
+          node instanceof HTMLButtonElement ||
+          node instanceof HTMLAnchorElement
+        ) {
+          return
+        }
       }
+      const title = composedPath.find(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement && node.hasAttribute('data-title')
+      )
+      const filePath = title?.textContent?.trim()
+      if (filePath) {
+        handleOpenFile(filePath)
+      }
+    },
+    [handleOpenFile]
+  )
+
+  const renderHeaderMetadata = useCallback(
+    (item: CodeViewItem) => {
+      const filePath = item.id
       return (
         <button
+          aria-label={`Open ${filePath} in editor`}
           className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
-          onClick={(e) => {
-            e.stopPropagation()
-            handleOpenFile(fileName)
+          data-diff-file-path={filePath}
+          onClick={(event) => {
+            event.stopPropagation()
+            handleOpenFile(filePath)
           }}
-          title={`Open ${fileName} in editor`}
+          title={`Open ${filePath} in editor`}
           type="button"
         >
           <ExternalLink className="h-3 w-3" />
@@ -638,24 +682,42 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
     [handleOpenFile]
   )
 
+  const renderHeaderPrefix = useCallback(
+    (item: CodeViewItem) => {
+      const collapsed = item.collapsed === true
+      const Chevron = collapsed ? ChevronRight : ChevronDown
+      return (
+        <button
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${item.id}`}
+          className="-ms-0.5 mr-0.5 inline-flex items-center rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation()
+            toggleCollapsed(item.id, collapsed)
+          }}
+          type="button"
+        >
+          <Chevron className="size-3.5" />
+        </button>
+      )
+    },
+    [toggleCollapsed]
+  )
+
   // --- Cross-pane diff scroll ---
-  // File wrappers carry `data-diff-file-path`; resolve by attribute
-  // comparison instead of child index because the Virtualizer inserts
-  // its own content wrapper between the scroll root and the files.
+  // The viewer owns the scroll container and virtualizes items, so the
+  // target line usually has no DOM node yet; its handle resolves the
+  // position from the item's measured layout instead.
   useOnDiffScrollRequest(
     workspaceId,
     useCallback((target: { file: string; line: number }) => {
-      const container = containerRef.current
-      if (!container) {
-        return
-      }
-      const fileElements = container.querySelectorAll('[data-diff-file-path]')
-      for (const fileElement of fileElements) {
-        if (fileElement.getAttribute('data-diff-file-path') === target.file) {
-          fileElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          return
-        }
-      }
+      viewerRef.current?.scrollTo({
+        type: 'line',
+        id: target.file,
+        lineNumber: target.line,
+        align: 'center',
+        behavior: 'smooth',
+      })
     }, [])
   )
 
@@ -743,48 +805,29 @@ function DiffPaneContent({ onClose, workspaceId }: DiffPaneProps) {
         </div>
       )}
 
-      <div className="min-h-0 flex-1" data-pane-text-selectable>
-        <Virtualizer
-          className="h-full select-text overflow-y-auto overflow-x-hidden"
-          config={VIRTUALIZER_CONFIG}
-        >
-          {deferredFileDiffs.map(({ entry, fileDiff }) => {
-            if (fileDiff === null) {
-              return (
-                <div data-diff-file-path={entry.path} key={entry.path}>
-                  <TruncatedDiffPlaceholder entry={entry} />
-                </div>
-              )
-            }
-
-            const changedLines = entry.added + entry.removed
-            const tooLarge =
-              changedLines > MAX_DIFF_CHANGED_LINES &&
-              !forcedPaths.has(entry.path)
-            if (tooLarge) {
-              return (
-                <div data-diff-file-path={entry.path} key={entry.path}>
-                  <LargeDiffPlaceholder
-                    entry={entry}
-                    onRender={() => forceRenderPath(entry.path)}
-                  />
-                </div>
-              )
-            }
-
-            const hugePatch = (entry.patch?.length ?? 0) > LARGE_PATCH_BYTES
-            return (
-              <div data-diff-file-path={entry.path} key={entry.path}>
-                <FileDiff
-                  className="select-text"
-                  fileDiff={fileDiff}
-                  options={hugePatch ? plainDiffOptions : diffOptions}
-                  renderHeaderMetadata={renderHeaderMetadata}
-                />
-              </div>
-            )
-          })}
-        </Virtualizer>
+      {/* The click target is the viewer's own filename node inside its
+          shadow root; every header's Open button is the keyboard path to
+          the same action. */}
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        data-pane-text-selectable
+        onClickCapture={handleHeaderClickCapture}
+      >
+        {truncatedEntries.length > 0 && (
+          <div className="shrink-0">
+            {truncatedEntries.map((entry) => (
+              <TruncatedDiffPlaceholder entry={entry} key={entry.path} />
+            ))}
+          </div>
+        )}
+        <StyledDiffCodeView
+          className="min-h-0 flex-1 select-text overflow-auto"
+          items={items}
+          options={diffOptions}
+          renderHeaderMetadata={renderHeaderMetadata}
+          renderHeaderPrefix={renderHeaderPrefix}
+          viewerRef={viewerRef}
+        />
       </div>
     </div>
   )

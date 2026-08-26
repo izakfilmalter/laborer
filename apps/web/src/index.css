@@ -1,1 +1,46 @@
 @import "@laborer/ui/globals.css";
+
+/*
+ * Code-surface tokens for the diff viewer.
+ *
+ * `@pierre/diffs` renders into a shadow root, so its internals are
+ * restyled from `src/lib/diff-rendering.ts` via the viewer's `unsafeCSS`
+ * option. Custom properties still inherit across the shadow boundary,
+ * which is how these reach it.
+ *
+ * The mix strengths exist because the app switches themes with a `.dark`
+ * class rather than `color-scheme`, so `light-dark()` is unavailable:
+ * a change row needs more of the accent in dark mode to read as tinted.
+ */
+:root {
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --code-foreground: var(--foreground);
+
+  --diff-change-mix: 50%;
+  --diff-change-number-mix: 35%;
+  --diff-selected-mix: 88%;
+  --diff-selected-tint-mix: 50%;
+  --diff-selected-gutter-mix: 91%;
+  --diff-selected-gutter-tint-mix: 35%;
+}
+
+.dark {
+  --diff-change-mix: 70%;
+  --diff-change-number-mix: 60%;
+  --diff-selected-mix: 80%;
+  --diff-selected-tint-mix: 70%;
+  --diff-selected-gutter-mix: 85%;
+  --diff-selected-gutter-tint-mix: 60%;
+}
+
+/*
+ * The host custom element draws its own card chrome; the pane already
+ * provides the frame, so flatten it onto the code surface.
+ */
+.diff-render-surface {
+  overflow: clip;
+  color: var(--code-foreground);
+  background: var(--code-background);
+  border: 0;
+  border-radius: 0;
+}

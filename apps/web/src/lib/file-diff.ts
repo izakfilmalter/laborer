@@ -1,6 +1,15 @@
 import type { FileDiffEntry } from '@laborer/shared/rpc'
 import type { FileDiffMetadata } from '@pierre/diffs'
 import { parsePatchFiles } from '@pierre/diffs'
+import { fnv1a32 } from '@/lib/fnv1a32'
+
+/**
+ * A cache key derived from the patch itself, so the renderer reuses its
+ * parsed and highlighted result across the watcher-driven refetches that
+ * re-deliver an unchanged file, and misses as soon as the file changes.
+ */
+export const buildPatchCacheKey = (patch: string): string =>
+  `file-diff:${patch.length}:${fnv1a32(patch).toString(36)}`
 
 /**
  * Convert a `file.diff` entry into Pierre's metadata format.
@@ -16,6 +25,6 @@ export const parseFileDiffEntry = (
   if (!entry.patch) {
     return null
   }
-  const parsed = parsePatchFiles(entry.patch)
+  const parsed = parsePatchFiles(entry.patch, buildPatchCacheKey(entry.patch))
   return parsed.flatMap((patchEntry) => patchEntry.files)[0] ?? null
 }

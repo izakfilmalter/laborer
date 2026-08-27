@@ -7,9 +7,11 @@ const {
   mutationMap,
   projectRowsMock,
   refreshPrMock,
+  viewerLoginMock,
   workspaceRowsMock,
 } = vi.hoisted(() => ({
   activePaneIdMock: vi.fn(),
+  viewerLoginMock: vi.fn<() => string | null>(() => null),
   headerPropsMock: vi.fn(),
   refreshPrMock: vi.fn().mockResolvedValue(undefined),
   mutationMap: new Map<unknown, ReturnType<typeof vi.fn>>(),
@@ -38,6 +40,10 @@ vi.mock('@/db/shared-state', () => ({
   projectCollection: Symbol('projects'),
   taskCollection: Symbol('tasks'),
   workspaceViewsFromRows: () => workspaceRowsMock(),
+}))
+
+vi.mock('@/hooks/use-current-github-login', () => ({
+  useCurrentGithubLogin: () => viewerLoginMock(),
 }))
 
 vi.mock('@/hooks/use-project-short-name', () => ({
@@ -103,7 +109,67 @@ describe('WorkspaceFrameHeaderContainer', () => {
     projectRowsMock.mockReset()
     workspaceRowsMock.mockReset()
     workspaceRowsMock.mockReturnValue([])
+    viewerLoginMock.mockReturnValue(null)
     headerPropsMock.mockClear()
+  })
+
+  it("names another author's login in the header, and never the viewer's own", () => {
+    activePaneIdMock.mockReturnValue('pane-1')
+    projectRowsMock.mockReturnValue([{ id: 'project-1', name: 'Demo' }])
+    viewerLoginMock.mockReturnValue('izakfilmalter')
+    workspaceRowsMock.mockReturnValue([
+      {
+        branchName: 'claude/errors-view',
+        id: 'ws-root',
+        parentTaskId: null,
+        prAuthorLogin: 'octocat',
+        projectId: 'project-1',
+        status: 'ready',
+        taskNumber: 7,
+      },
+      {
+        branchName: 'fixup/nit',
+        id: 'ws-1',
+        parentTaskId: 'ws-root',
+        prAuthorLogin: 'izakfilmalter',
+        projectId: 'project-1',
+        status: 'ready',
+        taskNumber: 8,
+      },
+    ])
+
+    const view = render(
+      <WorkspaceFrameHeaderContainer
+        isActiveFrame
+        isMinimized={false}
+        onHeaderClick={() => undefined}
+        onMinimize={() => undefined}
+        subLayout={subLayout}
+        workspaceId="ws-1"
+      />
+    )
+
+    // A sub-workspace is attributed to the branch it patches, not to itself.
+    expect(headerPropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ authorLogin: 'octocat' })
+    )
+
+    headerPropsMock.mockClear()
+    viewerLoginMock.mockReturnValue('octocat')
+    view.rerender(
+      <WorkspaceFrameHeaderContainer
+        isActiveFrame
+        isMinimized={false}
+        onHeaderClick={() => undefined}
+        onMinimize={() => undefined}
+        subLayout={subLayout}
+        workspaceId="ws-1"
+      />
+    )
+
+    expect(headerPropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ authorLogin: null })
+    )
   })
 
   it('refreshes PR status when a pane in the workspace becomes focused', async () => {

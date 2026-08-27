@@ -20,6 +20,11 @@ import type {
   PullRequestCheckRun,
   PullRequestReviewDecision,
 } from '@laborer/shared/rpc'
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from '@laborer/ui/components/avatar'
 import { Button } from '@laborer/ui/components/button'
 import { DialogTrigger } from '@laborer/ui/components/dialog'
 import { Kbd, KbdGroup } from '@laborer/ui/components/kbd'
@@ -62,6 +67,11 @@ interface WorkspaceFrameHeaderProps {
   readonly activePaneId: string | null
   /** Aggregate semantic Agent status for the workspace. */
   readonly agentStatus?: AgentDisplayStatus | null | undefined
+  /**
+   * The GitHub login this workspace's work belongs to, when it is somebody
+   * else's. Null for the reviewer's own or unattributed work.
+   */
+  readonly authorLogin?: string | null | undefined
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
   /** Whether the PR comments panel is currently open for the active pane. */
@@ -125,11 +135,22 @@ interface WorkspaceFrameHeaderProps {
   readonly workspacePath: readonly string[]
 }
 
+/**
+ * Project, then whose work this is, then the branch path.
+ *
+ * The sidebar files another author's branch under their login, so a frame
+ * pulled out of that group would otherwise lose the one fact that explains why
+ * it is here. Naming the author before the branch keeps the title reading as
+ * an address — project, person, branch — and stays absent for the reviewer's
+ * own work, where "mine" is the default and needs no label.
+ */
 function WorkspaceFrameTitle({
+  authorLogin,
   branchName,
   projectName,
   workspacePath,
 }: {
+  readonly authorLogin: string | null
   readonly branchName: string | undefined
   readonly projectName: string | undefined
   readonly workspacePath: readonly string[]
@@ -143,6 +164,24 @@ function WorkspaceFrameTitle({
   return (
     <>
       <span className="text-foreground">{projectName}</span>
+      {authorLogin === null ? null : (
+        <span
+          className="inline-flex items-center gap-1"
+          data-testid={`workspace-frame-author-${authorLogin}`}
+        >
+          <span className="mx-1">/</span>
+          <Avatar className="size-3.5">
+            <AvatarImage
+              alt=""
+              src={`https://github.com/${authorLogin}.png?s=32`}
+            />
+            <AvatarFallback className="text-[7px]">
+              {authorLogin.slice(0, 1).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <span>{authorLogin}</span>
+        </span>
+      )}
       {pathSegments.map((segment) => (
         <span key={segment}>
           <span className="mx-1">/</span>
@@ -384,6 +423,7 @@ function WorkspaceFrameHeader({
   activePaneId,
   actions,
   agentStatus,
+  authorLogin = null,
   branchName,
   commentsIsOpen = false,
   diffIsOpen,
@@ -506,6 +546,7 @@ function WorkspaceFrameHeader({
           </div>
           <div className="min-w-0 truncate text-muted-foreground text-xs">
             <WorkspaceFrameTitle
+              authorLogin={authorLogin}
               branchName={branchName}
               projectName={projectName}
               workspacePath={workspacePath}

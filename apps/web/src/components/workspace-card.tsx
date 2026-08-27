@@ -41,7 +41,6 @@ import {
 import { cn } from '@laborer/ui/lib/utils'
 import { GitBranch, GitBranchPlus, Trash2 } from 'lucide-react'
 import {
-  type FC,
   type KeyboardEvent,
   type ReactNode,
   useCallback,
@@ -52,8 +51,9 @@ import {
 import { createPortal } from 'react-dom'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
+import { CardDescriptionHover } from '@/components/card-description-hover'
 import { CardShell } from '@/components/card-shell'
-import { CopyButton } from '@/components/copy-button'
+import { CopyableValue } from '@/components/copyable-value'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { EditTaskCardButton } from '@/components/edit-task-card-button'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
@@ -68,6 +68,7 @@ import {
   type ActiveTerminal,
   useDestroyWorkspaceChecks,
 } from '@/hooks/use-destroy-workspace-checks'
+import { useTaskDescription } from '@/hooks/use-task-description'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
 import {
@@ -142,38 +143,6 @@ function StatusDot({ status }: { readonly status: string }) {
   })()
 
   return <span className={cn('inline-block size-2 rounded-full', dotColor)} />
-}
-
-interface CopyableValueProps {
-  /** Label for the main copy button tooltip (e.g. "Copy branch name"). */
-  readonly copyLabel: string
-  /** Extra values that get their own copy button on hover. */
-  readonly extraCopyValues?: ReadonlyArray<{
-    readonly value: string
-    readonly label: string
-  }>
-  readonly value: string
-}
-
-const CopyableValue: FC<CopyableValueProps> = (props) => {
-  const { value, copyLabel, extraCopyValues } = props
-
-  return (
-    <span className="group/copyable flex w-full min-w-0 items-start justify-between gap-1">
-      <span className="line-clamp-2 min-w-0 break-all">{value}</span>
-      <span className="-mr-8 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 group-hover/copyable:mr-0 group-hover/copyable:opacity-100">
-        {extraCopyValues?.map((extra) => (
-          <CopyButton
-            aria-label={extra.label}
-            key={extra.label}
-            title={extra.label}
-            value={extra.value}
-          />
-        ))}
-        <CopyButton title={copyLabel} value={value} />
-      </span>
-    </span>
-  )
 }
 
 /**
@@ -732,6 +701,9 @@ function WorkspaceCard({
 }: WorkspaceCardProps) {
   const [workspaceAgentStatus, setWorkspaceAgentStatus] =
     useState<AgentDisplayStatus | null>(null)
+  // What this branch is for, previewed on hovering its name. The editor behind
+  // the pencil is the only other way to read it, which is a modal for a glance.
+  const taskDescription = useTaskDescription(workspace.id)
   const activeWorkspaceId = useActiveWorkspaceId()
   const isActiveWorkspace = activeWorkspaceId === workspace.id
   const panelActions = usePanelActions()
@@ -892,18 +864,23 @@ function WorkspaceCard({
       selected={isActiveWorkspace}
       subtitle={subtitle}
       title={
-        <span className="block min-w-0 font-mono">
-          <CopyableValue
-            copyLabel="Copy branch name"
-            extraCopyValues={[
-              {
-                value: workspace.worktreePath,
-                label: 'Copy worktree path',
-              },
-            ]}
-            value={workspace.branchName}
-          />
-        </span>
+        <CardDescriptionHover
+          description={taskDescription}
+          heading={`What ${workspace.branchName} is for`}
+        >
+          <span className="block min-w-0 font-mono">
+            <CopyableValue
+              copyLabel="Copy branch name"
+              extraCopyValues={[
+                {
+                  value: workspace.worktreePath,
+                  label: 'Copy worktree path',
+                },
+              ]}
+              value={workspace.branchName}
+            />
+          </span>
+        </CardDescriptionHover>
       }
     >
       {/* No divider and no heading: the rows below are the only body the card

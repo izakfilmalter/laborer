@@ -31,6 +31,7 @@ import {
   SERVICE_INITIALIZING_CODE,
 } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
+import { GithubPullRequests } from '../../src/services/github-pull-requests.js'
 import { GithubViewer } from '../../src/services/github-viewer.js'
 import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
@@ -73,6 +74,9 @@ const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
   // Stubbed rather than built: the real service shells out to `gh`, and this
   // suite proves the core layers stand up without touching the network.
   Layer.provide(Layer.succeed(GithubViewer)({ login: Effect.succeed(null) })),
+  Layer.provide(
+    Layer.succeed(GithubPullRequests)({ list: () => Effect.succeed([]) })
+  ),
   Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 
@@ -171,6 +175,9 @@ const CoreOnlyRpcWithReadyRefLayer = LaborerRpcsLive.pipe(
   Layer.provideMerge(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),
   Layer.provide(Layer.succeed(GithubViewer)({ login: Effect.succeed(null) })),
+  Layer.provide(
+    Layer.succeed(GithubPullRequests)({ list: () => Effect.succeed([]) })
+  ),
   Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
 

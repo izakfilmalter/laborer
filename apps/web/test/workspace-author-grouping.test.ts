@@ -29,6 +29,26 @@ const node = (
     },
   }) as unknown as Node
 
+type PullRequest = Parameters<typeof partitionByAuthor>[2] extends
+  | readonly (infer Entry)[]
+  | undefined
+  ? Entry
+  : never
+
+const pullRequest = (
+  branchName: string,
+  authorLogin: string,
+  number = 1
+): PullRequest => ({
+  authorLogin,
+  body: null,
+  branchName,
+  isDraft: false,
+  number,
+  title: branchName,
+  url: `https://github.com/acme/repo/pull/${number}`,
+})
+
 describe('partitionByAuthor', () => {
   it('leaves the viewer’s own branches ungrouped', () => {
     const mine = node('my-feature', 'izakfilmalter')
@@ -125,5 +145,74 @@ describe('partitionByAuthor', () => {
       'izakfilmalter',
       'octocat',
     ])
+  })
+})
+
+describe('partitionByAuthor — pull requests that are not here yet', () => {
+  it('gives an author a group for work with no worktree behind it', () => {
+    // Nothing of theirs is checked out, but they still have something open,
+    // and a heading that only counted worktrees would say they have nothing.
+    const { authorGroups } = partitionByAuthor([], 'izakfilmalter', [
+      pullRequest('octocat/fix', 'octocat', 7),
+    ])
+
+    expect(authorGroups).toHaveLength(1)
+    expect(authorGroups[0]?.login).toBe('octocat')
+    expect(authorGroups[0]?.nodes).toEqual([])
+    expect(
+      authorGroups[0]?.remotePullRequests.map((entry) => entry.number)
+    ).toEqual([7])
+  })
+
+  it('does not list a pull request that is already checked out', () => {
+    // The workspace card above is the same branch. Two entries for one branch
+    // would read as two pieces of work.
+    const { authorGroups } = partitionByAuthor(
+      [node('octocat/fix', 'octocat')],
+      'izakfilmalter',
+      [pullRequest('octocat/fix', 'octocat', 7)]
+    )
+
+    expect(authorGroups[0]?.nodes).toHaveLength(1)
+    expect(authorGroups[0]?.remotePullRequests).toEqual([])
+  })
+
+  it('counts a branch pulled in as a sub-workspace as checked out', () => {
+    const { authorGroups } = partitionByAuthor(
+      [node('their-feature', 'octocat', [node('octocat/fix', 'octocat')])],
+      'izakfilmalter',
+      [pullRequest('octocat/fix', 'octocat', 7)]
+    )
+
+    expect(authorGroups[0]?.remotePullRequests).toEqual([])
+  })
+
+  it('leaves the viewer’s own pull requests out of the author groups', () => {
+    // The reviewer's own work is the list above, not reference material filed
+    // under their own name.
+    const { authorGroups } = partitionByAuthor([], 'izakfilmalter', [
+      pullRequest('my-feature', 'izakfilmalter', 8),
+    ])
+
+    expect(authorGroups).toEqual([])
+  })
+
+  it('shows an author’s checked-out branches above what is still remote', () => {
+    const { authorGroups } = partitionByAuthor(
+      [node('octocat/here', 'octocat')],
+      'izakfilmalter',
+      [
+        pullRequest('octocat/older', 'octocat', 3),
+        pullRequest('octocat/newer', 'octocat', 9),
+      ]
+    )
+
+    expect(authorGroups[0]?.nodes.map((entry) => entry.workspace.id)).toEqual([
+      'octocat/here',
+    ])
+    // Newest first: the pull request just opened is the one being asked about.
+    expect(
+      authorGroups[0]?.remotePullRequests.map((entry) => entry.branchName)
+    ).toEqual(['octocat/newer', 'octocat/older'])
   })
 })

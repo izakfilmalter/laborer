@@ -14,6 +14,7 @@ import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
+import { GithubPullRequests } from '../../src/services/github-pull-requests.js'
 import { GithubViewer } from '../../src/services/github-viewer.js'
 import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PowerProfileService } from '../../src/services/power-profile.js'
@@ -115,9 +116,21 @@ const TestGithubViewerLayer = Layer.succeed(GithubViewer)({
   login: Effect.succeed(null),
 })
 
+/**
+ * No pull requests are open, without asking `gh`.
+ *
+ * Same reasoning as the viewer stub: shelling out is not allowed here, and an
+ * empty listing is the branch every consumer already handles for a repository
+ * with no GitHub remote.
+ */
+const TestGithubPullRequestsLayer = Layer.succeed(GithubPullRequests)({
+  list: () => Effect.succeed([]),
+})
+
 const CoreLeafLayers = Layer.mergeAll(
   ConfigService.layer,
   RepositoryIdentity.layer,
+  TestGithubPullRequestsLayer,
   TestGithubViewerLayer
 )
 

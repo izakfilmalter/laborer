@@ -297,6 +297,11 @@ export const SharedTaskRow = Schema.Struct({
   baseSha: Schema.NullOr(Schema.String),
   parentTaskId: Schema.NullOr(Schema.String),
   prIsDraft: Schema.Boolean,
+  /**
+   * GitHub login of whoever opened the pull request on this branch. Null when
+   * the branch has no pull request; that is "unattributed", not "mine".
+   */
+  prAuthorLogin: Schema.NullOr(Schema.String),
   prBaseBranch: Schema.NullOr(Schema.String),
   prCheckStatus: Schema.NullOr(
     Schema.Literals(['pending', 'success', 'failure'])
@@ -1467,6 +1472,22 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       code: Schema.String,
     },
+  }),
+
+  /**
+   * The GitHub login of whoever this machine is authenticated as.
+   *
+   * Null means the question has no answer right now — `gh` is not installed,
+   * not logged in, or offline. Callers read that as "attribute nothing to me"
+   * rather than as an error, because an unattributed workspace is a normal
+   * state, not a failure.
+   */
+  Rpc.make('github.currentUser', {
+    success: Schema.Struct({
+      login: Schema.NullOr(Schema.String),
+    }),
+    error: RpcError,
+    payload: {},
   }),
 
   // -----------------------------------------------------------------------

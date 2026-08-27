@@ -52,6 +52,7 @@ const TestPrWatcherLayer = Layer.effect(
 
           return {
             approvals: null,
+            authorLogin: null,
             baseBranch: null,
             checkStatus: null,
             checks: null,

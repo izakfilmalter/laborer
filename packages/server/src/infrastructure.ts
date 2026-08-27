@@ -23,6 +23,7 @@ import {
 import { registerInitialDevProject } from './services/dev-project-bootstrap.js'
 import { FileService } from './services/file-service.js'
 import type { FileWatcherClient } from './services/file-watcher-client.js'
+import { GithubViewer } from './services/github-viewer.js'
 import {
   LaborerDatabase,
   LaborerDatabaseLive,
@@ -230,6 +231,9 @@ const provideInfrastructureCore = <ROut, RIn>(
 ) =>
   layer.pipe(
     Layer.provideMerge(DeferredServicesReadyLayer),
+    // A cached `gh api user` lookup: no dependencies, no work until first
+    // asked, so it costs nothing to build on the startup path.
+    Layer.provideMerge(GithubViewer.layer),
     Layer.provideMerge(PowerProfileService.layer),
     Layer.provideMerge(ConfigService.layer),
     Layer.provideMerge(RepositoryIdentity.layer),

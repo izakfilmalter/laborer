@@ -24,6 +24,8 @@ export interface WorkspaceRecord {
   readonly origin: 'laborer' | 'external'
   /** How many reviewers' latest review is an approval. Null when never read. */
   readonly prApprovals: number | null
+  /** GitHub login of whoever opened the pull request. Null when unattributed. */
+  readonly prAuthorLogin: string | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
   readonly prChecks: readonly PullRequestCheckRun[] | null
@@ -99,6 +101,7 @@ const toWorkspaceRecord = (
     errorMessage: task.worktreeError,
     id: task.id,
     origin: task.source === 'worktree' ? 'external' : 'laborer',
+    prAuthorLogin: task.prAuthorLogin,
     prBaseBranch: task.prBaseBranch,
     prCheckStatus: task.prCheckStatus,
     prChecks: task.prChecks,
@@ -148,6 +151,7 @@ const rootWorkspaceRecord = (project: Project): WorkspaceRecord => ({
   errorMessage: null,
   id: rootWorkspaceId(project.id),
   origin: 'external',
+  prAuthorLogin: null,
   prBaseBranch: null,
   prCheckStatus: null,
   prChecks: null,

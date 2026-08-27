@@ -25,6 +25,11 @@ import {
   buildWorkspaceTree,
   type WorkspaceTreeNode,
 } from '@laborer/shared/workspace-tree'
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from '@laborer/ui/components/avatar'
 import { Badge } from '@laborer/ui/components/badge'
 import { Button } from '@laborer/ui/components/button'
 import {
@@ -66,7 +71,9 @@ import type {
   PendingWorkspaceCreation,
   PendingWorkspaceCreationChangeHandler,
 } from '@/hooks/use-create-workspace'
+import { useCurrentGithubLogin } from '@/hooks/use-current-github-login'
 import {
+  authorGroupKey,
   type CollapseState,
   useWorkspaceGroupCollapseState,
 } from '@/hooks/use-project-collapse-state'
@@ -93,6 +100,59 @@ interface WorkspaceListProps {
 /** Workspace row shape used by the sidebar tree. */
 type WorkspaceTreeRow = WorkspaceCardWorkspace & {
   readonly parentTaskId: string | null
+  readonly prAuthorLogin: string | null
+}
+
+/** One author's branches, gathered under a heading bearing their login. */
+interface AuthorGroup {
+  readonly login: string
+  readonly nodes: readonly WorkspaceTreeNode<WorkspaceTreeRow>[]
+}
+
+/**
+ * Split top-level tree nodes into the reviewer's own list and one group per
+ * other author.
+ *
+ * Only the top of each stack is consulted. A sub-workspace of somebody else's
+ * branch is normally the reviewer's own fix-up commit for that pull request,
+ * so it belongs beside the branch it patches rather than pulled out into its
+ * own list — which is precisely the collecting this grouping exists to do.
+ *
+ * A null `viewerLogin` means "we do not yet know who I am". Everything
+ * attributed still groups, which stays truthful; the reviewer's own branches
+ * simply fold into a group of their own name until the login resolves.
+ */
+const partitionByAuthor = (
+  nodes: readonly WorkspaceTreeNode<WorkspaceTreeRow>[],
+  viewerLogin: string | null
+): {
+  readonly authorGroups: readonly AuthorGroup[]
+  readonly ownNodes: readonly WorkspaceTreeNode<WorkspaceTreeRow>[]
+} => {
+  const ownNodes: WorkspaceTreeNode<WorkspaceTreeRow>[] = []
+  const byAuthor = new Map<string, WorkspaceTreeNode<WorkspaceTreeRow>[]>()
+
+  for (const node of nodes) {
+    const login = node.workspace.prAuthorLogin
+    // An unattributed branch — no pull request, or one we have not read yet —
+    // stays where it has always been rather than being filed under a guess.
+    if (login === null || login === viewerLogin) {
+      ownNodes.push(node)
+      continue
+    }
+    const existing = byAuthor.get(login)
+    if (existing === undefined) {
+      byAuthor.set(login, [node])
+    } else {
+      existing.push(node)
+    }
+  }
+
+  const authorGroups = [...byAuthor.entries()]
+    .map(([login, groupNodes]): AuthorGroup => ({ login, nodes: groupNodes }))
+    .sort((left, right) => left.login.localeCompare(right.login))
+
+  return { authorGroups, ownNodes }
 }
 
 interface WorkspaceTreeGroupProps {
@@ -218,6 +278,82 @@ function WorkspaceTreeGroup({
   )
 }
 
+interface AuthorWorkspaceGroupProps {
+  readonly collapseState: CollapseState
+  readonly group: AuthorGroup
+  readonly onPendingCreationChange?:
+    | PendingWorkspaceCreationChangeHandler
+    | undefined
+  readonly projectId: string
+  readonly projectName: string
+  readonly projectShortName?: string | null | undefined
+  readonly rootPath: string
+}
+
+/**
+ * A collapsible heading gathering every branch opened by one other person.
+ *
+ * Sits below the reviewer's own workspaces because it is reference material
+ * for a review pass, not the work in progress.
+ */
+function AuthorWorkspaceGroup({
+  collapseState,
+  group,
+  onPendingCreationChange,
+  projectId,
+  projectName,
+  projectShortName,
+  rootPath,
+}: AuthorWorkspaceGroupProps) {
+  const groupKey = authorGroupKey(projectId, group.login)
+  const expanded = collapseState.isExpanded(groupKey)
+
+  return (
+    <Collapsible open={expanded}>
+      <CollapsibleTrigger
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left font-medium text-muted-foreground text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+        data-testid={`workspace-author-group-${group.login}`}
+        onClick={() => collapseState.toggle(groupKey)}
+      >
+        <ChevronRight
+          className={cn(
+            'size-3 shrink-0 transition-transform duration-200',
+            expanded && 'rotate-90'
+          )}
+        />
+        <Avatar className="size-4 shrink-0">
+          <AvatarImage
+            alt=""
+            src={`https://github.com/${group.login}.png?s=32`}
+          />
+          <AvatarFallback className="text-[8px]">
+            {group.login.slice(0, 1).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <span className="min-w-0 truncate">{group.login}</span>
+        <span className="ml-auto shrink-0 tabular-nums">
+          {group.nodes.length}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 ml-1.5 grid gap-2 border-l pl-1.5">
+          {group.nodes.map((node) => (
+            <WorkspaceTreeGroup
+              collapseState={collapseState}
+              key={node.workspace.id}
+              node={node}
+              onPendingCreationChange={onPendingCreationChange}
+              projectName={projectName}
+              projectShortName={projectShortName}
+              rootPath={rootPath}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 function PendingWorkspaceItem({
   creation,
 }: {
@@ -270,6 +406,7 @@ function WorkspaceList({
     [projects, tasks]
   )
   const collapseState = useWorkspaceGroupCollapseState()
+  const viewerLogin = useCurrentGithubLogin()
 
   // Filter out destroyed workspaces, scoped to the given project, and present
   // them oldest-first so newly created workspaces always land at the bottom.
@@ -307,6 +444,14 @@ function WorkspaceList({
     ]
   }, [activeWorkspaces, rootPath])
 
+  // Branches somebody else opened are pulled out into per-author groups below
+  // the reviewer's own list. Nothing is hidden — the same nodes are rendered,
+  // just gathered under the name they came from.
+  const { authorGroups, ownNodes } = useMemo(
+    () => partitionByAuthor(workspaceTree, viewerLogin),
+    [workspaceTree, viewerLogin]
+  )
+
   if (activeWorkspaces.length === 0 && pendingCreations.length === 0) {
     return (
       <Empty className="py-4">
@@ -329,7 +474,7 @@ function WorkspaceList({
       {pendingCreations.map((creation) => (
         <PendingWorkspaceItem creation={creation} key={creation.id} />
       ))}
-      {workspaceTree.map((node) => (
+      {ownNodes.map((node) => (
         <WorkspaceTreeGroup
           collapseState={collapseState}
           key={node.workspace.id}
@@ -340,8 +485,21 @@ function WorkspaceList({
           rootPath={rootPath}
         />
       ))}
+      {authorGroups.map((group) => (
+        <AuthorWorkspaceGroup
+          collapseState={collapseState}
+          group={group}
+          key={group.login}
+          onPendingCreationChange={onPendingCreationChange}
+          projectId={projectId}
+          projectName={projectName}
+          projectShortName={projectShortName}
+          rootPath={rootPath}
+        />
+      ))}
     </div>
   )
 }
 
-export { WorkspaceList }
+export { partitionByAuthor, WorkspaceList }
+export type { AuthorGroup }

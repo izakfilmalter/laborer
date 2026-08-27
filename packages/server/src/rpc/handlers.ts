@@ -32,6 +32,7 @@ import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
 import { parsePullRequestRepoSlug } from '../services/github-pr-view.js'
+import { GithubViewer } from '../services/github-viewer.js'
 import { LaborerDatabase } from '../services/laborer-database.js'
 import {
   LaborerDatabaseStaleRevisionError,
@@ -1750,6 +1751,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           scope: body.scope ?? '',
           tokenType: body.token_type ?? 'bearer',
         }
+      }),
+
+    'github.currentUser': () =>
+      Effect.gen(function* () {
+        const viewer = yield* GithubViewer
+        return { login: yield* viewer.login }
       }),
 
     // -------------------------------------------------------------------

@@ -51,7 +51,13 @@ vi.mock('@/hooks/use-terminal-list', () => ({
   }),
 }))
 
+const noopAtomRefresh = vi.hoisted(() => vi.fn())
+
 vi.mock('@effect/atom-react/Hooks', () => ({
+  // The sidebar polls its project's open pull requests, which needs a refresh
+  // handle. One stable no-op keeps the poll's effect from re-running on every
+  // render.
+  useAtomRefresh: () => noopAtomRefresh,
   useAtomSet: (atom: unknown) => mutationMap.get(atom) ?? vi.fn(),
   useAtomValue: (atom: symbol) =>
     (() => {

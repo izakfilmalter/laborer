@@ -23,6 +23,7 @@ import {
 import { registerInitialDevProject } from './services/dev-project-bootstrap.js'
 import { FileService } from './services/file-service.js'
 import type { FileWatcherClient } from './services/file-watcher-client.js'
+import { GithubPullRequests } from './services/github-pull-requests.js'
 import { GithubViewer } from './services/github-viewer.js'
 import {
   LaborerDatabase,
@@ -234,6 +235,9 @@ const provideInfrastructureCore = <ROut, RIn>(
     // A cached `gh api user` lookup: no dependencies, no work until first
     // asked, so it costs nothing to build on the startup path.
     Layer.provideMerge(GithubViewer.layer),
+    // A cached `gh pr list` per project root, on the same terms: nothing runs
+    // until the sidebar asks for an author's open pull requests.
+    Layer.provideMerge(GithubPullRequests.layer),
     Layer.provideMerge(PowerProfileService.layer),
     Layer.provideMerge(ConfigService.layer),
     Layer.provideMerge(RepositoryIdentity.layer),

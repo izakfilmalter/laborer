@@ -290,6 +290,29 @@ export const PullRequestReviewDecision = Schema.Literals([
 ])
 export type PullRequestReviewDecision = typeof PullRequestReviewDecision.Type
 
+/**
+ * An open pull request on the remote, described well enough to show it in the
+ * sidebar and to pull it in.
+ *
+ * This is deliberately not a task row. A pull request nobody has checked out
+ * has no worktree, no terminals, and no local status; the only things it can
+ * honestly claim are the ones GitHub told us. Once it is pulled in, the
+ * workspace it becomes is what the sidebar shows instead.
+ */
+export const OpenPullRequest = Schema.Struct({
+  /** The login that opened it, which is the heading it is filed under. */
+  authorLogin: Schema.String,
+  /** The pull request body, shown as the card's description on hover. */
+  body: Schema.NullOr(Schema.String),
+  /** The head branch — what pulling this in checks out. */
+  branchName: Schema.String,
+  isDraft: Schema.Boolean,
+  number: Schema.Number,
+  title: Schema.String,
+  url: Schema.String,
+})
+export type OpenPullRequest = typeof OpenPullRequest.Type
+
 /** Authoritative shared-database task row plus server-only worktree facts. */
 export const SharedTaskRow = Schema.Struct({
   ...BoardTask.fields,
@@ -1488,6 +1511,28 @@ export class LaborerRpcs extends RpcGroup.make(
     }),
     error: RpcError,
     payload: {},
+  }),
+
+  /**
+   * Every open pull request in a project's repository, checked out here or not.
+   *
+   * The sidebar files a branch under the login that opened it, but only once
+   * that branch has a worktree. This answers the other half of the author's
+   * heading — what they have open that is not here yet — so the gap is visible
+   * and can be closed with one action.
+   *
+   * An empty list is the answer whenever GitHub cannot be asked: no `gh`, no
+   * login, no GitHub remote, or no network. None of those are failures the
+   * sidebar acts on differently, so none of them raise.
+   */
+  Rpc.make('github.pullRequests', {
+    success: Schema.Struct({
+      pullRequests: Schema.Array(OpenPullRequest),
+    }),
+    error: RpcError,
+    payload: {
+      projectId: Schema.String,
+    },
   }),
 
   // -----------------------------------------------------------------------

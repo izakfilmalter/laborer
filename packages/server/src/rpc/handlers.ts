@@ -32,6 +32,7 @@ import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
 import { parsePullRequestRepoSlug } from '../services/github-pr-view.js'
+import { GithubPullRequests } from '../services/github-pull-requests.js'
 import { GithubViewer } from '../services/github-viewer.js'
 import { LaborerDatabase } from '../services/laborer-database.js'
 import {
@@ -1757,6 +1758,15 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const viewer = yield* GithubViewer
         return { login: yield* viewer.login }
+      }),
+
+    'github.pullRequests': ({ projectId }) =>
+      Effect.gen(function* () {
+        const pullRequestService = yield* GithubPullRequests
+        const project = yield* getProject(projectId)
+        return {
+          pullRequests: yield* pullRequestService.list(project.repoPath),
+        }
       }),
 
     // -------------------------------------------------------------------

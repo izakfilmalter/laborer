@@ -339,6 +339,23 @@
   margin-bottom: 0;
 }
 
+/* Images — badges and inline shields sit on the text baseline */
+.markdown-body img {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: text-bottom;
+}
+
+/* Disclosures (raw HTML <details>) */
+.markdown-body details {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+.markdown-body summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /* Horizontal rules */
 .markdown-body hr {
   margin: 1em 0;

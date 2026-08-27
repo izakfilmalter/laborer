@@ -83,6 +83,38 @@ describe('timeline item', () => {
     expect(screen.getByText('Ship it').tagName).toBe('STRONG')
   })
 
+  it('renders the inline HTML a review bot embeds instead of its source', () => {
+    const { container } = render(
+      <CommentTimelineItem
+        comment={comment({
+          body: '<a href="https://example.com/p1"><img alt="P1" src="https://example.com/p1.svg" align="top"></a> **Claim acknowledges delivery**',
+        })}
+        now={NOW}
+      />
+    )
+
+    const badge = container.querySelector(
+      '[data-slot="pr-comment-body"] img[alt="P1"]'
+    )
+
+    expect(badge).toBeTruthy()
+    expect(container.textContent).not.toContain('<img')
+  })
+
+  it('strips unsafe HTML a comment body carries', () => {
+    const { container } = render(
+      <CommentTimelineItem
+        comment={comment({
+          body: '<script>alert(1)</script><img src="x" onerror="alert(1)" alt="x">',
+        })}
+        now={NOW}
+      />
+    )
+
+    expect(container.querySelector('script')).toBeNull()
+    expect(container.querySelector('img')?.getAttribute('onerror')).toBeNull()
+  })
+
   it('uses the quiet card treatment from the pull request summary', () => {
     const { container } = render(
       <CommentTimelineItem comment={comment()} now={NOW} />

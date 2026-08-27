@@ -28,6 +28,8 @@ interface AutoOpenAgentOptions {
   readonly initialPrompt?: string | undefined
   /** Keep a newly created sub-workspace directly below this open parent. */
   readonly parentWorkspaceId?: string | undefined
+  /** Keep a newly created workspace with the other open workspaces in this project. */
+  readonly projectId?: string | undefined
 }
 
 interface OpenAgentPaneOptions {

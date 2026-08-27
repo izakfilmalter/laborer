@@ -340,7 +340,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       })
       expect(
         panelActionsMock.autoOpenAgentWhenWorkspaceReady
-      ).toHaveBeenCalledWith('ws-new')
+      ).toHaveBeenCalledWith('ws-new', { projectId: 'project-1' })
     })
   })
 
@@ -419,6 +419,7 @@ describe('CreateWorkspaceForm — branch name mask', () => {
         panelActionsMock.autoOpenAgentWhenWorkspaceReady
       ).toHaveBeenCalledWith('ws-child', {
         parentWorkspaceId: 'ws-parent',
+        projectId: 'project-1',
       })
     })
   })
@@ -519,7 +520,10 @@ describe('CreateWorkspaceForm — branch name mask', () => {
       })
       expect(
         panelActionsMock.autoOpenAgentWhenWorkspaceReady
-      ).toHaveBeenCalledWith('ws-slack', { initialPrompt })
+      ).toHaveBeenCalledWith('ws-slack', {
+        initialPrompt,
+        projectId: 'project-1',
+      })
     })
   })
 

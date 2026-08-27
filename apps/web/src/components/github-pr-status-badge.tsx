@@ -33,6 +33,7 @@ import {
 import type { ComponentType, MouseEvent, ReactElement, ReactNode } from 'react'
 import { GitHubCheckRunsSegment } from '@/components/github-check-runs'
 import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
+import { GitHubReviewersHoverCard } from '@/components/github-reviewers-hover-card'
 import { localApi } from '@/lib/local-api'
 
 interface GitHubPrStatusBadgeProps {
@@ -166,18 +167,24 @@ function renderSegmentTrigger({
  */
 function ConversationSegment({
   body,
-  conversationWorkspaceId,
   description,
   onOpenConversation,
   segmentClass,
   segmentUrl,
+  withPreview,
 }: {
   readonly body: ReactNode
-  readonly conversationWorkspaceId: string | undefined
   readonly description: string
   readonly onOpenConversation: (() => void) | undefined
   readonly segmentClass: string
   readonly segmentUrl: string | null
+  /**
+   * Hangs a hover preview off the finished trigger element. It has to be the
+   * element rather than this component, because a hover card trigger clones
+   * its child to attach the listeners, and a component element would swallow
+   * them.
+   */
+  readonly withPreview?: ((trigger: ReactElement) => ReactElement) | undefined
 }) {
   const openConversation = async (event: MouseEvent) => {
     if (onOpenConversation === undefined) {
@@ -200,16 +207,7 @@ function ConversationSegment({
     segmentUrl,
   })
 
-  if (conversationWorkspaceId !== undefined) {
-    return (
-      <GitHubConversationHoverCard
-        trigger={trigger}
-        workspaceId={conversationWorkspaceId}
-      />
-    )
-  }
-
-  return trigger
+  return withPreview === undefined ? trigger : withPreview(trigger)
 }
 
 // The seam every hung segment shares: neutral and barely there, so the pill
@@ -272,16 +270,17 @@ const REVIEW_DECISION_PRESENTATION = {
  */
 function ReviewDecisionSegment({
   approvals,
-  conversationWorkspaceId,
+  reviewersWorkspaceId,
   decision,
   onOpenConversation,
   prUrl,
 }: {
   readonly approvals: number | null
-  readonly conversationWorkspaceId: string | undefined
   readonly decision: PullRequestReviewDecision
   readonly onOpenConversation: (() => void) | undefined
   readonly prUrl: string | null
+  /** Enables the "who approved it" preview on workspace-backed cards. */
+  readonly reviewersWorkspaceId: string | undefined
 }) {
   const presentation = REVIEW_DECISION_PRESENTATION[decision]
   const approvalCount = approvals ?? 0
@@ -303,13 +302,25 @@ function ReviewDecisionSegment({
   return (
     <ConversationSegment
       body={body}
-      conversationWorkspaceId={conversationWorkspaceId}
       description={description}
       onOpenConversation={onOpenConversation}
       segmentClass={cn(SEGMENT_CLASS, presentation.tone)}
       // Reviews are submitted and read on the conversation tab, so that is
       // where GitHub is entered.
       segmentUrl={prUrl}
+      // The hover here answers "who?", not "what was said"; the remarks stay
+      // behind the conversation segment.
+      withPreview={
+        reviewersWorkspaceId === undefined
+          ? undefined
+          : (trigger) => (
+              <GitHubReviewersHoverCard
+                decision={decision}
+                trigger={trigger}
+                workspaceId={reviewersWorkspaceId}
+              />
+            )
+      }
     />
   )
 }
@@ -347,7 +358,6 @@ function UnresolvedThreadsSegment({
   return (
     <ConversationSegment
       body={body}
-      conversationWorkspaceId={conversationWorkspaceId}
       description={description}
       onOpenConversation={onOpenConversation}
       // Muted rather than amber, because an unresolved thread is a fact and
@@ -358,6 +368,16 @@ function UnresolvedThreadsSegment({
       segmentClass={cn(SEGMENT_CLASS, 'text-muted-foreground')}
       // Threads are answered on the diff, so that is where GitHub is entered.
       segmentUrl={prUrl === null ? null : `${prUrl}/files`}
+      withPreview={
+        conversationWorkspaceId === undefined
+          ? undefined
+          : (trigger) => (
+              <GitHubConversationHoverCard
+                trigger={trigger}
+                workspaceId={conversationWorkspaceId}
+              />
+            )
+      }
     />
   )
 }
@@ -449,8 +469,6 @@ function GitHubPrStatusBadge({
 
   const isDraft = isDraftState(prState, prIsDraft)
   const handleClick = openInBrowser(prUrl ?? '')
-  const previewsOnUnresolvedThread =
-    unresolvedThreads != null && unresolvedThreads > 0
 
   const identityContent = (
     <>
@@ -497,23 +515,23 @@ function GitHubPrStatusBadge({
           checksUrl={prUrl === null ? null : `${prUrl}/checks`}
         />
       )}
-      {/* Only a pull request actually asking for review is waiting on its
-          reviewers. On one already merged or closed the verdict is history,
-          and a green check beside a purple "merged" would read as a second,
-          quieter state. A draft has not asked yet — GitHub withholds the
-          automatic request until it is marked ready — so "Review required"
-          there would invent a reviewer nobody notified. */}
-      {reviewDecision === null || isDraft || !isOpenState(prState) ? null : (
+      {/* While a pull request is open, where it stands with its reviewers is
+          one of the things the pill exists to say, so the segment holds its
+          place rather than appearing and disappearing as reviews land — a
+          missing verdict is itself the answer "nobody has reviewed it yet",
+          and that includes a draft nobody has been asked to review. Once the
+          pull request is merged or closed the verdict is history, and a green
+          check beside a purple "merged" would read as a second, quieter
+          state. */}
+      {isOpenState(prState) ? (
         <ReviewDecisionSegment
           approvals={approvals}
-          conversationWorkspaceId={
-            previewsOnUnresolvedThread ? undefined : conversationWorkspaceId
-          }
-          decision={reviewDecision}
+          decision={reviewDecision ?? 'reviewRequired'}
           onOpenConversation={onOpenConversation}
           prUrl={prUrl}
+          reviewersWorkspaceId={conversationWorkspaceId}
         />
-      )}
+      ) : null}
       {unresolvedThreads != null && unresolvedThreads > 0 && (
         <UnresolvedThreadsSegment
           conversationWorkspaceId={conversationWorkspaceId}

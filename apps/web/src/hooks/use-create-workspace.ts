@@ -198,16 +198,13 @@ function useCreateWorkspace(
             }),
         })
 
-        if (initialPrompt === undefined && baseWorkspaceId === undefined) {
-          panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id)
-        } else {
-          panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id, {
-            ...(initialPrompt === undefined ? {} : { initialPrompt }),
-            ...(baseWorkspaceId === undefined
-              ? {}
-              : { parentWorkspaceId: baseWorkspaceId }),
-          })
-        }
+        panelActions?.autoOpenAgentWhenWorkspaceReady?.(result.id, {
+          ...(initialPrompt === undefined ? {} : { initialPrompt }),
+          ...(baseWorkspaceId === undefined
+            ? {}
+            : { parentWorkspaceId: baseWorkspaceId }),
+          projectId,
+        })
 
         return {
           branchName: result.branchName,

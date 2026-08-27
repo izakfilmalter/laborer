@@ -786,6 +786,88 @@ describe('usePanelLayout', () => {
     })
   })
 
+  it('opens a new workspace below the last open workspace for its project', async () => {
+    const projectWorkspaceLayout = makeWindowLayout(
+      'pane-project-one',
+      'workspace-project-one'
+    )
+    const projectTab = projectWorkspaceLayout.tabs[0]
+    const firstProjectTile = projectTab?.workspaceLayout
+    if (!(projectTab && firstProjectTile)) {
+      throw new Error('Expected project workspace layout fixture')
+    }
+    writeStoredWindowLayout('window-a', {
+      activeTabId: projectTab.id,
+      tabs: [
+        {
+          ...projectTab,
+          workspaceLayout: {
+            _tag: 'WorkspaceTileSplit',
+            children: [
+              firstProjectTile,
+              {
+                _tag: 'WorkspaceTileLeaf',
+                activePanelTabId: undefined,
+                id: 'workspace-tile-project-two',
+                panelTabs: [],
+                workspaceId: 'workspace-project-two',
+              },
+              {
+                _tag: 'WorkspaceTileLeaf',
+                activePanelTabId: undefined,
+                id: 'workspace-tile-other-project',
+                panelTabs: [],
+                workspaceId: 'workspace-other-project',
+              },
+            ],
+            direction: 'vertical',
+            id: 'workspace-stack',
+            sizes: [40, 35, 25],
+          },
+        },
+      ],
+    })
+    workspaceRowsRef.current = [
+      { id: 'workspace-project-one', projectId: 'project-1' },
+      { id: 'workspace-project-two', projectId: 'project-1' },
+      { id: 'workspace-other-project', projectId: 'project-2' },
+      {
+        id: 'workspace-new',
+        projectId: 'project-1',
+        branchName: 'feature/new-workspace',
+        worktreePath: '/tmp/workspace-new',
+        status: 'creating',
+        origin: 'laborer',
+        createdAt: '2026-04-20T00:00:00.000Z',
+      },
+    ]
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    act(() => {
+      result.current.panelActions.autoOpenAgentWhenWorkspaceReady?.(
+        'workspace-new',
+        { projectId: 'project-1' }
+      )
+    })
+
+    await waitFor(() => {
+      const stored = readStoredWindowLayout('window-a') as WindowLayout
+      expect(workspaceIdsInActiveTab(stored)).toEqual([
+        'workspace-project-one',
+        'workspace-project-two',
+        'workspace-new',
+        'workspace-other-project',
+      ])
+      const activeTab = stored.tabs.find((tab) => tab.id === stored.activeTabId)
+      const activeLayout = activeTab?.workspaceLayout
+      if (activeLayout?._tag !== 'WorkspaceTileSplit') {
+        throw new Error('Expected the project workspace stack')
+      }
+      expect(activeLayout.sizes).toEqual([25, 25, 25, 25])
+    })
+  })
+
   it('opens a sub-workspace below its last open sibling', async () => {
     const parentLayout = makeWindowLayout('pane-parent', 'workspace-parent')
     const parentTab = parentLayout.tabs[0]

@@ -284,6 +284,54 @@ function switchToParentWorkspaceTab(
   return switchWindowTab(windowLayout, parentLocation.tabId)
 }
 
+interface ProjectWorkspaceInsertionTarget {
+  readonly anchorWorkspaceId: string
+  readonly tabId: string
+}
+
+/** Find the last open workspace for a project, preferring the active tab. */
+function resolveProjectWorkspaceInsertionTarget(
+  windowLayout: WindowLayout,
+  workspaceId: string,
+  projectId: string,
+  workspaces: readonly {
+    readonly id: string
+    readonly projectId: string
+  }[]
+): ProjectWorkspaceInsertionTarget | undefined {
+  const projectWorkspaceIds = new Set(
+    workspaces
+      .filter(
+        (workspace) =>
+          workspace.id !== workspaceId && workspace.projectId === projectId
+      )
+      .map((workspace) => workspace.id)
+  )
+  if (projectWorkspaceIds.size === 0) {
+    return
+  }
+
+  const activeTab = getActiveWindowTab(windowLayout)
+  const candidateTabs = [
+    ...(activeTab === undefined ? [] : [activeTab]),
+    ...windowLayout.tabs.filter((tab) => tab.id !== activeTab?.id),
+  ]
+  for (const tab of candidateTabs) {
+    if (tab.workspaceLayout === undefined) {
+      continue
+    }
+    let anchorWorkspaceId: string | undefined
+    for (const leaf of getWorkspaceTileLeaves(tab.workspaceLayout)) {
+      if (projectWorkspaceIds.has(leaf.workspaceId)) {
+        anchorWorkspaceId = leaf.workspaceId
+      }
+    }
+    if (anchorWorkspaceId !== undefined) {
+      return { anchorWorkspaceId, tabId: tab.id }
+    }
+  }
+}
+
 /**
  * Find the last open descendant in the parent's column so sibling
  * sub-workspaces stay grouped in panel order.
@@ -332,7 +380,7 @@ function resolveSubWorkspaceInsertionAnchor(
   return anchorWorkspaceId
 }
 
-/** Reposition an already-open sub-workspace below its sibling group. */
+/** Reposition an already-open workspace below its requested group anchor. */
 function placeWorkspaceBelowAnchorInActiveTab(
   windowLayout: WindowLayout,
   workspaceId: string,
@@ -356,6 +404,98 @@ function placeWorkspaceBelowAnchorInActiveTab(
       tab.id === activeTab.id ? updatedTab : tab
     ),
   }
+}
+
+interface WorkspaceGroupPlacement {
+  readonly parentWorkspaceId?: string | undefined
+  readonly projectId?: string | undefined
+}
+
+/** Resolve the target tab and anchor for lineage- or project-based grouping. */
+function resolveWorkspaceGroupPlacement(
+  windowLayout: WindowLayout,
+  workspaceId: string,
+  placement: WorkspaceGroupPlacement,
+  workspaces: readonly {
+    readonly id: string
+    readonly parentTaskId: string | null
+    readonly projectId: string
+  }[],
+  workspaceLineage: readonly {
+    readonly id: string
+    readonly parentTaskId: string | null
+  }[]
+): {
+  readonly anchorWorkspaceId?: string | undefined
+  readonly windowLayout: WindowLayout
+} {
+  if (placement.parentWorkspaceId !== undefined) {
+    const parentTabLayout = switchToParentWorkspaceTab(
+      windowLayout,
+      placement.parentWorkspaceId
+    )
+    const activeTab = getActiveWindowTab(parentTabLayout)
+    return {
+      anchorWorkspaceId:
+        activeTab === undefined
+          ? placement.parentWorkspaceId
+          : resolveSubWorkspaceInsertionAnchor(
+              activeTab,
+              workspaceId,
+              placement.parentWorkspaceId,
+              workspaceLineage
+            ),
+      windowLayout: parentTabLayout,
+    }
+  }
+  if (placement.projectId === undefined) {
+    return { windowLayout }
+  }
+  const target = resolveProjectWorkspaceInsertionTarget(
+    windowLayout,
+    workspaceId,
+    placement.projectId,
+    workspaces
+  )
+  if (target === undefined) {
+    return { windowLayout }
+  }
+  return {
+    anchorWorkspaceId: target.anchorWorkspaceId,
+    windowLayout:
+      target.tabId === windowLayout.activeTabId
+        ? windowLayout
+        : switchWindowTab(windowLayout, target.tabId),
+  }
+}
+
+/** Add or move a workspace directly below an optional group anchor. */
+function placeWorkspaceInActiveTab(
+  windowLayout: WindowLayout,
+  workspaceId: string,
+  anchorWorkspaceId: string | undefined
+): WindowLayout {
+  const activeTab = getActiveWindowTab(windowLayout)
+  if (activeTab === undefined) {
+    return windowLayout
+  }
+  const existing = findWorkspaceLocation(windowLayout, workspaceId)
+  if (existing?.tabId !== activeTab.id) {
+    return addWorkspaceToTabUnique(
+      windowLayout,
+      workspaceId,
+      activeTab.id,
+      removeWorkspaceFromTab,
+      (tab, id) => addWorkspaceToTab(tab, id, anchorWorkspaceId)
+    )
+  }
+  return anchorWorkspaceId === undefined
+    ? windowLayout
+    : placeWorkspaceBelowAnchorInActiveTab(
+        windowLayout,
+        workspaceId,
+        anchorWorkspaceId
+      )
 }
 
 /**
@@ -2103,6 +2243,7 @@ export function usePanelLayout() {
         deferSpawn?: boolean
         initialPrompt?: string | undefined
         parentWorkspaceId?: string | undefined
+        projectId?: string | undefined
       }
     ): string | undefined => {
       let base = persistedWindowLayout ?? {
@@ -2117,9 +2258,17 @@ export function usePanelLayout() {
         commitWindowLayout('window-tab-created', base)
       }
 
-      // If the parent is open, reveal its tab so the sub-workspace can join
-      // its column. Otherwise, use the current tab as usual.
-      base = switchToParentWorkspaceTab(base, options?.parentWorkspaceId)
+      const groupPlacement = resolveWorkspaceGroupPlacement(
+        base,
+        workspaceId,
+        {
+          parentWorkspaceId: options?.parentWorkspaceId,
+          projectId: options?.projectId,
+        },
+        workspaceList,
+        workspaceLineage
+      )
+      base = groupPlacement.windowLayout
 
       // Ensure the workspace exists in the target window tab. If it doesn't
       // (e.g. "Empty tab" state), add it first.
@@ -2127,34 +2276,14 @@ export function usePanelLayout() {
       if (!activeTab) {
         return
       }
-      const existing = findWorkspaceLocation(base, workspaceId)
-      const insertionAnchor = options?.parentWorkspaceId
-        ? resolveSubWorkspaceInsertionAnchor(
-            activeTab,
-            workspaceId,
-            options.parentWorkspaceId,
-            workspaceLineage
-          )
-        : undefined
-      if (existing?.tabId !== activeTab.id) {
-        base = addWorkspaceToTabUnique(
-          base,
-          workspaceId,
-          activeTab.id,
-          removeWorkspaceFromTab,
-          (tab, id) => addWorkspaceToTab(tab, id, insertionAnchor)
-        )
-        commitWindowLayout('ensure-workspace-in-tab', base)
-      } else if (insertionAnchor !== undefined) {
-        const placedBelowSiblings = placeWorkspaceBelowAnchorInActiveTab(
-          base,
-          workspaceId,
-          insertionAnchor
-        )
-        if (placedBelowSiblings !== base) {
-          base = placedBelowSiblings
-          commitWindowLayout('sub-workspace-placed', base)
-        }
+      const placedWorkspace = placeWorkspaceInActiveTab(
+        base,
+        workspaceId,
+        groupPlacement.anchorWorkspaceId
+      )
+      if (placedWorkspace !== base) {
+        base = placedWorkspace
+        commitWindowLayout('workspace-group-placed', base)
       }
 
       // Agent panes are terminals running the configured agent command.
@@ -2204,6 +2333,7 @@ export function usePanelLayout() {
       commitWindowLayout,
       spawnTerminalIntoPane,
       workspaceLineage,
+      workspaceList,
     ]
   )
 
@@ -2213,6 +2343,7 @@ export function usePanelLayout() {
       const workspace = workspaceList.find((ws) => ws.id === workspaceId)
       const parentWorkspaceId =
         options?.parentWorkspaceId ?? workspace?.parentTaskId ?? undefined
+      const projectId = options?.projectId ?? workspace?.projectId
       if (
         workspace?.status === 'errored' ||
         workspace?.status === 'destroyed'
@@ -2223,6 +2354,7 @@ export function usePanelLayout() {
         handleAddPanelTab(workspaceId, 'agent', {
           initialPrompt,
           parentWorkspaceId,
+          projectId,
         })
         return
       }
@@ -2232,6 +2364,7 @@ export function usePanelLayout() {
         pendingAgentSpawnsRef.current.set(workspaceId, {
           initialPrompt,
           parentWorkspaceId,
+          projectId,
           paneId: null,
         })
         return
@@ -2242,10 +2375,12 @@ export function usePanelLayout() {
       const paneId = handleAddPanelTab(workspaceId, 'agent', {
         deferSpawn: true,
         parentWorkspaceId,
+        projectId,
       })
       pendingAgentSpawnsRef.current.set(workspaceId, {
         initialPrompt,
         parentWorkspaceId,
+        projectId,
         paneId: paneId ?? null,
       })
     },
@@ -2417,22 +2552,25 @@ export function usePanelLayout() {
    */
   const openDeferredAgentPane = useCallback(
     (workspaceId: string, status: string, options?: AutoOpenAgentOptions) => {
-      const { initialPrompt, parentWorkspaceId } = options ?? {}
+      const { initialPrompt, parentWorkspaceId, projectId } = options ?? {}
       if (status === 'running') {
         pendingAgentSpawnsRef.current.delete(workspaceId)
         handleAddPanelTab(workspaceId, 'agent', {
           initialPrompt,
           parentWorkspaceId,
+          projectId,
         })
         return
       }
       const openedPaneId = handleAddPanelTab(workspaceId, 'agent', {
         deferSpawn: true,
         parentWorkspaceId,
+        projectId,
       })
       pendingAgentSpawnsRef.current.set(workspaceId, {
         initialPrompt,
         parentWorkspaceId,
+        projectId,
         paneId: openedPaneId ?? null,
       })
     },
@@ -2441,7 +2579,7 @@ export function usePanelLayout() {
 
   const advancePendingAgentSpawn = useCallback(
     (workspaceId: string, pendingSpawn: PendingAgentSpawn) => {
-      const { initialPrompt, parentWorkspaceId, paneId, placement } =
+      const { initialPrompt, parentWorkspaceId, paneId, placement, projectId } =
         pendingSpawn
       const workspace = workspaceList.find((ws) => ws.id === workspaceId)
       if (!workspace) {
@@ -2463,6 +2601,7 @@ export function usePanelLayout() {
           initialPrompt,
           parentWorkspaceId:
             parentWorkspaceId ?? workspace.parentTaskId ?? undefined,
+          projectId: projectId ?? workspace.projectId,
         })
         return
       }

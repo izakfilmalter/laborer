@@ -541,19 +541,20 @@ function WorkspaceFrameHeader({
           unresolvedThreads={prUnresolvedThreads}
         />
         {workspaceId ? <WorkspaceSyncStatus workspaceId={workspaceId} /> : null}
-        {showsAgentStatus ? (
-          <AggregateAgentStatusBadge
-            className="shrink-0"
-            status={agentStatus}
-          />
-        ) : null}
-        {/* Last, and only a mark — the same place the card gives it. */}
+        {/* Only a mark, closing out the GitHub group before the agent's own
+            status has the last word. */}
         <GitHubMergeConflictMark
           baseBranch={prBaseBranch}
           mergeStatus={prMergeStatus}
           projectId={projectId}
           workspaceId={workspaceId}
         />
+        {showsAgentStatus ? (
+          <AggregateAgentStatusBadge
+            className="shrink-0"
+            status={agentStatus}
+          />
+        ) : null}
       </div>
       <div className="flex gap-0.5">
         {!isMinimized && (

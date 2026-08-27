@@ -77,7 +77,7 @@ describe('unresolved conversations on the pull request badge', () => {
     ).toBe('hover-card-trigger')
   })
 
-  it('uses one conversation preview when review and thread segments coexist', () => {
+  it('gives the review and thread segments their own previews', () => {
     render(
       <GitHubPrStatusBadge
         conversationWorkspaceId="ws-7"
@@ -91,11 +91,12 @@ describe('unresolved conversations on the pull request badge', () => {
       />
     )
 
-    expect(
-      document.querySelectorAll('[data-slot="hover-card-trigger"]')
-    ).toHaveLength(1)
+    // The remarks answer the thread count; the reviewers answer the verdict.
     expect(
       screen.getByLabelText(ANY_UNRESOLVED).getAttribute('data-slot')
+    ).toBe('hover-card-trigger')
+    expect(
+      screen.getByLabelText(CHANGES_REQUESTED).getAttribute('data-slot')
     ).toBe('hover-card-trigger')
   })
 
@@ -251,10 +252,12 @@ describe('review decision on the pull request badge', () => {
     expect(segment.tagName).toBe('A')
   })
 
-  it('says nothing where the pull request asks nobody for review', () => {
+  it('holds its place before any review has landed', () => {
     renderReviewBadge({ approvals: null, reviewDecision: null })
 
-    expect(screen.queryByLabelText(ANY_REVIEW)).toBeNull()
+    // An open pull request always says where it stands with its reviewers,
+    // and "nobody yet" is one of the answers.
+    expect(screen.getByLabelText('Review required')).toBeTruthy()
     expect(screen.getByText('#7')).toBeTruthy()
   })
 })
@@ -280,19 +283,19 @@ describe('review decision on a draft pull request', () => {
       />
     )
 
-  it('asks nobody for a review it has not requested yet', () => {
+  it('still says where the draft stands with its reviewers', () => {
     renderDraft('reviewRequired')
 
-    expect(screen.queryByLabelText(ANY_REVIEW)).toBeNull()
+    expect(screen.getByLabelText('Review required')).toBeTruthy()
   })
 
-  it('keeps quiet even when a review already landed on the draft', () => {
+  it('shows a review that already landed on the draft', () => {
     renderDraft('approved', 2)
 
-    expect(screen.queryByLabelText(ANY_REVIEW)).toBeNull()
+    expect(screen.getByLabelText(TWO_APPROVALS)).toBeTruthy()
   })
 
-  it('says draft, so the missing verdict has a reason on the pill', () => {
+  it('says draft, so the withheld review request has a reason on the pill', () => {
     renderDraft('reviewRequired')
 
     expect(screen.getByText('draft')).toBeTruthy()

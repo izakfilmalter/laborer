@@ -801,20 +801,20 @@ describe('WorkspaceFrameHeader', () => {
       expect(segment.textContent).toContain('2')
     })
 
-    it('says nothing where no review has been asked for', () => {
+    it('reads an unreviewed pull request as still waiting on one', () => {
       renderWithReview({})
 
-      expect(screen.queryByRole('link', { name: ANY_REVIEW_RE })).toBeNull()
+      expect(screen.getByRole('link', { name: ANY_REVIEW_RE })).toBeTruthy()
     })
 
-    it('withholds the verdict while the pull request is still a draft', () => {
+    it('says where a draft stands with its reviewers too', () => {
       renderWithReview({
         prApprovals: 0,
         prIsDraft: true,
         prReviewDecision: 'reviewRequired',
       })
 
-      expect(screen.queryByRole('link', { name: ANY_REVIEW_RE })).toBeNull()
+      expect(screen.getByRole('link', { name: ANY_REVIEW_RE })).toBeTruthy()
       expect(screen.getByText('draft')).toBeTruthy()
     })
   })

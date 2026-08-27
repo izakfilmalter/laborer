@@ -63,12 +63,31 @@ function useProjectCollapseState(): CollapseState {
 }
 
 /**
- * Collapse state for workspace group headers (workspaces with
- * sub-workspaces), keyed by Workspace ID.
+ * Collapse state for workspace group headers, keyed by Workspace ID for
+ * sub-workspace stacks and by {@link authorGroupKey} for author groups.
+ *
+ * Both kinds of header are sidebar groups that collapse the same way and
+ * default to expanded, so they share one collection rather than duplicating
+ * the preference machinery. The author keys are prefixed to keep them from
+ * ever colliding with a ULID.
  */
 function useWorkspaceGroupCollapseState(): CollapseState {
   return useCollapseState(workspaceGroupExpansionCollection)
 }
 
-export { useProjectCollapseState, useWorkspaceGroupCollapseState }
+/**
+ * Collapse key for one author's group inside one project.
+ *
+ * Scoped per project because the same person can have branches in several
+ * repositories, and collapsing their group in one has nothing to say about
+ * the others.
+ */
+const authorGroupKey = (projectId: string, login: string): string =>
+  `author:${projectId}:${login}`
+
+export {
+  authorGroupKey,
+  useProjectCollapseState,
+  useWorkspaceGroupCollapseState,
+}
 export type { CollapseState }

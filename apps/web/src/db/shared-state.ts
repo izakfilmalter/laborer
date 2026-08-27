@@ -515,6 +515,11 @@ export interface WorkspaceView {
   readonly parentTaskId: string | null
   /** How many reviewers' latest review is an approval. Null when never read. */
   readonly prApprovals: number | null
+  /**
+   * GitHub login of whoever opened the pull request on this branch. Null when
+   * the branch has no pull request, which the sidebar reads as unattributed.
+   */
+  readonly prAuthorLogin: string | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: 'pending' | 'success' | 'failure' | null
   readonly prChecks: readonly PullRequestCheckRun[] | null
@@ -569,6 +574,7 @@ const rootWorkspaceView = (project: SharedProjectRow): WorkspaceView => ({
   id: rootWorkspaceId(project.id),
   origin: 'external',
   parentTaskId: null,
+  prAuthorLogin: null,
   prBaseBranch: null,
   prCheckStatus: null,
   prChecks: null,
@@ -611,6 +617,7 @@ export const workspaceViewsFromRows = (
       id: task.id,
       origin: task.source === 'worktree' ? 'external' : 'laborer',
       parentTaskId: task.parentTaskId,
+      prAuthorLogin: task.prAuthorLogin,
       prBaseBranch: task.prBaseBranch,
       prCheckStatus: task.prCheckStatus,
       prChecks: task.prChecks,

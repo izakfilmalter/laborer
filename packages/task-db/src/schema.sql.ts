@@ -23,6 +23,12 @@ export const tasks = sqliteTable(
     slackPermalink: text('slack_permalink'),
     worktreePath: text('worktree_path'),
     branchName: text('branch_name'),
+    /**
+     * GitHub login of whoever opened the pull request on this branch. Null
+     * when the branch has no pull request, which reads as "unattributed"
+     * rather than "mine".
+     */
+    prAuthorLogin: text('pr_author_login'),
     prBaseBranch: text('pr_base_branch'),
     prMergeStatus: text('pr_merge_status'),
     prCheckStatus: text('pr_check_status'),

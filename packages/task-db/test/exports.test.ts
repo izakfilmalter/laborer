@@ -72,6 +72,10 @@ const migrationLedger = [
     '0016_review_comments',
     '3be39b957218d30d7ff98c1366d8835ab5b3ac8a7224c8bbb66270faf4003ec8',
   ],
+  [
+    '0017_pr_author_login',
+    '6e03e3ef1ef730744d0177094b494b87d4cac8ab3cfaed48472154c1fc4a49e5',
+  ],
 ]
 
 describe('@laborer/task-db exports', () => {

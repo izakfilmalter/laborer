@@ -104,6 +104,8 @@ export interface LaborerTask {
    * read.
    */
   readonly prApprovals: number | null
+  /** GitHub login of whoever opened the pull request. Null when unattributed. */
+  readonly prAuthorLogin: string | null
   readonly prBaseBranch: string | null
   readonly prCheckStatus: PullRequestCheckStatus | null
   readonly prChecks: readonly PullRequestCheckRun[] | null
@@ -148,6 +150,7 @@ export interface NewLaborerTask {
   readonly id: string
   readonly parentTaskId?: string | null
   readonly prApprovals?: number | null
+  readonly prAuthorLogin?: string | null
   readonly prBaseBranch?: string | null
   readonly prCheckStatus?: PullRequestCheckStatus | null
   readonly prChecks?: readonly PullRequestCheckRun[] | null
@@ -182,6 +185,7 @@ export type LaborerTaskPatch = Partial<
     | 'executionId'
     | 'executionStatus'
     | 'parentTaskId'
+    | 'prAuthorLogin'
     | 'prBaseBranch'
     | 'prCheckStatus'
     | 'prChecks'
@@ -440,7 +444,7 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   description, created_at, updated_at, revision, worktree_status,
   worktree_error, setup_completed_at, parent_task_id, base_sha, base_branch,
   pr_number, pr_url, pr_title, pr_state, pr_is_draft, sort_order,
-  pr_base_branch, pr_merge_status, pr_check_status, pr_checks,
+  pr_author_login, pr_base_branch, pr_merge_status, pr_check_status, pr_checks,
   pr_unresolved_threads, pr_review_decision, pr_approvals, task_number,
   label_ids`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
@@ -470,6 +474,7 @@ const TASK_PATCH_FIELDS = [
   'executionId',
   'executionStatus',
   'parentTaskId',
+  'prAuthorLogin',
   'prBaseBranch',
   'prCheckStatus',
   'prChecks',
@@ -510,6 +515,7 @@ const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
   executionId: 'execution_id',
   executionStatus: 'execution_status',
   parentTaskId: 'parent_task_id',
+  prAuthorLogin: 'pr_author_login',
   prBaseBranch: 'pr_base_branch',
   prCheckStatus: 'pr_check_status',
   prChecks: 'pr_checks',
@@ -723,6 +729,7 @@ const rowToTask = (value: unknown): LaborerTask => {
     id: string(row.id, 'tasks.id'),
     labelIds: parseLabelIds(row.label_ids),
     parentTaskId: nullableString(row.parent_task_id, 'tasks.parent_task_id'),
+    prAuthorLogin: nullableString(row.pr_author_login, 'tasks.pr_author_login'),
     prBaseBranch: nullableString(row.pr_base_branch, 'tasks.pr_base_branch'),
     prCheckStatus: nullableEnum(
       row.pr_check_status,
@@ -988,6 +995,7 @@ export class NativeLaborerDatabase {
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
     const createdAt = input.createdAt ?? changedAt
+    const prAuthorLogin = input.prAuthorLogin ?? null
     const prBaseBranch = input.prBaseBranch ?? null
     const prMergeStatus = input.prMergeStatus ?? null
     const prCheckStatus = input.prCheckStatus ?? null
@@ -1002,10 +1010,10 @@ export class NativeLaborerDatabase {
           description, created_at, updated_at, revision, worktree_status,
           worktree_error, setup_completed_at, parent_task_id, base_sha,
           base_branch, pr_number, pr_url, pr_title, pr_state, pr_is_draft,
-          sort_order, pr_base_branch, pr_merge_status, pr_check_status,
+          sort_order, pr_author_login, pr_base_branch, pr_merge_status, pr_check_status,
           pr_checks, pr_unresolved_threads, pr_review_decision, pr_approvals
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           input.id,
           input.rootPath,
@@ -1033,6 +1041,7 @@ export class NativeLaborerDatabase {
           input.prState ?? null,
           input.prIsDraft ? 1 : 0,
           sortOrder,
+          prAuthorLogin,
           prBaseBranch,
           prMergeStatus,
           prCheckStatus,

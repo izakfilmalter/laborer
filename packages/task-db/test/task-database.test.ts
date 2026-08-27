@@ -33,6 +33,7 @@ const migrationNames = [
   '0014_pr_unresolved_threads',
   '0015_pr_review_decision',
   '0016_review_comments',
+  '0017_pr_author_login',
 ]
 
 const temporaryDatabasePath = (): string => {

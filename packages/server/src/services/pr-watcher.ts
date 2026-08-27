@@ -64,6 +64,11 @@ interface PrData {
    * drawing.
    */
   readonly approvals: number | null
+  /**
+   * GitHub login of whoever opened the pull request. Null when there is no
+   * pull request, or when GitHub reports the author as a deleted account.
+   */
+  readonly authorLogin: string | null
   readonly baseBranch: string | null
   readonly checkStatus: 'pending' | 'success' | 'failure' | null
   readonly checks: readonly PullRequestCheckRun[] | null
@@ -100,7 +105,12 @@ const GhCheck = Schema.Struct({
   workflowName: Schema.optional(Schema.NullOr(Schema.String)),
 })
 
+const GhAuthor = Schema.Struct({
+  login: Schema.optional(Schema.NullOr(Schema.String)),
+})
+
 const GhPrData = Schema.Struct({
+  author: Schema.optional(Schema.NullOr(GhAuthor)),
   baseRefName: Schema.optional(Schema.NullOr(Schema.String)),
   reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
@@ -121,7 +131,7 @@ const GhPrDataJson = Schema.fromJsonString(GhPrData)
  * ride along on a request already being made.
  */
 const PR_VIEW_JSON_FIELDS =
-  'number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision'
+  'number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision,author'
 
 /**
  * GitHub's review decision, in this app's spelling. An empty string means the
@@ -157,6 +167,7 @@ const serializePrData = (data: PrData): string =>
     data.unresolvedThreads,
     data.reviewDecision,
     data.approvals,
+    data.authorLogin,
   ])
 
 const FAILURE_CONCLUSIONS = new Set([
@@ -283,6 +294,7 @@ const mergeStatus = (
 /** Empty PR data (no PR found). */
 const EMPTY_PR: PrData = {
   approvals: null,
+  authorLogin: null,
   baseBranch: null,
   checkStatus: null,
   checks: null,
@@ -420,6 +432,7 @@ const hostedPrData = (
 
   return {
     approvals: reviewCounts.approvals,
+    authorLogin: parsed.author?.login ?? null,
     reviewDecision: reviewDecision(parsed.reviewDecision),
     baseBranch: parsed.baseRefName ?? localMergeData.baseBranch ?? null,
     checkStatus: checkStatus(parsed.statusCheckRollup),
@@ -698,6 +711,7 @@ class PrWatcher extends Context.Service<
         // Deduplicate: only commit event if PR state changed
         const serialized = serializePrData(prData)
         const persistedSerialized = serializePrData({
+          authorLogin: workspace.prAuthorLogin,
           baseBranch: workspace.prBaseBranch,
           checkStatus: workspace.prCheckStatus,
           checks: workspace.prChecks,
@@ -757,6 +771,7 @@ class PrWatcher extends Context.Service<
             }
           })()
           yield* updateServerTaskFacts(laborerDatabase, task.id, {
+            prAuthorLogin: prData.authorLogin,
             prBaseBranch: prData.baseBranch,
             prCheckStatus: prData.checkStatus,
             prChecks: prData.checks,

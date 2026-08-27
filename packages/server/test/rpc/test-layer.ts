@@ -14,6 +14,7 @@ import { BranchStateTracker } from '../../src/services/branch-state-tracker.js'
 import { ConfigService } from '../../src/services/config-service.js'
 import { DeferredServicesReady } from '../../src/services/deferred-service.js'
 import { FileService } from '../../src/services/file-service.js'
+import { GithubViewer } from '../../src/services/github-viewer.js'
 import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PowerProfileService } from '../../src/services/power-profile.js'
 import { PrTaskTransitions } from '../../src/services/pr-task-transitions.js'
@@ -103,9 +104,21 @@ const TestTerminalClient = Layer.effect(
  * Core infrastructure layers that build fast and have no external
  * I/O dependencies. These mirror the core layers in main.ts.
  */
+/**
+ * Nobody is logged in, without asking `gh`.
+ *
+ * The real service shells out, which tests must not do. Reporting no login
+ * also exercises the branch every author-grouping consumer has to handle
+ * anyway: an unresolved viewer attributes nothing to the current user.
+ */
+const TestGithubViewerLayer = Layer.succeed(GithubViewer)({
+  login: Effect.succeed(null),
+})
+
 const CoreLeafLayers = Layer.mergeAll(
   ConfigService.layer,
-  RepositoryIdentity.layer
+  RepositoryIdentity.layer,
+  TestGithubViewerLayer
 )
 
 // ---------------------------------------------------------------------------

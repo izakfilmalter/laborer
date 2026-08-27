@@ -138,4 +138,11 @@ export const taskDbMigrations: readonly TaskDbMigration[] = [
       'utf8'
     ),
   },
+  {
+    name: '0017_pr_author_login',
+    sql: readFileSync(
+      new URL('./migrations/0017_pr_author_login.sql', import.meta.url),
+      'utf8'
+    ),
+  },
 ]

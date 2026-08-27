@@ -98,6 +98,7 @@ const testLayer = (
         checkPr: () =>
           Effect.succeed({
             approvals: null,
+            authorLogin: null,
             baseBranch: null,
             checkStatus: null,
             checks: null,
@@ -151,6 +152,7 @@ const durableWorkspace = {
   ...workspace,
   errorMessage: null,
   origin: 'laborer' as const,
+  prAuthorLogin: null,
   prBaseBranch: null,
   prCheckStatus: null,
   prChecks: null,

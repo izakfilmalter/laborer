@@ -39,7 +39,7 @@ describe('review comment migration', () => {
   it('registers the migration in the append-only ledger', () => {
     const path = temporaryDatabasePath()
     const database = NativeTaskDatabase.open(path)
-    expect(database.migrationNames().at(-1)).toBe('0016_review_comments')
+    expect(database.migrationNames()).toContain('0016_review_comments')
     database.close()
   })
 

@@ -23,6 +23,7 @@ export const pendingTaskRow = (input: {
     id: input.id,
     labelIds: [],
     parentTaskId: null,
+    prAuthorLogin: null,
     prBaseBranch: null,
     prCheckStatus: null,
     prChecks: null,

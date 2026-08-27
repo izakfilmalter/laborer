@@ -13,6 +13,7 @@ import {
   taskCollection,
   workspaceViewsFromRows,
 } from '@/db/shared-state'
+import { useCurrentGithubLogin } from '@/hooks/use-current-github-login'
 import { useProjectShortName } from '@/hooks/use-project-short-name'
 import { useWorkspaceAgentStatus } from '@/hooks/use-workspace-agent-status'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
@@ -79,6 +80,7 @@ export function WorkspaceFrameHeaderContainer({
   const globalActivePaneId = useActivePaneId()
   const actions = usePanelActions()
   const refreshPr = useAtomSet(refreshPrMutation, { mode: 'promise' })
+  const viewerLogin = useCurrentGithubLogin()
 
   // Scope the active pane to this workspace's sub-tree so header buttons
   // always operate on a pane within their own workspace, not the globally
@@ -97,6 +99,7 @@ export function WorkspaceFrameHeaderContainer({
 
   const workspaceData = useMemo(() => {
     const emptyWorkspaceData = {
+      authorLogin: null as string | null,
       projectName: undefined,
       projectId: undefined,
       taskNumber: null,
@@ -132,12 +135,15 @@ export function WorkspaceFrameHeaderContainer({
         id: ws.id,
         branchName: ws.branchName,
         parentTaskId: ws.parentTaskId,
+        prAuthorLogin: ws.prAuthorLogin ?? null,
       }))
-    const workspacePath = buildWorkspacePath(
-      projectWorkspaces,
-      workspaceId
-    ).map((ws) => ws.branchName)
+    const lineage = buildWorkspacePath(projectWorkspaces, workspaceId)
+    const workspacePath = lineage.map((ws) => ws.branchName)
+    // Attribution belongs to the top of the stack, matching the sidebar: a
+    // sub-workspace is the reviewer's fix-up on somebody's branch, and the
+    // branch it patches is whose work the frame is showing.
     return {
+      authorLogin: lineage[0]?.prAuthorLogin ?? null,
       projectName: project?.name,
       projectId: workspace.projectId,
       taskNumber: workspace.taskNumber,
@@ -171,6 +177,12 @@ export function WorkspaceFrameHeaderContainer({
     actions,
     activePaneId: scopedActivePaneId,
     agentStatus: workspaceAgentStatus,
+    // Only somebody else's login is worth the space; "mine" is the default the
+    // rest of the app already assumes.
+    authorLogin:
+      workspaceData.authorLogin === viewerLogin
+        ? null
+        : workspaceData.authorLogin,
     branchName: workspaceData.branchName,
     commentsIsOpen: commentsIsOpen ?? false,
     diffIsOpen: diffIsOpen ?? false,

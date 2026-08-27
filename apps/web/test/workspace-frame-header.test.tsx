@@ -157,6 +157,31 @@ describe('WorkspaceFrameHeader', () => {
     )
   })
 
+  it("names the author between the project and the branch when the work is somebody else's", () => {
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={mockActions()}
+        authorLogin="octocat"
+        branchName="claude/errors-view"
+      />
+    )
+
+    const title = screen.getByTestId('workspace-frame-author-octocat')
+    expect(title.textContent).toContain('octocat')
+    // The avatar fallback initial renders in jsdom, so only the ordering of
+    // project, author, and branch is asserted.
+    expect(title.parentElement?.textContent?.replace(/\s+/g, '')).toBe(
+      'my-project/Ooctocat/claude/errors-view'
+    )
+  })
+
+  it('leaves the title unadorned for the viewer’s own work', () => {
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={mockActions()} />)
+
+    expect(screen.queryByTestId(/^workspace-frame-author-/)).toBeNull()
+  })
+
   it('does not show a task identifier for a root workspace', () => {
     render(
       <WorkspaceFrameHeader

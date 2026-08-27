@@ -1,6 +1,6 @@
-import {
-  type DesktopBridge,
-  decodeWorkspaceActivationIntent,
+import type {
+  DesktopBridge,
+  WorkspaceActivationIntent,
 } from '@laborer/shared/desktop-bridge'
 import { contextBridge, ipcRenderer } from 'electron'
 
@@ -41,6 +41,41 @@ const QUIT_CONFIRMED_CHANNEL = 'desktop:quit-confirmed'
 const { windowId } = parseWindowBootstrapArgs(process.argv)
 
 // ---------------------------------------------------------------------------
+// Activation intent narrowing
+//
+// A sandboxed preload has no module resolver and no ordinary module scope, so
+// it cannot carry a runtime dependency: a bare `require` or a bundled library
+// that declares globals such as `setImmediate` fails the whole script and takes
+// `window.desktopBridge` with it. The main process already decodes this payload
+// against WorkspaceActivationIntentSchema before it is sent (see ipc.ts), so
+// this end only re-narrows the trusted shape for the renderer's type.
+// ---------------------------------------------------------------------------
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === 'string'
+}
+
+function narrowActivationIntent(
+  payload: object
+): WorkspaceActivationIntent | undefined {
+  const candidate = payload as Record<string, unknown>
+  if (typeof candidate.workspaceId !== 'string') {
+    return undefined
+  }
+  if (candidate.action === 'open-agent-pane') {
+    return isOptionalString(candidate.initialPrompt)
+      ? (candidate as unknown as WorkspaceActivationIntent)
+      : undefined
+  }
+  if (candidate.action !== undefined) {
+    return undefined
+  }
+  return isOptionalString(candidate.terminalId)
+    ? (candidate as unknown as WorkspaceActivationIntent)
+    : undefined
+}
+
+// ---------------------------------------------------------------------------
 // DesktopBridge implementation
 // ---------------------------------------------------------------------------
 
@@ -75,7 +110,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
       if (typeof payload !== 'object' || payload === null) {
         return
       }
-      const intent = decodeWorkspaceActivationIntent(payload)
+      const intent = narrowActivationIntent(payload)
       if (intent !== undefined) {
         listener(intent)
       }

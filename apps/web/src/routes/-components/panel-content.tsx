@@ -5,6 +5,7 @@ import {
   ResizablePanelGroup,
 } from '@laborer/ui/components/resizable'
 import { useCallback, useMemo, useState } from 'react'
+import { WorkspaceRightPanel } from '@/components/right-panel/workspace-right-panel'
 import {
   FullscreenPortalContext,
   usePanelActions,
@@ -12,9 +13,8 @@ import {
 } from '@/panels/panel-context'
 import { PanelManager } from '@/panels/panel-manager'
 import { findPaneAcrossAllTabs } from '@/panels/window-layout-utils'
-import { CommentsPane } from '@/panes/comments-pane'
-import { DiffPane } from '@/panes/diff-pane'
 import { TreePane } from '@/panes/tree-pane'
+import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
 import { WindowTabCloseConfirmDialog } from './close-dialogs'
 import { WorkspaceFrameHeaderContainer } from './workspace-frame-header-container'
 import {
@@ -26,29 +26,63 @@ import {
 /** No-op callback for fullscreen workspace header handlers. */
 const noop = () => undefined
 
+/**
+ * Workspace header shown above the fullscreen overlay. The diff/comments
+ * button states mirror the right panel's active surface, same as the inline
+ * frame header.
+ */
+function FullscreenWorkspaceHeader({
+  showsTree,
+  workspaceId,
+}: {
+  readonly showsTree: boolean
+  readonly workspaceId: string
+}) {
+  const activeRightPanelKind = useRightPanelStore(
+    useCallback(
+      (store) => selectActiveRightPanel(store.byWorkspaceId, workspaceId),
+      [workspaceId]
+    )
+  )
+
+  return (
+    <WorkspaceFrameHeaderContainer
+      commentsIsOpen={activeRightPanelKind === 'pull-request'}
+      diffIsOpen={activeRightPanelKind === 'diff'}
+      isActiveFrame
+      isMinimized={false}
+      onHeaderClick={noop}
+      onMinimize={noop}
+      treeIsOpen={showsTree}
+      workspaceId={workspaceId}
+    />
+  )
+}
+
 interface FullscreenWorkspaceOverlayProps {
   readonly fullscreenPaneId: string
   readonly fullscreenWorkspaceId: string
   readonly portalRef: (element: HTMLDivElement | null) => void
-  readonly showsComments: boolean
-  readonly showsDiff: boolean
   readonly showsTree: boolean
 }
 
+/**
+ * The fullscreen overlay keeps the fullscreened workspace's side panels in
+ * reach: the file tree on the left (a resizable-group panel) and the right
+ * panel on the right edge (which owns its own width and renders nothing
+ * while closed). The inline frame's right panel is suppressed while this
+ * overlay owns the workspace, so the surfaces are not mounted twice.
+ */
 function FullscreenWorkspaceOverlay({
   fullscreenPaneId,
   fullscreenWorkspaceId,
   portalRef,
-  showsComments,
-  showsDiff,
   showsTree,
 }: FullscreenWorkspaceOverlayProps) {
   const actions = usePanelActions()
-  const sidePanelCount =
-    (showsTree ? 1 : 0) + (showsDiff ? 1 : 0) + (showsComments ? 1 : 0)
   const sidePanelSizes = useMemo(
-    () => computeSidePanelSizes(sidePanelCount),
-    [sidePanelCount]
+    () => computeSidePanelSizes(showsTree ? 1 : 0),
+    [showsTree]
   )
 
   const toggleFullscreenSidePanel = useCallback(
@@ -63,75 +97,31 @@ function FullscreenWorkspaceOverlay({
     [actions, fullscreenPaneId]
   )
 
-  if (sidePanelCount === 0) {
-    return (
-      <div className="absolute inset-0 z-10">
+  const mainColumn = showsTree ? (
+    <ResizablePanelGroup className="h-full" orientation="horizontal">
+      <ResizablePanel
+        className="h-full overflow-hidden"
+        defaultSize={sidePanelSizes.sidePanelSize}
+        minSize="15%"
+      >
+        <TreePane
+          onClose={() => toggleFullscreenSidePanel(actions?.toggleTreePane)}
+          workspaceId={fullscreenWorkspaceId}
+        />
+      </ResizablePanel>
+      <ResizableHandle withHandle />
+      <ResizablePanel defaultSize={sidePanelSizes.mainPanelSize} minSize="30%">
         <div className="h-full w-full" ref={portalRef} />
-      </div>
-    )
-  }
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  ) : (
+    <div className="h-full w-full" ref={portalRef} />
+  )
 
   return (
-    <div className="absolute inset-0 z-10">
-      <ResizablePanelGroup className="h-full" orientation="horizontal">
-        {showsTree && (
-          <>
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSizes.sidePanelSize}
-              minSize="15%"
-            >
-              <TreePane
-                onClose={() =>
-                  toggleFullscreenSidePanel(actions?.toggleTreePane)
-                }
-                workspaceId={fullscreenWorkspaceId}
-              />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        )}
-        <ResizablePanel
-          defaultSize={sidePanelSizes.mainPanelSize}
-          minSize="30%"
-        >
-          <div className="h-full w-full" ref={portalRef} />
-        </ResizablePanel>
-        {showsDiff && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSizes.sidePanelSize}
-              minSize="15%"
-            >
-              <DiffPane
-                onClose={() =>
-                  toggleFullscreenSidePanel(actions?.toggleDiffPane)
-                }
-                workspaceId={fullscreenWorkspaceId}
-              />
-            </ResizablePanel>
-          </>
-        )}
-        {showsComments && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSizes.sidePanelSize}
-              minSize="15%"
-            >
-              <CommentsPane
-                onClose={() =>
-                  toggleFullscreenSidePanel(actions?.toggleCommentsPane)
-                }
-                workspaceId={fullscreenWorkspaceId}
-              />
-            </ResizablePanel>
-          </>
-        )}
-      </ResizablePanelGroup>
+    <div className="absolute inset-0 z-10 flex">
+      <div className="h-full min-w-0 flex-1">{mainColumn}</div>
+      <WorkspaceRightPanel workspaceId={fullscreenWorkspaceId} />
     </div>
   )
 }
@@ -160,15 +150,13 @@ function WindowTabContent({
   tab,
   isActive,
   activePaneId,
-  commentsWorkspaceIds,
-  diffWorkspaceIds,
+  suppressedRightPanelWorkspaceId,
   treeWorkspaceIds,
 }: {
   readonly tab: WindowTab
   readonly isActive: boolean
   readonly activePaneId: string | null
-  readonly commentsWorkspaceIds: readonly string[]
-  readonly diffWorkspaceIds: readonly string[]
+  readonly suppressedRightPanelWorkspaceId: string | null
   readonly treeWorkspaceIds: readonly string[]
 }) {
   const layout = tab.workspaceLayout
@@ -190,8 +178,7 @@ function WindowTabContent({
     >
       <WorkspaceFrames
         activePaneId={isActive ? activePaneId : null}
-        commentsWorkspaceIds={isActive ? commentsWorkspaceIds : []}
-        diffWorkspaceIds={isActive ? diffWorkspaceIds : []}
+        suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
         treeWorkspaceIds={isActive ? treeWorkspaceIds : []}
         workspaceTileLayout={layout}
       />
@@ -208,8 +195,6 @@ function WindowTabContent({
 interface PanelContentProps {
   readonly activePaneId: string | null
   readonly activeTabId?: string | undefined
-  readonly commentsWorkspaceIds?: readonly string[]
-  readonly diffWorkspaceIds?: readonly string[]
   readonly fullscreenPaneId: string | null
   /** True when the active window tab exists but has no workspace layout. */
   readonly isEmptyWindowTab?: boolean
@@ -243,8 +228,6 @@ export function PanelContent({
   windowTabs,
   isEmptyWindowTab = false,
   treeWorkspaceIds = [],
-  diffWorkspaceIds = [],
-  commentsWorkspaceIds = [],
 }: PanelContentProps) {
   const [portalElement, setPortalElement] = useState<HTMLElement | null>(null)
   const handlePortalRef = useCallback((element: HTMLDivElement | null) => {
@@ -264,34 +247,16 @@ export function PanelContent({
     return undefined
   }, [fullscreenPaneId, windowLayout])
 
-  const fullscreenShowsDiff =
-    fullscreenWorkspaceId !== undefined &&
-    diffWorkspaceIds.includes(fullscreenWorkspaceId)
   const fullscreenShowsTree =
     fullscreenWorkspaceId !== undefined &&
     treeWorkspaceIds.includes(fullscreenWorkspaceId)
-  const fullscreenShowsComments =
-    fullscreenWorkspaceId !== undefined &&
-    commentsWorkspaceIds.includes(fullscreenWorkspaceId)
 
   // Hide side panels for the fullscreened workspace in the normal tree so we
   // don't duplicate expensive panel instances underneath the fullscreen overlay.
-  const inlineDiffWorkspaceIds =
-    fullscreenWorkspaceId === undefined
-      ? diffWorkspaceIds
-      : diffWorkspaceIds.filter(
-          (workspaceId) => workspaceId !== fullscreenWorkspaceId
-        )
   const inlineTreeWorkspaceIds =
     fullscreenWorkspaceId === undefined
       ? treeWorkspaceIds
       : treeWorkspaceIds.filter(
-          (workspaceId) => workspaceId !== fullscreenWorkspaceId
-        )
-  const inlineCommentsWorkspaceIds =
-    fullscreenWorkspaceId === undefined
-      ? commentsWorkspaceIds
-      : commentsWorkspaceIds.filter(
           (workspaceId) => workspaceId !== fullscreenWorkspaceId
         )
 
@@ -328,14 +293,8 @@ export function PanelContent({
               data-testid="fullscreen-workspace-header"
               data-workspace-id={fullscreenWorkspaceId}
             >
-              <WorkspaceFrameHeaderContainer
-                commentsIsOpen={fullscreenShowsComments}
-                diffIsOpen={fullscreenShowsDiff}
-                isActiveFrame
-                isMinimized={false}
-                onHeaderClick={noop}
-                onMinimize={noop}
-                treeIsOpen={fullscreenShowsTree}
+              <FullscreenWorkspaceHeader
+                showsTree={fullscreenShowsTree}
                 workspaceId={fullscreenWorkspaceId}
               />
             </div>
@@ -344,10 +303,9 @@ export function PanelContent({
             {tabsToRender.map((tab) => (
               <WindowTabContent
                 activePaneId={activePaneId}
-                commentsWorkspaceIds={inlineCommentsWorkspaceIds}
-                diffWorkspaceIds={inlineDiffWorkspaceIds}
                 isActive={tab.id === activeTabId}
                 key={tab.id}
+                suppressedRightPanelWorkspaceId={fullscreenWorkspaceId ?? null}
                 tab={tab}
                 treeWorkspaceIds={inlineTreeWorkspaceIds}
               />
@@ -363,8 +321,6 @@ export function PanelContent({
                 fullscreenPaneId={fullscreenPaneId}
                 fullscreenWorkspaceId={fullscreenWorkspaceId}
                 portalRef={handlePortalRef}
-                showsComments={fullscreenShowsComments}
-                showsDiff={fullscreenShowsDiff}
                 showsTree={fullscreenShowsTree}
               />
             ) : null}

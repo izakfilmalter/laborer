@@ -126,6 +126,7 @@ vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
 }))
 
 import type { WorkspaceTileNode } from '@laborer/shared/types'
+import { useRightPanelStore } from '@/right-panel-store'
 import {
   computeSidePanelSizes,
   WorkspaceFrames,
@@ -272,16 +273,18 @@ describe('computeSidePanelSizes', () => {
   })
 })
 
-describe('WorkspaceFrames tree + diff panel positioning', () => {
+describe('WorkspaceFrames tree + right panel positioning', () => {
   afterEach(() => {
     cleanup()
+    useRightPanelStore.setState({ byWorkspaceId: {} })
   })
 
-  it('renders tree on left, main in center, diff on right', () => {
-    render(
+  it('renders tree on left, main in center, and the right panel diff on the right', () => {
+    useRightPanelStore.getState().open('ws-1', 'diff')
+
+    const { container } = render(
       <WorkspaceFrames
         activePaneId="pane-1"
-        diffWorkspaceIds={['ws-1']}
         treeWorkspaceIds={['ws-1']}
         workspaceTileLayout={singleLeafLayout}
       />
@@ -291,19 +294,33 @@ describe('WorkspaceFrames tree + diff panel positioning', () => {
     const diffPanes = screen.getAllByTestId('diff-pane')
     expect(treePanes).toHaveLength(1)
     expect(diffPanes).toHaveLength(1)
+    expect(diffPanes[0]?.getAttribute('data-workspace-id')).toBe('ws-1')
 
-    // Get the horizontal panel group that contains the side panels
-    const panelGroup = screen.getByTestId('resizable-panel-group')
+    // The right panel is a flex sibling of the workspace's main column, so
+    // document order pins the layout: tree (left) < main (center) < diff
+    // (right, inside the right panel).
     const allTestIds = Array.from(
-      panelGroup.querySelectorAll('[data-testid]')
+      container.querySelectorAll('[data-testid]')
     ).map((el) => el.getAttribute('data-testid'))
 
     const treeIndex = allTestIds.indexOf('tree-pane')
     const managerIndex = allTestIds.indexOf('panel-manager')
     const diffIndex = allTestIds.indexOf('diff-pane')
 
-    // Order: tree (left) < main (center) < diff (right)
+    expect(treeIndex).toBeGreaterThan(-1)
     expect(treeIndex).toBeLessThan(managerIndex)
     expect(managerIndex).toBeLessThan(diffIndex)
+  })
+
+  it('does not render the right panel while it is closed', () => {
+    render(
+      <WorkspaceFrames
+        activePaneId="pane-1"
+        treeWorkspaceIds={[]}
+        workspaceTileLayout={singleLeafLayout}
+      />
+    )
+
+    expect(screen.queryByTestId('diff-pane')).toBeNull()
   })
 })

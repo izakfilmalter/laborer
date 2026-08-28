@@ -38,6 +38,7 @@ import type {
   PanelImperativeHandle,
 } from 'react-resizable-panels'
 import { PanelTypePicker } from '@/components/panel-type-picker'
+import { WorkspaceRightPanel } from '@/components/right-panel/workspace-right-panel'
 import {
   orderedProjectsFromRows,
   projectCollection,
@@ -63,9 +64,8 @@ import {
 } from '@/panels/window-layout-utils'
 import { computeMinimizedTargetLayout } from '@/panels/workspace-minimize-layout'
 import type { WorkspaceDropEdge } from '@/panels/workspace-tile-utils'
-import { CommentsPane } from '@/panes/comments-pane'
-import { DiffPane } from '@/panes/diff-pane'
 import { TreePane } from '@/panes/tree-pane'
+import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
 import {
   PanelTabCloseConfirmDialog,
   WorkspaceCloseConfirmDialog,
@@ -387,33 +387,34 @@ function WorkspacePickerItem({
 /**
  * Renders the main content area of a workspace frame. Dispatches between:
  * - Empty workspace state (no panel tabs)
- * - Side panel layout (diff/tree open alongside main content)
+ * - Side panel layout (tree open alongside main content)
  * - Standard panel manager rendering
+ *
+ * The workspace's right panel (diff, pull request, and future surfaces) is
+ * a flex sibling on the right edge that owns its own width; it renders
+ * nothing while closed. It is suppressed while this workspace's pane is
+ * fullscreened, because the fullscreen overlay renders its own instance.
  */
 function WorkspaceContent({
   isEmptyWorkspace,
   workspaceId,
   panelTabId,
-  hasSidePanels,
   effectiveLayout,
   mainPanelSize,
   sidePanelSize,
-  showComments,
-  showDiff,
   showTree,
+  suppressRightPanel,
   closeSidePanel,
   tabBar,
 }: {
   readonly isEmptyWorkspace: boolean
   readonly workspaceId: string | undefined
   readonly panelTabId?: string | undefined
-  readonly hasSidePanels: boolean
   readonly effectiveLayout: PanelNode | null
   readonly mainPanelSize: string
   readonly sidePanelSize: string
-  readonly showComments: boolean
-  readonly showDiff: boolean
   readonly showTree: boolean
+  readonly suppressRightPanel: boolean
   readonly closeSidePanel: (
     togglePanel: ((paneId: string) => boolean) | undefined
   ) => void
@@ -445,62 +446,36 @@ function WorkspaceContent({
     </div>
   )
 
-  if (hasSidePanels) {
-    return (
+  const mainColumn =
+    showTree && workspaceId !== undefined ? (
       <ResizablePanelGroup className="h-full" orientation="horizontal">
-        {showTree && workspaceId !== undefined && (
-          <>
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSize}
-              minSize="15%"
-            >
-              <TreePane
-                onClose={() => closeSidePanel(actions?.toggleTreePane)}
-                workspaceId={workspaceId}
-              />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        )}
+        <ResizablePanel
+          className="h-full overflow-hidden"
+          defaultSize={sidePanelSize}
+          minSize="15%"
+        >
+          <TreePane
+            onClose={() => closeSidePanel(actions?.toggleTreePane)}
+            workspaceId={workspaceId}
+          />
+        </ResizablePanel>
+        <ResizableHandle withHandle />
         <ResizablePanel defaultSize={mainPanelSize} minSize="30%">
           {mainPanel}
         </ResizablePanel>
-        {showDiff && workspaceId !== undefined && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSize}
-              minSize="15%"
-            >
-              <DiffPane
-                onClose={() => closeSidePanel(actions?.toggleDiffPane)}
-                workspaceId={workspaceId}
-              />
-            </ResizablePanel>
-          </>
-        )}
-        {showComments && workspaceId !== undefined && (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              className="h-full overflow-hidden"
-              defaultSize={sidePanelSize}
-              minSize="15%"
-            >
-              <CommentsPane
-                onClose={() => closeSidePanel(actions?.toggleCommentsPane)}
-                workspaceId={workspaceId}
-              />
-            </ResizablePanel>
-          </>
-        )}
       </ResizablePanelGroup>
+    ) : (
+      mainPanel
     )
-  }
 
-  return <div className="min-h-0 flex-1">{mainPanel}</div>
+  return (
+    <div className="flex h-full min-h-0 min-w-0">
+      <div className="h-full min-w-0 flex-1">{mainColumn}</div>
+      {workspaceId !== undefined && !suppressRightPanel && (
+        <WorkspaceRightPanel workspaceId={workspaceId} />
+      )}
+    </div>
+  )
 }
 
 function WorkspaceFrameCloseDialog({
@@ -665,8 +640,7 @@ function WorkspaceFrame({
   index,
   isMinimized: isMinimizedProp,
   onToggleMinimize,
-  commentsWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  suppressedRightPanelWorkspaceId,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   tileLeaf,
 }: {
@@ -683,8 +657,11 @@ function WorkspaceFrame({
   readonly isMinimized?: boolean | undefined
   /** Toggle callback paired with the controlled `isMinimized` prop. */
   readonly onToggleMinimize?: (() => void) | undefined
-  readonly commentsWorkspaceIds?: readonly string[]
-  readonly diffWorkspaceIds?: readonly string[]
+  /**
+   * The workspace whose right panel is rendered by the fullscreen overlay
+   * instead of inline, so the frame does not mount a duplicate instance.
+   */
+  readonly suppressedRightPanelWorkspaceId?: string | null | undefined
   readonly treeWorkspaceIds?: readonly string[]
   readonly tileLeaf?: WorkspaceTileLeaf | undefined
 }) {
@@ -790,13 +767,19 @@ function WorkspaceFrame({
     )
   }, [workspaceId, index])
 
-  const showDiff =
-    workspaceId !== undefined && diffWorkspaceIds.includes(workspaceId)
   const showTree =
     workspaceId !== undefined && treeWorkspaceIds.includes(workspaceId)
-  const showComments =
-    workspaceId !== undefined && commentsWorkspaceIds.includes(workspaceId)
-  const hasSidePanels = showDiff || showTree || showComments
+  // The header's diff/comments buttons reflect the right panel's active
+  // surface, matching t3's toggle semantics: pressed while the panel is
+  // open with that surface active.
+  const activeRightPanelKind = useRightPanelStore(
+    useCallback(
+      (store) => selectActiveRightPanel(store.byWorkspaceId, workspaceId),
+      [workspaceId]
+    )
+  )
+  const showDiff = activeRightPanelKind === 'diff'
+  const showComments = activeRightPanelKind === 'pull-request'
   const workspacePaneId = useMemo(() => {
     if (activePaneInFrame) {
       return activePaneId
@@ -817,9 +800,10 @@ function WorkspaceFrame({
     [actions, workspacePaneId]
   )
 
-  // Calculate default sizes based on how many side panels are open
-  const sidePanelCount =
-    (showTree ? 1 : 0) + (showDiff ? 1 : 0) + (showComments ? 1 : 0)
+  // Calculate default sizes based on how many side panels are open.
+  // Only the tree remains a resizable-group side panel; the right panel
+  // owns its own pixel width.
+  const sidePanelCount = showTree ? 1 : 0
   const { sidePanelSize, mainPanelSize } = computeSidePanelSizes(sidePanelCount)
 
   // Panel tab bar items and active tab layout (hierarchical mode only)
@@ -958,14 +942,15 @@ function WorkspaceFrame({
         <WorkspaceContent
           closeSidePanel={closeSidePanel}
           effectiveLayout={effectiveLayout}
-          hasSidePanels={hasSidePanels}
           isEmptyWorkspace={isEmptyWorkspace}
           mainPanelSize={mainPanelSize}
           panelTabId={tileLeaf?.activePanelTabId}
-          showComments={showComments}
-          showDiff={showDiff}
           showTree={showTree}
           sidePanelSize={sidePanelSize}
+          suppressRightPanel={
+            workspaceId !== undefined &&
+            suppressedRightPanelWorkspaceId === workspaceId
+          }
           tabBar={tabBarElement}
           workspaceId={workspaceId}
         />
@@ -1019,8 +1004,7 @@ function WorkspaceTileLeafFrame({
   leaf,
   activePaneId,
   index,
-  commentsWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  suppressedRightPanelWorkspaceId,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   isMinimized,
   onToggleMinimize,
@@ -1028,8 +1012,7 @@ function WorkspaceTileLeafFrame({
   readonly leaf: WorkspaceTileLeaf
   readonly activePaneId: string | null
   readonly index: number
-  readonly commentsWorkspaceIds?: readonly string[]
-  readonly diffWorkspaceIds?: readonly string[]
+  readonly suppressedRightPanelWorkspaceId?: string | null | undefined
   readonly treeWorkspaceIds?: readonly string[]
   readonly isMinimized?: boolean | undefined
   readonly onToggleMinimize?: (() => void) | undefined
@@ -1055,12 +1038,11 @@ function WorkspaceTileLeafFrame({
   return (
     <WorkspaceFrame
       activePaneId={activePaneId}
-      commentsWorkspaceIds={commentsWorkspaceIds}
-      diffWorkspaceIds={diffWorkspaceIds}
       index={index}
       isMinimized={isMinimized}
       onToggleMinimize={onToggleMinimize}
       subLayout={subLayout}
+      suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
       tileLeaf={leaf}
       treeWorkspaceIds={treeWorkspaceIds}
       workspaceId={leaf.workspaceId}
@@ -1081,8 +1063,7 @@ function WorkspaceTileResizableChild({
   activePaneId,
   defaultSize,
   index,
-  commentsWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  suppressedRightPanelWorkspaceId,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   isMinimized = false,
   onToggleMinimize,
@@ -1092,8 +1073,7 @@ function WorkspaceTileResizableChild({
   readonly activePaneId: string | null
   readonly defaultSize: number
   readonly index: number
-  readonly commentsWorkspaceIds?: readonly string[]
-  readonly diffWorkspaceIds?: readonly string[]
+  readonly suppressedRightPanelWorkspaceId?: string | null | undefined
   readonly treeWorkspaceIds?: readonly string[]
   readonly isMinimized?: boolean
   readonly onToggleMinimize: (tileId: string) => void
@@ -1129,11 +1109,10 @@ function WorkspaceTileResizableChild({
       >
         <WorkspaceTileRenderer
           activePaneId={activePaneId}
-          commentsWorkspaceIds={commentsWorkspaceIds}
-          diffWorkspaceIds={diffWorkspaceIds}
           index={index}
           isMinimized={isLeaf ? isMinimized : undefined}
           onToggleMinimize={isLeaf ? handleToggleMinimize : undefined}
+          suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
           tileNode={tileNode}
           treeWorkspaceIds={treeWorkspaceIds}
         />
@@ -1199,14 +1178,12 @@ function isPanelCollapsed(
 function WorkspaceTileSplitGroup({
   tileNode,
   activePaneId,
-  commentsWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  suppressedRightPanelWorkspaceId,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
 }: {
   readonly tileNode: WorkspaceTileSplit
   readonly activePaneId: string | null
-  readonly commentsWorkspaceIds?: readonly string[]
-  readonly diffWorkspaceIds?: readonly string[]
+  readonly suppressedRightPanelWorkspaceId?: string | null | undefined
   readonly treeWorkspaceIds?: readonly string[]
 }) {
   const groupRef = useRef<GroupImperativeHandle | null>(null)
@@ -1338,14 +1315,13 @@ function WorkspaceTileSplitGroup({
         return (
           <WorkspaceTileResizableChild
             activePaneId={activePaneId}
-            commentsWorkspaceIds={commentsWorkspaceIds}
             defaultSize={size}
-            diffWorkspaceIds={diffWorkspaceIds}
             index={childIndex}
             isMinimized={minimizedIds.has(child.id)}
             key={child.id}
             onToggleMinimize={handleToggleMinimize}
             registerPanelHandle={registerPanelHandle}
+            suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
             tileNode={child}
             treeWorkspaceIds={treeWorkspaceIds}
           />
@@ -1370,8 +1346,7 @@ function WorkspaceTileRenderer({
   tileNode,
   activePaneId,
   index = 0,
-  commentsWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  suppressedRightPanelWorkspaceId,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
   isMinimized,
   onToggleMinimize,
@@ -1379,8 +1354,7 @@ function WorkspaceTileRenderer({
   readonly tileNode: WorkspaceTileNode
   readonly activePaneId: string | null
   readonly index?: number
-  readonly commentsWorkspaceIds?: readonly string[]
-  readonly diffWorkspaceIds?: readonly string[]
+  readonly suppressedRightPanelWorkspaceId?: string | null | undefined
   readonly treeWorkspaceIds?: readonly string[]
   readonly isMinimized?: boolean | undefined
   readonly onToggleMinimize?: (() => void) | undefined
@@ -1390,12 +1364,11 @@ function WorkspaceTileRenderer({
       <TabErrorBoundary label={tileNode.workspaceId}>
         <WorkspaceTileLeafFrame
           activePaneId={activePaneId}
-          commentsWorkspaceIds={commentsWorkspaceIds}
-          diffWorkspaceIds={diffWorkspaceIds}
           index={index}
           isMinimized={isMinimized}
           leaf={tileNode}
           onToggleMinimize={onToggleMinimize}
+          suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
           treeWorkspaceIds={treeWorkspaceIds}
         />
       </TabErrorBoundary>
@@ -1410,8 +1383,7 @@ function WorkspaceTileRenderer({
   return (
     <WorkspaceTileSplitGroup
       activePaneId={activePaneId}
-      commentsWorkspaceIds={commentsWorkspaceIds}
-      diffWorkspaceIds={diffWorkspaceIds}
+      suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
       tileNode={tileNode}
       treeWorkspaceIds={treeWorkspaceIds}
     />
@@ -1435,14 +1407,12 @@ function WorkspaceTileRenderer({
 export function WorkspaceFrames({
   activePaneId,
   workspaceTileLayout,
-  commentsWorkspaceIds = EMPTY_WORKSPACE_IDS,
-  diffWorkspaceIds = EMPTY_WORKSPACE_IDS,
+  suppressedRightPanelWorkspaceId,
   treeWorkspaceIds = EMPTY_WORKSPACE_IDS,
 }: {
   readonly activePaneId: string | null
   readonly workspaceTileLayout: WorkspaceTileNode
-  readonly commentsWorkspaceIds?: readonly string[]
-  readonly diffWorkspaceIds?: readonly string[]
+  readonly suppressedRightPanelWorkspaceId?: string | null | undefined
   readonly treeWorkspaceIds?: readonly string[]
 }) {
   // Wire up a monitor for workspace frame drag-and-drop. Drops on a
@@ -1489,8 +1459,7 @@ export function WorkspaceFrames({
   return (
     <WorkspaceTileRenderer
       activePaneId={activePaneId}
-      commentsWorkspaceIds={commentsWorkspaceIds}
-      diffWorkspaceIds={diffWorkspaceIds}
+      suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
       tileNode={workspaceTileLayout}
       treeWorkspaceIds={treeWorkspaceIds}
     />

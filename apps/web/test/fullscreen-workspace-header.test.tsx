@@ -151,6 +151,7 @@ vi.mock('@laborer/ui/components/resizable', () => ({
   ),
 }))
 
+import { useRightPanelStore } from '@/right-panel-store'
 import { PanelContent } from '../src/routes/-components/panel-content'
 
 const SINGLE_WORKSPACE_TILE: WorkspaceTileLeaf = {
@@ -240,6 +241,7 @@ const TWO_WORKSPACE_WINDOW_LAYOUT: WindowLayout = {
 describe('Workspace header visibility during fullscreen', () => {
   afterEach(() => {
     cleanup()
+    useRightPanelStore.setState({ byWorkspaceId: {} })
   })
 
   it('shows the workspace frame header when no pane is fullscreened', () => {
@@ -296,11 +298,12 @@ describe('Workspace header visibility during fullscreen', () => {
   })
 
   it('keeps fullscreen side panels mounted and reports their open state in the fullscreen header', () => {
+    useRightPanelStore.getState().open('workspace-1', 'diff')
+
     render(
       <PanelContent
         activePaneId="pane-1"
         activeTabId={SINGLE_WINDOW_LAYOUT.activeTabId}
-        diffWorkspaceIds={['workspace-1']}
         fullscreenPaneId="pane-1"
         isReconciling={false}
         treeWorkspaceIds={['workspace-1']}
@@ -310,6 +313,8 @@ describe('Workspace header visibility during fullscreen', () => {
     )
 
     expect(screen.getAllByTestId('tree-pane')).toHaveLength(1)
+    // Exactly one diff instance: the fullscreen overlay owns the workspace's
+    // right panel while the inline frame's copy is suppressed.
     expect(screen.getAllByTestId('diff-pane')).toHaveLength(1)
 
     const header = screen.getByTestId('fullscreen-workspace-header')

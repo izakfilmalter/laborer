@@ -15,6 +15,7 @@ import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
 import { useProjectReorderMonitor } from '@/components/project-reorder'
+import { rightPanelWidthStorageKey } from '@/components/right-panel/right-panel-shell'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import { destroyWorkspace as destroyWorkspaceOptimistically } from '@/db/shared-mutations'
@@ -54,6 +55,7 @@ import {
   resolveActiveWorkspaceId,
 } from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
+import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
 import {
   CloseAppDialog,
   DestroyWorkspaceOnCloseDialog,
@@ -206,10 +208,10 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Diff, file tree, and PR conversation are transient UI modes owned per
-  // workspace, so opening one workspace's panel leaves every other alone.
+  // The file tree is a transient UI mode owned per workspace, so opening
+  // one workspace's tree leaves every other alone. Diff and the PR
+  // conversation live in the persisted right-panel store instead.
   const panelVisibility = useWorkspacePanelVisibility({
-    focusWorkspace: panelActions.focusWorkspace,
     windowLayout,
   })
 
@@ -230,20 +232,28 @@ function HomeComponent() {
   )
 
   /**
-   * Toggle the full-height diff panel for the workspace of the given pane.
+   * Toggle the right panel's Diff surface for the workspace of the given
+   * pane: opens the panel with Diff active, or hides the panel when Diff is
+   * already the active surface (t3's toggle semantics).
    *
    * @param paneId - The pane ID to get the workspace from
-   * @returns Whether the diff panel is now open
+   * @returns Whether the Diff surface is now shown
    */
   const toggleDiffPane = useCallback(
     (paneId: string): boolean => {
       const workspaceId = resolvePaneWorkspaceId(paneId)
-
-      return workspaceId === undefined
-        ? false
-        : panelVisibility.toggleDiff(workspaceId)
+      if (workspaceId === undefined) {
+        return false
+      }
+      useRightPanelStore.getState().toggle(workspaceId, 'diff')
+      return (
+        selectActiveRightPanel(
+          useRightPanelStore.getState().byWorkspaceId,
+          workspaceId
+        ) === 'diff'
+      )
     },
-    [resolvePaneWorkspaceId, panelVisibility.toggleDiff]
+    [resolvePaneWorkspaceId]
   )
 
   /**
@@ -265,23 +275,68 @@ function HomeComponent() {
   )
 
   /**
-   * Toggle the full-height pull request comments panel for the workspace of
-   * the given pane. Like diff, it sits on the right; unlike diff, it reads
+   * Toggle the right panel's Pull request surface for the workspace of the
+   * given pane. Like diff, it sits on the right; unlike diff, it reads
    * GitHub rather than the worktree.
    *
    * @param paneId - The pane ID to get the workspace from
-   * @returns Whether the comments panel is now open
+   * @returns Whether the Pull request surface is now shown
    */
   const toggleCommentsPane = useCallback(
     (paneId: string): boolean => {
       const workspaceId = resolvePaneWorkspaceId(paneId)
-
-      return workspaceId === undefined
-        ? false
-        : panelVisibility.toggleComments(workspaceId)
+      if (workspaceId === undefined) {
+        return false
+      }
+      useRightPanelStore.getState().toggle(workspaceId, 'pull-request')
+      return (
+        selectActiveRightPanel(
+          useRightPanelStore.getState().byWorkspaceId,
+          workspaceId
+        ) === 'pull-request'
+      )
     },
-    [resolvePaneWorkspaceId, panelVisibility.toggleComments]
+    [resolvePaneWorkspaceId]
   )
+
+  /**
+   * Reveal a workspace and open — never toggle — its Pull request surface.
+   *
+   * Callers reach this from a count of unresolved conversations, which can
+   * only mean "show me"; a toggle would close the panel out from under an
+   * operator who clicked the count while already reading it. The panel
+   * state waits in the store, so it applies as soon as the workspace's
+   * frame lands in the layout.
+   */
+  const openCommentsPaneForWorkspace = useCallback(
+    (workspaceId: string) => {
+      panelActions.focusWorkspace(workspaceId)
+      useRightPanelStore.getState().open(workspaceId, 'pull-request')
+    },
+    [panelActions]
+  )
+
+  // Prune right-panel state (and persisted widths) for workspaces that
+  // have been destroyed, so removed workspaces do not leave entries behind.
+  const destroyedWorkspaceKey = useMemo(
+    () =>
+      workspaceList
+        .filter((ws) => ws.status === 'destroyed')
+        .map((ws) => ws.id)
+        .sort((left, right) => left.localeCompare(right))
+        .join('\n'),
+    [workspaceList]
+  )
+  useEffect(() => {
+    if (destroyedWorkspaceKey === '') {
+      return
+    }
+    const destroyedIds = destroyedWorkspaceKey.split('\n')
+    useRightPanelStore.getState().removeWorkspaces(destroyedIds)
+    for (const workspaceId of destroyedIds) {
+      window.localStorage.removeItem(rightPanelWidthStorageKey(workspaceId))
+    }
+  }, [destroyedWorkspaceKey])
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
   // state (not a ref) so that changes trigger a re-render, allowing the
@@ -700,7 +755,7 @@ function HomeComponent() {
       toggleDiffPane,
       toggleTreePane,
       toggleCommentsPane,
-      openCommentsPaneForWorkspace: panelVisibility.openCommentsForWorkspace,
+      openCommentsPaneForWorkspace,
       showPanelTypePicker,
     }),
     [
@@ -714,7 +769,7 @@ function HomeComponent() {
       toggleDiffPane,
       toggleTreePane,
       toggleCommentsPane,
-      panelVisibility.openCommentsForWorkspace,
+      openCommentsPaneForWorkspace,
       showPanelTypePicker,
     ]
   )
@@ -1128,8 +1183,6 @@ function HomeComponent() {
                   <PanelContent
                     activePaneId={activePaneId}
                     activeTabId={windowLayout?.activeTabId}
-                    commentsWorkspaceIds={panelVisibility.commentsWorkspaceIds}
-                    diffWorkspaceIds={panelVisibility.diffWorkspaceIds}
                     fullscreenPaneId={fullscreenPaneId}
                     isEmptyWindowTab={isEmptyWindowTab}
                     isReconciling={isReconciling}

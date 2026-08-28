@@ -248,9 +248,13 @@ const KEYBINDS = {
   /** Cmd+Shift+Enter — toggle fullscreen pane */
   TOGGLE_FULLSCREEN: { key: 'Enter', meta: true, shift: true },
 
+  // -- Command palette --
+  /** Cmd+K — toggle the command palette */
+  COMMAND_PALETTE: { key: 'k', meta: true },
+
   // -- Kanban board overlay --
-  /** Cmd+K — toggle the kanban board overlay over the main panel area */
-  TOGGLE_BOARD: { key: 'k', meta: true },
+  /** Cmd+Shift+K — toggle the kanban board overlay over the main panel area */
+  TOGGLE_BOARD: { key: 'k', meta: true, shift: true },
 
   // -- Push/Pull workspace --
   /** Cmd+P — push workspace */
@@ -458,6 +462,57 @@ function isTerminalFindPreviousShortcut(event: KeyboardEvent): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Display labels
+// ---------------------------------------------------------------------------
+
+/** Human-readable name for a keybind's main key (e.g. "Enter" → "↵" on mac). */
+function formatKeyName(key: string): string {
+  const named: Record<string, string> = {
+    arrowdown: '↓',
+    arrowleft: '←',
+    arrowright: '→',
+    arrowup: '↑',
+    enter: IS_MAC ? '↩' : 'Enter',
+    escape: 'Esc',
+  }
+  return named[key.toLowerCase()] ?? key.toUpperCase()
+}
+
+/**
+ * Format a keybind for display, following platform conventions:
+ * mac symbols (`⇧⌘K`) on macOS, `Ctrl+Shift+K` elsewhere.
+ *
+ * On macOS a `ctrl: true` bind with the default `"either"` behavior is
+ * displayed with ⌘, matching how users actually press it.
+ */
+function formatKeybind(keybind: Keybind): string {
+  const key = formatKeyName(keybind.key)
+
+  if (IS_MAC) {
+    const usesCommand =
+      keybind.meta || (keybind.ctrl && keybind.macCtrlBehavior !== 'control')
+    const usesControl = keybind.ctrl && keybind.macCtrlBehavior === 'control'
+    return [
+      usesControl ? '⌃' : '',
+      keybind.alt ? '⌥' : '',
+      keybind.shift ? '⇧' : '',
+      usesCommand ? '⌘' : '',
+      key,
+    ].join('')
+  }
+
+  return [
+    keybind.ctrl ? 'Ctrl' : '',
+    keybind.alt ? 'Alt' : '',
+    keybind.shift ? 'Shift' : '',
+    keybind.meta && !keybind.ctrl ? 'Meta' : '',
+    key,
+  ]
+    .filter((part) => part.length > 0)
+    .join('+')
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -466,6 +521,7 @@ export {
   APP_KEYBINDS,
   CLIPBOARD_KEYBINDS,
   detectCopyShortcut,
+  formatKeybind,
   IS_MAC,
   IS_WINDOWS,
   isPasteShortcut,

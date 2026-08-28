@@ -1,5 +1,5 @@
 /**
- * Shared-task-db kanban board — an overlay above the panel area (Cmd+K).
+ * Shared-task-db kanban board — an overlay above the panel area (Cmd+Shift+K).
  *
  * One global board where each shared-database project is a collapsible swim
  * lane (Todo / In Progress / In Review / Done per lane). Lane collapse

@@ -214,7 +214,8 @@ export function PanelHeaderBar({
             <SquareKanban className="size-3.5" />
           </TooltipTrigger>
           <TooltipContent>
-            {boardOpen ? 'Close board' : 'Open board'} <Kbd>Cmd</Kbd>
+            {boardOpen ? 'Close board' : 'Open board'} <Kbd>Shift</Kbd>
+            <Kbd>Cmd</Kbd>
             <Kbd>K</Kbd>
           </TooltipContent>
         </Tooltip>

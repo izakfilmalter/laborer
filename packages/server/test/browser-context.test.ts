@@ -1,6 +1,6 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative } from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { BrowserContext } from '../src/services/browser-context.js'
@@ -22,6 +22,8 @@ const annotation = {
     height: 1,
   },
 } as const
+const OPAQUE_PNG_NAME =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/
 
 describe('BrowserContext', () => {
   it.effect('persists scoped artifacts and consumption state', () =>
@@ -29,13 +31,16 @@ describe('BrowserContext', () => {
       const root = yield* Effect.promise(() =>
         mkdtemp(join(tmpdir(), 'laborer-browser-context-'))
       )
+      const canonicalRoot = yield* Effect.promise(() => realpath(root))
       const previousRoot = process.env.LABORER_BROWSER_CONTEXT_ROOT
       process.env.LABORER_BROWSER_CONTEXT_ROOT = root
       const program = Effect.gen(function* () {
         const context = yield* BrowserContext
         const delivered = yield* context.deliver('workspace-1', annotation)
         expect(
-          delivered.annotation.screenshot?.artifactPath.startsWith(root)
+          delivered.annotation.screenshot?.artifactPath.startsWith(
+            canonicalRoot
+          )
         ).toBe(true)
         const screenshot = delivered.annotation.screenshot
         if (!screenshot) {
@@ -57,6 +62,43 @@ describe('BrowserContext', () => {
           })
         )
         expect(invalid.code).toBe('INVALID_ARTIFACT')
+        const hostileIds = [
+          '../../../../escaped',
+          'nested/path',
+          'windows\\path',
+          '%2e%2e%2fencoded',
+          'unicode∕separator',
+        ]
+        for (const id of hostileIds) {
+          const hostile = yield* context.deliver('workspace-1', {
+            ...annotation,
+            id,
+          })
+          const artifactPath = hostile.annotation.screenshot?.artifactPath
+          if (!artifactPath) {
+            throw new Error('Expected a persisted hostile-ID screenshot')
+          }
+          const fromRoot = relative(canonicalRoot, artifactPath)
+          expect(isAbsolute(fromRoot)).toBe(false)
+          expect(fromRoot).not.toBe('..')
+          expect(
+            fromRoot.startsWith(
+              `..${process.platform === 'win32' ? '\\' : '/'}`
+            )
+          ).toBe(false)
+          expect(basename(dirname(artifactPath))).toBe('artifacts')
+          expect(basename(artifactPath)).toMatch(OPAQUE_PNG_NAME)
+          expect(basename(artifactPath)).not.toContain(id)
+          yield* context.consume('workspace-1', hostile.id)
+        }
+        expect(
+          yield* Effect.promise(() =>
+            readFile(join(root, 'escaped.png')).then(
+              () => true,
+              () => false
+            )
+          )
+        ).toBe(false)
         expect(
           (yield* context.consume('workspace-1', delivered.id)).state
         ).toBe('consumed')

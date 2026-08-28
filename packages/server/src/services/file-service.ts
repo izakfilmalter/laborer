@@ -17,15 +17,8 @@
  * @see Issue 5: file.watcher.subscribe — Per-workspace watcher event stream
  */
 
-import {
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
-import { dirname, extname, join, normalize, relative, resolve } from 'node:path'
+import { readdir, readFile } from 'node:fs/promises'
+import { extname, join, normalize, relative, resolve } from 'node:path'
 import type {
   DiffContentsChangeType,
   DiffTarget,
@@ -59,6 +52,11 @@ import {
 } from 'effect'
 import ignore from 'ignore'
 import { type GitProbeResult, resolveBaseRef } from '../lib/base-ref.js'
+import {
+  type FilesystemContainmentError,
+  readContainedFile,
+  writeContainedFile,
+} from '../lib/filesystem-containment.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import {
@@ -495,6 +493,28 @@ const walkWorktreeEntries = (
  * reader what was cut.
  */
 const MAX_READ_TEXT_BYTES = 1024 * 1024
+const FILE_NOT_FOUND_ERROR = /ENOENT|ENOTDIR/
+
+const containmentRpcError = (
+  error: FilesystemContainmentError,
+  operation: 'read' | 'write',
+  filePath: string
+) => {
+  if (error.reason === 'PATH_TRAVERSAL') {
+    return new RpcError({ message: error.message, code: 'PATH_TRAVERSAL' })
+  }
+  const notFound = FILE_NOT_FOUND_ERROR.test(error.message)
+  let code = operation === 'read' ? 'READ_FAILED' : 'WRITE_FAILED'
+  if (notFound) {
+    code = 'NOT_FOUND'
+  }
+  return new RpcError({
+    message: notFound
+      ? `File not found: ${filePath}`
+      : `Failed to ${operation} file: ${error.message}`,
+    code,
+  })
+}
 
 // ── Event type mapping ──────────────────────────────────────────
 // Maps internal watcher event types to client-facing types.
@@ -1476,10 +1496,6 @@ class FileService extends Context.Service<
         Effect.gen(function* () {
           const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
           const worktreeRoot = workspace.worktreePath
-          const fullPath = resolve(worktreeRoot, filePath)
-
-          yield* validatePathContainment(fullPath, worktreeRoot, filePath)
-
           if (isBinaryByExtension(filePath) || isImageByExtension(filePath)) {
             return yield* new RpcError({
               message: `${filePath} is not a text file.`,
@@ -1487,48 +1503,22 @@ class FileService extends Context.Service<
             })
           }
 
-          const result = yield* Effect.tryPromise({
-            try: async (): Promise<FileTextContent> => {
-              const stats = await stat(fullPath)
-              if (!stats.isFile()) {
-                throw Object.assign(new Error('not a file'), {
-                  code: 'ENOENT',
-                })
-              }
-              const bytesToRead = Math.min(stats.size, MAX_READ_TEXT_BYTES)
-              const handle = await open(fullPath, 'r')
-              try {
-                const buffer = Buffer.alloc(bytesToRead)
-                const { bytesRead } = await handle.read(
-                  buffer,
-                  0,
-                  bytesToRead,
-                  0
-                )
-                return {
-                  relativePath: filePath,
-                  contents: buffer.subarray(0, bytesRead).toString('utf-8'),
-                  byteLength: stats.size,
-                  truncated: stats.size > MAX_READ_TEXT_BYTES,
-                }
-              } finally {
-                await handle.close()
-              }
-            },
-            catch: (error) => {
-              const code = (error as NodeJS.ErrnoException | undefined)?.code
-              if (code === 'ENOENT' || code === 'ENOTDIR') {
-                return new RpcError({
-                  message: `File not found: ${filePath}`,
-                  code: 'NOT_FOUND',
-                })
-              }
-              return new RpcError({
-                message: `Failed to read file: ${String(error)}`,
-                code: 'READ_FAILED',
-              })
-            },
+          const contained = yield* Effect.tryPromise({
+            try: () =>
+              readContainedFile(worktreeRoot, filePath, MAX_READ_TEXT_BYTES),
+            catch: (error) =>
+              containmentRpcError(
+                error as FilesystemContainmentError,
+                'read',
+                filePath
+              ),
           })
+          const result: FileTextContent = {
+            relativePath: filePath,
+            contents: contained.contents.toString('utf-8'),
+            byteLength: contained.byteLength,
+            truncated: contained.byteLength > MAX_READ_TEXT_BYTES,
+          }
 
           // Extension checks miss extensionless binaries; sniff the decoded
           // text so the editor never renders mangled bytes as source.
@@ -1550,20 +1540,14 @@ class FileService extends Context.Service<
         Effect.gen(function* () {
           const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
           const worktreeRoot = workspace.worktreePath
-          const fullPath = resolve(worktreeRoot, filePath)
-
-          yield* validatePathContainment(fullPath, worktreeRoot, filePath)
-
           yield* Effect.tryPromise({
-            try: async () => {
-              await mkdir(dirname(fullPath), { recursive: true })
-              await writeFile(fullPath, contents, 'utf-8')
-            },
+            try: () => writeContainedFile(worktreeRoot, filePath, contents),
             catch: (error) =>
-              new RpcError({
-                message: `Failed to write file: ${String(error)}`,
-                code: 'WRITE_FAILED',
-              }),
+              containmentRpcError(
+                error as FilesystemContainmentError,
+                'write',
+                filePath
+              ),
           })
 
           return { relativePath: filePath }

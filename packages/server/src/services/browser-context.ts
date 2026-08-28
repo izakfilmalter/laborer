@@ -1,15 +1,17 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
+import { dirname, join, relative, resolve } from 'node:path'
 import type {
   BrowserAnnotation,
   BrowserContextItem,
 } from '@laborer/shared/browser-control'
 import {
+  BrowserAnnotation as BrowserAnnotationSchema,
   BrowserContextError,
   BrowserContextItem as BrowserContextItemSchema,
 } from '@laborer/shared/browser-control'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Context, Effect, Layer, Schema, SynchronizedRef } from 'effect'
+import { writeContainedFile } from '../lib/filesystem-containment.js'
 
 const DATA_URL = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/
 const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex')
@@ -34,10 +36,21 @@ export class BrowserContext extends Context.Service<
   static readonly layer = Layer.effect(
     BrowserContext,
     Effect.gen(function* () {
-      const root = resolve(
+      const configuredRoot = resolve(
         process.env.LABORER_BROWSER_CONTEXT_ROOT ??
           join(dirname(taskDatabasePath()), 'browser-context')
       )
+      const root = yield* Effect.tryPromise({
+        try: async () => {
+          await mkdir(configuredRoot, { recursive: true })
+          return realpath(configuredRoot)
+        },
+        catch: () =>
+          new BrowserContextError({
+            code: 'IO_FAILED',
+            message: 'Unable to initialize browser context storage',
+          }),
+      }).pipe(Effect.orDie)
       const lock = yield* SynchronizedRef.make(0)
       const fileFor = (workspaceId: string) =>
         join(root, Buffer.from(workspaceId).toString('base64url'), 'inbox.json')
@@ -100,21 +113,32 @@ export class BrowserContext extends Context.Service<
         (workspaceId: string, annotation: BrowserAnnotation) =>
           synchronized(
             Effect.gen(function* () {
+              const decoded = yield* Schema.decodeUnknownEffect(
+                BrowserAnnotationSchema
+              )(annotation).pipe(
+                Effect.mapError(
+                  () =>
+                    new BrowserContextError({
+                      code: 'INVALID_ARTIFACT',
+                      message: 'Annotation payload is invalid',
+                    })
+                )
+              )
               const dir = dirname(fileFor(workspaceId))
               let screenshot: BrowserContextItem['annotation']['screenshot'] =
                 null
-              if (annotation.screenshot) {
-                const match = DATA_URL.exec(annotation.screenshot.dataUrl)
+              if (decoded.screenshot) {
+                const match = DATA_URL.exec(decoded.screenshot.dataUrl)
                 if (!match?.[1]) {
                   return yield* new BrowserContextError({
                     code: 'INVALID_ARTIFACT',
                     message: 'Annotation screenshot is not a PNG data URL',
                   })
                 }
-                const artifactPath = join(
-                  dir,
+                const artifactRelativePath = join(
+                  relative(root, dir),
                   'artifacts',
-                  `${annotation.id}.png`
+                  `${crypto.randomUUID()}.png`
                 )
                 const artifact = Buffer.from(match[1], 'base64')
                 if (
@@ -127,11 +151,14 @@ export class BrowserContext extends Context.Service<
                     message: 'Annotation screenshot does not contain PNG data',
                   })
                 }
-                yield* Effect.tryPromise({
-                  try: async () => {
-                    await mkdir(dirname(artifactPath), { recursive: true })
-                    await writeFile(artifactPath, artifact, { mode: 0o600 })
-                  },
+                const artifactPath = yield* Effect.tryPromise({
+                  try: () =>
+                    writeContainedFile(
+                      root,
+                      artifactRelativePath,
+                      artifact,
+                      0o600
+                    ),
                   catch: () =>
                     new BrowserContextError({
                       code: 'IO_FAILED',
@@ -141,15 +168,15 @@ export class BrowserContext extends Context.Service<
                 screenshot = {
                   artifactPath,
                   mimeType: 'image/png',
-                  width: annotation.screenshot.width,
-                  height: annotation.screenshot.height,
+                  width: decoded.screenshot.width,
+                  height: decoded.screenshot.height,
                 }
               }
               const now = new Date().toISOString()
               const item: BrowserContextItem = {
-                id: annotation.id,
+                id: decoded.id,
                 workspaceId,
-                annotation: { ...annotation, screenshot },
+                annotation: { ...decoded, screenshot },
                 state: 'pending',
                 deliveredAt: now,
                 consumedAt: null,

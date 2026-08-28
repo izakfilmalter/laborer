@@ -10,7 +10,13 @@
  * @see file-service.ts — FileService implementation
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
@@ -218,6 +224,40 @@ describe('FileService files surface', () => {
         assert.strictEqual(result.code, 'PATH_TRAVERSAL')
       }).pipe(Effect.provide(TestFileServiceLayer))
     )
+
+    it.effect('rejects reads through an escaping symlink', () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-read-symlink-escape', tempRoots)
+        const outsidePath = join(repoPath, '..', `${crypto.randomUUID()}.txt`)
+        writeFileSync(outsidePath, 'outside\n')
+        symlinkSync(outsidePath, join(repoPath, 'escape.txt'))
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
+
+        const result = yield* Effect.flip(
+          (yield* FileService).readText(workspaceId, 'escape.txt')
+        )
+
+        assert.strictEqual(result.code, 'PATH_TRAVERSAL')
+      }).pipe(Effect.provide(TestFileServiceLayer))
+    )
+
+    it.effect('reads through a symlink that remains inside the workspace', () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-read-symlink-inside', tempRoots)
+        writeFileSync(join(repoPath, 'target.txt'), 'inside\n')
+        symlinkSync('target.txt', join(repoPath, 'alias.txt'))
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
+
+        const result = yield* (yield* FileService).readText(
+          workspaceId,
+          'alias.txt'
+        )
+
+        assert.strictEqual(result.contents, 'inside\n')
+      }).pipe(Effect.provide(TestFileServiceLayer))
+    )
   })
 
   describe('write', () => {
@@ -270,6 +310,72 @@ describe('FileService files surface', () => {
         )
         assert.strictEqual(result.code, 'PATH_TRAVERSAL')
       }).pipe(Effect.provide(TestFileServiceLayer))
+    )
+
+    it.effect('rejects overwriting an escaping file symlink', () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-write-file-symlink', tempRoots)
+        const outsidePath = join(repoPath, '..', `${crypto.randomUUID()}.txt`)
+        writeFileSync(outsidePath, 'untouched\n')
+        symlinkSync(outsidePath, join(repoPath, 'escape.txt'))
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
+
+        const result = yield* Effect.flip(
+          (yield* FileService).write(workspaceId, 'escape.txt', 'changed\n')
+        )
+
+        assert.strictEqual(result.code, 'PATH_TRAVERSAL')
+        assert.strictEqual(readFileSync(outsidePath, 'utf8'), 'untouched\n')
+      }).pipe(Effect.provide(TestFileServiceLayer))
+    )
+
+    it.effect('rejects writes through an escaping directory symlink', () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('file-write-directory-symlink', tempRoots)
+        const outsideDir = join(repoPath, '..', crypto.randomUUID())
+        mkdirSync(outsideDir)
+        symlinkSync(outsideDir, join(repoPath, 'escape'))
+        const { database } = yield* LaborerDatabase
+        const workspaceId = seedWorkspace(database, repoPath)
+
+        const result = yield* Effect.flip(
+          (yield* FileService).write(
+            workspaceId,
+            'escape/created.txt',
+            'changed\n'
+          )
+        )
+
+        assert.strictEqual(result.code, 'PATH_TRAVERSAL')
+        assert.isFalse(existsSync(join(outsideDir, 'created.txt')))
+      }).pipe(Effect.provide(TestFileServiceLayer))
+    )
+
+    it.effect(
+      'writes through a directory symlink contained by the workspace',
+      () =>
+        Effect.gen(function* () {
+          const repoPath = initRepo(
+            'file-write-directory-symlink-inside',
+            tempRoots
+          )
+          mkdirSync(join(repoPath, 'actual'))
+          symlinkSync('actual', join(repoPath, 'alias'))
+          const { database } = yield* LaborerDatabase
+          const workspaceId = seedWorkspace(database, repoPath)
+
+          yield* (yield* FileService).write(
+            workspaceId,
+            'alias/created.txt',
+            'inside\n'
+          )
+
+          assert.strictEqual(
+            readFileSync(join(repoPath, 'actual/created.txt'), 'utf8'),
+            'inside\n'
+          )
+        }).pipe(Effect.provide(TestFileServiceLayer))
     )
   })
 })

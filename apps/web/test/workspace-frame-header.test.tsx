@@ -120,6 +120,7 @@ const CHECKS_RE = /checks/i
 const UNRESOLVED_RE = /unresolved conversation/i
 const APPROVED_RE = /^Approved/
 const ANY_REVIEW_RE = /Approved|Review required|Changes requested/
+const WORKSPACE_FRAME_AUTHOR_TEST_ID_RE = /^workspace-frame-author-/
 
 /** Default props for a typical active pane scenario. */
 const BASE_PROPS = {
@@ -179,7 +180,7 @@ describe('WorkspaceFrameHeader', () => {
   it('leaves the title unadorned for the viewer’s own work', () => {
     render(<WorkspaceFrameHeader {...BASE_PROPS} actions={mockActions()} />)
 
-    expect(screen.queryByTestId(/^workspace-frame-author-/)).toBeNull()
+    expect(screen.queryByTestId(WORKSPACE_FRAME_AUTHOR_TEST_ID_RE)).toBeNull()
   })
 
   it('does not show a task identifier for a root workspace', () => {

@@ -100,7 +100,7 @@ test.describe('task board and kanban journeys', () => {
       const todo = columnFor(lane, 'todo')
       await todo.getByRole('button', { name: 'Add card to Todo' }).click()
       const composer = todo.getByRole('textbox', {
-        name: 'Card title or Slack message link for Todo',
+        name: 'Card title, branch name, or Slack message link for Todo',
       })
       const initialTitle = `Board journey ${crypto.randomUUID()}`
       await composer.fill(initialTitle)

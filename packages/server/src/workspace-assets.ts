@@ -1,7 +1,7 @@
 // biome-ignore-all lint/complexity/noExcessiveCognitiveComplexity: asset resolution deliberately keeps every security gate in one auditable path.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import {
   basename,
   dirname,
@@ -11,6 +11,7 @@ import {
   relative,
   resolve,
 } from 'node:path'
+import { env } from '@laborer/env/server'
 import { RpcError } from '@laborer/shared/rpc'
 import { Effect, Schema } from 'effect'
 import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
@@ -19,7 +20,7 @@ import { WorkspaceProvider } from './services/workspace-provider.js'
 export const WORKSPACE_ASSET_ROUTE_PREFIX = '/api/workspace-assets'
 export const WORKSPACE_ASSET_TTL_MS = 60 * 60 * 1000
 
-const signingKey = randomBytes(32)
+const SIGNING_KEY_PATH = join(env.DATA_DIR, 'workspace-asset-signing-key')
 const ENTRY_EXTENSION = /\.(?:html?|pdf)$/i
 const PATH_SEPARATOR = /[\\/]/
 const BYTE_RANGE = /^bytes=(\d*)-(\d*)$/
@@ -95,7 +96,42 @@ const decode = (value: string): string | null => {
     return null
   }
 }
-const sign = (payload: string, key: Uint8Array = signingKey): string =>
+let signingKeyPromise: Promise<Uint8Array> | undefined
+
+const loadSigningKey = async (): Promise<Uint8Array> => {
+  await mkdir(env.DATA_DIR, { recursive: true })
+  const existing = await readFile(SIGNING_KEY_PATH).catch(() => null)
+  if (existing !== null) {
+    if (existing.byteLength !== 32) {
+      throw new Error('Workspace asset signing key must be 32 bytes.')
+    }
+    return existing
+  }
+  const created = randomBytes(32)
+  await writeFile(SIGNING_KEY_PATH, created, { flag: 'wx', mode: 0o600 }).catch(
+    (error: unknown) => {
+      if (
+        typeof error !== 'object' ||
+        error === null ||
+        Reflect.get(error, 'code') !== 'EEXIST'
+      ) {
+        throw error
+      }
+    }
+  )
+  const persisted = await readFile(SIGNING_KEY_PATH)
+  if (persisted.byteLength !== 32) {
+    throw new Error('Workspace asset signing key must be 32 bytes.')
+  }
+  return persisted
+}
+
+const getSigningKey = (): Promise<Uint8Array> => {
+  signingKeyPromise ??= loadSigningKey()
+  return signingKeyPromise
+}
+
+const sign = (payload: string, key: Uint8Array): string =>
   createHmac('sha256', Buffer.from(key)).update(payload).digest('base64url')
 
 const containedFile = async (
@@ -155,6 +191,16 @@ export const issueWorkspaceAssetUrl = (
       })
     }
     const expiresAt = (options.now ?? Date.now()) + WORKSPACE_ASSET_TTL_MS
+    const key =
+      options.key ??
+      (yield* Effect.tryPromise({
+        try: getSigningKey,
+        catch: () =>
+          new RpcError({
+            code: 'ASSET_SIGNING_KEY_FAILED',
+            message: 'Could not load the workspace asset signing key.',
+          }),
+      }))
     const payload = encode(
       encodeClaims({
         baseRelativePath: dirname(relativePath),
@@ -163,7 +209,7 @@ export const issueWorkspaceAssetUrl = (
         workspaceId,
       })
     )
-    const token = `${payload}.${sign(payload, options.key ?? signingKey)}`
+    const token = `${payload}.${sign(payload, key)}`
     return {
       expiresAt,
       relativeUrl: `${WORKSPACE_ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(basename(relativePath))}`,
@@ -181,7 +227,8 @@ export const resolveWorkspaceAsset = (
     if (!(payload && signature) || extra !== undefined) {
       return null
     }
-    const expected = sign(payload, options.key ?? signingKey)
+    const key = options.key ?? (yield* Effect.promise(getSigningKey))
+    const expected = sign(payload, key)
     const actualBytes = Buffer.from(signature)
     const expectedBytes = Buffer.from(expected)
     if (

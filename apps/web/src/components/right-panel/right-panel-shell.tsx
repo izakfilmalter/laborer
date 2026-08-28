@@ -88,7 +88,12 @@ export function RightPanelShell(props: {
       ref={hostRef}
       style={{ width: `${width}px` }}
     >
-      <RightPanelResizeHandle handlers={handlers} />
+      <RightPanelResizeHandle
+        handlers={handlers}
+        max={maxWidth}
+        min={RIGHT_PANEL_MIN_WIDTH}
+        value={width}
+      />
       {props.children}
     </div>
   )

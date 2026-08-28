@@ -8,9 +8,8 @@
  * - The native desktop context menu is replaced with `@laborer/ui`'s
  *   Base UI context menu (Close / Close others / Close to the right /
  *   Close all).
- * - Preview-session and desktop-overlay (favicon/audio) plumbing is left
- *   out until those surfaces exist; titles and icons fall back to static
- *   names.
+ * - Preview titles, favicons, and audio state use Laborer's preview-session
+ *   and desktop-overlay stores while retaining t3's stale-origin guard.
  * - There is no Terminal surface (Laborer terminals live in the main panel
  *   tabs/splits) and no Agents surface (Laborer skips it), so the launcher
  *   offers four cards and the `T`/`A` shortcuts are unassigned.
@@ -95,6 +94,8 @@ interface RightPanelTabsProps {
   readonly onCloseOtherSurfaces: (surface: RightPanelSurface) => void
   readonly onCloseSurface: (surface: RightPanelSurface) => void
   readonly onCloseSurfacesToRight: (surface: RightPanelSurface) => void
+  readonly onCopyFilePath: (relativePath: string) => void
+  readonly pendingSurfaceIds: ReadonlySet<string>
   readonly pullRequestAvailable: boolean
   /** The workspace's PR number, used for the pull-request tab title. */
   readonly pullRequestNumber?: number | null | undefined
@@ -489,6 +490,25 @@ function RightPanelEmptyState(props: {
   )
 }
 
+export function browserSurfaceTitle(title: string, url: string): string {
+  if (title.trim().length > 0) {
+    return title
+  }
+  try {
+    return new URL(url).host || 'Browser'
+  } catch {
+    return 'Browser'
+  }
+}
+
+export function sameBrowserOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin
+  } catch {
+    return false
+  }
+}
+
 function surfaceTitle(
   surface: RightPanelSurface,
   pullRequestNumber: number | null | undefined,
@@ -578,6 +598,8 @@ function RightPanelTab({
   onCloseOthers,
   onCloseSurface,
   onCloseToRight,
+  onCopyFilePath,
+  pending,
   pullRequestStatus,
   surface,
   surfaceCount,
@@ -592,6 +614,8 @@ function RightPanelTab({
   readonly onCloseOthers: () => void
   readonly onCloseSurface: () => void
   readonly onCloseToRight: () => void
+  readonly onCopyFilePath: () => void
+  readonly pending: boolean
   readonly pullRequestStatus?: PullRequestTabStatus | null | undefined
   readonly surface: RightPanelSurface
   readonly surfaceCount: number
@@ -637,11 +661,21 @@ function RightPanelTab({
               label={`Close ${title}`}
               onClick={onCloseSurface}
             >
-              <SurfaceIcon
-                browserOverlay={browserOverlay}
-                pullRequestStatus={pullRequestStatus}
-                surface={surface}
-              />
+              {pending ? (
+                <>
+                  <span
+                    aria-hidden
+                    className="size-2 rounded-full bg-foreground"
+                  />
+                  <span className="sr-only">Unsaved changes</span>
+                </>
+              ) : (
+                <SurfaceIcon
+                  browserOverlay={browserOverlay}
+                  pullRequestStatus={pullRequestStatus}
+                  surface={surface}
+                />
+              )}
             </PanelTabCloseButton>
             <Tooltip>
               <TooltipTrigger
@@ -668,6 +702,14 @@ function RightPanelTab({
         }
       />
       <ContextMenuContent>
+        {surface.kind === 'file' ? (
+          <>
+            <ContextMenuItem onClick={onCopyFilePath}>
+              Copy path
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
         {surface.kind === 'preview' && browserRuntimeTabId ? (
           <>
             <ContextMenuItem
@@ -801,9 +843,23 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   : null
               const browserTitle =
                 browserSnapshot && browserSnapshot.navStatus._tag !== 'Idle'
-                  ? browserSnapshot.navStatus.title ||
-                    browserSnapshot.navStatus.url
+                  ? browserSurfaceTitle(
+                      browserSnapshot.navStatus.title,
+                      browserSnapshot.navStatus.url
+                    )
                   : undefined
+              const safeBrowserOverlay =
+                browserOverlay?.favicon &&
+                browserSnapshot &&
+                browserSnapshot.navStatus._tag !== 'Idle' &&
+                sameBrowserOrigin(
+                  browserOverlay.favicon.pageUrl,
+                  browserSnapshot.navStatus.url
+                )
+                  ? browserOverlay
+                  : browserOverlay
+                    ? { ...browserOverlay, favicon: null }
+                    : browserOverlay
               const browserRuntimeTabId =
                 surface.kind === 'preview' && surface.resourceId
                   ? previewRuntimeTabId(
@@ -815,7 +871,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               return (
                 <RightPanelTab
                   active={surface.id === props.activeSurfaceId}
-                  browserOverlay={browserOverlay}
+                  browserOverlay={safeBrowserOverlay}
                   browserRuntimeTabId={browserRuntimeTabId}
                   key={surface.id}
                   onActivate={() => props.onActivate(surface)}
@@ -823,6 +879,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   onCloseOthers={() => props.onCloseOtherSurfaces(surface)}
                   onCloseSurface={() => props.onCloseSurface(surface)}
                   onCloseToRight={() => props.onCloseSurfacesToRight(surface)}
+                  onCopyFilePath={() =>
+                    surface.kind === 'file'
+                      ? props.onCopyFilePath(surface.relativePath)
+                      : undefined
+                  }
+                  pending={props.pendingSurfaceIds.has(surface.id)}
                   pullRequestStatus={props.pullRequestStatus}
                   surface={surface}
                   surfaceCount={props.surfaces.length}

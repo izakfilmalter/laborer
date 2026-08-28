@@ -25,7 +25,7 @@ import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { PullRequestState } from '@laborer/shared/rpc'
 import { useLiveQuery } from '@tanstack/react-db'
 import { AsyncResult, Atom } from 'effect/unstable/reactivity'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import { FilePreviewPanel } from '@/components/files/file-preview-panel'
 import { PreviewPanel } from '@/components/preview/preview-panel'
@@ -35,6 +35,7 @@ import {
   taskCollection,
   workspaceViewsFromRows,
 } from '@/db/shared-state'
+import { toast } from '@/lib/toast'
 import { DiffPane } from '@/panes/diff-pane'
 import { usePreviewStateStore } from '@/preview-state-store'
 import {
@@ -139,6 +140,36 @@ export function WorkspaceRightPanel({
   const pullRequestStatus = useWorkspacePullRequestStatus(workspaceId)
   const projectName = project.name
   const closePreview = useAtomSet(closePreviewMutation, { mode: 'promise' })
+  const [pendingFileSurfaceIds, setPendingFileSurfaceIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+
+  const handlePendingChange = useCallback(
+    (relativePath: string, pending: boolean) => {
+      const surfaceId = `file:${relativePath}`
+      setPendingFileSurfaceIds((current) => {
+        if (current.has(surfaceId) === pending) {
+          return current
+        }
+        const next = new Set(current)
+        if (pending) {
+          next.add(surfaceId)
+        } else {
+          next.delete(surfaceId)
+        }
+        return next
+      })
+    },
+    []
+  )
+
+  useEffect(() => {
+    const liveIds = new Set<string>(state.surfaces.map((surface) => surface.id))
+    setPendingFileSurfaceIds((current) => {
+      const next = new Set([...current].filter((id) => liveIds.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [state.surfaces])
 
   const activeSurface = useMemo(
     () =>
@@ -245,6 +276,13 @@ export function WorkspaceRightPanel({
       onCloseOtherSurfaces={handleCloseOtherSurfaces}
       onCloseSurface={handleCloseSurface}
       onCloseSurfacesToRight={handleCloseSurfacesToRight}
+      onCopyFilePath={(path) => {
+        navigator.clipboard.writeText(path).then(
+          () => toast.success('Path copied'),
+          () => toast.error('Unable to copy path')
+        )
+      }}
+      pendingSurfaceIds={pendingFileSurfaceIds}
       pullRequestAvailable={pullRequestNumber !== null}
       pullRequestNumber={pullRequestNumber}
       pullRequestStatus={pullRequestStatus}
@@ -255,6 +293,7 @@ export function WorkspaceRightPanel({
       {activeSurface ? (
         <ActiveSurfaceContent
           configuredUrls={configuredUrls}
+          onPendingChange={handlePendingChange}
           projectName={projectName}
           surface={activeSurface}
           workspaceId={workspaceId}
@@ -264,20 +303,17 @@ export function WorkspaceRightPanel({
   )
 }
 
-/** The debounced save owns pending state; the tab chrome ignores it for now. */
-const noopPendingChange = () => {
-  // Reserved for a dirty indicator on file tabs.
-}
-
 /** The surface registry: maps the active descriptor to its content. */
 function ActiveSurfaceContent({
   configuredUrls,
   projectName,
+  onPendingChange,
   surface,
   workspaceId,
 }: {
   readonly projectName: string
   readonly configuredUrls: readonly string[]
+  readonly onPendingChange: (relativePath: string, pending: boolean) => void
   readonly surface: RightPanelSurface
   readonly workspaceId: string
 }) {
@@ -305,7 +341,7 @@ function ActiveSurfaceContent({
       return (
         <FilePreviewPanel
           onOpenFile={handleOpenFile}
-          onPendingChange={noopPendingChange}
+          onPendingChange={onPendingChange}
           projectName={projectName}
           relativePath={null}
           revealLine={null}
@@ -317,7 +353,7 @@ function ActiveSurfaceContent({
       return (
         <FilePreviewPanel
           onOpenFile={handleOpenFile}
-          onPendingChange={noopPendingChange}
+          onPendingChange={onPendingChange}
           projectName={projectName}
           relativePath={surface.relativePath}
           revealLine={surface.revealLine}

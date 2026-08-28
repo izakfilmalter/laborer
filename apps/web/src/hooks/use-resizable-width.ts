@@ -11,6 +11,7 @@
  */
 
 import {
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useRef,
@@ -32,6 +33,7 @@ interface UseResizableWidthOptions {
 }
 
 interface ResizableWidthHandlers {
+  readonly onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void
   readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void
@@ -195,9 +197,54 @@ function useResizableWidth(options: UseResizableWidthOptions): {
     [releasePointer]
   )
 
+  const commitWidth = useCallback(
+    (nextWidth: number) => {
+      const next = clamp(nextWidth)
+      setWidth(next)
+      try {
+        window.localStorage.setItem(storageKey, String(next))
+      } catch (error) {
+        console.error('Could not persist panel width.', error)
+      }
+    },
+    [clamp, storageKey]
+  )
+
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      let next: number | null = null
+      switch (event.key) {
+        case 'ArrowLeft':
+          next = clampedWidth + (edge === 'left' ? 10 : -10)
+          break
+        case 'ArrowRight':
+          next = clampedWidth + (edge === 'right' ? 10 : -10)
+          break
+        case 'Home':
+          next = minWidth
+          break
+        case 'End':
+          next = maxWidth
+          break
+        default:
+          return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      commitWidth(next)
+    },
+    [clampedWidth, commitWidth, edge, maxWidth, minWidth]
+  )
+
   return {
     width: clampedWidth,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: {
+      onKeyDown,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel,
+    },
   }
 }
 

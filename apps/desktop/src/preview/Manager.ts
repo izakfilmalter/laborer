@@ -3,7 +3,6 @@ import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewColorScheme,
   DesktopPreviewRecordingArtifact,
-  DesktopPreviewRecordingFrame,
   DesktopPreviewScreenshotArtifact,
   DesktopPreviewTabDefaults,
   DesktopPreviewTabState,
@@ -17,32 +16,20 @@ import type {
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from '@laborer/shared/desktop-bridge'
-import {
-  PreviewHumanInputEventSchema,
-  PreviewMouseNavigateEventSchema,
-} from '@laborer/shared/desktop-bridge'
-import { Option, Schema } from 'effect'
-import {
-  BrowserWindow,
-  nativeImage,
-  type WebContents,
-  webContents,
-} from 'electron'
+import type { WebContents } from 'electron'
+import { webContents } from 'electron'
 import { PreviewArtifacts } from './Artifacts.js'
 import { PreviewAutomation } from './Automation.js'
 import { BrowserSession } from './BrowserSession.js'
+import { PreviewCapture } from './Capture.js'
 import {
   ANNOTATION_THEME_CHANNEL,
-  HUMAN_INPUT_CHANNEL,
-  MOUSE_NAVIGATE_CHANNEL,
-  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
-  PREVIEW_RECORDING_FRAME_CHANNEL,
   PREVIEW_STATE_CHANGE_CHANNEL,
 } from './channels.js'
 import {
-  fitPictureInPictureContentSize,
-  PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON,
-} from './picture-in-picture-layout.js'
+  type ManagedPreviewTab,
+  PreviewGuestLifecycle,
+} from './GuestLifecycle.js'
 import { PREVIEW_WEBVIEW_PREFERENCES } from './WebviewPreferences.js'
 
 const ZOOM_LEVELS = [
@@ -50,23 +37,10 @@ const ZOOM_LEVELS = [
   5,
 ] as const
 const DEFAULT_ZOOM_FACTOR = 1
-const FRAME_INTERVAL_MS = Math.ceil(1000 / 12)
-const FRAME_JPEG_QUALITY = 80
 const MAX_TAB_ID_LENGTH = 4096
 const MAX_URL_LENGTH = 2048
 const LOOPBACK_PREFIX_PATTERN =
   /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::|\/|$)/i
-
-interface ManagedTab {
-  cleanup: (() => void) | null
-  owner: WebContents
-  state: DesktopPreviewTabState
-}
-
-interface FrameSession {
-  readonly consumers: Set<'picture-in-picture' | 'recording'>
-  readonly timer: ReturnType<typeof setInterval>
-}
 
 function assertTabId(tabId: unknown): asserts tabId is string {
   if (
@@ -127,23 +101,16 @@ function nextZoom(current: number, direction: 'in' | 'out'): number {
   return ZOOM_LEVELS[Math.max(0, Math.min(index, ZOOM_LEVELS.length - 1))] ?? 1
 }
 
-function buildPictureInPictureDataUrl(): string {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"><style>html,body,img{width:100%;height:100%;margin:0}body{background:#111;overflow:hidden}img{object-fit:contain}</style></head><body><img id="frame" alt="Live browser preview"><script>window.previewPictureInPicture.onFrame((next)=>{document.getElementById('frame').src='data:image/jpeg;base64,'+next.data})</script></body></html>`
-  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
-}
-
 export class PreviewManager {
-  readonly #tabs = new Map<string, ManagedTab>()
+  readonly #tabs = new Map<string, ManagedPreviewTab>()
   readonly #browserSessions = new BrowserSession()
   readonly #automation = new PreviewAutomation((owner, tabId) =>
     this.#requireGuest(owner, tabId)
   )
   readonly #artifacts: PreviewArtifacts
-  readonly #frameSessions = new Map<string, FrameSession>()
-  readonly #pictureInPictureWindows = new Map<string, BrowserWindow>()
-  readonly #pictureInPictureAspectRatios = new Map<string, number>()
+  readonly #capture: PreviewCapture
+  readonly #guests: PreviewGuestLifecycle
   readonly #pickPreloadUrl: string | null
-  readonly #pictureInPicturePreloadPath: string
 
   constructor(options: {
     artifactDirectory: string
@@ -161,8 +128,28 @@ export class PreviewManager {
         }
       },
     })
+    this.#capture = new PreviewCapture({
+      getRuntime: (tabId) => {
+        const tab = this.#tabs.get(tabId)
+        const guest = tab ? this.#guest(tab, false) : null
+        return tab && guest ? { guest, owner: tab.owner } : null
+      },
+      pictureInPicturePreloadPath: options.pictureInPicturePreloadPath,
+      setPictureInPicture: (tabId, pictureInPicture) => {
+        const tab = this.#tabs.get(tabId)
+        if (tab) {
+          this.#update(tab, { pictureInPicture })
+        }
+      },
+    })
+    this.#guests = new PreviewGuestLifecycle({
+      emit: (tab) => this.#emit(tab),
+      getGuest: (tab) => this.#guest(tab, false),
+      isCurrentTab: (tab) => this.#tabs.get(tab.state.tabId) === tab,
+      isSafeNavigation: isSafePreviewNavigation,
+      update: (tab, patch) => this.#update(tab, patch),
+    })
     this.#pickPreloadUrl = options.pickPreloadUrl
-    this.#pictureInPicturePreloadPath = options.pictureInPicturePreloadPath
   }
 
   get pickPreloadUrl(): string | null {
@@ -198,7 +185,7 @@ export class PreviewManager {
       return
     }
     const now = new Date().toISOString()
-    const managed: ManagedTab = {
+    const managed: ManagedPreviewTab = {
       cleanup: null,
       owner,
       state: {
@@ -224,7 +211,7 @@ export class PreviewManager {
     const tab = this.#requireTab(owner, tabId)
     this.cancelPickElement(owner, tabId)
     await this.closePictureInPicture(owner, tabId)
-    this.#stopFrameCapture(tabId, 'recording')
+    this.#capture.stopRecording(tabId)
     tab.cleanup?.()
     this.#tabs.delete(tabId)
     this.#emitState(owner, tabId, {
@@ -267,7 +254,7 @@ export class PreviewManager {
     }
 
     tab.cleanup?.()
-    tab.cleanup = this.#attachGuest(tab, guest)
+    tab.cleanup = this.#guests.attach(tab, guest)
     guest.setZoomFactor(tab.state.zoomFactor)
     guest.setAudioMuted(tab.state.audioMuted)
     const { favicon: _favicon, ...stateWithoutFavicon } = tab.state
@@ -276,7 +263,7 @@ export class PreviewManager {
       audible: guest.isCurrentlyAudible(),
       canGoBack: guest.navigationHistory.canGoBack(),
       canGoForward: guest.navigationHistory.canGoForward(),
-      navStatus: this.#readNavStatus(guest),
+      navStatus: this.#guests.readNavStatus(guest),
       updatedAt: new Date().toISOString(),
       webContentsId,
     }
@@ -426,80 +413,26 @@ export class PreviewManager {
   }
 
   async openPictureInPicture(owner: WebContents, tabId: string): Promise<void> {
-    const guest = this.#requireGuest(owner, tabId)
-    const existing = this.#pictureInPictureWindows.get(tabId)
-    if (existing && !existing.isDestroyed()) {
-      existing.showInactive()
-      return
-    }
-    const window = new BrowserWindow({
-      alwaysOnTop: true,
-      autoHideMenuBar: true,
-      backgroundColor: '#111111',
-      fullscreenable: false,
-      height: 320,
-      maximizable: false,
-      minimizable: false,
-      minHeight: 160,
-      minWidth: 240,
-      resizable: true,
-      show: false,
-      skipTaskbar: true,
-      title: guest.getTitle().trim()
-        ? `Preview - ${guest.getTitle().trim()}`
-        : 'Browser preview',
-      width: 480,
-      webPreferences: {
-        backgroundThrottling: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        preload: this.#pictureInPicturePreloadPath,
-        sandbox: true,
-      },
-    })
-    this.#pictureInPictureWindows.set(tabId, window)
-    window.setVisibleOnAllWorkspaces(true, { skipTransformProcessType: true })
-    window.once('closed', () => {
-      if (this.#pictureInPictureWindows.get(tabId) === window) {
-        this.#pictureInPictureWindows.delete(tabId)
-        this.#pictureInPictureAspectRatios.delete(tabId)
-        this.#stopFrameCapture(tabId, 'picture-in-picture')
-        const current = this.#tabs.get(tabId)
-        if (current) {
-          this.#update(current, { pictureInPicture: false })
-        }
-      }
-    })
-    await window.loadURL(buildPictureInPictureDataUrl())
-    this.#startFrameCapture(tabId, 'picture-in-picture')
-    this.#update(this.#requireTab(owner, tabId), { pictureInPicture: true })
-    window.showInactive()
+    await this.#capture.openPictureInPicture(
+      tabId,
+      this.#requireGuest(owner, tabId)
+    )
   }
 
   closePictureInPicture(owner: WebContents, tabId: string): Promise<void> {
     this.#requireTab(owner, tabId)
-    this.#stopFrameCapture(tabId, 'picture-in-picture')
-    const window = this.#pictureInPictureWindows.get(tabId)
-    this.#pictureInPictureWindows.delete(tabId)
-    this.#pictureInPictureAspectRatios.delete(tabId)
-    if (window && !window.isDestroyed()) {
-      window.close()
-    }
-    const tab = this.#tabs.get(tabId)
-    if (tab) {
-      this.#update(tab, { pictureInPicture: false })
-    }
+    this.#capture.closePictureInPicture(tabId)
     return Promise.resolve()
   }
 
   startRecording(owner: WebContents, tabId: string): void {
     this.#requireGuest(owner, tabId)
-    this.#startFrameCapture(tabId, 'recording')
+    this.#capture.startRecording(tabId)
   }
 
   stopRecording(owner: WebContents, tabId: string): void {
     this.#requireTab(owner, tabId)
-    this.#stopFrameCapture(tabId, 'recording')
+    this.#capture.stopRecording(tabId)
   }
 
   async saveRecording(
@@ -597,9 +530,7 @@ export class PreviewManager {
         continue
       }
       this.#artifacts.cancelPickElement(tabId)
-      this.#stopFrameCapture(tabId, 'recording')
-      this.#stopFrameCapture(tabId, 'picture-in-picture')
-      this.#pictureInPictureWindows.get(tabId)?.close()
+      this.#capture.disposeTab(tabId)
       tab.cleanup?.()
       this.#tabs.delete(tabId)
     }
@@ -611,13 +542,13 @@ export class PreviewManager {
     }
   }
 
-  #assertOwner(tab: ManagedTab, owner: WebContents): void {
+  #assertOwner(tab: ManagedPreviewTab, owner: WebContents): void {
     if (tab.owner !== owner || owner.isDestroyed()) {
       throw new Error('Preview tab does not belong to this renderer')
     }
   }
 
-  #requireTab(owner: WebContents, tabId: string): ManagedTab {
+  #requireTab(owner: WebContents, tabId: string): ManagedPreviewTab {
     assertTabId(tabId)
     const tab = this.#tabs.get(tabId)
     if (!tab) {
@@ -627,7 +558,7 @@ export class PreviewManager {
     return tab
   }
 
-  #guest(tab: ManagedTab, required: boolean): WebContents | null {
+  #guest(tab: ManagedPreviewTab, required: boolean): WebContents | null {
     const id = tab.state.webContentsId
     const guest = id === null ? null : webContents.fromId(id)
     if (
@@ -650,7 +581,7 @@ export class PreviewManager {
     return this.#guest(this.#requireTab(owner, tabId), true) as WebContents
   }
 
-  #emit(tab: ManagedTab): void {
+  #emit(tab: ManagedPreviewTab): void {
     this.#emitState(tab.owner, tab.state.tabId, tab.state)
   }
 
@@ -664,224 +595,12 @@ export class PreviewManager {
     }
   }
 
-  #update(tab: ManagedTab, patch: Partial<DesktopPreviewTabState>): void {
+  #update(
+    tab: ManagedPreviewTab,
+    patch: Partial<DesktopPreviewTabState>
+  ): void {
     tab.state = { ...tab.state, ...patch, updatedAt: new Date().toISOString() }
     this.#emit(tab)
-  }
-
-  #readNavStatus(guest: WebContents): DesktopPreviewTabState['navStatus'] {
-    const url = guest.getURL()
-    if (!url || url === 'about:blank') {
-      return { kind: 'Idle' }
-    }
-    return guest.isLoading()
-      ? { kind: 'Loading', title: guest.getTitle(), url }
-      : { kind: 'Success', title: guest.getTitle(), url }
-  }
-
-  #syncGuest(tab: ManagedTab, guest: WebContents): void {
-    if (this.#guest(tab, false) !== guest) {
-      return
-    }
-    this.#update(tab, {
-      audible: guest.isCurrentlyAudible(),
-      canGoBack: guest.navigationHistory.canGoBack(),
-      canGoForward: guest.navigationHistory.canGoForward(),
-      navStatus: this.#readNavStatus(guest),
-    })
-  }
-
-  #attachGuest(tab: ManagedTab, guest: WebContents): () => void {
-    const sync = () => this.#syncGuest(tab, guest)
-    const failed = (
-      _event: unknown,
-      code: number,
-      description: string,
-      validatedUrl: string,
-      isMainFrame: boolean
-    ) => {
-      if (code === -3 || !isMainFrame || this.#guest(tab, false) !== guest) {
-        return
-      }
-      this.#update(tab, {
-        navStatus: {
-          code,
-          description,
-          kind: 'LoadFailed',
-          title: guest.getTitle(),
-          url: validatedUrl || guest.getURL(),
-        },
-      })
-    }
-    const favicon = (_event: unknown, candidates: string[]) => {
-      this.#captureFavicon(tab, guest, candidates).catch(() => undefined)
-    }
-    const audio = (
-      event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>
-    ) => {
-      if (
-        this.#guest(tab, false) === guest &&
-        tab.state.audible !== event.audible
-      ) {
-        this.#update(tab, { audible: event.audible })
-      }
-    }
-    const destroyed = () => {
-      if (tab.state.webContentsId === guest.id) {
-        tab.cleanup?.()
-        tab.cleanup = null
-        const { favicon: _favicon, ...stateWithoutFavicon } = tab.state
-        tab.state = {
-          ...stateWithoutFavicon,
-          audible: false,
-          updatedAt: new Date().toISOString(),
-          webContentsId: null,
-        }
-        this.#emit(tab)
-      }
-    }
-    const humanInput = (_event: unknown, payload: unknown) => {
-      if (
-        Option.isNone(
-          Schema.decodeUnknownOption(PreviewHumanInputEventSchema)(payload)
-        )
-      ) {
-        return
-      }
-      this.#update(tab, { controller: 'human' })
-      setTimeout(() => {
-        if (
-          this.#tabs.get(tab.state.tabId) === tab &&
-          tab.state.controller === 'human'
-        ) {
-          this.#update(tab, { controller: 'none' })
-        }
-      }, 750)
-    }
-    const mouseNavigate = (_event: unknown, payload: unknown) => {
-      const decoded = Option.getOrUndefined(
-        Schema.decodeUnknownOption(PreviewMouseNavigateEventSchema)(payload)
-      )
-      if (!decoded) {
-        return
-      }
-      if (decoded.direction === 'back' && guest.navigationHistory.canGoBack()) {
-        guest.navigationHistory.goBack()
-      } else if (
-        decoded.direction === 'forward' &&
-        guest.navigationHistory.canGoForward()
-      ) {
-        guest.navigationHistory.goForward()
-      }
-    }
-    const beforeInput = (event: Electron.Event, input: Electron.Input) => {
-      if (
-        input.type === 'keyDown' &&
-        input.key.toLowerCase() === 'r' &&
-        (input.meta || input.control) &&
-        !input.shift &&
-        !input.alt
-      ) {
-        event.preventDefault()
-        guest.reload()
-      }
-    }
-    const willNavigate = (event: Electron.Event, url: string) => {
-      if (!isSafePreviewNavigation(url)) {
-        event.preventDefault()
-      }
-    }
-
-    guest.on('did-navigate', sync)
-    guest.on('did-navigate-in-page', sync)
-    guest.on('page-title-updated', sync)
-    guest.on('did-start-loading', sync)
-    guest.on('did-stop-loading', sync)
-    guest.on('did-fail-load', failed)
-    guest.on('page-favicon-updated', favicon)
-    guest.on('audio-state-changed', audio)
-    guest.once('destroyed', destroyed)
-    guest.on('before-input-event', beforeInput)
-    guest.on('will-navigate', willNavigate)
-    guest.ipc.on(HUMAN_INPUT_CHANNEL, humanInput)
-    guest.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate)
-    guest.setWindowOpenHandler(({ url }) => {
-      if (isSafePreviewNavigation(url)) {
-        guest.loadURL(url).catch(() => undefined)
-      }
-      return { action: 'deny' }
-    })
-
-    return () => {
-      guest.removeListener('did-navigate', sync)
-      guest.removeListener('did-navigate-in-page', sync)
-      guest.removeListener('page-title-updated', sync)
-      guest.removeListener('did-start-loading', sync)
-      guest.removeListener('did-stop-loading', sync)
-      guest.removeListener('did-fail-load', failed)
-      guest.removeListener('page-favicon-updated', favicon)
-      guest.removeListener('audio-state-changed', audio)
-      guest.removeListener('destroyed', destroyed)
-      guest.removeListener('before-input-event', beforeInput)
-      guest.removeListener('will-navigate', willNavigate)
-      guest.ipc.removeListener(HUMAN_INPUT_CHANNEL, humanInput)
-      guest.ipc.removeListener(MOUSE_NAVIGATE_CHANNEL, mouseNavigate)
-    }
-  }
-
-  async #captureFavicon(
-    tab: ManagedTab,
-    guest: WebContents,
-    candidates: readonly string[]
-  ): Promise<void> {
-    const pageUrl = guest.getURL()
-    let pageOrigin: string
-    try {
-      pageOrigin = new URL(pageUrl).origin
-    } catch {
-      return
-    }
-    for (const rawCandidate of candidates.slice(0, 8)) {
-      try {
-        const candidate = new URL(rawCandidate, pageUrl)
-        if (candidate.protocol !== 'http:' && candidate.protocol !== 'https:') {
-          continue
-        }
-        const response = await guest.session.fetch(candidate.href, {
-          credentials: candidate.origin === pageOrigin ? 'include' : 'omit',
-          redirect: 'error',
-          signal: AbortSignal.timeout(5000),
-        })
-        if (!response.ok) {
-          continue
-        }
-        const data = Buffer.from(await response.arrayBuffer())
-        if (data.byteLength === 0 || data.byteLength > 100_000) {
-          continue
-        }
-        const source = nativeImage.createFromBuffer(data)
-        if (source.isEmpty()) {
-          continue
-        }
-        const image = source.resize({ height: 32, width: 32 })
-        if (
-          this.#guest(tab, false) !== guest ||
-          new URL(guest.getURL()).origin !== pageOrigin
-        ) {
-          return
-        }
-        this.#update(tab, {
-          favicon: {
-            capturedAt: Date.now(),
-            dataUrl: image.toDataURL(),
-            pageUrl: pageOrigin,
-          },
-        })
-        return
-      } catch {
-        // Try the next bounded candidate.
-      }
-    }
   }
 
   #setZoom(
@@ -900,97 +619,5 @@ export class PreviewManager {
     colorScheme: DesktopPreviewColorScheme
   ): Promise<void> {
     await this.#automation.applyColorScheme(guest, colorScheme)
-  }
-
-  #startFrameCapture(
-    tabId: string,
-    consumer: 'picture-in-picture' | 'recording'
-  ): void {
-    const existing = this.#frameSessions.get(tabId)
-    if (existing) {
-      existing.consumers.add(consumer)
-      return
-    }
-    const consumers = new Set<typeof consumer>([consumer])
-    const capture = () => this.#captureFrame(tabId).catch(() => undefined)
-    const timer = setInterval(capture, FRAME_INTERVAL_MS)
-    timer.unref()
-    this.#frameSessions.set(tabId, { consumers, timer })
-    capture()
-  }
-
-  #stopFrameCapture(
-    tabId: string,
-    consumer: 'picture-in-picture' | 'recording'
-  ): void {
-    const session = this.#frameSessions.get(tabId)
-    if (!session) {
-      return
-    }
-    session.consumers.delete(consumer)
-    if (session.consumers.size === 0) {
-      clearInterval(session.timer)
-      this.#frameSessions.delete(tabId)
-    }
-  }
-
-  async #captureFrame(tabId: string): Promise<void> {
-    const session = this.#frameSessions.get(tabId)
-    const tab = this.#tabs.get(tabId)
-    const guest = tab ? this.#guest(tab, false) : null
-    if (!(session && tab && guest)) {
-      return
-    }
-    try {
-      const image = await guest.capturePage()
-      if (
-        this.#frameSessions.get(tabId) !== session ||
-        this.#guest(tab, false) !== guest
-      ) {
-        return
-      }
-      const size = image.getSize()
-      if (size.width <= 0 || size.height <= 0) {
-        return
-      }
-      const frame: DesktopPreviewRecordingFrame = {
-        data: image.toJPEG(FRAME_JPEG_QUALITY).toString('base64'),
-        height: size.height,
-        receivedAt: new Date().toISOString(),
-        tabId,
-        width: size.width,
-      }
-      if (session.consumers.has('recording') && !tab.owner.isDestroyed()) {
-        tab.owner.send(PREVIEW_RECORDING_FRAME_CHANNEL, frame)
-      }
-      if (session.consumers.has('picture-in-picture')) {
-        const window = this.#pictureInPictureWindows.get(tabId)
-        if (window && !window.isDestroyed()) {
-          const aspectRatio = frame.width / frame.height
-          const previousAspectRatio =
-            this.#pictureInPictureAspectRatios.get(tabId)
-          if (
-            previousAspectRatio === undefined ||
-            Math.abs(previousAspectRatio - aspectRatio) >
-              PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
-          ) {
-            const [width, height] = fitPictureInPictureContentSize(
-              window.getContentSize(),
-              aspectRatio
-            )
-            window.setAspectRatio(0)
-            window.setContentSize(width, height, false)
-            window.setAspectRatio(aspectRatio)
-            this.#pictureInPictureAspectRatios.set(tabId, aspectRatio)
-          }
-          window.webContents.send(
-            PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
-            frame
-          )
-        }
-      }
-    } catch {
-      // Chromium may not have a compositor frame yet; the next tick retries.
-    }
   }
 }

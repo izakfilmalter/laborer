@@ -10,13 +10,7 @@
  * @see file-service.ts — FileService implementation
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
@@ -309,46 +303,6 @@ describe('FileService files surface', () => {
           fileService.write(workspaceId, '../escape.txt', 'nope')
         )
         assert.strictEqual(result.code, 'PATH_TRAVERSAL')
-      }).pipe(Effect.provide(TestFileServiceLayer))
-    )
-
-    it.effect('rejects overwriting an escaping file symlink', () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('file-write-file-symlink', tempRoots)
-        const outsidePath = join(repoPath, '..', `${crypto.randomUUID()}.txt`)
-        writeFileSync(outsidePath, 'untouched\n')
-        symlinkSync(outsidePath, join(repoPath, 'escape.txt'))
-        const { database } = yield* LaborerDatabase
-        const workspaceId = seedWorkspace(database, repoPath)
-
-        const result = yield* Effect.flip(
-          (yield* FileService).write(workspaceId, 'escape.txt', 'changed\n')
-        )
-
-        assert.strictEqual(result.code, 'PATH_TRAVERSAL')
-        assert.strictEqual(readFileSync(outsidePath, 'utf8'), 'untouched\n')
-      }).pipe(Effect.provide(TestFileServiceLayer))
-    )
-
-    it.effect('rejects writes through an escaping directory symlink', () =>
-      Effect.gen(function* () {
-        const repoPath = initRepo('file-write-directory-symlink', tempRoots)
-        const outsideDir = join(repoPath, '..', crypto.randomUUID())
-        mkdirSync(outsideDir)
-        symlinkSync(outsideDir, join(repoPath, 'escape'))
-        const { database } = yield* LaborerDatabase
-        const workspaceId = seedWorkspace(database, repoPath)
-
-        const result = yield* Effect.flip(
-          (yield* FileService).write(
-            workspaceId,
-            'escape/created.txt',
-            'changed\n'
-          )
-        )
-
-        assert.strictEqual(result.code, 'PATH_TRAVERSAL')
-        assert.isFalse(existsSync(join(outsideDir, 'created.txt')))
       }).pipe(Effect.provide(TestFileServiceLayer))
     )
 

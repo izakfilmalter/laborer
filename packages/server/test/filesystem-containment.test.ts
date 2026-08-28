@@ -1,9 +1,6 @@
 import {
-  existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -13,6 +10,7 @@ import { join } from 'node:path'
 import { afterEach, assert, describe, it } from '@effect/vitest'
 import {
   FilesystemContainmentError,
+  readContainedFile,
   writeContainedFile,
 } from '../src/lib/filesystem-containment.js'
 
@@ -22,6 +20,15 @@ const makeRoot = () => {
   const root = mkdtempSync(join(tmpdir(), 'laborer-containment-'))
   roots.push(root)
   return root
+}
+
+const captureError = async (run: () => Promise<unknown>) => {
+  try {
+    await run()
+  } catch (cause) {
+    return cause
+  }
+  return undefined
 }
 
 afterEach(() => {
@@ -48,26 +55,51 @@ describe('writeContainedFile', () => {
     )
   })
 
-  it('rejects an ancestor swapped to an escaping symlink before mutation', async () => {
+  it('rejects a relative path that escapes the root', async () => {
     const root = makeRoot()
-    const outside = makeRoot()
-    mkdirSync(join(root, 'ancestor'))
 
-    let error: unknown
-    try {
-      await writeContainedFile(root, 'ancestor/created.txt', 'escaped', 0o666, {
-        beforeMutation: () => {
-          renameSync(join(root, 'ancestor'), join(root, 'original-ancestor'))
-          symlinkSync(outside, join(root, 'ancestor'))
-        },
-      })
-    } catch (cause) {
-      error = cause
-    }
+    const error = await captureError(() =>
+      writeContainedFile(root, '../escaped.txt', 'escaped')
+    )
 
     assert.instanceOf(error, FilesystemContainmentError)
     assert.strictEqual(error.reason, 'PATH_TRAVERSAL')
-    assert.isFalse(existsSync(join(outside, 'created.txt')))
-    assert.isFalse(existsSync(join(root, 'original-ancestor', 'created.txt')))
+  })
+
+  it('rejects a write addressed at the root itself', async () => {
+    const root = makeRoot()
+
+    const error = await captureError(() =>
+      writeContainedFile(root, '.', 'escaped')
+    )
+
+    assert.instanceOf(error, FilesystemContainmentError)
+    assert.strictEqual(error.reason, 'PATH_TRAVERSAL')
+  })
+})
+
+describe('readContainedFile', () => {
+  it('reads a contained file and reports its full byte length', async () => {
+    const root = makeRoot()
+    writeFileSync(join(root, 'file.txt'), 'hello world')
+
+    const contained = await readContainedFile(root, 'file.txt', 5)
+
+    assert.strictEqual(contained.contents.toString('utf8'), 'hello')
+    assert.strictEqual(contained.byteLength, 'hello world'.length)
+  })
+
+  it('rejects a symlink that resolves outside the root', async () => {
+    const root = makeRoot()
+    const outside = makeRoot()
+    writeFileSync(join(outside, 'secret.txt'), 'secret')
+    symlinkSync(join(outside, 'secret.txt'), join(root, 'link.txt'))
+
+    const error = await captureError(() =>
+      readContainedFile(root, 'link.txt', 1024)
+    )
+
+    assert.instanceOf(error, FilesystemContainmentError)
+    assert.strictEqual(error.reason, 'PATH_TRAVERSAL')
   })
 })

@@ -1,6 +1,4 @@
 // biome-ignore-all lint/style/useFilenamingConvention: preserves the upstream t3code module name.
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewColorScheme,
@@ -20,32 +18,26 @@ import type {
   PreviewAutomationWaitForInput,
 } from '@laborer/shared/desktop-bridge'
 import {
-  PreviewElementPickedEventSchema,
   PreviewHumanInputEventSchema,
   PreviewMouseNavigateEventSchema,
 } from '@laborer/shared/desktop-bridge'
 import { Option, Schema } from 'effect'
 import {
   BrowserWindow,
-  clipboard,
   nativeImage,
-  shell,
   type WebContents,
   webContents,
 } from 'electron'
+import { PreviewArtifacts } from './Artifacts.js'
 import { PreviewAutomation } from './Automation.js'
 import { BrowserSession } from './BrowserSession.js'
 import {
-  ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
-  CANCEL_PICK_CHANNEL,
-  ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
   PREVIEW_RECORDING_FRAME_CHANNEL,
   PREVIEW_STATE_CHANGE_CHANNEL,
-  START_PICK_CHANNEL,
 } from './channels.js'
 import {
   fitPictureInPictureContentSize,
@@ -65,35 +57,10 @@ const MAX_URL_LENGTH = 2048
 const LOOPBACK_PREFIX_PATTERN =
   /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::|\/|$)/i
 
-const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
-  accent: 'rgb(0 0 0 / 4%)',
-  accentForeground: 'oklch(0.269 0 0)',
-  background: 'white',
-  border: 'rgb(0 0 0 / 8%)',
-  colorScheme: 'light',
-  fontMono: 'ui-monospace, monospace',
-  fontSans: 'system-ui, sans-serif',
-  foreground: 'oklch(0.269 0 0)',
-  input: 'rgb(0 0 0 / 10%)',
-  muted: 'rgb(0 0 0 / 4%)',
-  mutedForeground: 'oklch(0.556 0 0)',
-  popover: 'white',
-  popoverForeground: 'oklch(0.269 0 0)',
-  primary: 'oklch(0.488 0.217 264)',
-  primaryForeground: 'white',
-  radius: '0.625rem',
-  ring: 'oklch(0.488 0.217 264)',
-}
-
 interface ManagedTab {
   cleanup: (() => void) | null
   owner: WebContents
   state: DesktopPreviewTabState
-}
-
-interface PickSession {
-  readonly cancel: () => void
-  readonly promise: Promise<PreviewAnnotationSubmissionResult | null>
 }
 
 interface FrameSession {
@@ -171,21 +138,29 @@ export class PreviewManager {
   readonly #automation = new PreviewAutomation((owner, tabId) =>
     this.#requireGuest(owner, tabId)
   )
-  readonly #pickSessions = new Map<string, PickSession>()
+  readonly #artifacts: PreviewArtifacts
   readonly #frameSessions = new Map<string, FrameSession>()
   readonly #pictureInPictureWindows = new Map<string, BrowserWindow>()
   readonly #pictureInPictureAspectRatios = new Map<string, number>()
-  readonly #artifactDirectory: string
   readonly #pickPreloadUrl: string | null
   readonly #pictureInPicturePreloadPath: string
-  #annotationTheme = DEFAULT_ANNOTATION_THEME
 
   constructor(options: {
     artifactDirectory: string
     pickPreloadUrl: string | null
     pictureInPicturePreloadPath: string
   }) {
-    this.#artifactDirectory = resolve(options.artifactDirectory)
+    this.#artifacts = new PreviewArtifacts({
+      artifactDirectory: options.artifactDirectory,
+      forEachGuest: (use) => {
+        for (const tab of this.#tabs.values()) {
+          const guest = this.#guest(tab, false)
+          if (guest) {
+            use(guest)
+          }
+        }
+      },
+    })
     this.#pickPreloadUrl = options.pickPreloadUrl
     this.#pictureInPicturePreloadPath = options.pictureInPicturePreloadPath
   }
@@ -287,7 +262,7 @@ export class PreviewManager {
     if (tab.state.webContentsId === webContentsId && tab.cleanup) {
       guest.setZoomFactor(tab.state.zoomFactor)
       guest.setAudioMuted(tab.state.audioMuted)
-      guest.send(ANNOTATION_THEME_CHANNEL, this.#annotationTheme)
+      guest.send(ANNOTATION_THEME_CHANNEL, this.#artifacts.annotationTheme)
       return
     }
 
@@ -306,7 +281,7 @@ export class PreviewManager {
       webContentsId,
     }
     this.#emit(tab)
-    guest.send(ANNOTATION_THEME_CHANNEL, this.#annotationTheme)
+    guest.send(ANNOTATION_THEME_CHANNEL, this.#artifacts.annotationTheme)
     await this.#applyColorScheme(guest, tab.state.colorScheme).catch(
       () => undefined
     )
@@ -417,136 +392,37 @@ export class PreviewManager {
   }
 
   setAnnotationTheme(theme: DesktopPreviewAnnotationTheme): void {
-    this.#annotationTheme = theme
-    for (const tab of this.#tabs.values()) {
-      this.#guest(tab, false)?.send(ANNOTATION_THEME_CHANNEL, theme)
-    }
+    this.#artifacts.setAnnotationTheme(theme)
   }
 
   pickElement(
     owner: WebContents,
     tabId: string
   ): Promise<PreviewAnnotationSubmissionResult | null> {
-    const guest = this.#requireGuest(owner, tabId)
-    this.cancelPickElement(owner, tabId)
-
-    let settle: (value: PreviewAnnotationSubmissionResult | null) => void =
-      () => undefined
-    const promise = new Promise<PreviewAnnotationSubmissionResult | null>(
-      (resolvePromise) => {
-        settle = resolvePromise
-      }
-    )
-    const cleanup = () => {
-      guest.ipc.removeListener(ELEMENT_PICKED_CHANNEL, onPicked)
-      guest.removeListener('destroyed', onCancelled)
-      guest.removeListener('did-start-navigation', onCancelled)
-      this.#pickSessions.delete(tabId)
-    }
-    const finish = (result: PreviewAnnotationSubmissionResult | null) => {
-      cleanup()
-      settle(result)
-    }
-    const onCancelled = () => finish(null)
-    const onPicked = async (_event: unknown, ...args: unknown[]) => {
-      const decoded = Option.getOrUndefined(
-        Schema.decodeUnknownOption(PreviewElementPickedEventSchema)(args)
-      )
-      if (!decoded || decoded[0] === null) {
-        finish(null)
-        return
-      }
-      const [payload, rect, submission] = decoded
-      try {
-        const image = await guest.capturePage({
-          height: Math.ceil(rect.height),
-          width: Math.ceil(rect.width),
-          x: Math.max(0, Math.floor(rect.x)),
-          y: Math.max(0, Math.floor(rect.y)),
-        })
-        const size = image.getSize()
-        finish({
-          annotation: {
-            ...payload,
-            screenshot: {
-              cropRect: rect ?? {
-                height: size.height,
-                width: size.width,
-                x: 0,
-                y: 0,
-              },
-              dataUrl: image.toDataURL(),
-              height: size.height,
-              width: size.width,
-            },
-          },
-          submission,
-        })
-      } catch {
-        finish({ annotation: payload, submission })
-      } finally {
-        if (!guest.isDestroyed()) {
-          guest.send(ANNOTATION_CAPTURED_CHANNEL)
-        }
-      }
-    }
-    const session: PickSession = {
-      cancel: () => {
-        cleanup()
-        if (!guest.isDestroyed()) {
-          guest.send(CANCEL_PICK_CHANNEL)
-        }
-        settle(null)
-      },
-      promise,
-    }
-    this.#pickSessions.set(tabId, session)
-    guest.ipc.on(ELEMENT_PICKED_CHANNEL, onPicked)
-    guest.once('destroyed', onCancelled)
-    guest.once('did-start-navigation', onCancelled)
-    guest.focus()
-    guest.send(START_PICK_CHANNEL, this.#annotationTheme)
-    return promise
+    return this.#artifacts.pickElement(tabId, this.#requireGuest(owner, tabId))
   }
 
   cancelPickElement(owner: WebContents, tabId: string): void {
     this.#requireTab(owner, tabId)
-    this.#pickSessions.get(tabId)?.cancel()
+    this.#artifacts.cancelPickElement(tabId)
   }
 
   async captureScreenshot(
     owner: WebContents,
     tabId: string
   ): Promise<DesktopPreviewScreenshotArtifact> {
-    const guest = this.#requireGuest(owner, tabId)
-    const image = await guest.capturePage()
-    const data = image.toPNG()
-    const createdAt = new Date().toISOString()
-    const id = `browser-screenshot-${Date.now().toString(36)}`
-    const path = join(this.#artifactDirectory, `${id}.png`)
-    await mkdir(this.#artifactDirectory, { recursive: true })
-    await writeFile(path, data)
-    return {
-      createdAt,
-      id,
-      mimeType: 'image/png',
-      path,
-      sizeBytes: data.byteLength,
+    return await this.#artifacts.captureScreenshot(
       tabId,
-    }
+      this.#requireGuest(owner, tabId)
+    )
   }
 
   revealArtifact(path: string): void {
-    shell.showItemInFolder(this.#resolveArtifact(path))
+    this.#artifacts.revealArtifact(path)
   }
 
   async copyArtifactToClipboard(path: string): Promise<void> {
-    const data = await readFile(this.#resolveArtifact(path))
-    const image = nativeImage.createFromBuffer(data)
-    if (image.isEmpty()) {
-      throw new Error('Preview artifact is not an image')
-    }
-    clipboard.writeImage(image)
+    await this.#artifacts.copyArtifactToClipboard(path)
   }
 
   async openPictureInPicture(owner: WebContents, tabId: string): Promise<void> {
@@ -633,13 +509,7 @@ export class PreviewManager {
     data: Uint8Array
   ): Promise<DesktopPreviewRecordingArtifact> {
     this.#requireTab(owner, tabId)
-    const createdAt = new Date().toISOString()
-    const id = `browser-recording-${Date.now().toString(36)}`
-    const extension = mimeType.includes('mp4') ? 'mp4' : 'webm'
-    const path = join(this.#artifactDirectory, `${id}.${extension}`)
-    await mkdir(this.#artifactDirectory, { recursive: true })
-    await writeFile(path, data)
-    return { createdAt, id, mimeType, path, sizeBytes: data.byteLength, tabId }
+    return await this.#artifacts.saveRecording(tabId, mimeType, data)
   }
 
   automationStatus(owner: WebContents, tabId: string): PreviewAutomationStatus {
@@ -726,7 +596,7 @@ export class PreviewManager {
       if (tab.owner !== owner) {
         continue
       }
-      this.#pickSessions.get(tabId)?.cancel()
+      this.#artifacts.cancelPickElement(tabId)
       this.#stopFrameCapture(tabId, 'recording')
       this.#stopFrameCapture(tabId, 'picture-in-picture')
       this.#pictureInPictureWindows.get(tabId)?.close()
@@ -1030,20 +900,6 @@ export class PreviewManager {
     colorScheme: DesktopPreviewColorScheme
   ): Promise<void> {
     await this.#automation.applyColorScheme(guest, colorScheme)
-  }
-
-  #resolveArtifact(path: string): string {
-    const resolvedPath = resolve(path)
-    const relativePath = relative(this.#artifactDirectory, resolvedPath)
-    if (
-      relativePath.length === 0 ||
-      relativePath === '..' ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath)
-    ) {
-      throw new Error('Preview artifact path is outside the artifact directory')
-    }
-    return resolvedPath
   }
 
   #startFrameCapture(

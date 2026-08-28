@@ -10,8 +10,9 @@
  * - Pull request renders t3code's full pull request panel
  *   (`PullRequestPanel`), and mirrors the loaded pull request's state onto
  *   the tab icon the way t3's compact chrome did.
- * - Browser / Files / Agents are disabled launcher cards. There is no
- *   Terminal surface: terminals live in the main panel tabs/splits.
+ * - Browser / Files are disabled launcher cards. There is no Terminal
+ *   surface (terminals live in the main panel tabs/splits) and no Agents
+ *   surface (Laborer skips it).
  *
  * The component renders nothing while the panel is hidden (`isOpen` false);
  * tab state survives in the store, so reopening restores the same tabs.
@@ -157,9 +158,6 @@ export function WorkspaceRightPanel({
   const handleAddFiles = useCallback(() => {
     store().open(workspaceId, 'files')
   }, [workspaceId])
-  const handleAddAgents = useCallback(() => {
-    store().open(workspaceId, 'agents')
-  }, [workspaceId])
 
   if (!state.isOpen) {
     return null
@@ -168,12 +166,10 @@ export function WorkspaceRightPanel({
   return (
     <RightPanelTabs
       activeSurfaceId={state.activeSurfaceId}
-      agentsAvailable={false}
       browserAvailable={false}
       diffAvailable={true}
       filesAvailable={false}
       onActivate={handleActivate}
-      onAddAgents={handleAddAgents}
       onAddBrowser={handleAddBrowser}
       onAddDiff={handleAddDiff}
       onAddFiles={handleAddFiles}
@@ -217,8 +213,6 @@ function ActiveSurfaceContent({
       return <SurfaceUnavailable label="Files" />
     case 'file':
       return <SurfaceUnavailable label="File viewer" />
-    case 'agents':
-      return <SurfaceUnavailable label="Agents" />
     default:
       return surface satisfies never
   }

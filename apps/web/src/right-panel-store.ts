@@ -5,17 +5,16 @@
  * workspace model: it owns an ordered set of surface descriptors and the
  * active surface, while each feature continues to own its durable resource
  * state. Browser surfaces point at preview tab ids, file surfaces point at
- * workspace paths, and diff/files/pull-request/agents remain singleton
- * surfaces.
+ * workspace paths, and diff/files/pull-request remain singleton surfaces.
  *
  * Laborer adaptations: t3 scopes the panel per thread
  * (`environmentId:threadId`); Laborer scopes it per workspace, so the map is
  * keyed by `workspaceId`. The pull-request surface is a singleton rather
  * than keyed by reference, because a Laborer workspace has at most one pull
- * request (the workspace id carries the identity). t3's terminal surface is
- * dropped entirely — Laborer terminals live in the main panel tabs/splits,
- * not the right panel — and migration silently discards any persisted
- * terminal descriptors.
+ * request (the workspace id carries the identity). t3's terminal and agents
+ * surfaces are dropped entirely — Laborer terminals live in the main panel
+ * tabs/splits and Laborer skips the Agents surface — and migration silently
+ * discards any persisted terminal or agents descriptors.
  */
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
@@ -26,7 +25,6 @@ export const RIGHT_PANEL_KINDS = [
   'file',
   'preview',
   'pull-request',
-  'agents',
 ] as const
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number]
 
@@ -43,7 +41,6 @@ export type RightPanelSurface =
       revealRequestId: number
     }
   | { id: 'pull-request'; kind: 'pull-request' }
-  | { id: 'agents'; kind: 'agents' }
 
 const RIGHT_PANEL_STORAGE_KEY = 'laborer:right-panel-state:v1'
 const RIGHT_PANEL_STORAGE_VERSION = 1
@@ -89,8 +86,6 @@ const singletonSurface = (kind: SingletonKind): RightPanelSurface => {
       return { id: 'files', kind }
     case 'pull-request':
       return { id: 'pull-request', kind }
-    case 'agents':
-      return { id: 'agents', kind }
     default:
       return kind satisfies never
   }
@@ -180,7 +175,8 @@ function sanitizeFileSurface(
 /**
  * A persisted surface in the current shape, or nothing when malformed.
  * Unknown kinds — including t3's terminal surfaces, which Laborer never
- * hosts in the right panel — are silently dropped.
+ * hosts in the right panel, and agents descriptors from builds that still
+ * offered that surface — are silently dropped.
  */
 function sanitizePersistedSurface(surface: unknown): RightPanelSurface[] {
   if (!surface || typeof surface !== 'object') {

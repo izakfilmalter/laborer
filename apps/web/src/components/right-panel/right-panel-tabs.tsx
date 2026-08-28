@@ -9,9 +9,9 @@
  * - Preview-session and desktop-overlay (favicon/audio) plumbing is left
  *   out until those surfaces exist; titles and icons fall back to static
  *   names.
- * - There is no Terminal surface: Laborer terminals live in the main panel
- *   tabs/splits, so the launcher offers five cards and the `T` shortcut is
- *   unassigned.
+ * - There is no Terminal surface (Laborer terminals live in the main panel
+ *   tabs/splits) and no Agents surface (Laborer skips it), so the launcher
+ *   offers four cards and the `T`/`A` shortcuts are unassigned.
  * - The tab bar is `h-8`, matching Laborer's workspace chrome (frame header
  *   and pane tab bars) instead of t3's `--workspace-topbar-height`.
  */
@@ -40,7 +40,6 @@ import {
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
 import {
-  Bot,
   FileCode2,
   FileDiff,
   Files,
@@ -71,15 +70,11 @@ export interface PullRequestTabStatus {
 
 interface RightPanelTabsProps {
   readonly activeSurfaceId: string | null
-  readonly agentsAvailable: boolean
   readonly browserAvailable: boolean
   readonly children: ReactNode
   readonly diffAvailable: boolean
   readonly filesAvailable: boolean
-  /** Running + waiting subagents; badges the Agents card in the empty state. */
-  readonly liveAgentCount?: number
   readonly onActivate: (surface: RightPanelSurface) => void
-  readonly onAddAgents: () => void
   readonly onAddBrowser: () => void
   readonly onAddDiff: () => void
   readonly onAddFiles: () => void
@@ -103,7 +98,6 @@ const SURFACE_DISABLED_REASONS = {
   files: 'The file explorer is coming soon.',
   diff: 'Diff is only available inside a workspace.',
   pullRequest: "This workspace's branch has no pull request yet.",
-  agents: 'Agent surfaces are coming soon.',
 } as const
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -125,7 +119,6 @@ const SURFACE_UNAVAILABLE_HINTS = {
   files: 'Coming soon.',
   diff: 'Available inside a workspace.',
   pullRequest: 'No pull request on this branch yet.',
-  agents: 'Coming soon.',
 } as const
 
 type SurfaceShortcutEvent = Pick<
@@ -239,13 +232,10 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void
   onAddFiles: () => void
   onAddPullRequest: () => void
-  onAddAgents: () => void
   browserAvailable: boolean
   diffAvailable: boolean
   filesAvailable: boolean
   pullRequestAvailable: boolean
-  agentsAvailable: boolean
-  liveAgentCount: number
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1)
@@ -290,16 +280,6 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
       onClick: props.onAddPullRequest,
       badgeCount: 0,
-    },
-    {
-      label: 'Agents',
-      description: 'Follow subagents and workflows.',
-      icon: Bot,
-      shortcut: 'A',
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
-      onClick: props.onAddAgents,
-      badgeCount: props.liveAgentCount,
     },
   ] as const
 
@@ -513,8 +493,6 @@ function surfaceTitle(
       return pullRequestNumber == null
         ? 'Pull request'
         : `#${pullRequestNumber}`
-    case 'agents':
-      return 'Agents'
     case 'preview':
       return 'Browser'
     default:
@@ -551,8 +529,6 @@ function SurfaceIcon({
         />
       )
     }
-    case 'agents':
-      return <Bot className="size-3 shrink-0" />
     default:
       return surface satisfies never
   }
@@ -701,14 +677,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
       onClick: props.onAddPullRequest,
     },
-    {
-      label: 'Agents',
-      icon: Bot,
-      shortcut: 'A',
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.agents,
-      onClick: props.onAddAgents,
-    },
   ] as const
 
   const handleAddSurfaceMenuKeyDown = (
@@ -823,12 +791,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       >
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
-            agentsAvailable={props.agentsAvailable}
             browserAvailable={props.browserAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
-            liveAgentCount={props.liveAgentCount ?? 0}
-            onAddAgents={props.onAddAgents}
             onAddBrowser={props.onAddBrowser}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}

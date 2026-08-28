@@ -68,7 +68,7 @@ describe('activateSurface', () => {
 
   it('ignores unknown surface ids', () => {
     store().open(WS, 'diff')
-    store().activateSurface(WS, 'agents')
+    store().activateSurface(WS, 'files')
 
     expect(wsState().activeSurfaceId).toBe('diff')
   })
@@ -78,7 +78,7 @@ describe('closeSurface', () => {
   it('falls back to the neighbor when the active surface closes', () => {
     store().open(WS, 'diff')
     store().open(WS, 'pull-request')
-    store().open(WS, 'agents')
+    store().open(WS, 'files')
     store().activateSurface(WS, 'pull-request')
 
     store().closeSurface(WS, 'pull-request')
@@ -86,18 +86,18 @@ describe('closeSurface', () => {
     // Fallback picks the surface now sitting at the closed index.
     expect(wsState().surfaces.map((surface) => surface.id)).toEqual([
       'diff',
-      'agents',
+      'files',
     ])
-    expect(wsState().activeSurfaceId).toBe('agents')
+    expect(wsState().activeSurfaceId).toBe('files')
   })
 
   it('keeps the active surface when a background surface closes', () => {
     store().open(WS, 'diff')
-    store().open(WS, 'agents')
+    store().open(WS, 'files')
 
     store().closeSurface(WS, 'diff')
 
-    expect(wsState().activeSurfaceId).toBe('agents')
+    expect(wsState().activeSurfaceId).toBe('files')
   })
 
   it('removes the workspace entry entirely when the last surface closes', () => {
@@ -117,7 +117,7 @@ describe('closeOtherSurfaces', () => {
   it('keeps only the named surface and activates it', () => {
     store().open(WS, 'diff')
     store().open(WS, 'pull-request')
-    store().open(WS, 'agents')
+    store().open(WS, 'files')
 
     store().closeOtherSurfaces(WS, 'pull-request')
 
@@ -132,7 +132,7 @@ describe('closeSurfacesToRight', () => {
   it('drops surfaces after the named one', () => {
     store().open(WS, 'diff')
     store().open(WS, 'pull-request')
-    store().open(WS, 'agents')
+    store().open(WS, 'files')
 
     store().closeSurfacesToRight(WS, 'diff')
 
@@ -143,7 +143,7 @@ describe('closeSurfacesToRight', () => {
   it('keeps the active surface when it survives the cut', () => {
     store().open(WS, 'diff')
     store().open(WS, 'pull-request')
-    store().open(WS, 'agents')
+    store().open(WS, 'files')
     store().activateSurface(WS, 'diff')
 
     store().closeSurfacesToRight(WS, 'pull-request')
@@ -159,7 +159,7 @@ describe('closeSurfacesToRight', () => {
 describe('closeAllSurfaces', () => {
   it('clears surfaces and hides the panel (entry pruned)', () => {
     store().open(WS, 'diff')
-    store().open(WS, 'agents')
+    store().open(WS, 'files')
 
     store().closeAllSurfaces(WS)
 
@@ -346,6 +346,48 @@ describe('migratePersistedRightPanelState', () => {
       isOpen: true,
       activeSurfaceId: 'diff',
       surfaces: [{ id: 'diff', kind: 'diff' }],
+    })
+  })
+
+  it('drops persisted agents surfaces and falls back the active tab', () => {
+    // Laborer skips the Agents surface, so a persisted agents descriptor
+    // (from a build that still offered one) must vanish without reopening
+    // an empty panel or leaving the active id dangling.
+    const migrated = migratePersistedRightPanelState({
+      byWorkspaceId: {
+        [WS]: {
+          isOpen: true,
+          activeSurfaceId: 'agents',
+          surfaces: [
+            { id: 'agents', kind: 'agents' },
+            { id: 'diff', kind: 'diff' },
+          ],
+        },
+      },
+    })
+
+    expect(migrated.byWorkspaceId[WS]).toEqual({
+      isOpen: true,
+      activeSurfaceId: 'diff',
+      surfaces: [{ id: 'diff', kind: 'diff' }],
+    })
+  })
+
+  it('closes the panel when agents surfaces were all it had', () => {
+    const migrated = migratePersistedRightPanelState({
+      byWorkspaceId: {
+        [WS]: {
+          isOpen: true,
+          activeSurfaceId: 'agents',
+          surfaces: [{ id: 'agents', kind: 'agents' }],
+        },
+      },
+    })
+
+    expect(migrated.byWorkspaceId[WS]).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
     })
   })
 

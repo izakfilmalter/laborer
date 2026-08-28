@@ -32,6 +32,8 @@ import {
 import { PowerProfileService } from './services/power-profile.js'
 import { PrTaskTransitions } from './services/pr-task-transitions.js'
 import { PrWatcher } from './services/pr-watcher.js'
+import { PreviewManager } from './services/preview-manager.js'
+import { PreviewPortDiscovery } from './services/preview-port-discovery.js'
 import { ProjectRegistry } from './services/project-registry.js'
 import { RepositoryIdentity } from './services/repository-identity.js'
 import { RepositoryWatchCoordinator } from './services/repository-watch-coordinator.js'
@@ -239,6 +241,8 @@ const provideInfrastructureCore = <ROut, RIn>(
     // until the sidebar asks for an author's open pull requests.
     Layer.provideMerge(GithubPullRequests.layer),
     Layer.provideMerge(PowerProfileService.layer),
+    Layer.provideMerge(PreviewManager.layer),
+    Layer.provideMerge(PreviewPortDiscovery.live),
     Layer.provideMerge(ConfigService.layer),
     Layer.provideMerge(RepositoryIdentity.layer),
     Layer.provideMerge(LaborerDatabaseLive.pipe(Layer.orDie))

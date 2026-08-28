@@ -26,7 +26,15 @@ import {
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { isProjectShortName } from '@laborer/task-db/task-identifier'
-import { Array, Effect, Semaphore, Stream, SubscriptionRef } from 'effect'
+import {
+  Array,
+  Clock,
+  Effect,
+  Queue,
+  Semaphore,
+  Stream,
+  SubscriptionRef,
+} from 'effect'
 import { spawn } from '../lib/spawn.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
@@ -42,6 +50,8 @@ import {
 } from '../services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { PrWatcher } from '../services/pr-watcher.js'
+import { PreviewManager } from '../services/preview-manager.js'
+import { PreviewPortDiscovery } from '../services/preview-port-discovery.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import {
   aliasesAfterRename,
@@ -235,6 +245,19 @@ const resolvePullRequestWorkspace = (workspaceId: string) =>
       repoSlug,
       worktreePath: workspace.worktreePath,
     }
+  })
+
+const resolvePreviewWorkspace = (workspaceId: string) =>
+  Effect.gen(function* () {
+    const workspaceProvider = yield* WorkspaceProvider
+    const workspace = yield* workspaceProvider.findWorkspaceForTask(workspaceId)
+    if (workspace === null) {
+      return yield* new RpcError({
+        message: `Workspace not found: ${workspaceId}`,
+        code: 'NOT_FOUND',
+      })
+    }
+    return workspace
   })
 
 /** One expected `gh` failure as the RPC error every panel read reports. */
@@ -1669,6 +1692,9 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
         const provider = yield* WorkspaceProvider
         yield* provider.destroyWorktree(workspaceId, force, operationId)
+
+        const previewManager = yield* PreviewManager
+        yield* previewManager.closeWorkspace(workspaceId)
       }),
     'workspace.checkDirty': ({ workspaceId }) =>
       Effect.gen(function* () {
@@ -1713,6 +1739,97 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, command, initialPrompt)
       }),
+
+    // The daemon tracks browser metadata; Electron owns Chromium resources.
+    'preview.open': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.open(input)
+      }),
+    'preview.navigate': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.navigate(input)
+      }),
+    'preview.resize': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.resize(input)
+      }),
+    'preview.refresh': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        yield* manager.refresh(input)
+      }),
+    'preview.close': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        yield* manager.close(input)
+      }),
+    'preview.list': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.list(workspaceId)
+      }),
+    'preview.reportStatus': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        yield* manager.reportStatus(input)
+      }),
+    'preview.events': () =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const manager = yield* PreviewManager
+          return manager.events
+        })
+      ),
+    'preview.discoveredLocalServers': ({ workspaceId, configuredUrls }) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const workspace = yield* resolvePreviewWorkspace(workspaceId)
+          const discovery = yield* PreviewPortDiscovery
+          return Stream.callback((queue) =>
+            Effect.gen(function* () {
+              yield* discovery.retain
+              const urls = configuredUrls ?? []
+              const initial = yield* discovery.scan(
+                workspace.worktreePath,
+                urls
+              )
+              const now = yield* Clock.currentTimeMillis
+              yield* Queue.offer(queue, {
+                configuredUrlProbing: true as const,
+                scannedAt: new Date(now).toISOString(),
+                servers: initial,
+              })
+              yield* discovery.subscribe(
+                {
+                  configuredUrls: urls,
+                  initialSnapshot: initial,
+                  workspaceRoot: workspace.worktreePath,
+                },
+                (servers) =>
+                  Clock.currentTimeMillis.pipe(
+                    Effect.flatMap((millis) =>
+                      Queue.offer(queue, {
+                        configuredUrlProbing: true as const,
+                        scannedAt: new Date(millis).toISOString(),
+                        servers,
+                      })
+                    )
+                  )
+              )
+            })
+          )
+        })
+      ),
 
     // -------------------------------------------------------------------
     // Editor RPCs (Issue #111)

@@ -35,6 +35,8 @@ import { GithubPullRequests } from '../../src/services/github-pull-requests.js'
 import { GithubViewer } from '../../src/services/github-viewer.js'
 import { LaborerDatabase } from '../../src/services/laborer-database.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
+import { PreviewManager } from '../../src/services/preview-manager.js'
+import { PreviewPortDiscovery } from '../../src/services/preview-port-discovery.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
@@ -59,6 +61,11 @@ const DeferredServiceStubs = Layer.mergeAll(
   Layer.succeed(TerminalClient, makeServiceProxy('TerminalClient'))
 )
 
+const PreviewLayers = Layer.merge(
+  PreviewManager.layer,
+  PreviewPortDiscovery.live
+)
+
 /**
  * Core-only test layer: LaborerRpcsLive with only core infrastructure
  * layers (ConfigService, LaborerDatabase) and placeholder proxy
@@ -68,6 +75,7 @@ const DeferredServiceStubs = Layer.mergeAll(
  * deferred services — terminal and file-watcher sidecars are placeholders.
  */
 const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
+  Layer.provide(PreviewLayers),
   Layer.provide(DeferredServiceStubs),
   Layer.provide(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),
@@ -171,6 +179,7 @@ describe('Deferred service proxies (Issue #14)', () => {
  * in the output context for extraction.
  */
 const CoreOnlyRpcWithReadyRefLayer = LaborerRpcsLive.pipe(
+  Layer.provide(PreviewLayers),
   Layer.provide(DeferredServiceStubs),
   Layer.provideMerge(DeferredServicesReadyLayer),
   Layer.provide(ConfigService.layer),

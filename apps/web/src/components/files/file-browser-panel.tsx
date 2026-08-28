@@ -23,6 +23,12 @@ import {
 } from '@effect/atom-react/Hooks'
 import type { FileEntry, FileWatcherEvent } from '@laborer/shared/rpc'
 import { Button } from '@laborer/ui/components/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@laborer/ui/components/dropdown-menu'
 import { InputGroup, InputGroupInput } from '@laborer/ui/components/input-group'
 import {
   Tooltip,
@@ -30,18 +36,22 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
-import type { GitStatusEntry } from '@pierre/trees'
+import type { ContextMenuOpenContext, GitStatusEntry } from '@pierre/trees'
 import { FileTree, useFileTree, useFileTreeSearch } from '@pierre/trees/react'
 import { Effect } from 'effect'
 import { Atom, AsyncResult as Result } from 'effect/unstable/reactivity'
 import { RotateCw } from 'lucide-react'
 import { useTheme } from 'next-themes'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
-import { createFileTreeDragMentionController } from '@/components/files/file-tree-drag-mention'
+import {
+  createFileTreeDragMentionController,
+  serializeFileMention,
+} from '@/components/files/file-tree-drag-mention'
 import { LABORER_PIERRE_ICONS } from '@/components/files/pierre-icons'
 import { useFileEntriesQuery } from '@/components/files/project-files-query-state'
+import { toast } from '@/lib/toast'
 
 interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void
@@ -177,8 +187,58 @@ export function FileBrowserPanel({
       }),
     []
   )
+  const contextMenuPointerRef = useRef<{
+    x: number
+    y: number
+    at: number
+  } | null>(null)
+  const [entryMenu, setEntryMenu] = useState<{
+    close: () => void
+    path: string
+    x: number
+    y: number
+  } | null>(null)
+  useEffect(() => {
+    const capturePointer = (event: MouseEvent) => {
+      contextMenuPointerRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        at: event.timeStamp,
+      }
+    }
+    document.addEventListener('contextmenu', capturePointer, true)
+    return () =>
+      document.removeEventListener('contextmenu', capturePointer, true)
+  }, [])
+
+  const openEntryMenu = (path: string, context: ContextMenuOpenContext) => {
+    const pointer = contextMenuPointerRef.current
+    const anchor = context.anchorElement.getBoundingClientRect()
+    setEntryMenu({
+      close: context.close,
+      path: path.replace(TRAILING_SLASH_REGEX, ''),
+      x:
+        pointer && performance.now() - pointer.at < 1000
+          ? pointer.x
+          : anchor.left,
+      y:
+        pointer && performance.now() - pointer.at < 1000
+          ? pointer.y
+          : anchor.bottom,
+    })
+  }
+  const closeEntryMenu = () => {
+    entryMenu?.close()
+    setEntryMenu(null)
+  }
 
   const { model } = useFileTree({
+    composition: {
+      contextMenu: {
+        triggerMode: 'right-click',
+        onOpen: (item, context) => openEntryMenu(item.path, context),
+      },
+    },
     density: 'compact',
     fileTreeSearchMode: 'hide-non-matches',
     flattenEmptyDirectories: true,
@@ -407,15 +467,65 @@ export function FileBrowserPanel({
           {entriesQuery.error}
         </div>
       ) : (
-        <FileTree
-          aria-label={`${projectName} files`}
-          className="min-h-0 flex-1 overflow-hidden"
-          model={model}
-          style={{
-            colorScheme: resolvedTheme === 'light' ? 'light' : 'dark',
-            ['--trees-fg-override' as string]: 'var(--foreground)',
-          }}
-        />
+        <>
+          <FileTree
+            aria-label={`${projectName} files`}
+            className="min-h-0 flex-1 overflow-hidden"
+            model={model}
+            style={{
+              colorScheme: resolvedTheme === 'light' ? 'light' : 'dark',
+              ['--trees-fg-override' as string]: 'var(--foreground)',
+            }}
+          />
+          <DropdownMenu
+            onOpenChange={(open) => {
+              if (!open) {
+                closeEntryMenu()
+              }
+            }}
+            open={entryMenu !== null}
+          >
+            <DropdownMenuTrigger
+              render={
+                <span
+                  aria-hidden
+                  className="pointer-events-none fixed size-px"
+                  style={{ left: entryMenu?.x ?? 0, top: entryMenu?.y ?? 0 }}
+                />
+              }
+            />
+            <DropdownMenuContent align="start" sideOffset={0}>
+              <DropdownMenuItem
+                onClick={() => {
+                  if (entryMenu) {
+                    navigator.clipboard
+                      .writeText(serializeFileMention(entryMenu.path))
+                      .then(
+                        () => toast.success('Mention copied'),
+                        () => toast.error('Unable to copy mention')
+                      )
+                  }
+                  closeEntryMenu()
+                }}
+              >
+                Copy mention
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  if (entryMenu) {
+                    navigator.clipboard.writeText(entryMenu.path).then(
+                      () => toast.success('Path copied'),
+                      () => toast.error('Unable to copy path')
+                    )
+                  }
+                  closeEntryMenu()
+                }}
+              >
+                Copy path
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
       )}
     </div>
   )

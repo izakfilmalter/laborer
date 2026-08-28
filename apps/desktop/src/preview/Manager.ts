@@ -44,6 +44,10 @@ import {
   PREVIEW_STATE_CHANGE_CHANNEL,
   START_PICK_CHANNEL,
 } from './channels.js'
+import {
+  fitPictureInPictureContentSize,
+  PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON,
+} from './picture-in-picture-layout.js'
 import { PREVIEW_WEBVIEW_PREFERENCES } from './WebviewPreferences.js'
 
 const ZOOM_LEVELS = [
@@ -212,6 +216,7 @@ export class PreviewManager {
   readonly #pickSessions = new Map<string, PickSession>()
   readonly #frameSessions = new Map<string, FrameSession>()
   readonly #pictureInPictureWindows = new Map<string, BrowserWindow>()
+  readonly #pictureInPictureAspectRatios = new Map<string, number>()
   readonly #artifactDirectory: string
   readonly #pickPreloadUrl: string | null
   readonly #pictureInPicturePreloadPath: string
@@ -631,9 +636,11 @@ export class PreviewManager {
       },
     })
     this.#pictureInPictureWindows.set(tabId, window)
+    window.setVisibleOnAllWorkspaces(true, { skipTransformProcessType: true })
     window.once('closed', () => {
       if (this.#pictureInPictureWindows.get(tabId) === window) {
         this.#pictureInPictureWindows.delete(tabId)
+        this.#pictureInPictureAspectRatios.delete(tabId)
         this.#stopFrameCapture(tabId, 'picture-in-picture')
         const current = this.#tabs.get(tabId)
         if (current) {
@@ -652,6 +659,7 @@ export class PreviewManager {
     this.#stopFrameCapture(tabId, 'picture-in-picture')
     const window = this.#pictureInPictureWindows.get(tabId)
     this.#pictureInPictureWindows.delete(tabId)
+    this.#pictureInPictureAspectRatios.delete(tabId)
     if (window && !window.isDestroyed()) {
       window.close()
     }
@@ -1316,6 +1324,23 @@ export class PreviewManager {
       if (session.consumers.has('picture-in-picture')) {
         const window = this.#pictureInPictureWindows.get(tabId)
         if (window && !window.isDestroyed()) {
+          const aspectRatio = frame.width / frame.height
+          const previousAspectRatio =
+            this.#pictureInPictureAspectRatios.get(tabId)
+          if (
+            previousAspectRatio === undefined ||
+            Math.abs(previousAspectRatio - aspectRatio) >
+              PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
+          ) {
+            const [width, height] = fitPictureInPictureContentSize(
+              window.getContentSize(),
+              aspectRatio
+            )
+            window.setAspectRatio(0)
+            window.setContentSize(width, height, false)
+            window.setAspectRatio(aspectRatio)
+            this.#pictureInPictureAspectRatios.set(tabId, aspectRatio)
+          }
           window.webContents.send(
             PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
             frame

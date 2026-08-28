@@ -8,7 +8,10 @@ import { BackgroundFetchService } from '../src/services/background-fetch-service
 import { LaborerDatabase } from '../src/services/laborer-database.js'
 import type { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { PrWatcher } from '../src/services/pr-watcher.js'
-import { WorkspaceSyncService } from '../src/services/workspace-sync-service.js'
+import {
+  resolveDefaultBaseBranch,
+  WorkspaceSyncService,
+} from '../src/services/workspace-sync-service.js'
 import { createTempDir, git, initRepo } from './helpers/git-helpers.js'
 
 const tempRoots: string[] = []
@@ -451,5 +454,43 @@ describe('WorkspaceSyncService', () => {
         '2'
       )
     }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.effect(
+    'targets the branch the remote calls default, not the one named main',
+    () =>
+      Effect.gen(function* () {
+        // Regression: the base branch was hardcoded to "main", so opening a
+        // pull request on a repository whose default is "master" failed with
+        // "Base ref must be a branch" — after the work had already been
+        // pushed, which is the worst moment to find out.
+        const remotePath = createTempDir('sync-default-remote', tempRoots)
+        git('init --bare -b master', remotePath)
+
+        const seedPath = initRepo('sync-default-seed', tempRoots)
+        git('branch -M master', seedPath)
+        git(`remote add origin "${remotePath}"`, seedPath)
+        git('push -u origin master', seedPath)
+
+        const localPath = createRemoteClone(remotePath, 'sync-default-local')
+
+        assert.strictEqual(
+          yield* Effect.promise(() => resolveDefaultBaseBranch(localPath)),
+          'master'
+        )
+      })
+  )
+
+  it.effect('falls back to main when the remote will not say', () =>
+    Effect.gen(function* () {
+      // A repository with no origin at all still has to answer something,
+      // and "main" is the better guess than an empty base ref.
+      const localPath = initRepo('sync-no-origin', tempRoots)
+
+      assert.strictEqual(
+        yield* Effect.promise(() => resolveDefaultBaseBranch(localPath)),
+        'main'
+      )
+    })
   )
 })

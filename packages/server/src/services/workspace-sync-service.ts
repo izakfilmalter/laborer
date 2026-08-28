@@ -122,8 +122,10 @@ const spawnGit = (
 /** How many recent subjects it takes to hear a repository's commit voice. */
 const RECENT_COMMIT_SUBJECT_COUNT = 20
 
-/** The base branch assumed when the workspace has not recorded one. */
-const FALLBACK_BASE_BRANCH = 'main'
+/** The base branch assumed when even the remote will not say. */
+const LAST_RESORT_BASE_BRANCH = 'main'
+
+const ORIGIN_HEAD_PREFIX = 'origin/'
 
 /**
  * Read git output for prompt context, treating failure as absence.
@@ -157,6 +159,26 @@ const readRecentCommitSubjects = async (
     .split(LINE_SPLIT_RE)
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
+}
+
+/**
+ * The branch a pull request should target when the workspace has not recorded
+ * one of its own.
+ *
+ * Asked of the remote rather than assumed, because "main" is a convention and
+ * not a fact — this repository's own default is `master`, and guessing wrong
+ * makes `gh pr create` fail with "Base ref must be a branch" after the work is
+ * already pushed.
+ */
+const resolveDefaultBaseBranch = async (cwd: string): Promise<string> => {
+  const symbolic = await readGitText(
+    ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'],
+    cwd
+  )
+  const branch = symbolic.trim()
+  return branch.startsWith(ORIGIN_HEAD_PREFIX)
+    ? branch.slice(ORIGIN_HEAD_PREFIX.length)
+    : LAST_RESORT_BASE_BRANCH
 }
 
 /**
@@ -577,7 +599,11 @@ class WorkspaceSyncService extends Context.Service<
         'WorkspaceSyncService.createPullRequest'
       )(function* (workspaceId: string) {
         const workspace = yield* getWorkspace(workspaceId)
-        const baseBranch = workspace.baseBranch ?? FALLBACK_BASE_BRANCH
+        const baseBranch =
+          workspace.baseBranch ??
+          (yield* Effect.promise(() =>
+            resolveDefaultBaseBranch(workspace.worktreePath)
+          ))
         const content = yield* writePrContent(
           workspace.worktreePath,
           baseBranch
@@ -746,4 +772,4 @@ class WorkspaceSyncService extends Context.Service<
   )
 }
 
-export { WorkspaceSyncService }
+export { resolveDefaultBaseBranch, WorkspaceSyncService }

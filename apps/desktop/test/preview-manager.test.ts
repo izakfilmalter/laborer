@@ -94,4 +94,16 @@ describe('PreviewManager lifecycle', () => {
       manager.registerWebview(tabOwner, 'tab-1', 42)
     ).rejects.toThrow('Invalid preview webContents')
   })
+
+  it('rejects artifact paths outside the owned artifact directory', () => {
+    const manager = new PreviewManager({
+      artifactDirectory: '/tmp/laborer-preview-test',
+      pickPreloadUrl: null,
+      pictureInPicturePreloadPath: '/tmp/preview-pip-preload.cjs',
+    })
+
+    expect(() => manager.revealArtifact('/etc/passwd')).toThrow(
+      'outside the artifact directory'
+    )
+  })
 })

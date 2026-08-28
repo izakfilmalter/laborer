@@ -167,6 +167,180 @@ export interface WorkspaceNotificationContext {
 
 export type DesktopPreviewColorScheme = 'system' | 'light' | 'dark'
 
+const PreviewNonEmptyString = Schema.String.check(Schema.isMinLength(1))
+const PreviewTabIdSchema = PreviewNonEmptyString.check(
+  Schema.isTrimmed(),
+  Schema.isMaxLength(4096)
+)
+const previewUrlProtocol = Schema.makeFilter((rawUrl: string) => {
+  const input = rawUrl.trim()
+  try {
+    const candidate = input.includes('://') ? input : `https://${input}`
+    const protocol = new URL(candidate).protocol
+    return (
+      protocol === 'http:' ||
+      protocol === 'https:' ||
+      'Preview URL must use HTTP or HTTPS.'
+    )
+  } catch {
+    return 'Preview URL must be valid.'
+  }
+})
+const PreviewUrlSchema = PreviewNonEmptyString.check(
+  Schema.isMaxLength(2048),
+  previewUrlProtocol
+)
+const PreviewArtifactPathSchema = PreviewNonEmptyString.check(
+  Schema.isMaxLength(4096)
+)
+const PreviewFinitePositive = Schema.Finite.check(Schema.isGreaterThan(0))
+const PreviewTimeoutSchema = Schema.Int.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(60_000)
+)
+const PreviewAutomationTargetSchema = {
+  locator: Schema.optionalKey(
+    PreviewNonEmptyString.check(Schema.isMaxLength(4096))
+  ),
+  selector: Schema.optionalKey(
+    PreviewNonEmptyString.check(Schema.isMaxLength(4096))
+  ),
+}
+
+export const PreviewTabRequestSchema = Schema.Struct({
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewCreateTabRequestSchema = Schema.Struct({
+  colorScheme: Schema.optionalKey(Schema.Literals(['system', 'light', 'dark'])),
+  tabId: PreviewTabIdSchema,
+  zoomFactor: Schema.optionalKey(PreviewFinitePositive),
+})
+export const PreviewRegisterWebviewRequestSchema = Schema.Struct({
+  tabId: PreviewTabIdSchema,
+  webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+export const PreviewNavigateRequestSchema = Schema.Struct({
+  tabId: PreviewTabIdSchema,
+  url: PreviewUrlSchema,
+})
+export const PreviewSetColorSchemeRequestSchema = Schema.Struct({
+  colorScheme: Schema.Literals(['system', 'light', 'dark']),
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewSetAudioMutedRequestSchema = Schema.Struct({
+  audioMuted: Schema.Boolean,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewGetConfigRequestSchema = Schema.Struct({
+  environmentId: PreviewNonEmptyString.check(Schema.isMaxLength(1024)),
+})
+
+export const DesktopPreviewAnnotationThemeSchema = Schema.Struct({
+  accent: Schema.String,
+  accentForeground: Schema.String,
+  background: Schema.String,
+  border: Schema.String,
+  colorScheme: Schema.Literals(['light', 'dark']),
+  fontMono: Schema.String,
+  fontSans: Schema.String,
+  foreground: Schema.String,
+  input: Schema.String,
+  muted: Schema.String,
+  mutedForeground: Schema.String,
+  popover: Schema.String,
+  popoverForeground: Schema.String,
+  primary: Schema.String,
+  primaryForeground: Schema.String,
+  radius: Schema.String,
+  ring: Schema.String,
+})
+export const PreviewSetAnnotationThemeRequestSchema = Schema.Struct({
+  theme: DesktopPreviewAnnotationThemeSchema,
+})
+export const PreviewArtifactRequestSchema = Schema.Struct({
+  path: PreviewArtifactPathSchema,
+})
+export const PreviewRecordingSaveRequestSchema = Schema.Struct({
+  data: Schema.Uint8Array.check(
+    Schema.makeFilter(
+      (data: Uint8Array) =>
+        data.byteLength <= 1024 * 1024 * 1024 ||
+        'Recording data must not exceed 1 GiB.'
+    )
+  ),
+  mimeType: PreviewNonEmptyString.check(Schema.isMaxLength(256)),
+  tabId: PreviewTabIdSchema,
+})
+
+export const PreviewAutomationClickInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
+  x: Schema.optionalKey(Schema.Finite),
+  y: Schema.optionalKey(Schema.Finite),
+})
+export const PreviewAutomationTypeInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  clear: Schema.optionalKey(Schema.Boolean),
+  text: Schema.String.check(Schema.isMaxLength(64_000)),
+  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
+})
+export const PreviewAutomationPressInputSchema = Schema.Struct({
+  key: PreviewNonEmptyString.check(Schema.isMaxLength(256)),
+  modifiers: Schema.optionalKey(
+    Schema.Array(Schema.Literals(['Alt', 'Control', 'Meta', 'Shift'])).check(
+      Schema.isMaxLength(4)
+    )
+  ),
+})
+export const PreviewAutomationScrollInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  deltaX: Schema.optionalKey(Schema.Finite),
+  deltaY: Schema.optionalKey(Schema.Finite),
+})
+export const PreviewAutomationEvaluateInputSchema = Schema.Struct({
+  awaitPromise: Schema.optionalKey(Schema.Boolean),
+  expression: PreviewNonEmptyString.check(Schema.isMaxLength(64_000)),
+  returnByValue: Schema.optionalKey(Schema.Boolean),
+})
+export const PreviewAutomationWaitForInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  text: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64_000))),
+  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
+  urlIncludes: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(2048))
+  ),
+})
+
+export const PreviewAutomationClickRequestSchema = Schema.Struct({
+  input: PreviewAutomationClickInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationTypeRequestSchema = Schema.Struct({
+  input: PreviewAutomationTypeInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationPressRequestSchema = Schema.Struct({
+  input: PreviewAutomationPressInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationScrollRequestSchema = Schema.Struct({
+  input: PreviewAutomationScrollInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationEvaluateRequestSchema = Schema.Struct({
+  input: PreviewAutomationEvaluateInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationWaitForRequestSchema = Schema.Struct({
+  input: PreviewAutomationWaitForInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+
+export class PreviewIpcDecodeError extends Schema.TaggedError<PreviewIpcDecodeError>()(
+  'PreviewIpcDecodeError',
+  { channel: Schema.String, message: Schema.String }
+) {}
+
 export type DesktopPreviewNavStatus =
   | { readonly kind: 'Idle' }
   | { readonly kind: 'Loading'; readonly title: string; readonly url: string }
@@ -333,6 +507,160 @@ export interface DesktopPreviewPointerEvent {
   readonly x: number
   readonly y: number
 }
+
+const PreviewAnnotationRectSchema = Schema.Struct({
+  height: PreviewFinitePositive,
+  width: PreviewFinitePositive,
+  x: Schema.Finite,
+  y: Schema.Finite,
+})
+const PreviewPickedElementSchema = Schema.Struct({
+  componentName: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1024))),
+  htmlPreview: Schema.String.check(Schema.isMaxLength(4000)),
+  pageTitle: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+  pageUrl: PreviewUrlSchema,
+  pickedAt: Schema.String,
+  selector: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+  source: Schema.NullOr(
+    Schema.Struct({
+      columnNumber: Schema.NullOr(Schema.Int),
+      fileName: Schema.NullOr(Schema.String),
+      functionName: Schema.NullOr(Schema.String),
+      lineNumber: Schema.NullOr(Schema.Int),
+    })
+  ),
+  stack: Schema.Array(
+    Schema.Struct({
+      columnNumber: Schema.NullOr(Schema.Int),
+      fileName: Schema.NullOr(Schema.String),
+      functionName: Schema.NullOr(Schema.String),
+      lineNumber: Schema.NullOr(Schema.Int),
+    })
+  ).check(Schema.isMaxLength(100)),
+  styles: Schema.String.check(Schema.isMaxLength(64_000)),
+  tagName: PreviewNonEmptyString.check(Schema.isMaxLength(256)),
+})
+export const PreviewAnnotationPayloadSchema = Schema.Struct({
+  comment: Schema.String.check(Schema.isMaxLength(10_000)),
+  createdAt: Schema.String,
+  elements: Schema.Array(
+    Schema.Struct({
+      element: PreviewPickedElementSchema,
+      id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+      rect: PreviewAnnotationRectSchema,
+    })
+  ).check(Schema.isMaxLength(200)),
+  id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+  pageTitle: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+  pageUrl: PreviewUrlSchema,
+  regions: Schema.Array(
+    Schema.Struct({
+      id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+      rect: PreviewAnnotationRectSchema,
+    })
+  ).check(Schema.isMaxLength(200)),
+  screenshot: Schema.Null,
+  strokes: Schema.Array(
+    Schema.Struct({
+      bounds: PreviewAnnotationRectSchema,
+      color: Schema.String,
+      id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+      points: Schema.Array(
+        Schema.Struct({ x: Schema.Finite, y: Schema.Finite })
+      ).check(Schema.isMaxLength(10_000)),
+      width: PreviewFinitePositive,
+    })
+  ).check(Schema.isMaxLength(200)),
+  styleChanges: Schema.Array(
+    Schema.Struct({
+      previousValue: Schema.String,
+      property: Schema.String,
+      selector: Schema.NullOr(Schema.String),
+      targetId: Schema.String,
+      value: Schema.String,
+    })
+  ).check(Schema.isMaxLength(200)),
+})
+export const PreviewElementPickedEventSchema = Schema.Union([
+  Schema.Tuple([Schema.Null]),
+  Schema.Tuple([
+    PreviewAnnotationPayloadSchema,
+    PreviewAnnotationRectSchema,
+    Schema.Literals(['attach', 'send']),
+  ]),
+])
+export const PreviewHumanInputEventSchema = Schema.Union([
+  Schema.Struct({
+    button: Schema.Int,
+    kind: Schema.Literal('pointer'),
+    x: Schema.Finite,
+    y: Schema.Finite,
+  }),
+  Schema.Struct({
+    code: Schema.String.check(Schema.isMaxLength(256)),
+    key: Schema.String.check(Schema.isMaxLength(256)),
+    kind: Schema.Literal('key'),
+  }),
+])
+export const PreviewMouseNavigateEventSchema = Schema.Struct({
+  direction: Schema.Literals(['back', 'forward']),
+})
+
+const DesktopPreviewNavStatusSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('Idle') }),
+  Schema.Struct({
+    kind: Schema.Literals(['Loading', 'Success']),
+    title: Schema.String,
+    url: Schema.String,
+  }),
+  Schema.Struct({
+    code: Schema.Int,
+    description: Schema.String,
+    kind: Schema.Literal('LoadFailed'),
+    title: Schema.String,
+    url: Schema.String,
+  }),
+])
+export const DesktopPreviewTabStateSchema = Schema.Struct({
+  audible: Schema.Boolean,
+  audioMuted: Schema.Boolean,
+  canGoBack: Schema.Boolean,
+  canGoForward: Schema.Boolean,
+  colorScheme: Schema.Literals(['system', 'light', 'dark']),
+  controller: Schema.Literals(['agent', 'human', 'none']),
+  favicon: Schema.optionalKey(
+    Schema.Struct({
+      capturedAt: Schema.Finite,
+      dataUrl: Schema.String,
+      pageUrl: Schema.String,
+    })
+  ),
+  navStatus: DesktopPreviewNavStatusSchema,
+  pictureInPicture: Schema.Boolean,
+  tabId: PreviewTabIdSchema,
+  updatedAt: Schema.String,
+  webContentsId: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  zoomFactor: PreviewFinitePositive,
+})
+export const DesktopPreviewStateChangeEventSchema = Schema.Tuple([
+  PreviewTabIdSchema,
+  DesktopPreviewTabStateSchema,
+])
+export const DesktopPreviewRecordingFrameSchema = Schema.Struct({
+  data: Schema.String.check(Schema.isMaxLength(20_000_000)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+  receivedAt: Schema.String,
+  tabId: PreviewTabIdSchema,
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+export const DesktopPreviewPointerEventSchema = Schema.Struct({
+  createdAt: Schema.String,
+  phase: Schema.Literals(['click', 'move']),
+  sequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  tabId: PreviewTabIdSchema,
+  x: Schema.Finite,
+  y: Schema.Finite,
+})
 
 export interface PreviewAutomationStatus {
   readonly available: boolean

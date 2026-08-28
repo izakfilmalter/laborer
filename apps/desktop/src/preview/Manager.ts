@@ -10,8 +10,6 @@ import type {
   DesktopPreviewScreenshotArtifact,
   DesktopPreviewTabDefaults,
   DesktopPreviewTabState,
-  PreviewAnnotationPayload,
-  PreviewAnnotationRect,
   PreviewAnnotationSubmissionResult,
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
@@ -22,6 +20,12 @@ import type {
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from '@laborer/shared/desktop-bridge'
+import {
+  PreviewElementPickedEventSchema,
+  PreviewHumanInputEventSchema,
+  PreviewMouseNavigateEventSchema,
+} from '@laborer/shared/desktop-bridge'
+import { Option, Schema } from 'effect'
 import {
   BrowserWindow,
   clipboard,
@@ -170,39 +174,6 @@ function nextZoom(current: number, direction: 'in' | 'out'): number {
   )
   const index = direction === 'in' ? closest + 1 : closest - 1
   return ZOOM_LEVELS[Math.max(0, Math.min(index, ZOOM_LEVELS.length - 1))] ?? 1
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function isFiniteRect(value: unknown): value is PreviewAnnotationRect {
-  return (
-    isRecord(value) &&
-    ['x', 'y', 'width', 'height'].every(
-      (key) => typeof value[key] === 'number' && Number.isFinite(value[key])
-    ) &&
-    (value.width as number) > 0 &&
-    (value.height as number) > 0
-  )
-}
-
-function isAnnotationPayload(
-  value: unknown
-): value is PreviewAnnotationPayload {
-  return (
-    isRecord(value) &&
-    typeof value.id === 'string' &&
-    typeof value.pageUrl === 'string' &&
-    (value.pageTitle === null || typeof value.pageTitle === 'string') &&
-    typeof value.comment === 'string' &&
-    typeof value.createdAt === 'string' &&
-    Array.isArray(value.elements) &&
-    Array.isArray(value.regions) &&
-    Array.isArray(value.strokes) &&
-    Array.isArray(value.styleChanges) &&
-    value.screenshot === null
-  )
 }
 
 function buildPictureInPictureDataUrl(): string {
@@ -500,24 +471,21 @@ export class PreviewManager {
     }
     const onCancelled = () => finish(null)
     const onPicked = async (_event: unknown, ...args: unknown[]) => {
-      const payload = args[0]
-      if (!isAnnotationPayload(payload)) {
+      const decoded = Option.getOrUndefined(
+        Schema.decodeUnknownOption(PreviewElementPickedEventSchema)(args)
+      )
+      if (!decoded || decoded[0] === null) {
         finish(null)
         return
       }
-      const rect = isFiniteRect(args[1]) ? args[1] : null
-      const submission = args[2] === 'send' ? 'send' : 'attach'
+      const [payload, rect, submission] = decoded
       try {
-        const image = await guest.capturePage(
-          rect
-            ? {
-                height: Math.ceil(rect.height),
-                width: Math.ceil(rect.width),
-                x: Math.max(0, Math.floor(rect.x)),
-                y: Math.max(0, Math.floor(rect.y)),
-              }
-            : undefined
-        )
+        const image = await guest.capturePage({
+          height: Math.ceil(rect.height),
+          width: Math.ceil(rect.width),
+          x: Math.max(0, Math.floor(rect.x)),
+          y: Math.max(0, Math.floor(rect.y)),
+        })
         const size = image.getSize()
         finish({
           annotation: {
@@ -1052,12 +1020,14 @@ export class PreviewManager {
     const favicon = (_event: unknown, candidates: string[]) => {
       this.#captureFavicon(tab, guest, candidates).catch(() => undefined)
     }
-    const audio = (_event: unknown, details: { audible: boolean }) => {
+    const audio = (
+      event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>
+    ) => {
       if (
         this.#guest(tab, false) === guest &&
-        tab.state.audible !== details.audible
+        tab.state.audible !== event.audible
       ) {
-        this.#update(tab, { audible: details.audible })
+        this.#update(tab, { audible: event.audible })
       }
     }
     const destroyed = () => {
@@ -1074,7 +1044,14 @@ export class PreviewManager {
         this.#emit(tab)
       }
     }
-    const humanInput = () => {
+    const humanInput = (_event: unknown, payload: unknown) => {
+      if (
+        Option.isNone(
+          Schema.decodeUnknownOption(PreviewHumanInputEventSchema)(payload)
+        )
+      ) {
+        return
+      }
       this.#update(tab, { controller: 'human' })
       setTimeout(() => {
         if (
@@ -1086,13 +1063,16 @@ export class PreviewManager {
       }, 750)
     }
     const mouseNavigate = (_event: unknown, payload: unknown) => {
-      if (!isRecord(payload)) {
+      const decoded = Option.getOrUndefined(
+        Schema.decodeUnknownOption(PreviewMouseNavigateEventSchema)(payload)
+      )
+      if (!decoded) {
         return
       }
-      if (payload.direction === 'back' && guest.navigationHistory.canGoBack()) {
+      if (decoded.direction === 'back' && guest.navigationHistory.canGoBack()) {
         guest.navigationHistory.goBack()
       } else if (
-        payload.direction === 'forward' &&
+        decoded.direction === 'forward' &&
         guest.navigationHistory.canGoForward()
       ) {
         guest.navigationHistory.goForward()
@@ -1123,11 +1103,7 @@ export class PreviewManager {
     guest.on('did-stop-loading', sync)
     guest.on('did-fail-load', failed)
     guest.on('page-favicon-updated', favicon)
-    ;(
-      guest as unknown as {
-        on: (event: string, listener: (...args: never[]) => void) => void
-      }
-    ).on('audio-state-changed', audio as never)
+    guest.on('audio-state-changed', audio)
     guest.once('destroyed', destroyed)
     guest.on('before-input-event', beforeInput)
     guest.on('will-navigate', willNavigate)
@@ -1148,14 +1124,7 @@ export class PreviewManager {
       guest.removeListener('did-stop-loading', sync)
       guest.removeListener('did-fail-load', failed)
       guest.removeListener('page-favicon-updated', favicon)
-      ;(
-        guest as unknown as {
-          removeListener: (
-            event: string,
-            listener: (...args: never[]) => void
-          ) => void
-        }
-      ).removeListener('audio-state-changed', audio as never)
+      guest.removeListener('audio-state-changed', audio)
       guest.removeListener('destroyed', destroyed)
       guest.removeListener('before-input-event', beforeInput)
       guest.removeListener('will-navigate', willNavigate)

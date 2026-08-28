@@ -37,6 +37,7 @@
     "effect": "catalog:",
     "ignore": "7.0.5",
     "ioredis": "catalog:",
+    "koffi": "3.1.6",
     "redis": "^6.2.1"
   },
   "devDependencies": {

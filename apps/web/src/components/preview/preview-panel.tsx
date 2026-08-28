@@ -57,6 +57,7 @@ import {
 } from '@/browser/browser-recording'
 import { BrowserSurfaceSlot } from '@/browser/browser-surface-slot'
 import { toast } from '@/lib/toast'
+import { usePreviewMiniPlayerStore } from '@/preview-mini-player-store'
 import {
   emptyWorkspacePreviewState,
   previewRuntimeTabId,
@@ -382,6 +383,9 @@ export function PreviewPanel(props: {
   )
   const recordingTabId = useBrowserRecordingStore((state) => state.activeTabId)
   const recording = runtimeTabId !== null && recordingTabId === runtimeTabId
+  const miniPlayer = usePreviewMiniPlayerStore(
+    (state) => state.byWorkspaceId[props.workspaceId] ?? null
+  )
 
   const submitUrl = useCallback(
     async (raw: string) => {
@@ -628,11 +632,24 @@ export function PreviewPanel(props: {
           {props.tabId ? (
             <ChromeButton
               disabled={!overlay?.hasWebContents}
-              label="Open separate preview window"
-              onClick={() =>
-                runtimeTabId &&
-                void preview?.pictureInPicture.open(runtimeTabId)
+              label={
+                miniPlayer?.tabId === props.tabId
+                  ? 'Close floating preview'
+                  : 'Float preview over workspace'
               }
+              onClick={() => {
+                if (!props.tabId) {
+                  return
+                }
+                if (miniPlayer?.tabId === props.tabId) {
+                  usePreviewMiniPlayerStore.getState().close(props.workspaceId)
+                  return
+                }
+                usePreviewMiniPlayerStore
+                  .getState()
+                  .open(props.workspaceId, props.tabId)
+                useRightPanelStore.getState().close(props.workspaceId)
+              }}
             >
               <PictureInPicture2 />
             </ChromeButton>

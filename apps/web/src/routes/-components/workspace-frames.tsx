@@ -38,6 +38,7 @@ import type {
   PanelImperativeHandle,
 } from 'react-resizable-panels'
 import { PanelTypePicker } from '@/components/panel-type-picker'
+import { WorkspacePreviewMiniPlayer } from '@/components/preview/workspace-preview-mini-player'
 import { WorkspaceRightPanel } from '@/components/right-panel/workspace-right-panel'
 import {
   orderedProjectsFromRows,
@@ -64,6 +65,11 @@ import {
 } from '@/panels/window-layout-utils'
 import { computeMinimizedTargetLayout } from '@/panels/workspace-minimize-layout'
 import type { WorkspaceDropEdge } from '@/panels/workspace-tile-utils'
+import { usePreviewMiniPlayerStore } from '@/preview-mini-player-store'
+import {
+  emptyWorkspacePreviewState,
+  usePreviewStateStore,
+} from '@/preview-state-store'
 import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
 import {
   PanelTabCloseConfirmDialog,
@@ -723,10 +729,44 @@ function WorkspaceFrame({
       [workspaceId]
     )
   )
+  const activeRightPanelSurfaceId = useRightPanelStore(
+    useCallback(
+      (store) =>
+        (workspaceId &&
+          store.byWorkspaceId[workspaceId]?.isOpen &&
+          store.byWorkspaceId[workspaceId]?.activeSurfaceId) ||
+        null,
+      [workspaceId]
+    )
+  )
   const showDiff = activeRightPanelKind === 'diff'
   const showComments = activeRightPanelKind === 'pull-request'
   const showFiles =
     activeRightPanelKind === 'files' || activeRightPanelKind === 'file'
+  const miniPlayer = usePreviewMiniPlayerStore(
+    (state) => (workspaceId && state.byWorkspaceId[workspaceId]) || null
+  )
+  const previewState = usePreviewStateStore(
+    (state) =>
+      (workspaceId && state.byWorkspaceId[workspaceId]) ||
+      emptyWorkspacePreviewState
+  )
+
+  useEffect(() => {
+    if (!(workspaceId && miniPlayer)) {
+      return
+    }
+    const sameTabInPanel =
+      activeRightPanelSurfaceId === `browser:${miniPlayer.tabId}`
+    if (!previewState.sessions[miniPlayer.tabId] || sameTabInPanel) {
+      usePreviewMiniPlayerStore.getState().close(workspaceId)
+    }
+  }, [
+    activeRightPanelSurfaceId,
+    miniPlayer,
+    previewState.sessions,
+    workspaceId,
+  ])
 
   // Panel tab bar items and active tab layout (hierarchical mode only)
   const panelTabItems: readonly TabBarItem[] = useMemo(() => {
@@ -861,17 +901,22 @@ function WorkspaceFrame({
         workspaceId={workspaceId}
       />
       {!isMinimized && (
-        <WorkspaceContent
-          effectiveLayout={effectiveLayout}
-          isEmptyWorkspace={isEmptyWorkspace}
-          panelTabId={tileLeaf?.activePanelTabId}
-          suppressRightPanel={
-            workspaceId !== undefined &&
-            suppressedRightPanelWorkspaceId === workspaceId
-          }
-          tabBar={tabBarElement}
-          workspaceId={workspaceId}
-        />
+        <>
+          <WorkspaceContent
+            effectiveLayout={effectiveLayout}
+            isEmptyWorkspace={isEmptyWorkspace}
+            panelTabId={tileLeaf?.activePanelTabId}
+            suppressRightPanel={
+              workspaceId !== undefined &&
+              suppressedRightPanelWorkspaceId === workspaceId
+            }
+            tabBar={tabBarElement}
+            workspaceId={workspaceId}
+          />
+          {workspaceId ? (
+            <WorkspacePreviewMiniPlayer workspaceId={workspaceId} />
+          ) : null}
+        </>
       )}
       <WorkspaceFrameCloseDialog workspaceId={workspaceId} />
       <WorkspaceFrameDestroyOnCloseDialog workspaceId={workspaceId} />

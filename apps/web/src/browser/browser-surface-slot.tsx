@@ -7,6 +7,7 @@ export function BrowserSurfaceSlot(props: {
   readonly layoutVersion?: number | string
   readonly tabId: string
   readonly visible: boolean
+  readonly fitSourceContent?: boolean
 }) {
   const elementRef = useRef<HTMLDivElement>(null)
   const presentationRef = useRef({
@@ -20,7 +21,7 @@ export function BrowserSurfaceSlot(props: {
     if (!element) {
       return
     }
-    let lease = acquireBrowserSurface(props.tabId)
+    let lease = acquireBrowserSurface(props.tabId, props.fitSourceContent)
     const update = () => {
       const rect = element.getBoundingClientRect()
       const presentation = presentationRef.current
@@ -38,7 +39,7 @@ export function BrowserSurfaceSlot(props: {
         )
       ) {
         lease.release()
-        lease = acquireBrowserSurface(props.tabId)
+        lease = acquireBrowserSurface(props.tabId, props.fitSourceContent)
         lease.present(bounds, presentation.visible, presentation.cornerRadius)
       }
     }
@@ -59,15 +60,16 @@ export function BrowserSurfaceSlot(props: {
       visualViewport?.removeEventListener('scroll', update)
       lease.release()
     }
-  }, [props.tabId])
+  }, [props.fitSourceContent, props.tabId])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: layoutVersion deliberately retriggers geometry after drag, resize, and portal movement.
   useLayoutEffect(() => {
     presentationRef.current = {
       visible: props.visible,
       cornerRadius: props.cornerRadius ?? 0,
     }
     updateRef.current?.()
-  }, [props.cornerRadius, props.visible])
+  }, [props.cornerRadius, props.layoutVersion, props.visible])
 
   return (
     <div

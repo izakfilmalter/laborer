@@ -56,6 +56,7 @@ import {
   resolveActiveWorkspaceId,
 } from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
+import { usePreviewMiniPlayerStore } from '@/preview-mini-player-store'
 import { usePreviewStateStore } from '@/preview-state-store'
 import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
 import {
@@ -343,6 +344,7 @@ function HomeComponent() {
         () => undefined
       )
       usePreviewStateStore.getState().removeWorkspace(workspaceId)
+      usePreviewMiniPlayerStore.getState().removeWorkspace(workspaceId)
     }
     useRightPanelStore.getState().removeWorkspaces(destroyedIds)
     for (const workspaceId of destroyedIds) {

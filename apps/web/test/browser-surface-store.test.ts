@@ -21,4 +21,31 @@ describe('browser surface leases', () => {
     current.release()
     expect(useBrowserSurfaceStore.getState().byTabId.tab?.visible).toBe(false)
   })
+
+  it('transfers geometry ownership to a fitted floating surface', () => {
+    const panel = acquireBrowserSurface('tab')
+    panel.present({ x: 400, y: 20, width: 600, height: 500 }, true)
+    const floating = acquireBrowserSurface('tab', true)
+    expect(useBrowserSurfaceStore.getState().byTabId.tab?.sourceRect).toEqual({
+      x: 400,
+      y: 20,
+      width: 600,
+      height: 500,
+    })
+    expect(
+      floating.present({ x: 12, y: 12, width: 320, height: 200 }, true, 12)
+    ).toBe(true)
+    panel.release()
+    expect(useBrowserSurfaceStore.getState().byTabId.tab).toMatchObject({
+      fitSourceContent: true,
+      visible: true,
+      cornerRadius: 12,
+    })
+    floating.release()
+    expect(useBrowserSurfaceStore.getState().byTabId.tab).toMatchObject({
+      fitSourceContent: false,
+      owner: null,
+      visible: false,
+    })
+  })
 })

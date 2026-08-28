@@ -5,7 +5,7 @@ import type {
   DesktopPreviewWebviewConfig,
 } from '@laborer/shared/desktop-bridge'
 import { FILL_PREVIEW_VIEWPORT } from '@laborer/shared/rpc'
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import {
   previewRuntimeTabId,
@@ -13,6 +13,11 @@ import {
 } from '@/preview-state-store'
 import { useBrowserPointerStore } from './browser-pointer-store'
 import { useBrowserSurfaceStore } from './browser-surface-store'
+import {
+  INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
+  planWebviewCrashRecovery,
+  type WebviewCrashRecoveryState,
+} from './webview-crash-recovery'
 
 interface ElectronWebview extends HTMLElement {
   readonly getWebContentsId: () => number
@@ -72,6 +77,11 @@ function HostedBrowserWebview(props: {
   const preview = window.desktopBridge?.preview
   const reportStatus = useAtomSet(reportStatusMutation, { mode: 'promise' })
   const [config, setConfig] = useState<DesktopPreviewWebviewConfig | null>(null)
+  const [webviewGeneration, setWebviewGeneration] = useState(0)
+  const crashRecoveryRef = useRef<WebviewCrashRecoveryState>(
+    INITIAL_WEBVIEW_CRASH_RECOVERY_STATE
+  )
+  const latestUrlRef = useRef(props.initialUrl)
   const [tabReady] = useState(() => {
     let resolve!: () => void
     let reject!: (error: unknown) => void
@@ -84,6 +94,10 @@ function HostedBrowserWebview(props: {
   const presentation = useBrowserSurfaceStore(
     (state) => state.byTabId[props.runtimeTabId]
   )
+
+  useEffect(() => {
+    latestUrlRef.current = props.initialUrl
+  }, [props.initialUrl])
 
   useEffect(() => {
     if (!preview) {
@@ -155,18 +169,25 @@ function HostedBrowserWebview(props: {
   }
   const active = Boolean(presentation?.visible && presentation.rect)
   const rect = presentation?.rect
-  const width =
+  const sourceRect = presentation?.fitSourceContent
+    ? presentation.sourceRect
+    : null
+  const sourceWidth =
     props.viewport._tag === 'fill'
-      ? (rect?.width ?? 1280)
+      ? (sourceRect?.width ?? rect?.width ?? 1280)
       : props.viewport.width
-  const height =
+  const sourceHeight =
     props.viewport._tag === 'fill'
-      ? (rect?.height ?? 800)
+      ? (sourceRect?.height ?? rect?.height ?? 800)
       : props.viewport.height
+  const fitScale =
+    active && rect && presentation?.fitSourceContent
+      ? Math.min(rect.width / sourceWidth, rect.height / sourceHeight)
+      : 1
 
   return (
     <div
-      className="fixed overflow-auto bg-muted/35"
+      className="fixed overflow-hidden bg-muted/35"
       data-preview-viewport={props.runtimeTabId}
       style={
         active && rect
@@ -175,10 +196,18 @@ function HostedBrowserWebview(props: {
               top: rect.y,
               width: rect.width,
               height: rect.height,
-              zIndex: 20,
+              pointerEvents: 'auto',
+              zIndex: 30,
               borderRadius: presentation?.cornerRadius,
             }
-          : { left: -100_000, top: 0, width, height, visibility: 'hidden' }
+          : {
+              height: sourceHeight,
+              left: -100_000,
+              pointerEvents: 'none',
+              top: -100_000,
+              width: sourceWidth,
+              zIndex: -1,
+            }
       }
     >
       <webview
@@ -187,6 +216,7 @@ function HostedBrowserWebview(props: {
         className="flex bg-background"
         data-preview-server-tab={props.serverTabId}
         data-preview-tab={props.runtimeTabId}
+        key={webviewGeneration}
         partition={config.partition}
         preload={config.preloadUrl ?? undefined}
         ref={(node) => {
@@ -195,6 +225,7 @@ function HostedBrowserWebview(props: {
           }
           const webview = node as unknown as ElectronWebview
           let disposed = false
+          let recoveryTimeout: ReturnType<typeof setTimeout> | null = null
           const register = async () => {
             try {
               await tabReady.promise
@@ -211,15 +242,44 @@ function HostedBrowserWebview(props: {
           }
           webview.addEventListener('did-attach', register)
           webview.addEventListener('dom-ready', register)
+          const recoverGuest = () => {
+            if (disposed || recoveryTimeout !== null) {
+              return
+            }
+            const recovery = planWebviewCrashRecovery(
+              crashRecoveryRef.current,
+              Date.now()
+            )
+            if (!recovery) {
+              return
+            }
+            crashRecoveryRef.current = recovery.state
+            recoveryTimeout = setTimeout(() => {
+              recoveryTimeout = null
+              if (!disposed) {
+                setWebviewGeneration((generation) => generation + 1)
+              }
+            }, recovery.delayMs)
+          }
+          webview.addEventListener('render-process-gone', recoverGuest)
           register()
           return () => {
             disposed = true
+            if (recoveryTimeout !== null) {
+              clearTimeout(recoveryTimeout)
+            }
             webview.removeEventListener('did-attach', register)
             webview.removeEventListener('dom-ready', register)
+            webview.removeEventListener('render-process-gone', recoverGuest)
           }
         }}
-        src={props.initialUrl ?? 'about:blank'}
-        style={{ width, height }}
+        src={latestUrlRef.current ?? 'about:blank'}
+        style={{
+          height: sourceHeight,
+          transform: fitScale < 1 ? `scale(${fitScale})` : undefined,
+          transformOrigin: 'top left',
+          width: sourceWidth,
+        }}
         webpreferences={config.webPreferences}
       />
     </div>

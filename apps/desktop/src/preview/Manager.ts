@@ -4,7 +4,6 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewColorScheme,
-  DesktopPreviewPointerEvent,
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
   DesktopPreviewScreenshotArtifact,
@@ -34,6 +33,7 @@ import {
   type WebContents,
   webContents,
 } from 'electron'
+import { PreviewAutomation } from './Automation.js'
 import { BrowserSession } from './BrowserSession.js'
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -43,7 +43,6 @@ import {
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
-  PREVIEW_POINTER_EVENT_CHANNEL,
   PREVIEW_RECORDING_FRAME_CHANNEL,
   PREVIEW_STATE_CHANGE_CHANNEL,
   START_PICK_CHANNEL,
@@ -59,27 +58,12 @@ const ZOOM_LEVELS = [
   5,
 ] as const
 const DEFAULT_ZOOM_FACTOR = 1
-const MAX_EVALUATION_BYTES = 64_000
-const MAX_VISIBLE_TEXT_LENGTH = 20_000
-const MAX_INTERACTIVE_ELEMENTS = 200
-const MAX_SCREENSHOT_WIDTH = 1280
 const FRAME_INTERVAL_MS = Math.ceil(1000 / 12)
 const FRAME_JPEG_QUALITY = 80
 const MAX_TAB_ID_LENGTH = 4096
 const MAX_URL_LENGTH = 2048
 const LOOPBACK_PREFIX_PATTERN =
   /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::|\/|$)/i
-const ROLE_LOCATOR_PATTERN =
-  /^role=([^[]+)(?:\[name=(?:'([^']*)'|"([^"]*)")\])?$/
-const KEY_MODIFIERS = {
-  Alt: 'alt',
-  Control: 'control',
-  Meta: 'meta',
-  Shift: 'shift',
-} as const satisfies Record<
-  NonNullable<PreviewAutomationPressInput['modifiers']>[number],
-  NonNullable<Electron.KeyboardInputEvent['modifiers']>[number]
->
 
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   accent: 'rgb(0 0 0 / 4%)',
@@ -184,6 +168,9 @@ function buildPictureInPictureDataUrl(): string {
 export class PreviewManager {
   readonly #tabs = new Map<string, ManagedTab>()
   readonly #browserSessions = new BrowserSession()
+  readonly #automation = new PreviewAutomation((owner, tabId) =>
+    this.#requireGuest(owner, tabId)
+  )
   readonly #pickSessions = new Map<string, PickSession>()
   readonly #frameSessions = new Map<string, FrameSession>()
   readonly #pictureInPictureWindows = new Map<string, BrowserWindow>()
@@ -192,7 +179,6 @@ export class PreviewManager {
   readonly #pickPreloadUrl: string | null
   readonly #pictureInPicturePreloadPath: string
   #annotationTheme = DEFAULT_ANNOTATION_THEME
-  #pointerSequence = 0
 
   constructor(options: {
     artifactDirectory: string
@@ -419,15 +405,7 @@ export class PreviewManager {
   }
 
   openDevTools(owner: WebContents, tabId: string): void {
-    const guest = this.#requireGuest(owner, tabId)
-    if (guest.debugger.isAttached()) {
-      guest.debugger.detach()
-    }
-    if (guest.isDevToolsOpened()) {
-      guest.devToolsWebContents?.focus()
-    } else {
-      guest.openDevTools({ mode: 'detach' })
-    }
+    this.#automation.openDevTools(owner, tabId)
   }
 
   clearCookies(): Promise<void> {
@@ -692,65 +670,7 @@ export class PreviewManager {
     owner: WebContents,
     tabId: string
   ): Promise<PreviewAutomationSnapshot> {
-    const guest = this.#requireGuest(owner, tabId)
-    return await this.#withDebugger(guest, async (send) => {
-      const page = (await this.#evaluate(
-        send,
-        `(() => {
-        const selectorFor = (element) => {
-          if (element.id) return '#' + CSS.escape(element.id)
-          const testId = element.getAttribute('data-testid')
-          if (testId) return element.tagName.toLowerCase() + '[data-testid=' + JSON.stringify(testId) + ']'
-          return element.tagName.toLowerCase()
-        }
-        const visible = (element) => {
-          const style = getComputedStyle(element)
-          const rect = element.getBoundingClientRect()
-          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0
-        }
-        return {
-          url: location.href,
-          title: document.title,
-          loading: document.readyState !== 'complete',
-          visibleText: (document.body?.innerText || '').slice(0, ${MAX_VISIBLE_TEXT_LENGTH}),
-          interactiveElements: Array.from(document.querySelectorAll('a[href],button,input,textarea,select,[role],[tabindex]')).filter(visible).slice(0, ${MAX_INTERACTIVE_ELEMENTS}).map((element) => {
-            const rect = element.getBoundingClientRect()
-            return { tag: element.tagName.toLowerCase(), role: element.getAttribute('role'), name: element.getAttribute('aria-label') || element.innerText || element.getAttribute('name') || '', selector: selectorFor(element), x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-          })
-        }
-      })()`
-      )) as Omit<
-        PreviewAutomationSnapshot,
-        | 'accessibilityTree'
-        | 'actionTimeline'
-        | 'consoleEntries'
-        | 'networkEntries'
-        | 'screenshot'
-      >
-      const [accessibilityTree, sourceImage] = await Promise.all([
-        send('Accessibility.getFullAXTree'),
-        guest.capturePage(),
-      ])
-      const sourceSize = sourceImage.getSize()
-      const image =
-        sourceSize.width > MAX_SCREENSHOT_WIDTH
-          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
-          : sourceImage
-      const size = image.getSize()
-      return {
-        ...page,
-        accessibilityTree,
-        actionTimeline: [],
-        consoleEntries: [],
-        networkEntries: [],
-        screenshot: {
-          data: image.toPNG().toString('base64'),
-          height: size.height,
-          mimeType: 'image/png',
-          width: size.width,
-        },
-      }
-    })
+    return await this.#automation.snapshot(owner, tabId)
   }
 
   async automationClick(
@@ -758,34 +678,7 @@ export class PreviewManager {
     tabId: string,
     input: PreviewAutomationClickInput
   ): Promise<void> {
-    const guest = this.#requireGuest(owner, tabId)
-    await this.#withDebugger(guest, async (send) => {
-      const point =
-        typeof input.x === 'number' && typeof input.y === 'number'
-          ? { x: input.x, y: input.y }
-          : ((await this.#evaluate(
-              send,
-              `(() => { const element = ${this.#elementExpression(input)}; if (!element) return null; element.scrollIntoView({block:'center',inline:'center'}); const rect=element.getBoundingClientRect(); return {x:rect.left+rect.width/2,y:rect.top+rect.height/2} })()`
-            )) as { x: number; y: number } | null)
-      if (!(point && Number.isFinite(point.x) && Number.isFinite(point.y))) {
-        throw new Error('Preview automation target was not found')
-      }
-      this.#emitPointer(tabId, 'move', point.x, point.y)
-      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
-      this.#emitPointer(tabId, 'click', point.x, point.y)
-      await send('Input.dispatchMouseEvent', {
-        button: 'left',
-        clickCount: 1,
-        type: 'mousePressed',
-        ...point,
-      })
-      await send('Input.dispatchMouseEvent', {
-        button: 'left',
-        clickCount: 1,
-        type: 'mouseReleased',
-        ...point,
-      })
-    })
+    await this.#automation.click(owner, tabId, input)
   }
 
   async automationType(
@@ -793,16 +686,7 @@ export class PreviewManager {
     tabId: string,
     input: PreviewAutomationTypeInput
   ): Promise<void> {
-    const guest = this.#requireGuest(owner, tabId)
-    await this.#withDebugger(guest, async (send) => {
-      const result = await this.#evaluate(
-        send,
-        `(() => { const element=${this.#elementExpression(input, true)}; if (!element) return 'not-found'; const editable=element instanceof HTMLInputElement||element instanceof HTMLTextAreaElement||element.isContentEditable; if (!editable||element.disabled||element.readOnly) return 'not-editable'; element.focus(); const text=${JSON.stringify(input.text)}; if (${input.clear === true}) { if ('value' in element) element.value=''; else element.textContent=''; } if ('value' in element) element.value += text; else element.textContent=(element.textContent||'')+text; element.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text})); element.dispatchEvent(new Event('change',{bubbles:true})); return 'ok' })()`
-      )
-      if (result !== 'ok') {
-        throw new Error(`Preview automation target is ${String(result)}`)
-      }
-    })
+    await this.#automation.type(owner, tabId, input)
   }
 
   automationPress(
@@ -810,20 +694,7 @@ export class PreviewManager {
     tabId: string,
     input: PreviewAutomationPressInput
   ): Promise<void> {
-    const guest = this.#requireGuest(owner, tabId)
-    const modifiers: NonNullable<Electron.KeyboardInputEvent['modifiers']> =
-      input.modifiers?.map((modifier) => KEY_MODIFIERS[modifier]) ?? []
-    guest.sendInputEvent({
-      keyCode: input.key,
-      modifiers,
-      type: 'keyDown',
-    })
-    guest.sendInputEvent({
-      keyCode: input.key,
-      modifiers,
-      type: 'keyUp',
-    })
-    return Promise.resolve()
+    return this.#automation.press(owner, tabId, input)
   }
 
   async automationScroll(
@@ -831,16 +702,7 @@ export class PreviewManager {
     tabId: string,
     input: PreviewAutomationScrollInput
   ): Promise<void> {
-    const guest = this.#requireGuest(owner, tabId)
-    await this.#withDebugger(guest, async (send) => {
-      const result = await this.#evaluate(
-        send,
-        `(() => { const target=${this.#elementExpression(input, true, 'window')}; if (!target) return false; target.scrollBy({left:${input.deltaX ?? 0},top:${input.deltaY ?? 0},behavior:'instant'}); return true })()`
-      )
-      if (result !== true) {
-        throw new Error('Preview automation scroll target was not found')
-      }
-    })
+    await this.#automation.scroll(owner, tabId, input)
   }
 
   async automationEvaluate(
@@ -848,28 +710,7 @@ export class PreviewManager {
     tabId: string,
     input: PreviewAutomationEvaluateInput
   ): Promise<unknown> {
-    const guest = this.#requireGuest(owner, tabId)
-    if (
-      input.expression.length === 0 ||
-      input.expression.length > MAX_EVALUATION_BYTES
-    ) {
-      throw new Error('Invalid preview evaluation expression')
-    }
-    return await this.#withDebugger(guest, async (send) => {
-      const value = await this.#evaluate(
-        send,
-        input.expression,
-        input.awaitPromise ?? true,
-        input.returnByValue ?? true
-      )
-      if (
-        Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8') >
-        MAX_EVALUATION_BYTES
-      ) {
-        throw new Error('Preview evaluation result is too large')
-      }
-      return value
-    })
+    return await this.#automation.evaluate(owner, tabId, input)
   }
 
   async automationWaitFor(
@@ -877,22 +718,7 @@ export class PreviewManager {
     tabId: string,
     input: PreviewAutomationWaitForInput
   ): Promise<void> {
-    const guest = this.#requireGuest(owner, tabId)
-    const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 15_000, 1), 60_000)
-    await this.#withDebugger(guest, async (send) => {
-      const deadline = Date.now() + timeoutMs
-      while (Date.now() <= deadline) {
-        const matched = await this.#evaluate(
-          send,
-          `(() => Boolean(${this.#elementExpression(input, true, 'true')}) && ${input.text ? `(document.body?.innerText||'').includes(${JSON.stringify(input.text)})` : 'true'} && ${input.urlIncludes ? `location.href.includes(${JSON.stringify(input.urlIncludes)})` : 'true'})()`
-        )
-        if (matched === true) {
-          return
-        }
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100))
-      }
-      throw new Error(`Preview condition did not match within ${timeoutMs}ms`)
-    })
+    await this.#automation.waitFor(owner, tabId, input)
   }
 
   disposeWindow(owner: WebContents): void {
@@ -1203,16 +1029,7 @@ export class PreviewManager {
     guest: WebContents,
     colorScheme: DesktopPreviewColorScheme
   ): Promise<void> {
-    await this.#withDebugger(guest, (send) =>
-      send('Emulation.setEmulatedMedia', {
-        features: [
-          {
-            name: 'prefers-color-scheme',
-            value: colorScheme === 'system' ? '' : colorScheme,
-          },
-        ],
-      })
-    )
+    await this.#automation.applyColorScheme(guest, colorScheme)
   }
 
   #resolveArtifact(path: string): string {
@@ -1319,113 +1136,5 @@ export class PreviewManager {
     } catch {
       // Chromium may not have a compositor frame yet; the next tick retries.
     }
-  }
-
-  #emitPointer(
-    tabId: string,
-    phase: 'click' | 'move',
-    x: number,
-    y: number
-  ): void {
-    const tab = this.#tabs.get(tabId)
-    if (!tab || tab.owner.isDestroyed()) {
-      return
-    }
-    const event: DesktopPreviewPointerEvent = {
-      createdAt: new Date().toISOString(),
-      phase,
-      sequence: this.#pointerSequence++,
-      tabId,
-      x,
-      y,
-    }
-    tab.owner.send(PREVIEW_POINTER_EVENT_CHANNEL, event)
-  }
-
-  async #withDebugger<A>(
-    guest: WebContents,
-    use: (
-      send: (
-        method: string,
-        params?: Record<string, unknown>
-      ) => Promise<unknown>
-    ) => Promise<A>
-  ): Promise<A> {
-    if (guest.isDevToolsOpened()) {
-      throw new Error('Close preview DevTools before using browser automation')
-    }
-    if (guest.debugger.isAttached()) {
-      throw new Error('Another debugger owns this preview webview')
-    }
-    guest.debugger.attach('1.3')
-    const send = (method: string, params?: Record<string, unknown>) =>
-      guest.debugger.sendCommand(method, params)
-    try {
-      await Promise.all([send('Runtime.enable'), send('Accessibility.enable')])
-      return await use(send)
-    } finally {
-      if (guest.debugger.isAttached()) {
-        guest.debugger.detach()
-      }
-    }
-  }
-
-  async #evaluate(
-    send: (
-      method: string,
-      params?: Record<string, unknown>
-    ) => Promise<unknown>,
-    expression: string,
-    awaitPromise = true,
-    returnByValue = true
-  ): Promise<unknown> {
-    const response = (await send('Runtime.evaluate', {
-      awaitPromise,
-      expression,
-      returnByValue,
-      userGesture: true,
-    })) as {
-      exceptionDetails?: { exception?: { description?: string }; text?: string }
-      result?: { value?: unknown }
-    }
-    if (response.exceptionDetails) {
-      throw new Error(
-        response.exceptionDetails.exception?.description ??
-          response.exceptionDetails.text ??
-          'Preview evaluation failed'
-      )
-    }
-    return response.result?.value
-  }
-
-  #elementExpression(
-    input: { locator?: string; selector?: string },
-    optional = false,
-    fallback = 'null'
-  ): string {
-    const raw = input.locator ?? input.selector
-    if (!raw) {
-      return optional ? fallback : 'null'
-    }
-    const locator = raw.trim()
-    if (locator.startsWith('css=')) {
-      return `document.querySelector(${JSON.stringify(locator.slice(4))})`
-    }
-    const role = ROLE_LOCATOR_PATTERN.exec(locator)
-    if (role) {
-      const roleName = role[1]
-      const accessibleName = role[2] ?? role[3]
-      let nativeSelector = '*'
-      if (roleName === 'button') {
-        nativeSelector = 'button'
-      } else if (roleName === 'textbox') {
-        nativeSelector = 'input,textarea'
-      }
-      return `Array.from(document.querySelectorAll('[role=${JSON.stringify(roleName)}],${nativeSelector}')).find((element)=>${accessibleName === undefined ? 'true' : `(element.getAttribute('aria-label')||element.textContent||'').trim()===${JSON.stringify(accessibleName)}`})||null`
-    }
-    if (locator.startsWith('text=')) {
-      return `Array.from(document.querySelectorAll('*')).find((element)=>element.textContent?.includes(${JSON.stringify(locator.slice(5))}))||null`
-    }
-    return `document.querySelector(${JSON.stringify(locator)})`
   }
 }

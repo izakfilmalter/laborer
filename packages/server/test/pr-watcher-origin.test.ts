@@ -250,7 +250,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision':
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision,author':
               {
                 stdout: '',
                 stderr: 'no pull requests found',
@@ -311,7 +311,7 @@ describe('PrWatcher fork origin PR lookup', () => {
         assert.isAtLeast(ghCalls.length, 1)
         assert.include(
           ghCalls[0]?.[0].join(' '),
-          'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision --repo acme/fork'
+          'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision,author --repo acme/fork'
         )
       })
   )
@@ -330,7 +330,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             'remote.origin.url': {
               stdout: 'git@github.com:acme/fork.git',
             },
-            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision':
+            'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision,author':
               {
                 stdout: JSON.stringify({
                   number: 7,
@@ -374,7 +374,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             cmd
               .join(' ')
               .includes(
-                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision --repo acme/fork'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision,author --repo acme/fork'
               )
           )
         )
@@ -383,7 +383,7 @@ describe('PrWatcher fork origin PR lookup', () => {
             const call = cmd.join(' ')
             return (
               call.includes(
-                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision'
+                'gh pr view feature/fork-pr --json number,url,title,state,isDraft,baseRefName,mergeable,mergeStateStatus,statusCheckRollup,updatedAt,reviewDecision,author'
               ) && !call.includes('--repo')
             )
           })

@@ -560,6 +560,8 @@ const ConfigResponse = Schema.Struct({
   shortNameAliases: ConfigResolvedValueStringArray,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
+  /** Configured local preview URLs from the owning laborer.json layer. */
+  previewUrls: ConfigResolvedValueStringArray,
   watchIgnore: ConfigResolvedValueStringArray,
 })
 
@@ -2084,6 +2086,7 @@ export class LaborerRpcs extends RpcGroup.make(
         shortName: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
+        previewUrls: Schema.optional(ConfiguredLocalServerUrls),
       }),
     },
   }),
@@ -2252,6 +2255,19 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: PreviewWorkspaceId,
       configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
+    },
+  }),
+
+  /** Mint a scoped daemon URL for one browser-previewable workspace file. */
+  Rpc.make('workspace.assetUrl', {
+    success: Schema.Struct({
+      expiresAt: Schema.Number,
+      relativeUrl: Schema.String,
+    }),
+    error: RpcError,
+    payload: {
+      relativePath: PreviewUrl,
+      workspaceId: PreviewWorkspaceId,
     },
   }),
 

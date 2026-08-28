@@ -63,14 +63,22 @@ import {
   usePreviewStateStore,
 } from '@/preview-state-store'
 import { useRightPanelStore } from '@/right-panel-store'
+import { mergePreviewServers } from './preview-empty-state-logic'
 
 const openMutation = BrowserDaemonClient.mutation('preview.open')
 const navigateMutation = BrowserDaemonClient.mutation('preview.navigate')
 const resizeMutation = BrowserDaemonClient.mutation('preview.resize')
 const refreshMutation = BrowserDaemonClient.mutation('preview.refresh')
-const discoveredAtom = Atom.family((workspaceId: string) =>
-  BrowserDaemonClient.query('preview.discoveredLocalServers', { workspaceId })
-)
+const discoveredAtom = Atom.family((key: string) => {
+  const { configuredUrls, workspaceId } = JSON.parse(key) as {
+    readonly configuredUrls: readonly string[]
+    readonly workspaceId: string
+  }
+  return BrowserDaemonClient.query('preview.discoveredLocalServers', {
+    configuredUrls,
+    workspaceId,
+  })
+})
 const LOCAL_PREVIEW_URL = /^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i
 
 function normalizePreviewUrl(input: string): string {
@@ -83,13 +91,24 @@ function normalizePreviewUrl(input: string): string {
 }
 
 function EmptyState(props: {
+  readonly configuredUrls: readonly string[]
   readonly onOpen: (url: string) => void
   readonly recentUrls: readonly string[]
   readonly workspaceId: string
 }) {
-  const result = useAtomValue(discoveredAtom(props.workspaceId))
+  const result = useAtomValue(
+    discoveredAtom(
+      JSON.stringify({
+        configuredUrls: props.configuredUrls,
+        workspaceId: props.workspaceId,
+      })
+    )
+  )
   const servers = AsyncResult.isSuccess(result)
-    ? (result.value.items.at(-1)?.servers ?? [])
+    ? mergePreviewServers(
+        result.value.items.at(-1)?.servers ?? [],
+        props.configuredUrls
+      )
     : []
   if (servers.length === 0 && props.recentUrls.length === 0) {
     return (
@@ -138,7 +157,7 @@ function EmptyState(props: {
                 <button
                   className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
                   key={`${server.host}:${server.port}`}
-                  onClick={() => props.onOpen(server.url)}
+                  onClick={() => props.onOpen(server.requestedUrl)}
                   type="button"
                 >
                   <span className="flex size-8 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-500">
@@ -146,14 +165,11 @@ function EmptyState(props: {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm">
-                      {server.processName ?? server.host}
+                      {server.processName ?? 'Listening'}
                     </span>
                     <span className="block truncate text-muted-foreground text-xs">
-                      {server.url}
+                      {server.host}:{server.port}
                     </span>
-                  </span>
-                  <span className="text-muted-foreground text-xs tabular-nums">
-                    :{server.port}
                   </span>
                 </button>
               ))}
@@ -320,6 +336,7 @@ function ChromeButton(props: {
 }
 
 export function PreviewPanel(props: {
+  readonly configuredUrls?: readonly string[]
   readonly tabId: string | null
   readonly visible: boolean
   readonly workspaceId: string
@@ -625,6 +642,7 @@ export function PreviewPanel(props: {
         ) : null}
         {!snapshot || navStatus._tag === 'Idle' ? (
           <EmptyState
+            configuredUrls={props.configuredUrls ?? []}
             onOpen={(next) => void submitUrl(next)}
             recentUrls={previewState.recentlySeenUrls}
             workspaceId={props.workspaceId}

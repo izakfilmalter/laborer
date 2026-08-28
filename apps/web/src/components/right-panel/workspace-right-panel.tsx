@@ -21,9 +21,10 @@
  * tab state survives in the store, so reopening restores the same tabs.
  */
 
-import { useAtomSet } from '@effect/atom-react/Hooks'
+import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
 import type { PullRequestState } from '@laborer/shared/rpc'
 import { useLiveQuery } from '@tanstack/react-db'
+import { AsyncResult, Atom } from 'effect/unstable/reactivity'
 import { useCallback, useMemo } from 'react'
 import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import { FilePreviewPanel } from '@/components/files/file-preview-panel'
@@ -45,7 +46,10 @@ import { rightPanelWidthStorageKey } from './right-panel-shell'
 import { type PullRequestTabStatus, RightPanelTabs } from './right-panel-tabs'
 
 /** The workspace's project name, for the file surface's breadcrumbs. */
-function useWorkspaceProjectName(workspaceId: string): string {
+function useWorkspaceProject(workspaceId: string): {
+  readonly id: string | null
+  readonly name: string
+} {
   const { data: projects } = useLiveQuery((query) =>
     query.from({ projects: projectCollection })
   )
@@ -57,7 +61,7 @@ function useWorkspaceProjectName(workspaceId: string): string {
       (ws) => ws.id === workspaceId
     )
     const project = projects.find((row) => row.id === workspace?.projectId)
-    return project?.name ?? 'workspace'
+    return { id: project?.id ?? null, name: project?.name ?? 'workspace' }
   }, [projects, tasks, workspaceId])
 }
 
@@ -110,12 +114,20 @@ function useWorkspacePullRequestStatus(
 }
 
 const closePreviewMutation = BrowserDaemonClient.mutation('preview.close')
+const projectConfigAtom = Atom.family((projectId: string) =>
+  BrowserDaemonClient.query('config.get', { projectId })
+)
 
 export function WorkspaceRightPanel({
   workspaceId,
 }: {
   readonly workspaceId: string
 }) {
+  const project = useWorkspaceProject(workspaceId)
+  const config = useAtomValue(projectConfigAtom(project.id ?? '__missing__'))
+  const configuredUrls = AsyncResult.isSuccess(config)
+    ? config.value.previewUrls.value
+    : []
   const state = useRightPanelStore(
     useCallback(
       (store) =>
@@ -125,7 +137,7 @@ export function WorkspaceRightPanel({
   )
   const pullRequestNumber = useWorkspacePullRequestNumber(workspaceId)
   const pullRequestStatus = useWorkspacePullRequestStatus(workspaceId)
-  const projectName = useWorkspaceProjectName(workspaceId)
+  const projectName = project.name
   const closePreview = useAtomSet(closePreviewMutation, { mode: 'promise' })
 
   const activeSurface = useMemo(
@@ -242,6 +254,7 @@ export function WorkspaceRightPanel({
     >
       {activeSurface ? (
         <ActiveSurfaceContent
+          configuredUrls={configuredUrls}
           projectName={projectName}
           surface={activeSurface}
           workspaceId={workspaceId}
@@ -258,11 +271,13 @@ const noopPendingChange = () => {
 
 /** The surface registry: maps the active descriptor to its content. */
 function ActiveSurfaceContent({
+  configuredUrls,
   projectName,
   surface,
   workspaceId,
 }: {
   readonly projectName: string
+  readonly configuredUrls: readonly string[]
   readonly surface: RightPanelSurface
   readonly workspaceId: string
 }) {
@@ -280,6 +295,7 @@ function ActiveSurfaceContent({
     case 'preview':
       return (
         <PreviewPanel
+          configuredUrls={configuredUrls}
           tabId={surface.resourceId}
           visible
           workspaceId={workspaceId}

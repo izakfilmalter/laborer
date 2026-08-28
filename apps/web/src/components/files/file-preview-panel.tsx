@@ -16,8 +16,7 @@
  * - Queries key by workspace id (t3: environment + cwd), backed by the
  *   `file.readText` / `file.write` RPCs.
  * - t3's composer review-comment annotations, drag mentions, and the
- *   browser-preview handoff are left out (no chat composer or Browser
- *   surface here yet); its OpenInPicker becomes a plain open-in-editor
+ *   browser annotations are left out (no chat composer); its OpenInPicker becomes a plain open-in-editor
  *   button on the `editor.open` RPC.
  * - Rendered markdown uses `@laborer/ui`'s read-only `Markdown` (no task
  *   checkbox toggling), and word wrap is fixed off rather than read from
@@ -82,6 +81,12 @@ import {
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from '@/lib/diff-rendering'
 import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
+import {
+  isPreviewSupportedInRuntime,
+  usePreviewStateStore,
+} from '@/preview-state-store'
+import { useRightPanelStore } from '@/right-panel-store'
+import { isBrowserPreviewFile, openFileInBrowser } from './open-file-in-browser'
 
 interface FilePreviewPanelProps {
   onOpenFile: (relativePath: string) => void
@@ -170,16 +175,11 @@ export function isWorkspaceImagePreviewPath(path: string): boolean {
   return IMAGE_PREVIEW_EXTENSIONS.has(path.slice(dotIndex + 1).toLowerCase())
 }
 
-const BROWSER_PREVIEW_FILE_EXTENSION = /\.(?:html?|pdf)$/i
-const FILE_QUERY_OR_HASH = /[?#]/
-const isBrowserPreviewFile = (path: string): boolean =>
-  BROWSER_PREVIEW_FILE_EXTENSION.test(
-    path.split(FILE_QUERY_OR_HASH, 1)[0] ?? ''
-  )
-
 /** Mutation atoms shared across all panel instances. */
 const fileWriteMutation = LaborerClient.mutation('file.write')
 const editorOpenMutation = LaborerClient.mutation('editor.open')
+const assetUrlMutation = LaborerClient.mutation('workspace.assetUrl')
+const previewOpenMutation = LaborerClient.mutation('preview.open')
 
 /** Per-file query for image previews: `file.read` serves base64 + MIME. */
 const imagePreviewQueryAtom = Atom.family((key: string) => {
@@ -734,6 +734,8 @@ export function FilePreviewPanel({
   const resolvedTheme =
     themeName === 'light' ? ('light' as const) : ('dark' as const)
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
+  const createAssetUrl = useAtomSet(assetUrlMutation, { mode: 'promise' })
+  const openPreview = useAtomSet(previewOpenMutation, { mode: 'promise' })
   const isImage =
     relativePath !== null && isWorkspaceImagePreviewPath(relativePath)
   const file = useFileTextQuery(workspaceId, relativePath, !isImage)
@@ -804,6 +806,28 @@ export function FilePreviewPanel({
     )
   }, [openEditor, relativePath, workspaceId])
 
+  const handleOpenInBrowser = useCallback(() => {
+    if (relativePath === null) {
+      return
+    }
+    openFileInBrowser({
+      baseUrl: window.location.origin,
+      createAssetUrl: (payload) => createAssetUrl({ payload }),
+      openPreview: (payload) => openPreview({ payload }),
+      relativePath,
+      workspaceId,
+    }).then(
+      ({ preview }) => {
+        usePreviewStateStore.getState().upsert(workspaceId, preview)
+        useRightPanelStore.getState().openBrowser(workspaceId, preview.tabId)
+      },
+      (error: unknown) =>
+        toast.error(
+          `Unable to open file in browser: ${extractErrorMessage(error)}`
+        )
+    )
+  }, [createAssetUrl, openPreview, relativePath, workspaceId])
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
@@ -866,14 +890,15 @@ export function FilePreviewPanel({
             />
             <TooltipContent>Open file in editor</TooltipContent>
           </Tooltip>
-          {isBrowserPreviewFile(relativePath) ? (
+          {isPreviewSupportedInRuntime() &&
+          isBrowserPreviewFile(relativePath) ? (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Toggle
                     aria-label="Open file in browser preview"
                     className="shrink-0"
-                    disabled
+                    onPressedChange={handleOpenInBrowser}
                     pressed={false}
                     size="sm"
                   >
@@ -881,10 +906,7 @@ export function FilePreviewPanel({
                   </Toggle>
                 }
               />
-              <TooltipContent>
-                Browser file preview needs a workspace asset URL from the
-                daemon.
-              </TooltipContent>
+              <TooltipContent>Open file in browser preview</TooltipContent>
             </Tooltip>
           ) : null}
           {isMarkdown ? (

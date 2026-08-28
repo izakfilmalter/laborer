@@ -94,6 +94,7 @@ import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
+import { issueWorkspaceAssetUrl } from '../workspace-assets.js'
 
 const startTime = Date.now()
 const MAX_DIRECTORY_PICKER_ENTRIES = 1000
@@ -303,6 +304,7 @@ export const handleConfigUpdate = ({
     conflictPrompt?: string | undefined
     shortName?: string | undefined
     setupScripts?: readonly string[] | undefined
+    previewUrls?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
 }) =>
@@ -318,6 +320,9 @@ export const handleConfigUpdate = ({
         (config.setupScripts.every((script) => typeof script === 'string') &&
           Array.isArray(config.setupScripts))
 
+      const isValidPreviewUrls =
+        config.previewUrls === undefined || Array.isArray(config.previewUrls)
+
       const isValidConfig =
         isValidAgent &&
         (config.shortName === undefined ||
@@ -326,13 +331,14 @@ export const handleConfigUpdate = ({
           typeof config.worktreeDir === 'string') &&
         (config.conflictPrompt === undefined ||
           typeof config.conflictPrompt === 'string') &&
-        isValidSetupScripts
+        isValidSetupScripts &&
+        isValidPreviewUrls
 
       if (!isValidConfig) {
         return yield* new RpcError({
           code: 'INVALID_INPUT',
           message:
-            'Invalid config payload. Expected optional shortName (1-10 uppercase letters/digits, starting with a letter), worktreeDir, conflictPrompt, agent (opencode2/claude/codex), and setupScripts as a string array.',
+            'Invalid config payload. Expected optional shortName (1-10 uppercase letters/digits, starting with a letter), worktreeDir, conflictPrompt, agent (opencode2/claude/codex), setupScripts, and previewUrls as string arrays.',
         })
       }
 
@@ -1830,6 +1836,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           )
         })
       ),
+
+    'workspace.assetUrl': ({ relativePath, workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceProvider = yield* WorkspaceProvider
+        return yield* issueWorkspaceAssetUrl(
+          workspaceProvider,
+          workspaceId,
+          relativePath
+        )
+      }),
 
     // -------------------------------------------------------------------
     // Editor RPCs (Issue #111)

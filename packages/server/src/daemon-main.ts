@@ -48,6 +48,7 @@ import { ProcessLauncher } from './services/process-launcher.js'
 import { SlackDaemonProcessControl } from './services/slack-daemon-process-control.js'
 import { TerminalClient } from './services/terminal-client.js'
 import { staticAssetResponse, WEB_DIST_ENV } from './static-assets.js'
+import { workspaceAssetResponse } from './workspace-assets.js'
 
 export const DAEMON_HOST = '127.0.0.1'
 export const DAEMON_PORT_ENV = 'LABORER_DAEMON_PORT'
@@ -206,6 +207,11 @@ const ControlRoutes = HttpRouter.addAll([
   HttpRouter.route('POST', '/daemon/power-state', powerStateResponse),
 ])
 
+const WorkspaceAssetRoutes = HttpRouter.addAll([
+  HttpRouter.route('GET', '/api/workspace-assets/*', workspaceAssetResponse),
+  HttpRouter.route('HEAD', '/api/workspace-assets/*', workspaceAssetResponse),
+])
+
 const webDist = process.env[WEB_DIST_ENV]
 const StaticRoutes =
   webDist === undefined
@@ -262,7 +268,13 @@ export const makeDaemonServerLayer = (
   options: { readonly register?: boolean } = {}
 ) =>
   HttpRouter.serve(
-    Layer.mergeAll(RpcRoute, HealthRoutes, ControlRoutes, StaticRoutes)
+    Layer.mergeAll(
+      RpcRoute,
+      HealthRoutes,
+      ControlRoutes,
+      WorkspaceAssetRoutes,
+      StaticRoutes
+    )
   ).pipe(
     Layer.provide(ApplicationServices),
     Layer.provide(RpcSerialization.layerJson),

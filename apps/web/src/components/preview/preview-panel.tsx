@@ -69,6 +69,9 @@ const openMutation = BrowserDaemonClient.mutation('preview.open')
 const navigateMutation = BrowserDaemonClient.mutation('preview.navigate')
 const resizeMutation = BrowserDaemonClient.mutation('preview.resize')
 const refreshMutation = BrowserDaemonClient.mutation('preview.refresh')
+const deliverAnnotationMutation = BrowserDaemonClient.mutation(
+  'browserContext.deliver'
+)
 const discoveredAtom = Atom.family((key: string) => {
   const { configuredUrls, workspaceId } = JSON.parse(key) as {
     readonly configuredUrls: readonly string[]
@@ -368,6 +371,9 @@ export function PreviewPanel(props: {
   const navigate = useAtomSet(navigateMutation, { mode: 'promise' })
   const resize = useAtomSet(resizeMutation, { mode: 'promise' })
   const refresh = useAtomSet(refreshMutation, { mode: 'promise' })
+  const deliverAnnotation = useAtomSet(deliverAnnotationMutation, {
+    mode: 'promise',
+  })
   const preview = window.desktopBridge?.preview
   const loading = overlay?.loading ?? navStatus._tag === 'Loading'
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT
@@ -487,10 +493,26 @@ export function PreviewPanel(props: {
         if (!result) {
           return
         }
-        return navigator.clipboard
-          ?.writeText(JSON.stringify(result.annotation, null, 2))
-          .then(() => toast.success('Annotation copied to clipboard'))
+        return deliverAnnotation({
+          payload: {
+            workspaceId: props.workspaceId,
+            annotation: result.annotation,
+          },
+        })
+          .then(() =>
+            toast.success('Annotation delivered to the workspace agent')
+          )
+          .catch(async () => {
+            if (!navigator.clipboard) {
+              throw new Error('Clipboard is unavailable')
+            }
+            await navigator.clipboard.writeText(
+              JSON.stringify(result.annotation, null, 2)
+            )
+            toast.error('Unable to deliver annotation; copied to clipboard')
+          })
       })
+      .catch(() => toast.error('Unable to deliver annotation'))
       .finally(() => setPickActive(false))
   }
 

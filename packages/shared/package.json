@@ -18,7 +18,9 @@
     "./desktop-bridge": "./src/desktop-bridge.ts",
     "./process-time-scheduler": "./src/process-time-scheduler.ts",
     "./slack-url": "./src/slack-url.ts",
-    "./branch-name": "./src/branch-name.ts"
+    "./branch-name": "./src/branch-name.ts",
+    "./browser-agent-rpc": "./src/browser-agent-rpc.ts",
+    "./browser-control": "./src/browser-control.ts"
   },
   "dependencies": {
     "effect": "catalog:"

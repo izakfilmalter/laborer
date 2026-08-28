@@ -1,5 +1,15 @@
 import { Schema } from 'effect'
 import { Rpc, RpcGroup } from 'effect/unstable/rpc'
+import {
+  BrowserAnnotation,
+  BrowserContextError,
+  BrowserContextItem,
+  BrowserControlError,
+  BrowserControlEvent,
+  BrowserControlHost,
+  BrowserControlOperation,
+  BrowserControlResponse,
+} from './browser-control.js'
 import { SLACK_MESSAGE_URL_MAX_LENGTH } from './slack-url.js'
 import { TerminalStatus, WorkspaceStatus } from './types.js'
 
@@ -2256,6 +2266,50 @@ export class LaborerRpcs extends RpcGroup.make(
       workspaceId: PreviewWorkspaceId,
       configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
     },
+  }),
+
+  Rpc.make('browserControl.connect', {
+    success: BrowserControlEvent,
+    error: RpcError,
+    stream: true,
+    payload: BrowserControlHost.fields,
+  }),
+  Rpc.make('browserControl.respond', {
+    error: BrowserControlError,
+    payload: BrowserControlResponse.fields,
+  }),
+  Rpc.make('browserControl.invoke', {
+    success: Schema.Unknown,
+    error: Schema.Union([BrowserControlError, RpcError]),
+    payload: {
+      workspaceId: PreviewWorkspaceId,
+      controllerId: Schema.String,
+      tabId: Schema.optional(PreviewTabId),
+      operation: BrowserControlOperation,
+      input: Schema.Unknown,
+      timeoutMs: Schema.optional(Schema.Int),
+    },
+  }),
+  Rpc.make('browserControl.cancel', {
+    payload: { workspaceId: PreviewWorkspaceId, controllerId: Schema.String },
+  }),
+  Rpc.make('browserContext.deliver', {
+    success: BrowserContextItem,
+    error: Schema.Union([BrowserContextError, RpcError]),
+    payload: { workspaceId: PreviewWorkspaceId, annotation: BrowserAnnotation },
+  }),
+  Rpc.make('browserContext.list', {
+    success: Schema.Array(BrowserContextItem),
+    error: Schema.Union([BrowserContextError, RpcError]),
+    payload: {
+      workspaceId: PreviewWorkspaceId,
+      includeConsumed: Schema.optional(Schema.Boolean),
+    },
+  }),
+  Rpc.make('browserContext.consume', {
+    success: BrowserContextItem,
+    error: Schema.Union([BrowserContextError, RpcError]),
+    payload: { workspaceId: PreviewWorkspaceId, id: Schema.String },
   }),
 
   /** Mint a scoped daemon URL for one browser-previewable workspace file. */

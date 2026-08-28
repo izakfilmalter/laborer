@@ -30,12 +30,15 @@ import {
   Array,
   Clock,
   Effect,
+  Layer,
   Queue,
   Semaphore,
   Stream,
   SubscriptionRef,
 } from 'effect'
 import { spawn } from '../lib/spawn.js'
+import { BrowserContext } from '../services/browser-context.js'
+import { BrowserControl } from '../services/browser-control.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
@@ -1837,6 +1840,58 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         })
       ),
 
+    'browserControl.connect': (input) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          yield* resolvePreviewWorkspace(input.workspaceId)
+          const control = yield* BrowserControl
+          return yield* control.connect(input)
+        })
+      ),
+    'browserControl.respond': (response) =>
+      Effect.gen(function* () {
+        const control = yield* BrowserControl
+        yield* control.respond(response)
+      }),
+    'browserControl.invoke': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const control = yield* BrowserControl
+        return yield* control.invoke({
+          workspaceId: input.workspaceId,
+          controllerId: input.controllerId,
+          operation: input.operation,
+          input: input.input,
+          ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+          ...(input.timeoutMs === undefined
+            ? {}
+            : { timeoutMs: input.timeoutMs }),
+        })
+      }),
+    'browserControl.cancel': ({ workspaceId, controllerId }) =>
+      Effect.gen(function* () {
+        const control = yield* BrowserControl
+        yield* control.cancel(workspaceId, controllerId)
+      }),
+    'browserContext.deliver': ({ workspaceId, annotation }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const context = yield* BrowserContext
+        return yield* context.deliver(workspaceId, annotation)
+      }),
+    'browserContext.list': ({ workspaceId, includeConsumed }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const context = yield* BrowserContext
+        return yield* context.list(workspaceId, includeConsumed)
+      }),
+    'browserContext.consume': ({ workspaceId, id }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const context = yield* BrowserContext
+        return yield* context.consume(workspaceId, id)
+      }),
+
     'workspace.assetUrl': ({ relativePath, workspaceId }) =>
       Effect.gen(function* () {
         const workspaceProvider = yield* WorkspaceProvider
@@ -2220,4 +2275,4 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         })
       ),
   })
-)
+).pipe(Layer.provide(BrowserControl.layer), Layer.provide(BrowserContext.layer))

@@ -94,6 +94,11 @@ interface PreviewStore {
   readonly reconcile: (workspaceId: string, result: PreviewListResult) => void
   readonly removeWorkspace: (workspaceId: string) => void
   readonly setActive: (workspaceId: string, tabId: string) => void
+  readonly setController: (
+    workspaceId: string,
+    tabId: string,
+    controller: DesktopPreviewTabState['controller']
+  ) => void
   readonly upsert: (
     workspaceId: string,
     snapshot: PreviewSessionSnapshot
@@ -136,6 +141,25 @@ export const usePreviewStateStore = create<PreviewStore>()((set) => ({
             delete desktopByTabId[tabId]
           }
           return { ...state, desktopByTabId }
+        }
+      ),
+    })),
+  setController: (workspaceId, tabId, controller) =>
+    set((store) => ({
+      byWorkspaceId: updateWorkspace(
+        store.byWorkspaceId,
+        workspaceId,
+        (state) => {
+          const current = state.desktopByTabId[tabId]
+          return current === undefined
+            ? state
+            : {
+                ...state,
+                desktopByTabId: {
+                  ...state.desktopByTabId,
+                  [tabId]: { ...current, controller },
+                },
+              }
         }
       ),
     })),

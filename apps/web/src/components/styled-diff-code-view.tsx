@@ -35,12 +35,19 @@ type StyledDiffCodeViewProps<LAnnotation> = (
 ) & {
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>
   readonly viewerRef?: Ref<CodeViewHandle<LAnnotation>>
+  /**
+   * Extra rules appended to the shared stylesheet, for a surface that has
+   * to restyle chrome inside the viewer's shadow root (the pull request
+   * panel hides the per-file counts it replaces with host-reported ones).
+   */
+  readonly unsafeCSSExtra?: string
 }
 
 export function StyledDiffCodeView<LAnnotation = undefined>({
   className,
   options,
   viewerRef,
+  unsafeCSSExtra,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
   return (
@@ -57,7 +64,9 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
       }
       options={{
         ...options,
-        unsafeCSS: DIFF_VIEW_UNSAFE_CSS,
+        unsafeCSS: unsafeCSSExtra
+          ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
+          : DIFF_VIEW_UNSAFE_CSS,
         itemMetrics: DIFF_VIEW_ITEM_METRICS,
         layout: DIFF_VIEW_LAYOUT,
       }}

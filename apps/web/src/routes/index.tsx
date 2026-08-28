@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
+import { CommandPalette } from '@/components/command-palette/command-palette'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
 import { useProjectReorderMonitor } from '@/components/project-reorder'
@@ -845,8 +846,9 @@ function HomeComponent() {
   const isSearchActive = searchQuery.trim().length > 0
 
   // Kanban board overlay — covers the main panel area (not the sidebar).
-  // Toggled instantly (no animation) via Cmd+K or the header bar button;
-  // the panels underneath stay mounted so terminal sessions stay alive.
+  // Toggled instantly (no animation) via Cmd+Shift+K or the header bar
+  // button; the panels underneath stay mounted so terminal sessions stay
+  // alive.
   const [boardOverlayOpen, setBoardOverlayOpen] = useState(false)
   const boardOverlayHeight = useBoardOverlayHeight()
   const mainContentRef = useRef<HTMLDivElement | null>(null)
@@ -865,7 +867,7 @@ function HomeComponent() {
     setBoardOverlayOpen(false)
   }, [])
 
-  useHotkeySequence(['Meta+K'], (event) => {
+  useHotkeySequence(['Shift+Meta+K'], (event) => {
     event.preventDefault()
     toggleBoardOverlay()
   })
@@ -1009,6 +1011,14 @@ function HomeComponent() {
         pendingPicker={pendingPickerState}
         value={gatedPanelActions}
       >
+        <CommandPalette
+          onToggleBoard={toggleBoardOverlay}
+          onToggleSidebar={
+            responsiveSizes.canCollapseSidebar ? toggleSidebar : undefined
+          }
+          projects={projectList}
+          workspaces={workspaceList}
+        />
         <CloseAppDialog
           onOpenChange={setIsCloseAppDialogOpen}
           open={isCloseAppDialogOpen}

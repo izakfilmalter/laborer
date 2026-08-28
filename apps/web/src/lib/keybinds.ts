@@ -252,6 +252,14 @@ const KEYBINDS = {
   /** Cmd+K — toggle the kanban board overlay over the main panel area */
   TOGGLE_BOARD: { key: 'k', meta: true },
 
+  // -- Right panel --
+  /**
+   * Cmd+Option+B — toggle the focused workspace's right panel (t3code's
+   * `rightPanel.toggle`, mod+alt+b). Matched by physical key code because
+   * Option+B produces "∫" on macOS keyboard layouts.
+   */
+  TOGGLE_RIGHT_PANEL: { key: 'b', code: 'KeyB', meta: true, alt: true },
+
   // -- Push/Pull workspace --
   /** Cmd+P — push workspace */
   PUSH_WORKSPACE: { key: 'p', meta: true },

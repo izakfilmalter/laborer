@@ -200,6 +200,10 @@ vi.mock('@/components/workspace-sync-status', () => ({
   WorkspaceSyncStatus: () => null,
 }))
 
+vi.mock('@/components/git-actions-control', () => ({
+  GitActionsControl: () => null,
+}))
+
 import { WorkspaceList } from '../src/components/workspace-list'
 
 describe('First-launch empty cache handling', () => {

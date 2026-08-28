@@ -34,6 +34,7 @@ import { FileService } from '../../src/services/file-service.js'
 import { GithubPullRequests } from '../../src/services/github-pull-requests.js'
 import { GithubViewer } from '../../src/services/github-viewer.js'
 import { LaborerDatabase } from '../../src/services/laborer-database.js'
+import { OpenCodeModels } from '../../src/services/opencode-models.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
@@ -76,6 +77,9 @@ const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
   Layer.provide(Layer.succeed(GithubViewer)({ login: Effect.succeed(null) })),
   Layer.provide(
     Layer.succeed(GithubPullRequests)({ list: () => Effect.succeed([]) })
+  ),
+  Layer.provide(
+    Layer.succeed(OpenCodeModels)({ list: () => Effect.succeed([]) })
   ),
   Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )
@@ -177,6 +181,9 @@ const CoreOnlyRpcWithReadyRefLayer = LaborerRpcsLive.pipe(
   Layer.provide(Layer.succeed(GithubViewer)({ login: Effect.succeed(null) })),
   Layer.provide(
     Layer.succeed(GithubPullRequests)({ list: () => Effect.succeed([]) })
+  ),
+  Layer.provide(
+    Layer.succeed(OpenCodeModels)({ list: () => Effect.succeed([]) })
   ),
   Layer.provide(LaborerDatabase.testLayer().pipe(Layer.orDie))
 )

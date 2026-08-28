@@ -215,6 +215,8 @@ describe('WorkspaceSyncService', () => {
       assert.deepStrictEqual(result, {
         aheadCount: null,
         behindCount: null,
+        hasChanges: false,
+        hasUpstream: false,
       })
     }).pipe(Effect.provide(TestLayer))
   )
@@ -282,6 +284,8 @@ describe('WorkspaceSyncService', () => {
       assert.deepStrictEqual(result, {
         aheadCount: 1,
         behindCount: 1,
+        hasChanges: false,
+        hasUpstream: true,
       })
     }).pipe(Effect.provide(TestLayer))
   )
@@ -312,6 +316,8 @@ describe('WorkspaceSyncService', () => {
         assert.deepStrictEqual(result, {
           aheadCount: 1,
           behindCount: 1,
+          hasChanges: false,
+          hasUpstream: true,
         })
 
         // The root's tracking refs go stale unless reading its status
@@ -349,6 +355,8 @@ describe('WorkspaceSyncService', () => {
       assert.deepStrictEqual(result, {
         aheadCount: 0,
         behindCount: 0,
+        hasChanges: false,
+        hasUpstream: true,
       })
       assert.strictEqual(git('rev-list --count main', remotePath), '2')
 
@@ -383,8 +391,65 @@ describe('WorkspaceSyncService', () => {
       assert.deepStrictEqual(result, {
         aheadCount: 0,
         behindCount: 0,
+        hasChanges: false,
+        hasUpstream: true,
       })
       assert.strictEqual(git('show HEAD:pulled.txt', localPath), 'from remote')
+    }).pipe(Effect.provide(TestLayer))
+  )
+  it.effect('reports uncommitted work, then commits all of it at once', () =>
+    Effect.gen(function* () {
+      const { localPath } = initRemoteRepo('sync-commit')
+      writeFileSync(join(localPath, 'tracked.txt'), 'edited\n')
+      writeFileSync(join(localPath, 'untracked.txt'), 'new\n')
+
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath, 'workspace-commit')
+
+      const workspaceSyncService = yield* WorkspaceSyncService
+
+      const before = yield* workspaceSyncService.checkStatus('workspace-commit')
+      assert.isTrue(before.hasChanges)
+
+      const after = yield* workspaceSyncService.commit(
+        'workspace-commit',
+        'Commit everything'
+      )
+
+      // Untracked files count too: the diff the operator approved included
+      // them, so a commit that left them behind would mean something else.
+      assert.isFalse(after.hasChanges)
+      assert.strictEqual(after.aheadCount, 1)
+      assert.strictEqual(
+        git('show --name-only --format=%s HEAD', localPath).split('\n')[0],
+        'Commit everything'
+      )
+    }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.effect('publishes a branch that has never been pushed', () =>
+    Effect.gen(function* () {
+      const { localPath, remotePath } = initRemoteRepo('sync-publish')
+      git('checkout -b feature/publish-me', localPath)
+      commitFile(localPath, 'feature.txt', 'feature work\n')
+
+      const { database } = yield* LaborerDatabase
+      createWorkspace(database, localPath, 'workspace-publish')
+
+      const workspaceSyncService = yield* WorkspaceSyncService
+
+      const before =
+        yield* workspaceSyncService.checkStatus('workspace-publish')
+      assert.isFalse(before.hasUpstream)
+
+      const result = yield* workspaceSyncService.push('workspace-publish')
+
+      assert.isTrue(result.hasUpstream)
+      assert.strictEqual(result.aheadCount, 0)
+      assert.strictEqual(
+        git('rev-list --count feature/publish-me', remotePath),
+        '2'
+      )
     }).pipe(Effect.provide(TestLayer))
   )
 })

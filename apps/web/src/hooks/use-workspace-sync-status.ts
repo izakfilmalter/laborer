@@ -36,11 +36,24 @@ interface WorkspaceSyncCounts {
   readonly aheadCount: number | null
   /** Upstream commits not yet pulled, or null without an upstream branch. */
   readonly behindCount: number | null
+  /** Whether the worktree holds uncommitted work. */
+  readonly hasChanges: boolean
+  /** Whether the branch tracks an upstream. */
+  readonly hasUpstream: boolean
+  /**
+   * Whether git has answered yet. Before it has, every other field is a
+   * placeholder rather than a fact, and a caller that acts on them would be
+   * acting on silence — "no upstream" and "not asked yet" look identical.
+   */
+  readonly isKnown: boolean
 }
 
 const UNKNOWN_SYNC_COUNTS: WorkspaceSyncCounts = {
   aheadCount: null,
   behindCount: null,
+  hasChanges: false,
+  hasUpstream: false,
+  isKnown: false,
 }
 
 /**
@@ -82,7 +95,9 @@ function useWorkspaceSyncStatus(workspaceId: string): WorkspaceSyncCounts {
     }
   }, [isServerReady, refresh])
 
-  return result._tag === 'Success' ? result.value : UNKNOWN_SYNC_COUNTS
+  return result._tag === 'Success'
+    ? { ...result.value, isKnown: true }
+    : UNKNOWN_SYNC_COUNTS
 }
 
 export { SYNC_STATUS_POLL_MS, useWorkspaceSyncStatus, type WorkspaceSyncCounts }

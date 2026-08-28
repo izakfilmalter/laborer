@@ -121,9 +121,36 @@ const testLayer = (
     Layer.succeed(
       WorkspaceSyncService,
       WorkspaceSyncService.of({
-        checkStatus: () => Effect.succeed({ aheadCount: 0, behindCount: 0 }),
-        pull: () => Effect.succeed({ aheadCount: 0, behindCount: 0 }),
-        push: () => Effect.succeed({ aheadCount: 0, behindCount: 0 }),
+        checkStatus: () =>
+          Effect.succeed({
+            aheadCount: 0,
+            behindCount: 0,
+            hasChanges: false,
+            hasUpstream: true,
+          }),
+        commit: () =>
+          Effect.succeed({
+            aheadCount: 0,
+            behindCount: 0,
+            hasChanges: false,
+            hasUpstream: true,
+          }),
+        createPullRequest: () =>
+          Effect.succeed({ number: null, state: null, title: null, url: null }),
+        pull: () =>
+          Effect.succeed({
+            aheadCount: 0,
+            behindCount: 0,
+            hasChanges: false,
+            hasUpstream: true,
+          }),
+        push: () =>
+          Effect.succeed({
+            aheadCount: 0,
+            behindCount: 0,
+            hasChanges: false,
+            hasUpstream: true,
+          }),
         startPolling: () => Effect.void,
         stopAllPolling: () => Effect.void,
         stopPolling: () => Effect.void,

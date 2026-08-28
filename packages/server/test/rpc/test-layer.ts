@@ -17,6 +17,7 @@ import { FileService } from '../../src/services/file-service.js'
 import { GithubPullRequests } from '../../src/services/github-pull-requests.js'
 import { GithubViewer } from '../../src/services/github-viewer.js'
 import { LaborerDatabase } from '../../src/services/laborer-database.js'
+import { OpenCodeModels } from '../../src/services/opencode-models.js'
 import { PowerProfileService } from '../../src/services/power-profile.js'
 import { PrTaskTransitions } from '../../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
@@ -127,11 +128,23 @@ const TestGithubPullRequestsLayer = Layer.succeed(GithubPullRequests)({
   list: () => Effect.succeed([]),
 })
 
+/**
+ * No models, without spawning OpenCode.
+ *
+ * The picker already has to render for a machine where OpenCode has no
+ * credentials, so an empty listing is a branch the UI handles rather than a
+ * gap in the fixture.
+ */
+const TestOpenCodeModelsLayer = Layer.succeed(OpenCodeModels)({
+  list: () => Effect.succeed([]),
+})
+
 const CoreLeafLayers = Layer.mergeAll(
   ConfigService.layer,
   RepositoryIdentity.layer,
   TestGithubPullRequestsLayer,
-  TestGithubViewerLayer
+  TestGithubViewerLayer,
+  TestOpenCodeModelsLayer
 )
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import { TerminalManager } from '@laborer/terminal/services/terminal-manager'
 import { Effect, Layer, Schema, SubscriptionRef } from 'effect'
 import {
   HttpRouter,
+  HttpServer,
   HttpServerRequest,
   HttpServerResponse,
 } from 'effect/unstable/http'
@@ -32,6 +33,11 @@ import {
   resolveDaemonRegistrationPath,
   resolveDaemonVersion,
 } from './daemon-registration.js'
+import {
+  DaemonWebSocketPolicy,
+  isDaemonWebSocketRequestAllowed,
+  makeDaemonWebSocketPolicy,
+} from './daemon-websocket-auth.js'
 import { DEV_INITIAL_PROJECT_PATH_ENV } from './dev-environment.js'
 import { makeInfrastructureLayer } from './infrastructure.js'
 import { LaborerRpcsLive } from './rpc/handlers.js'
@@ -48,7 +54,11 @@ import { ProcessLauncher } from './services/process-launcher.js'
 import { SlackDaemonProcessControl } from './services/slack-daemon-process-control.js'
 import { TerminalClient } from './services/terminal-client.js'
 import { staticAssetResponse, WEB_DIST_ENV } from './static-assets.js'
-import { workspaceAssetResponse } from './workspace-assets.js'
+import {
+  makeWorkspaceAssetServerLayer,
+  parseWorkspaceAssetPort,
+  WORKSPACE_ASSET_PORT_ENV,
+} from './workspace-asset-server.js'
 
 export const DAEMON_HOST = '127.0.0.1'
 export const DAEMON_PORT_ENV = 'LABORER_DAEMON_PORT'
@@ -112,8 +122,30 @@ const RpcHandlers = Layer.mergeAll(
   )
 )
 
+const AuthorizedWebSocketProtocol = Layer.effect(
+  RpcServer.Protocol,
+  Effect.gen(function* () {
+    const { httpEffect, protocol } =
+      yield* RpcServer.makeProtocolWithHttpEffectWebsocket
+    const router = yield* HttpRouter.HttpRouter
+    const policy = yield* DaemonWebSocketPolicy
+    yield* router.add(
+      'GET',
+      '/ws',
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest
+        if (!isDaemonWebSocketRequestAllowed(policy, request.headers.origin)) {
+          return HttpServerResponse.text('Forbidden', { status: 403 })
+        }
+        return yield* httpEffect
+      })
+    )
+    return protocol
+  })
+)
+
 const RpcRoute = RpcServer.layer(DaemonRpcs).pipe(
-  Layer.provide(RpcServer.layerProtocolWebsocket({ path: '/ws' })),
+  Layer.provide(AuthorizedWebSocketProtocol),
   Layer.provide(RpcHandlers),
   Layer.provide(ApplicationServices)
 )
@@ -207,11 +239,6 @@ const ControlRoutes = HttpRouter.addAll([
   HttpRouter.route('POST', '/daemon/power-state', powerStateResponse),
 ])
 
-const WorkspaceAssetRoutes = HttpRouter.addAll([
-  HttpRouter.route('GET', '/api/workspace-assets/*', workspaceAssetResponse),
-  HttpRouter.route('HEAD', '/api/workspace-assets/*', workspaceAssetResponse),
-])
-
 const webDist = process.env[WEB_DIST_ENV]
 const StaticRoutes =
   webDist === undefined
@@ -265,35 +292,53 @@ const makeRegisteredServer = (): Server => {
 
 export const makeDaemonServerLayer = (
   port: number,
-  options: { readonly register?: boolean } = {}
-) =>
-  HttpRouter.serve(
-    Layer.mergeAll(
-      RpcRoute,
-      HealthRoutes,
-      ControlRoutes,
-      WorkspaceAssetRoutes,
-      StaticRoutes
-    )
+  options: {
+    readonly assetPort?: number
+    readonly register?: boolean
+    readonly vitePort?: string | undefined
+  } = {}
+) => {
+  const DaemonHttpServer = NodeHttpServer.layer(
+    options.register === true ? makeRegisteredServer : createServer,
+    {
+      // A daemon restart must checkpoint native services even while browser
+      // WebSockets remain open. Do not hold all layer finalizers behind the
+      // HTTP server's default 20-second graceful-close budget.
+      gracefulShutdownTimeout: 0,
+      host: DAEMON_HOST,
+      port,
+    }
+  )
+  const WebSocketPolicyLive = Layer.effect(
+    DaemonWebSocketPolicy,
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer
+      if (server.address._tag !== 'TcpAddress') {
+        throw new Error('Daemon did not bind a TCP address')
+      }
+      return makeDaemonWebSocketPolicy(
+        `http://${DAEMON_HOST}:${String(server.address.port)}`,
+        options.vitePort
+      )
+    })
+  )
+  const WorkspaceAssetServerLive = makeWorkspaceAssetServerLayer(
+    options.assetPort ?? 0
+  ).pipe(Layer.provide(ApplicationServices))
+
+  return HttpRouter.serve(
+    Layer.mergeAll(RpcRoute, HealthRoutes, ControlRoutes, StaticRoutes)
   ).pipe(
     Layer.provide(ApplicationServices),
     Layer.provide(RpcSerialization.layerJson),
-    Layer.provide(
-      NodeHttpServer.layer(
-        options.register === true ? makeRegisteredServer : createServer,
-        {
-          // A daemon restart must checkpoint native services even while browser
-          // WebSockets remain open. Do not hold all layer finalizers behind the
-          // HTTP server's default 20-second graceful-close budget.
-          gracefulShutdownTimeout: 0,
-          host: DAEMON_HOST,
-          port,
-        }
-      )
-    )
+    Layer.provide(WebSocketPolicyLive),
+    Layer.provideMerge(WorkspaceAssetServerLive),
+    Layer.provide(DaemonHttpServer)
   )
+}
 
 const port = parsePort(process.env[DAEMON_PORT_ENV])
+const assetPort = parseWorkspaceAssetPort(process.env[WORKSPACE_ASSET_PORT_ENV])
 
 const isAddressInUse = (error: unknown): boolean => {
   let current: unknown = error
@@ -311,7 +356,11 @@ const isAddressInUse = (error: unknown): boolean => {
 }
 
 const runDaemon = Layer.launch(
-  makeDaemonServerLayer(port, { register: true })
+  makeDaemonServerLayer(port, {
+    assetPort,
+    register: true,
+    vitePort: process.env.VITE_PORT,
+  })
 ).pipe(
   Effect.scoped,
   Effect.catch((error) =>

@@ -2,10 +2,15 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Exit } from 'effect'
-import type { WorkspaceProvider } from '../src/services/workspace-provider.js'
+import { Effect, Exit, Layer } from 'effect'
+import { WorkspaceProvider } from '../src/services/workspace-provider.js'
+import {
+  makeWorkspaceAssetServerLayer,
+  WorkspaceAssetServer,
+} from '../src/workspace-asset-server.js'
 import {
   issueWorkspaceAssetUrl,
+  loadWorkspaceAssetSigningKey,
   makeWorkspaceAssetHttpResponse,
   resolveWorkspaceAsset,
 } from '../src/workspace-assets.js'
@@ -13,6 +18,8 @@ import {
 const key = Buffer.alloc(32, 7)
 const INDEX_HTML_PATH = /\/site\/index\.html$/
 const STYLE_CSS_PATH = /\/site\/style\.css$/
+const ASSET_ORIGIN_PATH =
+  /^http:\/\/127\.0\.0\.1:43210\/api\/workspace-assets\//
 
 describe('workspace assets', () => {
   it.effect(
@@ -43,13 +50,16 @@ describe('workspace assets', () => {
               provider,
               'workspace-1',
               'site/index.html',
+              'http://127.0.0.1:43210',
               { key, now: 1000 }
             )
-            const suffix = issued.relativeUrl.slice(
+            const suffix = new URL(issued.relativeUrl).pathname.slice(
               '/api/workspace-assets/'.length
             )
             const slash = suffix.indexOf('/')
             const token = suffix.slice(0, slash)
+
+            expect(issued.relativeUrl).toMatch(ASSET_ORIGIN_PATH)
 
             expect(
               yield* resolveWorkspaceAsset(provider, token, 'index.html', {
@@ -93,6 +103,7 @@ describe('workspace assets', () => {
                 provider,
                 'workspace-1',
                 'site/index.html',
+                'http://127.0.0.1:43210',
                 {
                   key,
                   now: 1000,
@@ -149,5 +160,44 @@ describe('workspace assets', () => {
     })
     expect(invalid.status).toBe(416)
     expect(invalid.headers['content-range']).toBe('bytes */10')
+  })
+
+  it('reuses the persisted signing key across fresh daemon loads', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'laborer-asset-key-'))
+    try {
+      const path = join(root, 'workspace-asset-signing-key')
+      const first = await loadWorkspaceAssetSigningKey(path)
+      const afterRestart = await loadWorkspaceAssetSigningKey(path)
+      expect(first).toHaveLength(32)
+      expect(Buffer.from(afterRestart)).toEqual(Buffer.from(first))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('owns a separate scoped listener and tears it down on finalization', async () => {
+    const provider = Layer.succeed(WorkspaceProvider, {
+      findWorkspaceForTask: () => Effect.succeed(null),
+    } as unknown as WorkspaceProvider['Service'])
+    const listener = makeWorkspaceAssetServerLayer(0).pipe(
+      Layer.provide(provider)
+    )
+    let origin = ''
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const assetServer = yield* WorkspaceAssetServer
+        origin = assetServer.origin
+        const response = yield* Effect.promise(() =>
+          fetch(`${assetServer.origin}/api/workspace-assets/malformed`)
+        )
+        expect(response.status).toBe(404)
+      }).pipe(Effect.provide(listener), Effect.scoped)
+    )
+
+    await expect(
+      fetch(`${origin}/api/workspace-assets/malformed`, {
+        signal: AbortSignal.timeout(500),
+      })
+    ).rejects.toThrow()
   })
 })

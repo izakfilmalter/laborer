@@ -98,17 +98,30 @@ const decode = (value: string): string | null => {
 }
 let signingKeyPromise: Promise<Uint8Array> | undefined
 
-const loadSigningKey = async (): Promise<Uint8Array> => {
-  await mkdir(env.DATA_DIR, { recursive: true })
-  const existing = await readFile(SIGNING_KEY_PATH).catch(() => null)
+export class WorkspaceAssetSigningKeyError extends Schema.TaggedError<WorkspaceAssetSigningKeyError>()(
+  'WorkspaceAssetSigningKeyError',
+  {
+    path: Schema.String,
+    reason: Schema.String,
+  }
+) {}
+
+export const loadWorkspaceAssetSigningKey = async (
+  path = SIGNING_KEY_PATH
+): Promise<Uint8Array> => {
+  await mkdir(dirname(path), { recursive: true })
+  const existing = await readFile(path).catch(() => null)
   if (existing !== null) {
     if (existing.byteLength !== 32) {
-      throw new Error('Workspace asset signing key must be 32 bytes.')
+      throw new WorkspaceAssetSigningKeyError({
+        path,
+        reason: 'Workspace asset signing key must be 32 bytes.',
+      })
     }
     return existing
   }
   const created = randomBytes(32)
-  await writeFile(SIGNING_KEY_PATH, created, { flag: 'wx', mode: 0o600 }).catch(
+  await writeFile(path, created, { flag: 'wx', mode: 0o600 }).catch(
     (error: unknown) => {
       if (
         typeof error !== 'object' ||
@@ -119,15 +132,18 @@ const loadSigningKey = async (): Promise<Uint8Array> => {
       }
     }
   )
-  const persisted = await readFile(SIGNING_KEY_PATH)
+  const persisted = await readFile(path)
   if (persisted.byteLength !== 32) {
-    throw new Error('Workspace asset signing key must be 32 bytes.')
+    throw new WorkspaceAssetSigningKeyError({
+      path,
+      reason: 'Workspace asset signing key must be 32 bytes.',
+    })
   }
   return persisted
 }
 
 const getSigningKey = (): Promise<Uint8Array> => {
-  signingKeyPromise ??= loadSigningKey()
+  signingKeyPromise ??= loadWorkspaceAssetSigningKey()
   return signingKeyPromise
 }
 
@@ -160,6 +176,7 @@ export const issueWorkspaceAssetUrl = (
   workspaceProvider: WorkspaceProvider['Service'],
   workspaceId: string,
   relativePath: string,
+  assetOrigin: string,
   options: { readonly key?: Uint8Array; readonly now?: number } = {}
 ) =>
   Effect.gen(function* () {
@@ -212,7 +229,7 @@ export const issueWorkspaceAssetUrl = (
     const token = `${payload}.${sign(payload, key)}`
     return {
       expiresAt,
-      relativeUrl: `${WORKSPACE_ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(basename(relativePath))}`,
+      relativeUrl: `${assetOrigin}${WORKSPACE_ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(basename(relativePath))}`,
     }
   })
 

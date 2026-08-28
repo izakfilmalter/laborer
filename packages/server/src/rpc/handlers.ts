@@ -97,6 +97,7 @@ import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
+import { WorkspaceAssetServer } from '../workspace-asset-server.js'
 import { issueWorkspaceAssetUrl } from '../workspace-assets.js'
 
 const startTime = Date.now()
@@ -1895,10 +1896,12 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     'workspace.assetUrl': ({ relativePath, workspaceId }) =>
       Effect.gen(function* () {
         const workspaceProvider = yield* WorkspaceProvider
+        const assetServer = yield* WorkspaceAssetServer
         return yield* issueWorkspaceAssetUrl(
           workspaceProvider,
           workspaceId,
-          relativePath
+          relativePath,
+          assetServer.origin
         )
       }),
 

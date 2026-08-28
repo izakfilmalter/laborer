@@ -30,6 +30,7 @@ import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
 import { WorktreeDetector } from '../../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../../src/services/worktree-reconciler.js'
+import { WorkspaceAssetServer } from '../../src/workspace-asset-server.js'
 import { TestFileWatcherClientLayer } from '../helpers/test-file-watcher-client.js'
 
 class TestTerminalClientRecorder extends Context.Service<
@@ -232,6 +233,7 @@ const TestPreviewLayers = Layer.merge(
 )
 
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
+  Layer.provide(WorkspaceAssetServer.testLayer),
   Layer.provide(TestPreviewLayers),
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
@@ -243,6 +245,7 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 )
 
 const TestLaborerRpcWithDatabaseLayer = LaborerRpcsLive.pipe(
+  Layer.provide(WorkspaceAssetServer.testLayer),
   Layer.provide(TestPreviewLayers),
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),

@@ -41,6 +41,7 @@ import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { TerminalClient } from '../../src/services/terminal-client.js'
 import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
+import { WorkspaceAssetServer } from '../../src/workspace-asset-server.js'
 
 /**
  * Placeholder proxy layers for all deferred services.
@@ -75,6 +76,7 @@ const PreviewLayers = Layer.merge(
  * deferred services — terminal and file-watcher sidecars are placeholders.
  */
 const CoreOnlyRpcLayer = LaborerRpcsLive.pipe(
+  Layer.provide(WorkspaceAssetServer.testLayer),
   Layer.provide(PreviewLayers),
   Layer.provide(DeferredServiceStubs),
   Layer.provide(DeferredServicesReadyLayer),
@@ -179,6 +181,7 @@ describe('Deferred service proxies (Issue #14)', () => {
  * in the output context for extraction.
  */
 const CoreOnlyRpcWithReadyRefLayer = LaborerRpcsLive.pipe(
+  Layer.provide(WorkspaceAssetServer.testLayer),
   Layer.provide(PreviewLayers),
   Layer.provide(DeferredServiceStubs),
   Layer.provideMerge(DeferredServicesReadyLayer),

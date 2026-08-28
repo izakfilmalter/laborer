@@ -58,7 +58,7 @@ function makeActions(): PanelActions {
     toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
-    toggleTreePane: vi.fn(() => false),
+    toggleFilesPane: vi.fn(() => false),
     updatePaneType: vi.fn(),
     windowLayout: undefined,
   }

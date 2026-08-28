@@ -492,7 +492,8 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
     }
   }, [activeWorkspaceId])
 
-  // Ctrl+b then t → toggle file tree panel on the left side
+  // Ctrl+b then t → toggle the right panel's Files surface for the focused
+  // workspace (was: toggle the left file-tree panel, now retired)
   useHotkeySequence(
     ['Control+B', 'T'],
     (event) => {
@@ -501,7 +502,7 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
         return
       }
       if (activePaneId) {
-        actions.toggleTreePane(activePaneId)
+        actions.toggleFilesPane(activePaneId)
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

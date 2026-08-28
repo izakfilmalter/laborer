@@ -65,7 +65,6 @@ import { PanelHeaderBar } from './-components/panel-header-bar'
 import { WelcomeEmptyState } from './-components/welcome-empty-state'
 import { usePanelLayout } from './-hooks/use-panel-layout'
 import { useTabCloseConfirmations } from './-hooks/use-tab-close-confirmations'
-import { useWorkspacePanelVisibility } from './-hooks/use-workspace-panel-visibility'
 
 /**
  * Route-level wrapper that provides PanelGroupRegistryProvider above
@@ -208,13 +207,6 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // The file tree is a transient UI mode owned per workspace, so opening
-  // one workspace's tree leaves every other alone. Diff and the PR
-  // conversation live in the persisted right-panel store instead.
-  const panelVisibility = useWorkspacePanelVisibility({
-    windowLayout,
-  })
-
   /**
    * The workspace a pane belongs to, which is the unit the full-height
    * panels are keyed by. Panes are addressed within the active tab, so a
@@ -257,21 +249,28 @@ function HomeComponent() {
   )
 
   /**
-   * Toggle the full-height file tree panel for the workspace of the given
-   * pane. The tree panel is forced to the left side, unlike diff.
+   * Toggle the right panel's Files surface for the workspace of the given
+   * pane. The old left file-tree panel is retired; the explorer lives in
+   * the right panel alongside diff and the pull request.
    *
    * @param paneId - The pane ID to get the workspace from
-   * @returns Whether the tree panel is now open
+   * @returns Whether the Files surface is now shown
    */
-  const toggleTreePane = useCallback(
+  const toggleFilesPane = useCallback(
     (paneId: string): boolean => {
       const workspaceId = resolvePaneWorkspaceId(paneId)
-
-      return workspaceId === undefined
-        ? false
-        : panelVisibility.toggleTree(workspaceId)
+      if (workspaceId === undefined) {
+        return false
+      }
+      useRightPanelStore.getState().toggle(workspaceId, 'files')
+      return (
+        selectActiveRightPanel(
+          useRightPanelStore.getState().byWorkspaceId,
+          workspaceId
+        ) === 'files'
+      )
     },
-    [resolvePaneWorkspaceId, panelVisibility.toggleTree]
+    [resolvePaneWorkspaceId]
   )
 
   /**
@@ -753,7 +752,7 @@ function HomeComponent() {
       forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
       toggleDiffPane,
-      toggleTreePane,
+      toggleFilesPane,
       toggleCommentsPane,
       openCommentsPaneForWorkspace,
       showPanelTypePicker,
@@ -767,7 +766,7 @@ function HomeComponent() {
       gatedRemovePanelTab,
       toggleFullscreenPane,
       toggleDiffPane,
-      toggleTreePane,
+      toggleFilesPane,
       toggleCommentsPane,
       openCommentsPaneForWorkspace,
       showPanelTypePicker,
@@ -1186,7 +1185,6 @@ function HomeComponent() {
                     fullscreenPaneId={fullscreenPaneId}
                     isEmptyWindowTab={isEmptyWindowTab}
                     isReconciling={isReconciling}
-                    treeWorkspaceIds={panelVisibility.treeWorkspaceIds}
                     windowLayout={windowLayout}
                     windowTabs={windowLayout?.tabs}
                   />

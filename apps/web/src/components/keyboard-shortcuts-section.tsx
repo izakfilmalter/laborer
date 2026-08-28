@@ -79,7 +79,7 @@ const SHORTCUT_GROUPS: readonly {
         label: 'New agent / diff / dev server pane',
         hint: sequence(['⌃', 'B'], ['A / D / S']),
       },
-      { label: 'Toggle file tree', hint: sequence(['⌃', 'B'], ['T']) },
+      { label: 'Toggle file explorer', hint: sequence(['⌃', 'B'], ['T']) },
     ],
   },
   {

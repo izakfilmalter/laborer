@@ -418,6 +418,16 @@ interface PanelActions {
    */
   readonly toggleDiffPane: (paneId: string) => boolean
   /**
+   * Toggle the right panel's Files surface for a workspace.
+   *
+   * When toggled ON: opens the workspace's right panel with the file
+   * explorer surface active. When toggled OFF: hides the right panel.
+   *
+   * @param paneId - The ID of the pane (used to inherit workspaceId)
+   * @returns Whether the Files surface is now visible (true = toggled on)
+   */
+  readonly toggleFilesPane: (paneId: string) => boolean
+  /**
    * Toggle fullscreen mode for the active terminal pane.
    *
    * When toggled ON: hides all other workspaces and all sibling panes
@@ -429,19 +439,6 @@ interface PanelActions {
    * This is transient UI state.
    */
   readonly toggleFullscreenPane: () => void
-  /**
-   * Toggle a file tree pane for a workspace.
-   *
-   * When toggled ON: shows a left-side panel with the workspace's file
-   * tree alongside the main content.
-   * When toggled OFF: closes the file tree panel.
-   *
-   * The tree panel is forced to the left side, unlike diff which is on the right.
-   *
-   * @param paneId - The ID of the pane (used to inherit workspaceId)
-   * @returns Whether the tree pane is now visible (true = toggled on)
-   */
-  readonly toggleTreePane: (paneId: string) => boolean
 
   /**
    * Update the type of an existing pane. Used by the panel type picker

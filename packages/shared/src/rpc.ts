@@ -706,6 +706,327 @@ export const FileWatcherEvent = Schema.Struct({
 
 export type FileWatcherEvent = typeof FileWatcherEvent.Type
 
+// ---------------------------------------------------------------------------
+// Browser Preview Schemas
+// ---------------------------------------------------------------------------
+
+export const PREVIEW_URL_MAX_LENGTH = 2048
+export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32
+
+const PreviewUrl = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH)
+)
+
+const PreviewWorkspaceId = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1)
+)
+
+export const ConfiguredLocalServerUrls = Schema.Array(PreviewUrl).check(
+  Schema.isMaxLength(CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS)
+)
+
+export const PreviewTabId = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(128)
+)
+export type PreviewTabId = typeof PreviewTabId.Type
+
+export const PREVIEW_VIEWPORT_MIN_DIMENSION = 240
+export const PREVIEW_VIEWPORT_MAX_DIMENSION = 3840
+export const PREVIEW_VIEWPORT_MAX_AREA = 3840 * 2160
+
+const PreviewViewportDimension = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(PREVIEW_VIEWPORT_MIN_DIMENSION),
+  Schema.isLessThanOrEqualTo(PREVIEW_VIEWPORT_MAX_DIMENSION)
+)
+
+const previewViewportArea = Schema.makeFilter(
+  ({ width, height }: { readonly height: number; readonly width: number }) =>
+    width * height <= PREVIEW_VIEWPORT_MAX_AREA ||
+    `Viewport area must not exceed ${String(PREVIEW_VIEWPORT_MAX_AREA)} pixels.`
+)
+
+export const PreviewViewportSize = Schema.Struct({
+  height: PreviewViewportDimension,
+  width: PreviewViewportDimension,
+}).check(previewViewportArea)
+export type PreviewViewportSize = typeof PreviewViewportSize.Type
+
+export const PreviewRenderedViewportSize = Schema.Struct({
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+export type PreviewRenderedViewportSize =
+  typeof PreviewRenderedViewportSize.Type
+
+export const PREVIEW_VIEWPORT_PRESET_IDS = [
+  'iphone-se',
+  'iphone-xr',
+  'iphone-12-pro',
+  'iphone-14-pro-max',
+  'pixel-7',
+  'samsung-galaxy-s8-plus',
+  'samsung-galaxy-s20-ultra',
+  'ipad-mini',
+  'ipad-air',
+  'ipad-pro',
+  'surface-pro-7',
+  'surface-duo',
+  'galaxy-z-fold-5',
+  'asus-zenbook-fold',
+  'samsung-galaxy-a51-71',
+  'nest-hub',
+  'nest-hub-max',
+] as const
+
+export const PreviewViewportPresetId = Schema.Literals(
+  PREVIEW_VIEWPORT_PRESET_IDS
+)
+export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type
+
+const StoredPreviewViewportPresetId = Schema.Literals([
+  ...PREVIEW_VIEWPORT_PRESET_IDS,
+  'desktop-1920x1080',
+  'desktop-1440x900',
+  'laptop-1366x768',
+  'laptop-1280x800',
+  'ipad-pro-11',
+  'iphone-15-pro',
+  'pixel-8',
+  'galaxy-s24',
+])
+
+export const PreviewViewportSetting = Schema.Union([
+  Schema.TaggedStruct('fill', {}),
+  Schema.TaggedStruct('freeform', {
+    ...PreviewViewportSize.fields,
+  }).check(previewViewportArea),
+  Schema.TaggedStruct('preset', {
+    ...PreviewViewportSize.fields,
+    presetId: StoredPreviewViewportPresetId,
+  }).check(previewViewportArea),
+])
+export type PreviewViewportSetting = typeof PreviewViewportSetting.Type
+
+export const FILL_PREVIEW_VIEWPORT = {
+  _tag: 'fill',
+} as const satisfies PreviewViewportSetting
+
+export const PREVIEW_ZOOM_LEVELS = [
+  0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4,
+  5,
+] as const
+export const PreviewZoomFactor = Schema.Literals(PREVIEW_ZOOM_LEVELS)
+export type PreviewZoomFactor = typeof PreviewZoomFactor.Type
+export const DEFAULT_PREVIEW_ZOOM_FACTOR: PreviewZoomFactor = 1
+
+export const PreviewAppearancePreference = Schema.Literals([
+  'system',
+  'light',
+  'dark',
+])
+export type PreviewAppearancePreference =
+  typeof PreviewAppearancePreference.Type
+export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = 'system'
+
+const PreviewTitle = Schema.String.check(Schema.isMaxLength(512))
+
+export const PreviewNavStatus = Schema.Union([
+  Schema.TaggedStruct('Idle', {}),
+  Schema.TaggedStruct('Loading', {
+    title: PreviewTitle,
+    url: PreviewUrl,
+  }),
+  Schema.TaggedStruct('Success', {
+    title: PreviewTitle,
+    url: PreviewUrl,
+  }),
+  Schema.TaggedStruct('LoadFailed', {
+    code: Schema.Int,
+    description: Schema.String,
+    title: PreviewTitle,
+    url: PreviewUrl,
+  }),
+])
+export type PreviewNavStatus = typeof PreviewNavStatus.Type
+
+export const PreviewSessionSnapshot = Schema.Struct({
+  canGoBack: Schema.Boolean,
+  canGoForward: Schema.Boolean,
+  navStatus: PreviewNavStatus,
+  tabId: PreviewTabId,
+  updatedAt: Schema.String,
+  viewport: Schema.optional(PreviewViewportSetting),
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type
+
+export const PreviewOpenInput = Schema.Struct({
+  url: Schema.optional(PreviewUrl),
+  viewport: Schema.optional(PreviewViewportSetting),
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewOpenInput = typeof PreviewOpenInput.Type
+
+export const PreviewNavigateInput = Schema.Struct({
+  resolvedTitle: Schema.optional(PreviewTitle),
+  tabId: PreviewTabId,
+  url: PreviewUrl,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewNavigateInput = typeof PreviewNavigateInput.Type
+
+export const PreviewResizeInput = Schema.Struct({
+  tabId: PreviewTabId,
+  viewport: PreviewViewportSetting,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewResizeInput = typeof PreviewResizeInput.Type
+
+export const PreviewRefreshInput = Schema.Struct({
+  tabId: PreviewTabId,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewRefreshInput = typeof PreviewRefreshInput.Type
+
+export const PreviewCloseInput = Schema.Struct({
+  tabId: Schema.optional(PreviewTabId),
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewCloseInput = typeof PreviewCloseInput.Type
+
+export const PreviewListInput = Schema.Struct({
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewListInput = typeof PreviewListInput.Type
+
+export const PreviewReportStatusInput = Schema.Struct({
+  canGoBack: Schema.Boolean,
+  canGoForward: Schema.Boolean,
+  navStatus: PreviewNavStatus,
+  tabId: PreviewTabId,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewReportStatusInput = typeof PreviewReportStatusInput.Type
+
+export const PreviewListResult = Schema.Struct({
+  revision: NonNegativeInt,
+  serverEpoch: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1)),
+  sessions: Schema.Array(PreviewSessionSnapshot),
+})
+export type PreviewListResult = typeof PreviewListResult.Type
+
+const PreviewEventBase = Schema.Struct({
+  createdAt: Schema.String,
+  revision: PositiveInt,
+  serverEpoch: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1)),
+  tabId: PreviewTabId,
+  workspaceId: PreviewWorkspaceId,
+})
+
+export const PreviewEvent = Schema.Union([
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    snapshot: PreviewSessionSnapshot,
+    type: Schema.Literal('opened'),
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    snapshot: PreviewSessionSnapshot,
+    type: Schema.Literal('navigated'),
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    snapshot: PreviewSessionSnapshot,
+    type: Schema.Literal('resized'),
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    code: Schema.Int,
+    description: Schema.String,
+    title: PreviewTitle,
+    type: Schema.Literal('failed'),
+    url: PreviewUrl,
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    type: Schema.Literal('closed'),
+  }),
+])
+export type PreviewEvent = typeof PreviewEvent.Type
+
+export const DiscoveredLocalServer = Schema.Struct({
+  host: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1)),
+  pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  port: Schema.Int.check(
+    Schema.isGreaterThan(0),
+    Schema.isLessThanOrEqualTo(65_535)
+  ),
+  processName: Schema.NullOr(
+    Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1))
+  ),
+  terminal: Schema.NullOr(
+    Schema.Struct({
+      terminalId: Schema.String.check(
+        Schema.isTrimmed(),
+        Schema.isMinLength(1)
+      ),
+      workspaceId: PreviewWorkspaceId,
+    })
+  ),
+  url: PreviewUrl,
+})
+export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type
+
+export const DiscoveredLocalServerList = Schema.Struct({
+  configuredUrlProbing: Schema.optional(Schema.Literal(true)),
+  scannedAt: Schema.String,
+  servers: Schema.Array(DiscoveredLocalServer),
+})
+export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type
+
+export class PreviewSessionLookupError extends Schema.TaggedError<PreviewSessionLookupError>()(
+  'PreviewSessionLookupError',
+  {
+    tabId: Schema.String,
+    workspaceId: Schema.String,
+  }
+) {
+  override get message(): string {
+    return `Unknown preview session: workspace=${this.workspaceId}, tab=${this.tabId}`
+  }
+}
+
+export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrlError>()(
+  'PreviewInvalidUrlError',
+  {
+    cause: Schema.Defect(),
+    inputLength: Schema.Number,
+    protocol: Schema.optional(Schema.String),
+    reason: Schema.Literals([
+      'empty',
+      'parse',
+      'unsupported-protocol',
+      'unexpected',
+    ]),
+  }
+) {
+  override get message(): string {
+    const protocol = this.protocol === undefined ? '' : `: ${this.protocol}`
+    return `Invalid preview URL (${this.reason}${protocol}; input length ${String(this.inputLength)}).`
+  }
+}
+
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+])
+export type PreviewError = typeof PreviewError.Type
+
 /**
  * A single hunk within a structured patch, representing a contiguous
  * set of changes between the old and new file versions.
@@ -1874,6 +2195,63 @@ export class LaborerRpcs extends RpcGroup.make(
       command: Schema.optional(Schema.String),
       /** Prompt passed to a supported interactive agent when it starts. */
       initialPrompt: Schema.optional(Schema.String),
+    },
+  }),
+
+  // -----------------------------------------------------------------------
+  // Browser Preview RPCs
+  // -----------------------------------------------------------------------
+  Rpc.make('preview.open', {
+    success: PreviewSessionSnapshot,
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewOpenInput.fields,
+  }),
+
+  Rpc.make('preview.navigate', {
+    success: PreviewSessionSnapshot,
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewNavigateInput.fields,
+  }),
+
+  Rpc.make('preview.resize', {
+    success: PreviewSessionSnapshot,
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewResizeInput.fields,
+  }),
+
+  Rpc.make('preview.refresh', {
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewRefreshInput.fields,
+  }),
+
+  Rpc.make('preview.close', {
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewCloseInput.fields,
+  }),
+
+  Rpc.make('preview.list', {
+    success: PreviewListResult,
+    error: RpcError,
+    payload: PreviewListInput.fields,
+  }),
+
+  Rpc.make('preview.reportStatus', {
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewReportStatusInput.fields,
+  }),
+
+  Rpc.make('preview.events', {
+    success: PreviewEvent,
+    stream: true,
+  }),
+
+  Rpc.make('preview.discoveredLocalServers', {
+    success: DiscoveredLocalServerList,
+    error: RpcError,
+    stream: true,
+    payload: {
+      workspaceId: PreviewWorkspaceId,
+      configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
     },
   }),
 

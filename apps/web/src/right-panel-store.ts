@@ -65,6 +65,10 @@ interface RightPanelStoreState {
   open: (workspaceId: string, kind: SingletonKind | 'preview') => void
   openBrowser: (workspaceId: string, tabId: string | null) => void
   openFile: (workspaceId: string, relativePath: string, line?: number) => void
+  reconcileBrowserSurfaces: (
+    workspaceId: string,
+    tabIds: readonly string[]
+  ) => void
   /** Drop panel state for workspaces that no longer exist. */
   removeWorkspaces: (workspaceIds: readonly string[]) => void
   show: (workspaceId: string) => void
@@ -317,6 +321,49 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                       entry.id === surface.id ? surface : entry
                     )
                   : [...withoutStandaloneExplorer, surface],
+              }
+            }
+          ),
+        })),
+      reconcileBrowserSurfaces: (workspaceId, tabIds) =>
+        set((state) => ({
+          byWorkspaceId: updateWorkspace(
+            state.byWorkspaceId,
+            workspaceId,
+            (current) => {
+              const validIds = new Set(
+                tabIds.map((tabId) => `browser:${tabId}`)
+              )
+              const nonBrowser = current.surfaces.filter(
+                (surface) => surface.kind !== 'preview'
+              )
+              const existingBrowser = current.surfaces.filter(
+                (
+                  surface
+                ): surface is Extract<RightPanelSurface, { kind: 'preview' }> =>
+                  surface.kind === 'preview' &&
+                  surface.id !== 'browser:new' &&
+                  validIds.has(surface.id)
+              )
+              const knownIds = new Set(
+                existingBrowser.map((surface) => surface.id)
+              )
+              const added = tabIds
+                .filter((tabId) => !knownIds.has(`browser:${tabId}`))
+                .map((tabId) => browserSurface(tabId))
+              const surfaces = [...nonBrowser, ...existingBrowser, ...added]
+              const activeStillExists = surfaces.some(
+                (surface) => surface.id === current.activeSurfaceId
+              )
+              const fallbackBrowser = surfaces.find(
+                (surface) => surface.kind === 'preview'
+              )
+              return {
+                ...current,
+                surfaces,
+                activeSurfaceId: activeStillExists
+                  ? current.activeSurfaceId
+                  : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
               }
             }
           ),

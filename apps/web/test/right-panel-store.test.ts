@@ -54,6 +54,38 @@ describe('open', () => {
   })
 })
 
+describe('browser surface reconciliation', () => {
+  it('replaces the placeholder and preserves existing browser order', () => {
+    store().open(WS, 'preview')
+    store().open(WS, 'diff')
+    store().reconcileBrowserSurfaces(WS, ['tab-b', 'tab-c'])
+
+    expect(wsState().surfaces).toEqual([
+      { id: 'diff', kind: 'diff' },
+      { id: 'browser:tab-b', kind: 'preview', resourceId: 'tab-b' },
+      { id: 'browser:tab-c', kind: 'preview', resourceId: 'tab-c' },
+    ])
+    expect(wsState().activeSurfaceId).toBe('diff')
+
+    store().activateSurface(WS, 'browser:tab-c')
+    store().reconcileBrowserSurfaces(WS, ['tab-a', 'tab-c'])
+    expect(wsState().surfaces.map((surface) => surface.id)).toEqual([
+      'diff',
+      'browser:tab-c',
+      'browser:tab-a',
+    ])
+    expect(wsState().activeSurfaceId).toBe('browser:tab-c')
+  })
+
+  it('does not touch another workspace', () => {
+    store().openBrowser(OTHER_WS, 'other-tab')
+    store().reconcileBrowserSurfaces(WS, ['tab'])
+    expect(wsState(OTHER_WS).surfaces).toEqual([
+      { id: 'browser:other-tab', kind: 'preview', resourceId: 'other-tab' },
+    ])
+  })
+})
+
 describe('activateSurface', () => {
   it('activates an existing surface and reopens the panel', () => {
     store().open(WS, 'diff')

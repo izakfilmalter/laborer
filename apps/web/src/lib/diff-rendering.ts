@@ -19,7 +19,7 @@
  * tokens, so the themed palette reaches the code body, gutter, and row
  * tints instead of the renderer's bundled colors.
  */
-const DIFF_SURFACE_THEME_UNSAFE_CSS = `
+export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-diffs-header],
 [data-diff],
 [data-file],

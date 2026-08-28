@@ -6,6 +6,7 @@ import {
 import { Effect, Layer, Schema } from 'effect'
 import { McpProtocol, McpServer, Tool, Toolkit } from 'effect/unstable/ai'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
+import { BrowserToolkit, BrowserToolkitHandlers } from './browser-mcp.js'
 
 const TaskStatus = Schema.Literals([
   'todo',
@@ -332,6 +333,10 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
 
 export const TaskMcpToolsLayer = McpServer.toolkit(TaskToolkit).pipe(
   Layer.provide(TaskToolkitHandlers)
+)
+
+export const BrowserMcpToolsLayer = McpServer.toolkit(BrowserToolkit).pipe(
+  Layer.provide(BrowserToolkitHandlers)
 )
 
 export const TaskMcpStdioProtocolLayer = McpServer.layerStdio({

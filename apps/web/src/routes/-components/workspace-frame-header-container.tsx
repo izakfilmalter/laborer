@@ -52,7 +52,7 @@ export function WorkspaceFrameHeaderContainer({
   isMinimized,
   onHeaderClick,
   onMinimize,
-  treeIsOpen,
+  filesIsOpen,
 }: {
   readonly workspaceId: string | undefined
   readonly subLayout?: PanelNode | undefined
@@ -65,7 +65,7 @@ export function WorkspaceFrameHeaderContainer({
   readonly onMinimize: () => void
   readonly commentsIsOpen?: boolean
   readonly diffIsOpen?: boolean
-  readonly treeIsOpen?: boolean
+  readonly filesIsOpen?: boolean
 }) {
   const { data: projectList } = useLiveQuery((query) =>
     query.from({ projects: projectCollection })
@@ -206,7 +206,7 @@ export function WorkspaceFrameHeaderContainer({
     prUnresolvedThreads: workspaceData.prUnresolvedThreads,
     prUrl: workspaceData.prUrl,
     taskNumber: workspaceData.taskNumber,
-    treeIsOpen: treeIsOpen ?? false,
+    filesIsOpen: filesIsOpen ?? false,
     workspaceId,
     workspacePath: workspaceData.workspacePath,
   } satisfies Omit<WorkspaceFrameHeaderProps, 'projectShortName'>

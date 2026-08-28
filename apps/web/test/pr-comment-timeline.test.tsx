@@ -1,8 +1,8 @@
 import type { PullRequestComment } from '@laborer/shared/rpc'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { formatRelativeTime } from '@/panes/comments-pane/relative-time'
-import { CommentTimelineItem } from '@/panes/comments-pane/timeline-item'
+import { formatRelativeTime } from '@/components/pull-request/relative-time'
+import { CommentTimelineItem } from '@/components/pull-request/timeline-item'
 
 const NOW = Date.parse('2026-08-20T12:00:00.000Z')
 const RELATIVE_AGE_RE = /ago$/

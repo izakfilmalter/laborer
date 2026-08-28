@@ -47,10 +47,6 @@ vi.mock('@/panes/diff-pane', () => ({
   DiffPane: () => <div data-testid="diff-pane" />,
 }))
 
-vi.mock('@/panes/tree-pane', () => ({
-  TreePane: () => <div data-testid="tree-pane" />,
-}))
-
 vi.mock('@/panels/panel-context', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/panels/panel-context')>()
   return {
@@ -70,7 +66,7 @@ vi.mock('@/panels/panel-context', async (importOriginal) => {
       toggleDevServerPane: vi.fn(async () => false),
       toggleDiffPane: vi.fn(() => false),
       toggleFullscreenPane: vi.fn(),
-      toggleTreePane: vi.fn(() => false),
+      toggleFilesPane: vi.fn(() => false),
       addPanelTab: vi.fn(),
       addWorkspaceToCurrentTab: vi.fn(),
       addWindowTab: vi.fn(),
@@ -92,17 +88,17 @@ vi.mock('@/panels/panel-context', async (importOriginal) => {
 vi.mock('../src/routes/-components/workspace-frame-header-container', () => ({
   WorkspaceFrameHeaderContainer: ({
     diffIsOpen,
-    treeIsOpen,
+    filesIsOpen,
     workspaceId,
   }: {
     diffIsOpen?: boolean
-    treeIsOpen?: boolean
+    filesIsOpen?: boolean
     workspaceId: string | undefined
   }) => (
     <div
       data-diff-open={diffIsOpen ? 'true' : 'false'}
+      data-files-open={filesIsOpen ? 'true' : 'false'}
       data-testid="workspace-frame-header"
-      data-tree-open={treeIsOpen ? 'true' : 'false'}
       data-workspace-id={workspaceId}
     >
       Header {workspaceId}
@@ -151,6 +147,7 @@ vi.mock('@laborer/ui/components/resizable', () => ({
   ),
 }))
 
+import { useRightPanelStore } from '@/right-panel-store'
 import { PanelContent } from '../src/routes/-components/panel-content'
 
 const SINGLE_WORKSPACE_TILE: WorkspaceTileLeaf = {
@@ -240,6 +237,7 @@ const TWO_WORKSPACE_WINDOW_LAYOUT: WindowLayout = {
 describe('Workspace header visibility during fullscreen', () => {
   afterEach(() => {
     cleanup()
+    useRightPanelStore.setState({ byWorkspaceId: {} })
   })
 
   it('shows the workspace frame header when no pane is fullscreened', () => {
@@ -295,21 +293,22 @@ describe('Workspace header visibility during fullscreen', () => {
     expect(header.getAttribute('data-workspace-id')).toBe('workspace-2')
   })
 
-  it('keeps fullscreen side panels mounted and reports their open state in the fullscreen header', () => {
+  it('keeps the fullscreen right panel mounted and reports its open state in the fullscreen header', () => {
+    useRightPanelStore.getState().open('workspace-1', 'diff')
+
     render(
       <PanelContent
         activePaneId="pane-1"
         activeTabId={SINGLE_WINDOW_LAYOUT.activeTabId}
-        diffWorkspaceIds={['workspace-1']}
         fullscreenPaneId="pane-1"
         isReconciling={false}
-        treeWorkspaceIds={['workspace-1']}
         windowLayout={SINGLE_WINDOW_LAYOUT}
         windowTabs={SINGLE_WINDOW_LAYOUT.tabs}
       />
     )
 
-    expect(screen.getAllByTestId('tree-pane')).toHaveLength(1)
+    // Exactly one diff instance: the fullscreen overlay owns the workspace's
+    // right panel while the inline frame's copy is suppressed.
     expect(screen.getAllByTestId('diff-pane')).toHaveLength(1)
 
     const header = screen.getByTestId('fullscreen-workspace-header')
@@ -318,7 +317,7 @@ describe('Workspace header visibility during fullscreen', () => {
     const headerContent = header.querySelector(
       '[data-testid="workspace-frame-header"]'
     )
-    expect(headerContent?.getAttribute('data-tree-open')).toBe('true')
+    expect(headerContent?.getAttribute('data-files-open')).toBe('false')
     expect(headerContent?.getAttribute('data-diff-open')).toBe('true')
   })
 

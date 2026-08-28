@@ -315,17 +315,24 @@ test.describe('workspaces, panels, and window tabs journeys', () => {
       await expect(frameFor(page, first.id)).toBeVisible()
 
       await secondFrame.getByTestId('workspace-frame-header').click()
-      await secondFrame.getByRole('button', { name: 'Open file tree' }).click()
-      const tree = secondFrame.locator(
-        `[data-testid="tree-pane"][data-workspace-id="${second.id}"]`
+      await secondFrame
+        .getByRole('button', { name: 'Open file explorer' })
+        .click()
+      const explorer = secondFrame.locator(
+        `[data-file-browser-panel="${second.id}"]`
       )
-      await expect(tree).toBeVisible()
-      const readme = tree.getByRole('treeitem', { name: 'README.md' })
+      await expect(explorer).toBeVisible()
+      const readme = explorer.getByText('README.md')
       await expect(readme).toBeVisible()
       await readme.click()
-      await expect(readme).toHaveAttribute('aria-selected', 'true')
+      // Selecting a file in the explorer opens it as a right-panel tab.
       await expect(
-        frameFor(page, first.id).locator('[data-testid="tree-pane"]')
+        secondFrame
+          .locator('[data-right-panel-tab-list]')
+          .getByText('README.md')
+      ).toBeVisible()
+      await expect(
+        frameFor(page, first.id).locator('[data-file-browser-panel]')
       ).toHaveCount(0)
     } finally {
       await cleanLayoutJourney(daemon, journey)

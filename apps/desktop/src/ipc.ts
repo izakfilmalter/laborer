@@ -15,6 +15,8 @@ import {
   type OpenDialogOptions,
   shell,
 } from 'electron'
+import { registerPreviewIpcHandlers } from './preview/Ipc.js'
+import type { PreviewManager } from './preview/Manager.js'
 import { WindowWorkspacePresenceRegistry } from './window-workspace-presence.js'
 
 // ---------------------------------------------------------------------------
@@ -269,7 +271,8 @@ export async function askRenderersBeforeQuit(
  * Each handler mirrors a method on the `DesktopBridge` interface.
  */
 export function registerIpcHandlers(
-  getFallbackWindow: () => BrowserWindow | null
+  getFallbackWindow: () => BrowserWindow | null,
+  previewManager?: PreviewManager
 ): void {
   // -- Folder picker -------------------------------------------------------
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL)
@@ -515,4 +518,8 @@ export function registerIpcHandlers(
       `&state=${state}`
     await shell.openExternal(url)
   })
+
+  if (previewManager) {
+    registerPreviewIpcHandlers(previewManager)
+  }
 }

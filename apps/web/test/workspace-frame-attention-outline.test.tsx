@@ -46,10 +46,6 @@ vi.mock('@/panes/diff-pane', () => ({
   DiffPane: () => <div data-testid="diff-pane" />,
 }))
 
-vi.mock('@/panes/tree-pane', () => ({
-  TreePane: () => <div data-testid="tree-pane" />,
-}))
-
 vi.mock('@/panels/panel-context', () => {
   const actions = {
     closeWorkspace: vi.fn(),

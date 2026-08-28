@@ -33,7 +33,12 @@ import type {
   PullRequestReviewState,
 } from '@laborer/shared/rpc'
 import { Effect, Schema } from 'effect'
-import { spawn } from '../lib/spawn.js'
+import {
+  type GhApiFailure,
+  ghApiFailure,
+  missingWorktreeFailure,
+  runGh,
+} from './gh-cli.js'
 
 /** What an older `gh` prints when it does not know `--slurp`. */
 const SLURP_UNSUPPORTED = 'unknown flag: --slurp'
@@ -123,82 +128,6 @@ const parsePaginatedJsonArray = (stdout: string): unknown => {
 
   return parsed
 }
-
-interface GhApiFailure {
-  readonly _tag: 'GhApiFailure'
-  readonly message: string
-}
-
-const ghApiFailure = (message: string): GhApiFailure => ({
-  _tag: 'GhApiFailure',
-  message,
-})
-
-/**
- * A workspace can outlive its directory, for example when its project is
- * removed. Node reports a missing cwd as `spawn gh ENOENT`, which reads like
- * a missing GitHub CLI unless the worktree is named explicitly.
- */
-const missingWorktreeFailure = (worktreePath: string): GhApiFailure =>
-  ghApiFailure(`Worktree no longer exists: ${worktreePath}`)
-
-/** The directory can also disappear between the guard and the spawn. */
-const spawnFailure = (
-  worktreePath: string,
-  label: string,
-  error: unknown
-): GhApiFailure =>
-  existsSync(worktreePath)
-    ? ghApiFailure(`Failed to run ${label}: ${String(error)}`)
-    : missingWorktreeFailure(worktreePath)
-
-interface GhApiOutput {
-  readonly exitCode: number
-  readonly stderr: string
-  readonly stdout: string
-}
-
-/**
- * Run `gh` in a worktree, holding the child process in a scope.
- *
- * The fiber running this is interrupted whenever the caller's timeout fires,
- * a sibling request fails, or the client closes the pane — and interrupting
- * a fiber does nothing to the OS process it started. Acquiring the process
- * in a scope makes the kill part of the fiber's unwinding instead.
- *
- * `label` names the request in failures, since the argument list is not
- * something to read back in an error message.
- */
-const runGh = (
-  worktreePath: string,
-  args: readonly string[],
-  label: string
-): Effect.Effect<GhApiOutput, GhApiFailure> =>
-  Effect.gen(function* () {
-    const proc = yield* Effect.acquireRelease(
-      Effect.try({
-        try: () =>
-          spawn(['gh', ...args], {
-            cwd: worktreePath,
-            stdout: 'pipe',
-            stderr: 'pipe',
-          }),
-        catch: (error) => spawnFailure(worktreePath, label, error),
-      }),
-      (spawned) => Effect.ignore(Effect.try(() => spawned.kill()))
-    )
-
-    return yield* Effect.tryPromise({
-      try: async () => {
-        const exitCode = await proc.exited
-        const stdout = await new Response(proc.stdout).text()
-        const stderr = await new Response(proc.stderr).text()
-
-        return { exitCode, stderr, stdout }
-      },
-      catch: (error) => spawnFailure(worktreePath, label, error),
-    })
-  }).pipe(Effect.scoped)
 
 /**
  * Run `gh api` in a worktree and decode the JSON array it prints. Failures
@@ -593,4 +522,5 @@ export {
   fetchUnresolvedReviewThreadCount,
   parsePaginatedJsonArray,
 }
-export type { GhApiFailure, PullRequestReviewSummary }
+export type { GhApiFailure } from './gh-cli.js'
+export type { PullRequestReviewSummary }

@@ -1765,21 +1765,19 @@ export function usePanelLayout() {
   )
 
   /**
-   * Toggle a full-height file tree panel for a workspace.
+   * Toggle the right panel's Files surface for a workspace.
    *
-   * NOTE: This is a placeholder implementation. The actual tree panel
-   * toggle is handled at the route level (index.tsx) where the full-height
-   * tree panel state is managed. This hook's version is overridden by
-   * the route's gatedPanelActions to provide the full-height behavior.
-   *
-   * The tree panel is forced to the left side, unlike diff which is on the right.
+   * NOTE: This is a placeholder implementation. The actual Files-surface
+   * toggle is handled at the route level (index.tsx), which flips the
+   * right panel's Files surface for the pane's workspace. This hook's
+   * version is overridden by the route's gatedPanelActions.
    *
    * @param _paneId - The pane ID (unused in this stub implementation)
    * @returns Always false since the actual implementation is in index.tsx
    */
-  const handleToggleTreePane = useCallback((_paneId: string): boolean => {
-    // This is overridden by gatedPanelActions in index.tsx
-    // to provide full-height tree panel behavior
+  const handleToggleFilesPane = useCallback((_paneId: string): boolean => {
+    // This is overridden by gatedPanelActions in index.tsx to toggle the
+    // right panel's Files surface.
     return false
   }, [])
 
@@ -2812,7 +2810,7 @@ export function usePanelLayout() {
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
       toggleDevServerPane: handleToggleDevServerPane,
-      toggleTreePane: handleToggleTreePane,
+      toggleFilesPane: handleToggleFilesPane,
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
       removePanelTab: handleRemovePanelTab,
@@ -2847,7 +2845,7 @@ export function usePanelLayout() {
       handleSetActivePaneId,
       handleToggleDiffPane,
       handleToggleDevServerPane,
-      handleToggleTreePane,
+      handleToggleFilesPane,
       handleResizePane,
       handleCloseTerminalPane,
       handleRemovePanelTab,

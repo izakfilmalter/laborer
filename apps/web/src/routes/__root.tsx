@@ -8,11 +8,13 @@ import {
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { AtomRegistryProvider } from '@/atoms/provider'
+import { ElectronBrowserHost } from '@/browser/electron-browser-host'
 import { AppSettingsProvider } from '@/components/app-settings-context'
 import { AppSettingsModal } from '@/components/app-settings-modal'
 import { ConnectionReconnectBanner } from '@/components/connection-reconnect-banner'
 import { DesktopUpdateToastListener } from '@/components/desktop-update-toast-listener'
 import { LifecyclePhaseProvider } from '@/components/lifecycle-phase-context'
+import { PreviewSessionHosts } from '@/components/preview/preview-session-hosts'
 import { ServerGate } from '@/components/server-gate'
 import { SharedCollectionCoordinator } from '@/components/shared-collection-coordinator'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -95,6 +97,8 @@ function RootComponent() {
               <ServerGate>
                 <AtomRegistryProvider>
                   <SharedCollectionCoordinator />
+                  <ElectronBrowserHost />
+                  <PreviewSessionHosts />
                   <ConnectionReconnectBanner />
                   <AppSettingsProvider>
                     <div className="h-svh">

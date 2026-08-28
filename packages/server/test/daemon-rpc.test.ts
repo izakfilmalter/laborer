@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { NodeSocket } from '@effect/platform-node'
@@ -14,6 +14,7 @@ import { FileWatcherClient } from '../src/services/file-watcher-client.js'
 
 const MAX_DIAGNOSTICS_LENGTH = 64 * 1024
 const DAEMON_WEB_CLIENT_PATTERN = /daemon web client/
+const HTTP_STATUS_PATTERN = /^HTTP\/1\.1 (\d{3})/
 
 const allocatePort = (): Promise<number> =>
   new Promise((resolvePort, reject) => {
@@ -67,6 +68,49 @@ const waitForReady = async (
   }
   throw new Error('Timed out waiting for daemon readiness')
 }
+
+const websocketHandshakeStatus = (
+  port: number,
+  origin?: string
+): Promise<number> =>
+  new Promise((resolveStatus, reject) => {
+    const socket = connect(port, '127.0.0.1')
+    const timeout = setTimeout(() => {
+      socket.destroy(new Error('WebSocket handshake timed out'))
+    }, 2000)
+    let response = ''
+    socket.setEncoding('utf8')
+    socket.once('error', reject)
+    socket.on('data', (chunk) => {
+      response += chunk
+      if (!response.includes('\r\n\r\n')) {
+        return
+      }
+      clearTimeout(timeout)
+      socket.destroy()
+      const match = HTTP_STATUS_PATTERN.exec(response)
+      if (match?.[1] === undefined) {
+        reject(new Error(`Invalid WebSocket handshake response: ${response}`))
+      } else {
+        resolveStatus(Number(match[1]))
+      }
+    })
+    socket.once('connect', () => {
+      socket.write(
+        [
+          'GET /ws HTTP/1.1',
+          `Host: 127.0.0.1:${String(port)}`,
+          'Connection: Upgrade',
+          'Upgrade: websocket',
+          'Sec-WebSocket-Version: 13',
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          ...(origin === undefined ? [] : [`Origin: ${origin}`]),
+          '',
+          '',
+        ].join('\r\n')
+      )
+    })
+  })
 
 const stopChild = async (child: ChildProcess): Promise<void> => {
   if (child.exitCode !== null) {
@@ -205,6 +249,7 @@ describe('standalone daemon', () => {
 
   it('serves all three RPC groups over one WebSocket', async () => {
     const port = await allocatePort()
+    const assetPort = await allocatePort()
     const stateHome = await mkdtemp(join(tmpdir(), 'laborer-daemon-test-'))
     const webDist = join(stateHome, 'web-dist')
     await mkdir(join(webDist, 'assets'), { recursive: true })
@@ -218,6 +263,7 @@ describe('standalone daemon', () => {
     const daemonEnvironment = {
       HOME: stateHome,
       LABORER_DAEMON_PORT: String(port),
+      LABORER_WORKSPACE_ASSET_PORT: String(assetPort),
       LABORER_FILE_WATCHER_BACKEND: 'fs',
       LABORER_PTY_HOST_ENTRY: resolve(
         import.meta.dirname,
@@ -228,6 +274,7 @@ describe('standalone daemon', () => {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       SHELL: '/bin/sh',
       TMPDIR: tmpdir(),
+      VITE_PORT: '2101',
       XDG_CONFIG_HOME: join(stateHome, 'config'),
       XDG_STATE_HOME: stateHome,
     }
@@ -252,6 +299,43 @@ describe('standalone daemon', () => {
     const url = `http://127.0.0.1:${String(port)}`
     try {
       await waitForReady(url, child)
+      assert.strictEqual(
+        await websocketHandshakeStatus(port, url),
+        101,
+        'same-origin browser renderer must connect'
+      )
+      assert.strictEqual(
+        await websocketHandshakeStatus(port, 'http://localhost:2101'),
+        101,
+        'Vite browser renderer must connect'
+      )
+      assert.strictEqual(
+        await websocketHandshakeStatus(port),
+        101,
+        'native and CLI clients without Origin must connect'
+      )
+      assert.strictEqual(
+        await websocketHandshakeStatus(
+          port,
+          `http://127.0.0.1:${String(assetPort)}`
+        ),
+        403,
+        'JavaScript in hostile workspace HTML must not connect from the asset origin'
+      )
+      assert.strictEqual(
+        await websocketHandshakeStatus(port, 'https://attacker.example'),
+        403
+      )
+      assert.strictEqual(await websocketHandshakeStatus(port, 'null'), 403)
+      assert.strictEqual(
+        (
+          await fetch(
+            `http://127.0.0.1:${String(assetPort)}/api/workspace-assets/malformed`
+          )
+        ).status,
+        404,
+        'workspace asset routes must be reachable only on the dedicated listener'
+      )
       assert.match(
         await fetch(url).then((response) => response.text()),
         DAEMON_WEB_CLIENT_PATTERN

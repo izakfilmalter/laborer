@@ -26,8 +26,19 @@ import {
 import type { Task, TaskStatus } from '@laborer/task-db'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { isProjectShortName } from '@laborer/task-db/task-identifier'
-import { Array, Effect, Semaphore, Stream, SubscriptionRef } from 'effect'
+import {
+  Array,
+  Clock,
+  Effect,
+  Layer,
+  Queue,
+  Semaphore,
+  Stream,
+  SubscriptionRef,
+} from 'effect'
 import { spawn } from '../lib/spawn.js'
+import { BrowserContext } from '../services/browser-context.js'
+import { BrowserControl } from '../services/browser-control.js'
 import { ConfigService } from '../services/config-service.js'
 import { DeferredServicesReady } from '../services/deferred-service.js'
 import { FileService } from '../services/file-service.js'
@@ -43,6 +54,8 @@ import {
 import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
 import { OpenCodeModels } from '../services/opencode-models.js'
 import { PrWatcher } from '../services/pr-watcher.js'
+import { PreviewManager } from '../services/preview-manager.js'
+import { PreviewPortDiscovery } from '../services/preview-port-discovery.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import {
   aliasesAfterRename,
@@ -51,6 +64,21 @@ import {
   withProjectIdentifierNamespaceLock,
 } from '../services/project-task-identifiers.js'
 import { fetchPullRequestComments } from '../services/pull-request-comments.js'
+import {
+  commentOnPullRequest,
+  editPullRequest,
+  fetchPullRequestActivity,
+  fetchPullRequestDetail,
+  fetchPullRequestDiff,
+  fetchPullRequestDiffFileContents,
+  fetchReviewerCandidates,
+  replyToReviewThread,
+  runPullRequestAction,
+  setPullRequestReaction,
+  setReviewerRequest,
+  setReviewThreadResolution,
+  submitPullRequestReview,
+} from '../services/pull-request-panel.js'
 import {
   HUMAN_AUTHOR,
   ReviewCommentAuthorMismatchError,
@@ -70,6 +98,8 @@ import { inspectTaskWorktree } from '../services/task-worktree.js'
 import { TerminalClient } from '../services/terminal-client.js'
 import { WorkspaceProvider } from '../services/workspace-provider.js'
 import { WorkspaceSyncService } from '../services/workspace-sync-service.js'
+import { WorkspaceAssetServer } from '../workspace-asset-server.js'
+import { issueWorkspaceAssetUrl } from '../workspace-assets.js'
 
 const startTime = Date.now()
 const MAX_DIRECTORY_PICKER_ENTRIES = 1000
@@ -170,6 +200,76 @@ const getProject = (projectId: string) =>
     return yield* registry.getProject(projectId)
   })
 
+/**
+ * Resolve a workspace to the pull request every `pullRequest.*` RPC speaks
+ * about: the worktree to run `gh` in, the repository the pull request lives
+ * in, and its number.
+ *
+ * PrWatcher already knows whether the branch has a pull request, so a
+ * branch without one fails with `PR_NOT_FOUND` rather than asking GitHub a
+ * slower way to learn no. The number alone does not say which repository to
+ * ask: on a fork clone the pull request usually lives upstream while origin
+ * is the fork, so the URL PrWatcher persisted alongside the number is what
+ * decides. Guessing origin would read a stranger's conversation at that
+ * number, or none at all.
+ */
+const resolvePullRequestWorkspace = (workspaceId: string) =>
+  Effect.gen(function* () {
+    const workspaceProvider = yield* WorkspaceProvider
+    const workspace = yield* workspaceProvider.findWorkspaceForTask(workspaceId)
+
+    if (workspace === null) {
+      return yield* new RpcError({
+        message: `Workspace not found: ${workspaceId}`,
+        code: 'NOT_FOUND',
+      })
+    }
+
+    if (workspace.prNumber === null) {
+      return yield* new RpcError({
+        message: `No pull request for ${workspace.branchName}`,
+        code: 'PR_NOT_FOUND',
+      })
+    }
+
+    const repoSlug =
+      workspace.prUrl === null
+        ? null
+        : parsePullRequestRepoSlug(workspace.prUrl)
+
+    if (repoSlug === null) {
+      return yield* new RpcError({
+        message: `Could not tell which GitHub repository pull request #${workspace.prNumber} lives in: ${workspace.prUrl ?? 'no pull request URL recorded'}`,
+        code: 'GH_FAILED',
+      })
+    }
+
+    return {
+      prNumber: workspace.prNumber,
+      prTitle: workspace.prTitle,
+      prUrl: workspace.prUrl,
+      repoSlug,
+      worktreePath: workspace.worktreePath,
+    }
+  })
+
+const resolvePreviewWorkspace = (workspaceId: string) =>
+  Effect.gen(function* () {
+    const workspaceProvider = yield* WorkspaceProvider
+    const workspace = yield* workspaceProvider.findWorkspaceForTask(workspaceId)
+    if (workspace === null) {
+      return yield* new RpcError({
+        message: `Workspace not found: ${workspaceId}`,
+        code: 'NOT_FOUND',
+      })
+    }
+    return workspace
+  })
+
+/** One expected `gh` failure as the RPC error every panel read reports. */
+const ghFailed = (failure: { readonly message: string }) =>
+  new RpcError({ message: failure.message, code: 'GH_FAILED' })
+
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
   Effect.gen(function* () {
     const configService = yield* ConfigService
@@ -209,6 +309,7 @@ export const handleConfigUpdate = ({
     conflictPrompt?: string | undefined
     shortName?: string | undefined
     setupScripts?: readonly string[] | undefined
+    previewUrls?: readonly string[] | undefined
     worktreeDir?: string | undefined
   }
 }) =>
@@ -224,6 +325,9 @@ export const handleConfigUpdate = ({
         (config.setupScripts.every((script) => typeof script === 'string') &&
           Array.isArray(config.setupScripts))
 
+      const isValidPreviewUrls =
+        config.previewUrls === undefined || Array.isArray(config.previewUrls)
+
       const isValidConfig =
         isValidAgent &&
         (config.shortName === undefined ||
@@ -232,13 +336,14 @@ export const handleConfigUpdate = ({
           typeof config.worktreeDir === 'string') &&
         (config.conflictPrompt === undefined ||
           typeof config.conflictPrompt === 'string') &&
-        isValidSetupScripts
+        isValidSetupScripts &&
+        isValidPreviewUrls
 
       if (!isValidConfig) {
         return yield* new RpcError({
           code: 'INVALID_INPUT',
           message:
-            'Invalid config payload. Expected optional shortName (1-10 uppercase letters/digits, starting with a letter), worktreeDir, conflictPrompt, agent (opencode2/claude/codex), and setupScripts as a string array.',
+            'Invalid config payload. Expected optional shortName (1-10 uppercase letters/digits, starting with a letter), worktreeDir, conflictPrompt, agent (opencode2/claude/codex), setupScripts, and previewUrls as string arrays.',
         })
       }
 
@@ -1603,6 +1708,9 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
 
         const provider = yield* WorkspaceProvider
         yield* provider.destroyWorktree(workspaceId, force, operationId)
+
+        const previewManager = yield* PreviewManager
+        yield* previewManager.closeWorkspace(workspaceId)
       }),
     'workspace.checkDirty': ({ workspaceId }) =>
       Effect.gen(function* () {
@@ -1656,6 +1764,161 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const tc = yield* TerminalClient
         return yield* tc.spawnInWorkspace(workspaceId, command, initialPrompt)
+      }),
+
+    // The daemon tracks browser metadata; Electron owns Chromium resources.
+    'preview.open': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.open(input)
+      }),
+    'preview.navigate': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.navigate(input)
+      }),
+    'preview.resize': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.resize(input)
+      }),
+    'preview.refresh': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        yield* manager.refresh(input)
+      }),
+    'preview.close': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        yield* manager.close(input)
+      }),
+    'preview.list': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const manager = yield* PreviewManager
+        return yield* manager.list(workspaceId)
+      }),
+    'preview.reportStatus': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const manager = yield* PreviewManager
+        yield* manager.reportStatus(input)
+      }),
+    'preview.events': () =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const manager = yield* PreviewManager
+          return manager.events
+        })
+      ),
+    'preview.discoveredLocalServers': ({ workspaceId, configuredUrls }) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const workspace = yield* resolvePreviewWorkspace(workspaceId)
+          const discovery = yield* PreviewPortDiscovery
+          return Stream.callback((queue) =>
+            Effect.gen(function* () {
+              yield* discovery.retain
+              const urls = configuredUrls ?? []
+              const initial = yield* discovery.scan(
+                workspace.worktreePath,
+                urls
+              )
+              const now = yield* Clock.currentTimeMillis
+              yield* Queue.offer(queue, {
+                configuredUrlProbing: true as const,
+                scannedAt: new Date(now).toISOString(),
+                servers: initial,
+              })
+              yield* discovery.subscribe(
+                {
+                  configuredUrls: urls,
+                  initialSnapshot: initial,
+                  workspaceRoot: workspace.worktreePath,
+                },
+                (servers) =>
+                  Clock.currentTimeMillis.pipe(
+                    Effect.flatMap((millis) =>
+                      Queue.offer(queue, {
+                        configuredUrlProbing: true as const,
+                        scannedAt: new Date(millis).toISOString(),
+                        servers,
+                      })
+                    )
+                  )
+              )
+            })
+          )
+        })
+      ),
+
+    'browserControl.connect': (input) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          yield* resolvePreviewWorkspace(input.workspaceId)
+          const control = yield* BrowserControl
+          return yield* control.connect(input)
+        })
+      ),
+    'browserControl.respond': (response) =>
+      Effect.gen(function* () {
+        const control = yield* BrowserControl
+        yield* control.respond(response)
+      }),
+    'browserControl.invoke': (input) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(input.workspaceId)
+        const control = yield* BrowserControl
+        return yield* control.invoke({
+          workspaceId: input.workspaceId,
+          controllerId: input.controllerId,
+          operation: input.operation,
+          input: input.input,
+          ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+          ...(input.timeoutMs === undefined
+            ? {}
+            : { timeoutMs: input.timeoutMs }),
+        })
+      }),
+    'browserControl.cancel': ({ workspaceId, controllerId }) =>
+      Effect.gen(function* () {
+        const control = yield* BrowserControl
+        yield* control.cancel(workspaceId, controllerId)
+      }),
+    'browserContext.deliver': ({ workspaceId, annotation }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const context = yield* BrowserContext
+        return yield* context.deliver(workspaceId, annotation)
+      }),
+    'browserContext.list': ({ workspaceId, includeConsumed }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const context = yield* BrowserContext
+        return yield* context.list(workspaceId, includeConsumed)
+      }),
+    'browserContext.consume': ({ workspaceId, id }) =>
+      Effect.gen(function* () {
+        yield* resolvePreviewWorkspace(workspaceId)
+        const context = yield* BrowserContext
+        return yield* context.consume(workspaceId, id)
+      }),
+
+    'workspace.assetUrl': ({ relativePath, workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceProvider = yield* WorkspaceProvider
+        const assetServer = yield* WorkspaceAssetServer
+        return yield* issueWorkspaceAssetUrl(
+          workspaceProvider,
+          workspaceId,
+          relativePath,
+          assetServer.origin
+        )
       }),
 
     // -------------------------------------------------------------------
@@ -1794,10 +2057,28 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         return yield* fileService.list(workspaceId, dir)
       }),
 
+    'file.listEntries': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const fileService = yield* FileService
+        return yield* fileService.listEntries(workspaceId)
+      }),
+
     'file.read': ({ workspaceId, filePath }) =>
       Effect.gen(function* () {
         const fileService = yield* FileService
         return yield* fileService.read(workspaceId, filePath)
+      }),
+
+    'file.readText': ({ workspaceId, filePath }) =>
+      Effect.gen(function* () {
+        const fileService = yield* FileService
+        return yield* fileService.readText(workspaceId, filePath)
+      }),
+
+    'file.write': ({ workspaceId, filePath, contents }) =>
+      Effect.gen(function* () {
+        const fileService = yield* FileService
+        return yield* fileService.write(workspaceId, filePath, contents)
       }),
 
     'file.status': ({ workspaceId }) =>
@@ -1839,53 +2120,13 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'pullRequest.comments': ({ workspaceId }) =>
       Effect.gen(function* () {
-        const workspaceProvider = yield* WorkspaceProvider
-        const workspace =
-          yield* workspaceProvider.findWorkspaceForTask(workspaceId)
-
-        if (workspace === null) {
-          return yield* new RpcError({
-            message: `Workspace not found: ${workspaceId}`,
-            code: 'NOT_FOUND',
-          })
-        }
-
-        // PrWatcher already knows whether the branch has a pull request.
-        // Asking GitHub again here would just be a slower way to learn no.
-        if (workspace.prNumber === null) {
-          return yield* new RpcError({
-            message: `No pull request for ${workspace.branchName}`,
-            code: 'PR_NOT_FOUND',
-          })
-        }
-
-        // The number alone does not say which repository to ask: on a fork
-        // clone the pull request usually lives upstream while origin is the
-        // fork, so the URL PrWatcher persisted alongside the number is what
-        // decides. Guessing origin here reads a stranger's conversation at
-        // that number, or none at all.
-        const repoSlug =
-          workspace.prUrl === null
-            ? null
-            : parsePullRequestRepoSlug(workspace.prUrl)
-
-        if (repoSlug === null) {
-          return yield* new RpcError({
-            message: `Could not tell which GitHub repository pull request #${workspace.prNumber} lives in: ${workspace.prUrl ?? 'no pull request URL recorded'}`,
-            code: 'GH_FAILED',
-          })
-        }
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
 
         const comments = yield* fetchPullRequestComments(
           workspace.worktreePath,
-          repoSlug,
+          workspace.repoSlug,
           workspace.prNumber
-        ).pipe(
-          Effect.mapError(
-            (failure) =>
-              new RpcError({ message: failure.message, code: 'GH_FAILED' })
-          )
-        )
+        ).pipe(Effect.mapError(ghFailed))
 
         return {
           number: workspace.prNumber,
@@ -1893,6 +2134,153 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           url: workspace.prUrl,
           comments,
         }
+      }),
+
+    'pullRequest.detail': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestDetail(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.activity': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestActivity(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.diff': ({ workspaceId, cursor, commit }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestDiff(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { commit, cursor }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.diffContents': ({
+      workspaceId,
+      changeType,
+      oldPath,
+      newPath,
+      commit,
+    }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestDiffFileContents(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { changeType, commit, newPath, oldPath }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.comment': ({ workspaceId, body }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* commentOnPullRequest(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          body
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.edit': ({ workspaceId, title, body }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* editPullRequest(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { body, title }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.action': ({
+      workspaceId,
+      action,
+      mergeMethod,
+      updateMethod,
+    }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* runPullRequestAction(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { action, mergeMethod, updateMethod }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.submitReview': ({ workspaceId, verdict, body, comments }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* submitPullRequestReview(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { body, comments, verdict }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.replyToThread': ({ workspaceId, threadId, body }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* replyToReviewThread(workspace.worktreePath, threadId, body).pipe(
+          Effect.mapError(ghFailed)
+        )
+      }),
+
+    'pullRequest.setThreadResolution': ({ workspaceId, threadId, resolved }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* setReviewThreadResolution(
+          workspace.worktreePath,
+          threadId,
+          resolved
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.setReaction': ({ workspaceId, subjectId, content, reacted }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* setPullRequestReaction(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { content, reacted, subjectId }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.reviewerCandidates': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchReviewerCandidates(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.requestReviewers': ({ workspaceId, reviewers, requested }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* setReviewerRequest(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { requested, reviewers }
+        ).pipe(Effect.mapError(ghFailed))
       }),
 
     // -------------------------------------------------------------------
@@ -1906,4 +2294,4 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         })
       ),
   })
-)
+).pipe(Layer.provide(BrowserControl.layer), Layer.provide(BrowserContext.layer))

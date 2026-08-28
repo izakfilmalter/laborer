@@ -40,13 +40,13 @@ import {
   Users,
 } from 'lucide-react'
 import { type ReactElement, useMemo } from 'react'
-import { extractErrorMessage } from '@/lib/errors'
-import { pullRequestConversationQuery } from '@/panes/comments-pane/conversation-query'
-import { GitHubLink } from '@/panes/comments-pane/external-links'
+import { pullRequestConversationQuery } from '@/components/pull-request/conversation-query'
+import { GitHubLink } from '@/components/pull-request/external-links'
 import {
   formatAbsoluteTime,
   formatRelativeTime,
-} from '@/panes/comments-pane/relative-time'
+} from '@/components/pull-request/relative-time'
+import { extractErrorMessage } from '@/lib/errors'
 
 // Matches the conversation preview, so the two segments of the same pill
 // answer a deliberate hover at the same speed.

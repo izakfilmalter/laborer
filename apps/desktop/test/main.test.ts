@@ -129,6 +129,7 @@ const loadMainWithRecords = async (
 
   vi.doMock('electron', () => ({
     app: {
+      getPath: () => '/tmp/laborer-test',
       getVersion: () => '1.2.3',
       setName,
       whenReady: () => Promise.resolve(),

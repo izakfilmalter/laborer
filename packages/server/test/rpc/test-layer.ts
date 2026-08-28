@@ -21,6 +21,8 @@ import { OpenCodeModels } from '../../src/services/opencode-models.js'
 import { PowerProfileService } from '../../src/services/power-profile.js'
 import { PrTaskTransitions } from '../../src/services/pr-task-transitions.js'
 import { PrWatcher } from '../../src/services/pr-watcher.js'
+import { PreviewManager } from '../../src/services/preview-manager.js'
+import { PreviewPortDiscovery } from '../../src/services/preview-port-discovery.js'
 import { ProjectRegistry } from '../../src/services/project-registry.js'
 import { RepositoryIdentity } from '../../src/services/repository-identity.js'
 import { RepositoryWatchCoordinator } from '../../src/services/repository-watch-coordinator.js'
@@ -29,6 +31,7 @@ import { WorkspaceProvider } from '../../src/services/workspace-provider.js'
 import { WorkspaceSyncService } from '../../src/services/workspace-sync-service.js'
 import { WorktreeDetector } from '../../src/services/worktree-detector.js'
 import { WorktreeReconciler } from '../../src/services/worktree-reconciler.js'
+import { WorkspaceAssetServer } from '../../src/workspace-asset-server.js'
 import { TestFileWatcherClientLayer } from '../helpers/test-file-watcher-client.js'
 
 class TestTerminalClientRecorder extends Context.Service<
@@ -237,7 +240,14 @@ const DeferredServiceStackWithTerminal = DeferredServiceStack.pipe(
   Layer.provide(TestTerminalClientRecorderLayer)
 )
 
+const TestPreviewLayers = Layer.merge(
+  PreviewManager.layer,
+  PreviewPortDiscovery.live
+)
+
 export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
+  Layer.provide(WorkspaceAssetServer.testLayer),
+  Layer.provide(TestPreviewLayers),
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(DeferredServiceStackWithTerminal),
@@ -248,6 +258,8 @@ export const TestLaborerRpcLayer = LaborerRpcsLive.pipe(
 )
 
 const TestLaborerRpcWithDatabaseLayer = LaborerRpcsLive.pipe(
+  Layer.provide(WorkspaceAssetServer.testLayer),
+  Layer.provide(TestPreviewLayers),
   Layer.provide(TestTerminalClient),
   Layer.provideMerge(TestTerminalClientRecorderLayer),
   Layer.provide(DeferredServiceStackWithTerminal),

@@ -10,12 +10,14 @@ import { createFileRoute } from '@tanstack/react-router'
 import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { CommandPalette } from '@/components/command-palette/command-palette'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
 import { useProjectReorderMonitor } from '@/components/project-reorder'
+import { rightPanelWidthStorageKey } from '@/components/right-panel/right-panel-shell'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import { destroyWorkspace as destroyWorkspaceOptimistically } from '@/db/shared-mutations'
@@ -55,6 +57,9 @@ import {
   resolveActiveWorkspaceId,
 } from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
+import { usePreviewMiniPlayerStore } from '@/preview-mini-player-store'
+import { usePreviewStateStore } from '@/preview-state-store'
+import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
 import {
   CloseAppDialog,
   DestroyWorkspaceOnCloseDialog,
@@ -64,7 +69,6 @@ import { PanelHeaderBar } from './-components/panel-header-bar'
 import { WelcomeEmptyState } from './-components/welcome-empty-state'
 import { usePanelLayout } from './-hooks/use-panel-layout'
 import { useTabCloseConfirmations } from './-hooks/use-tab-close-confirmations'
-import { useWorkspacePanelVisibility } from './-hooks/use-workspace-panel-visibility'
 
 /**
  * Route-level wrapper that provides PanelGroupRegistryProvider above
@@ -85,6 +89,8 @@ export const Route = createFileRoute('/')({
 })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
+const closeWorkspacePreviewsMutation =
+  BrowserDaemonClient.mutation('preview.close')
 
 function HomeComponent() {
   const {
@@ -149,6 +155,9 @@ function HomeComponent() {
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
     mode: 'promise',
   })
+  const closeWorkspacePreviews = useAtomSet(closeWorkspacePreviewsMutation, {
+    mode: 'promise',
+  })
 
   /**
    * Look up the PR state for a workspace by its ID.
@@ -207,13 +216,6 @@ function HomeComponent() {
     })
   }, [activePaneId])
 
-  // Diff, file tree, and PR conversation are transient UI modes owned per
-  // workspace, so opening one workspace's panel leaves every other alone.
-  const panelVisibility = useWorkspacePanelVisibility({
-    focusWorkspace: panelActions.focusWorkspace,
-    windowLayout,
-  })
-
   /**
    * The workspace a pane belongs to, which is the unit the full-height
    * panels are keyed by. Panes are addressed within the active tab, so a
@@ -231,58 +233,125 @@ function HomeComponent() {
   )
 
   /**
-   * Toggle the full-height diff panel for the workspace of the given pane.
+   * Toggle the right panel's Diff surface for the workspace of the given
+   * pane: opens the panel with Diff active, or hides the panel when Diff is
+   * already the active surface (t3's toggle semantics).
    *
    * @param paneId - The pane ID to get the workspace from
-   * @returns Whether the diff panel is now open
+   * @returns Whether the Diff surface is now shown
    */
   const toggleDiffPane = useCallback(
     (paneId: string): boolean => {
       const workspaceId = resolvePaneWorkspaceId(paneId)
-
-      return workspaceId === undefined
-        ? false
-        : panelVisibility.toggleDiff(workspaceId)
+      if (workspaceId === undefined) {
+        return false
+      }
+      useRightPanelStore.getState().toggle(workspaceId, 'diff')
+      return (
+        selectActiveRightPanel(
+          useRightPanelStore.getState().byWorkspaceId,
+          workspaceId
+        ) === 'diff'
+      )
     },
-    [resolvePaneWorkspaceId, panelVisibility.toggleDiff]
+    [resolvePaneWorkspaceId]
   )
 
   /**
-   * Toggle the full-height file tree panel for the workspace of the given
-   * pane. The tree panel is forced to the left side, unlike diff.
+   * Toggle the right panel's Files surface for the workspace of the given
+   * pane. The old left file-tree panel is retired; the explorer lives in
+   * the right panel alongside diff and the pull request.
    *
    * @param paneId - The pane ID to get the workspace from
-   * @returns Whether the tree panel is now open
+   * @returns Whether the Files surface is now shown
    */
-  const toggleTreePane = useCallback(
+  const toggleFilesPane = useCallback(
     (paneId: string): boolean => {
       const workspaceId = resolvePaneWorkspaceId(paneId)
-
-      return workspaceId === undefined
-        ? false
-        : panelVisibility.toggleTree(workspaceId)
+      if (workspaceId === undefined) {
+        return false
+      }
+      useRightPanelStore.getState().toggle(workspaceId, 'files')
+      return (
+        selectActiveRightPanel(
+          useRightPanelStore.getState().byWorkspaceId,
+          workspaceId
+        ) === 'files'
+      )
     },
-    [resolvePaneWorkspaceId, panelVisibility.toggleTree]
+    [resolvePaneWorkspaceId]
   )
 
   /**
-   * Toggle the full-height pull request comments panel for the workspace of
-   * the given pane. Like diff, it sits on the right; unlike diff, it reads
+   * Toggle the right panel's Pull request surface for the workspace of the
+   * given pane. Like diff, it sits on the right; unlike diff, it reads
    * GitHub rather than the worktree.
    *
    * @param paneId - The pane ID to get the workspace from
-   * @returns Whether the comments panel is now open
+   * @returns Whether the Pull request surface is now shown
    */
   const toggleCommentsPane = useCallback(
     (paneId: string): boolean => {
       const workspaceId = resolvePaneWorkspaceId(paneId)
-
-      return workspaceId === undefined
-        ? false
-        : panelVisibility.toggleComments(workspaceId)
+      if (workspaceId === undefined) {
+        return false
+      }
+      useRightPanelStore.getState().toggle(workspaceId, 'pull-request')
+      return (
+        selectActiveRightPanel(
+          useRightPanelStore.getState().byWorkspaceId,
+          workspaceId
+        ) === 'pull-request'
+      )
     },
-    [resolvePaneWorkspaceId, panelVisibility.toggleComments]
+    [resolvePaneWorkspaceId]
   )
+
+  /**
+   * Reveal a workspace and open — never toggle — its Pull request surface.
+   *
+   * Callers reach this from a count of unresolved conversations, which can
+   * only mean "show me"; a toggle would close the panel out from under an
+   * operator who clicked the count while already reading it. The panel
+   * state waits in the store, so it applies as soon as the workspace's
+   * frame lands in the layout.
+   */
+  const openCommentsPaneForWorkspace = useCallback(
+    (workspaceId: string) => {
+      panelActions.focusWorkspace(workspaceId)
+      useRightPanelStore.getState().open(workspaceId, 'pull-request')
+    },
+    [panelActions]
+  )
+
+  // Prune right-panel state (and persisted widths) for workspaces that
+  // have been destroyed, so removed workspaces do not leave entries behind.
+  const destroyedWorkspaceKey = useMemo(
+    () =>
+      workspaceList
+        .filter((ws) => ws.status === 'destroyed')
+        .map((ws) => ws.id)
+        .sort((left, right) => left.localeCompare(right))
+        .join('\n'),
+    [workspaceList]
+  )
+  useEffect(() => {
+    if (destroyedWorkspaceKey === '') {
+      return
+    }
+    const destroyedIds = destroyedWorkspaceKey.split('\n')
+    for (const workspaceId of destroyedIds) {
+      closeWorkspacePreviews({ payload: { workspaceId } }).catch(
+        () => undefined
+      )
+      usePreviewStateStore.getState().removeWorkspace(workspaceId)
+      usePreviewMiniPlayerStore.getState().removeWorkspace(workspaceId)
+    }
+    useRightPanelStore.getState().removeWorkspaces(destroyedIds)
+    for (const workspaceId of destroyedIds) {
+      window.localStorage.removeItem(rightPanelWidthStorageKey(workspaceId))
+    }
+  }, [closeWorkspacePreviews, destroyedWorkspaceKey])
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
   // state (not a ref) so that changes trigger a re-render, allowing the
@@ -699,9 +768,9 @@ function HomeComponent() {
       forceCloseWorkspace: panelActions.closeWorkspace,
       toggleFullscreenPane,
       toggleDiffPane,
-      toggleTreePane,
+      toggleFilesPane,
       toggleCommentsPane,
-      openCommentsPaneForWorkspace: panelVisibility.openCommentsForWorkspace,
+      openCommentsPaneForWorkspace,
       showPanelTypePicker,
     }),
     [
@@ -713,9 +782,9 @@ function HomeComponent() {
       gatedRemovePanelTab,
       toggleFullscreenPane,
       toggleDiffPane,
-      toggleTreePane,
+      toggleFilesPane,
       toggleCommentsPane,
-      panelVisibility.openCommentsForWorkspace,
+      openCommentsPaneForWorkspace,
       showPanelTypePicker,
     ]
   )
@@ -1138,12 +1207,9 @@ function HomeComponent() {
                   <PanelContent
                     activePaneId={activePaneId}
                     activeTabId={windowLayout?.activeTabId}
-                    commentsWorkspaceIds={panelVisibility.commentsWorkspaceIds}
-                    diffWorkspaceIds={panelVisibility.diffWorkspaceIds}
                     fullscreenPaneId={fullscreenPaneId}
                     isEmptyWindowTab={isEmptyWindowTab}
                     isReconciling={isReconciling}
-                    treeWorkspaceIds={panelVisibility.treeWorkspaceIds}
                     windowLayout={windowLayout}
                     windowTabs={windowLayout?.tabs}
                   />

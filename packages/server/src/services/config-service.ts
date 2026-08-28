@@ -1,3 +1,5 @@
+// biome-ignore-all lint/complexity/noExcessiveCognitiveComplexity: config provenance is resolved in one closest-wins pass.
+
 /**
  * ConfigService — Effect Service
  *
@@ -18,6 +20,7 @@
  *   "shortName": "LAB",
  *   "worktreeDir": "/path/to/my-project.worktrees",
  *   "setupScripts": ["bun install", "cp .env.example .env"],
+ *   "previewUrls": ["http://localhost:3000"],
  *   "conflictPrompt": "Rebase this branch on dev and resolve the conflicts.",
  * }
  * ```
@@ -54,7 +57,7 @@ import {
   defaultProjectShortName,
   isProjectShortName,
 } from '@laborer/task-db/task-identifier'
-import { Context, Data, Effect, Layer } from 'effect'
+import { Context, Data, Effect, Layer, Option, Schema } from 'effect'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,6 +84,16 @@ const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, CONFIG_FILE_NAME)
 /** Module-level log annotation for structured logging. */
 const logPrefix = 'ConfigService'
 
+const PreviewUrls = Schema.Array(
+  Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isMinLength(1),
+    Schema.isMaxLength(2048)
+  )
+).check(Schema.isMaxLength(32))
+
+const decodePreviewUrls = Schema.decodeUnknownOption(PreviewUrls)
+
 /**
  * Valid agent provider values.
  * Each value is also the CLI command used to launch the agent.
@@ -102,6 +115,8 @@ interface LaborerConfig {
   readonly agent?: AgentProvider
   /** Prompt run by a fresh agent when resolving this project's merge conflicts. */
   readonly conflictPrompt?: string
+  /** Local HTTP(S) targets shown first in Browser's live-server picker. */
+  readonly previewUrls?: readonly string[]
   readonly setupScripts?: readonly string[]
   readonly shortName?: string
   readonly shortNameAliases?: readonly string[]
@@ -113,6 +128,7 @@ interface LaborerConfig {
 interface ProjectConfigUpdates {
   readonly agent?: AgentProvider | undefined
   readonly conflictPrompt?: string | undefined
+  readonly previewUrls?: readonly string[] | undefined
   readonly setupScripts?: readonly string[] | undefined
   readonly shortName?: string | undefined
   readonly shortNameAliases?: readonly string[] | undefined
@@ -140,6 +156,7 @@ interface ResolvedLaborerConfig {
   readonly agent: ResolvedValue<AgentProvider>
   /** Conflict-resolution prompt, empty when the project has not set one. */
   readonly conflictPrompt: ResolvedValue<string>
+  readonly previewUrls: ResolvedValue<readonly string[]>
   readonly setupScripts: ResolvedValue<readonly string[]>
   readonly shortName: ResolvedValue<string>
   /** Historical project keys that continue to resolve existing task IDs. */
@@ -239,6 +256,17 @@ const readConfigFile = (
           `Migrated legacy OpenCode agent config at ${configPath} to opencode2`
         ).pipe(Effect.annotateLogs('module', logPrefix))
         return migrated as LaborerConfig
+      }
+      if (config.previewUrls !== undefined) {
+        const previewUrls = decodePreviewUrls(config.previewUrls)
+        if (Option.isNone(previewUrls)) {
+          yield* Effect.logWarning(
+            `Ignoring invalid previewUrls in ${configPath}`
+          ).pipe(Effect.annotateLogs('module', logPrefix))
+          const { previewUrls: _invalidPreviewUrls, ...validConfig } = config
+          return validConfig as LaborerConfig
+        }
+        config.previewUrls = previewUrls.value
       }
       return config as LaborerConfig
     }
@@ -350,6 +378,10 @@ const applyConfigUpdates = (
 
   if (updates.setupScripts !== undefined) {
     next.setupScripts = [...updates.setupScripts]
+  }
+
+  if (updates.previewUrls !== undefined) {
+    next.previewUrls = [...updates.previewUrls]
   }
 
   if (updates.watchIgnore !== undefined) {
@@ -499,6 +531,10 @@ const mergeConfigs = (
     value: [],
     source: 'default',
   }
+  let previewUrls: ResolvedValue<readonly string[]> = {
+    value: [],
+    source: 'default',
+  }
   let watchIgnore: ResolvedValue<readonly string[]> = {
     value: [],
     source: 'default',
@@ -558,6 +594,13 @@ const mergeConfigs = (
       }
     }
 
+    if (config.previewUrls !== undefined) {
+      previewUrls = {
+        value: config.previewUrls,
+        source: path,
+      }
+    }
+
     if (config.watchIgnore !== undefined) {
       watchIgnore = {
         value: config.watchIgnore,
@@ -573,6 +616,7 @@ const mergeConfigs = (
     shortNameAliases,
     worktreeDir,
     setupScripts,
+    previewUrls,
     watchIgnore,
   }
 }

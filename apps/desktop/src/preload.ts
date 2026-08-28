@@ -1,9 +1,14 @@
-import type {
-  DesktopBridge,
-  WorkspaceActivationIntent,
+import {
+  type DesktopBridge,
+  DesktopPreviewPointerEventSchema,
+  DesktopPreviewRecordingFrameSchema,
+  DesktopPreviewStateChangeEventSchema,
+  type WorkspaceActivationIntent,
 } from '@laborer/shared/desktop-bridge'
+import { Schema } from 'effect'
 import { contextBridge, ipcRenderer } from 'electron'
-
+// biome-ignore lint/performance/noNamespaceImport: mirrors the isolated preview channel surface.
+import * as PreviewChannels from './preview/channels.js'
 import { parseWindowBootstrapArgs } from './window-identity.js'
 
 // ---------------------------------------------------------------------------
@@ -215,4 +220,228 @@ contextBridge.exposeInMainWorld('desktopBridge', {
 
   startGithubOAuth: (state) =>
     ipcRenderer.invoke(START_GITHUB_OAUTH_CHANNEL, state),
+
+  preview: {
+    createTab: (tabId, defaults) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_CREATE_TAB_CHANNEL, {
+        colorScheme: defaults?.colorScheme,
+        tabId,
+        zoomFactor: defaults?.zoomFactor,
+      }),
+    closeTab: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),
+    registerWebview: (tabId, webContentsId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL, {
+        tabId,
+        webContentsId,
+      }),
+    navigate: (tabId, url) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_NAVIGATE_CHANNEL, {
+        tabId,
+        url,
+      }),
+    goBack: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_GO_BACK_CHANNEL, { tabId }),
+    goForward: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_GO_FORWARD_CHANNEL, { tabId }),
+    refresh: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_REFRESH_CHANNEL, { tabId }),
+    stop: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_STOP_CHANNEL, { tabId }),
+    zoomIn: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_ZOOM_IN_CHANNEL, { tabId }),
+    zoomOut: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_ZOOM_OUT_CHANNEL, { tabId }),
+    resetZoom: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_RESET_ZOOM_CHANNEL, { tabId }),
+    hardReload: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_HARD_RELOAD_CHANNEL, {
+        tabId,
+      }),
+    setColorScheme: (tabId, colorScheme) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, {
+        colorScheme,
+        tabId,
+      }),
+    setAudioMuted: (tabId, audioMuted) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, {
+        audioMuted,
+        tabId,
+      }),
+    openDevTools: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, {
+        tabId,
+      }),
+    clearCookies: () =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_CLEAR_COOKIES_CHANNEL),
+    clearCache: () =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_CLEAR_CACHE_CHANNEL),
+    getPreviewConfig: (environmentId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_GET_CONFIG_CHANNEL, {
+        environmentId,
+      }),
+    setAnnotationTheme: (theme) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, {
+        theme,
+      }),
+    pickElement: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_PICK_ELEMENT_CHANNEL, {
+        tabId,
+      }),
+    cancelPickElement: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, {
+        tabId,
+      }),
+    captureScreenshot: (tabId) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, {
+        tabId,
+      }),
+    revealArtifact: (path) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, {
+        path,
+      }),
+    copyArtifactToClipboard: (path) =>
+      ipcRenderer.invoke(PreviewChannels.PREVIEW_COPY_ARTIFACT_CHANNEL, {
+        path,
+      }),
+    pictureInPicture: {
+      open: (tabId) =>
+        ipcRenderer.invoke(
+          PreviewChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
+          {
+            tabId,
+          }
+        ),
+      close: (tabId) =>
+        ipcRenderer.invoke(
+          PreviewChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL,
+          {
+            tabId,
+          }
+        ),
+    },
+    recording: {
+      startScreencast: (tabId) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_RECORDING_START_CHANNEL, {
+          tabId,
+        }),
+      stopScreencast: (tabId) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_RECORDING_STOP_CHANNEL, {
+          tabId,
+        }),
+      save: (tabId, mimeType, data) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_RECORDING_SAVE_CHANNEL, {
+          data,
+          mimeType,
+          tabId,
+        }),
+      onFrame: (listener) => {
+        const wrapped = (_event: Electron.IpcRendererEvent, frame: unknown) => {
+          try {
+            listener(
+              Schema.decodeUnknownSync(DesktopPreviewRecordingFrameSchema)(
+                frame
+              )
+            )
+          } catch {
+            // Ignore malformed main-process events at the bridge boundary.
+          }
+        }
+        ipcRenderer.on(PreviewChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrapped)
+        return () =>
+          ipcRenderer.removeListener(
+            PreviewChannels.PREVIEW_RECORDING_FRAME_CHANNEL,
+            wrapped
+          )
+      },
+    },
+    automation: {
+      status: (tabId) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, {
+          tabId,
+        }),
+      snapshot: (tabId) =>
+        ipcRenderer.invoke(
+          PreviewChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL,
+          {
+            tabId,
+          }
+        ),
+      click: (tabId, input) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL, {
+          input,
+          tabId,
+        }),
+      type: (tabId, input) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL, {
+          input,
+          tabId,
+        }),
+      press: (tabId, input) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL, {
+          input,
+          tabId,
+        }),
+      scroll: (tabId, input) =>
+        ipcRenderer.invoke(PreviewChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL, {
+          input,
+          tabId,
+        }),
+      evaluate: (tabId, input) =>
+        ipcRenderer.invoke(
+          PreviewChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL,
+          {
+            input,
+            tabId,
+          }
+        ),
+      waitFor: (tabId, input) =>
+        ipcRenderer.invoke(
+          PreviewChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL,
+          {
+            input,
+            tabId,
+          }
+        ),
+    },
+    onStateChange: (listener) => {
+      const wrapped = (
+        _event: Electron.IpcRendererEvent,
+        tabId: unknown,
+        state: unknown
+      ) => {
+        try {
+          const decoded = Schema.decodeUnknownSync(
+            DesktopPreviewStateChangeEventSchema
+          )([tabId, state])
+          listener(decoded[0], decoded[1])
+        } catch {
+          // Ignore malformed main-process events at the bridge boundary.
+        }
+      }
+      ipcRenderer.on(PreviewChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrapped)
+      return () =>
+        ipcRenderer.removeListener(
+          PreviewChannels.PREVIEW_STATE_CHANGE_CHANNEL,
+          wrapped
+        )
+    },
+    onPointerEvent: (listener) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        try {
+          listener(
+            Schema.decodeUnknownSync(DesktopPreviewPointerEventSchema)(value)
+          )
+        } catch {
+          // Ignore malformed main-process events at the bridge boundary.
+        }
+      }
+      ipcRenderer.on(PreviewChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrapped)
+      return () =>
+        ipcRenderer.removeListener(
+          PreviewChannels.PREVIEW_POINTER_EVENT_CHANNEL,
+          wrapped
+        )
+    },
+  },
 } satisfies DesktopBridge)

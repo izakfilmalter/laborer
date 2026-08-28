@@ -38,6 +38,7 @@ export default defineConfig([
     entry: ['src/daemon-main.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
     inlineOnly: false,
+    outputOptions: { codeSplitting: false },
     // Native addons are loaded from the installed package at runtime.
     external: ['@parcel/watcher', 'node-pty'],
   },

@@ -103,6 +103,7 @@ describe('LaborerRpcs config management', () => {
               source: canonicalProjectConfigPath,
               value: ['bun install', 'bun test'],
             },
+            previewUrls: { source: 'default', value: [] },
             watchIgnore: { source: 'default', value: [] },
             worktreeDir: {
               source: canonicalAncestorConfigPath,
@@ -260,6 +261,7 @@ describe('LaborerRpcs config management', () => {
               source: canonicalConfigPath,
               value: ['bun install'],
             },
+            previewUrls: { source: 'default', value: [] },
             watchIgnore: { source: 'default', value: [] },
             worktreeDir: {
               source: canonicalConfigPath,

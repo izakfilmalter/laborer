@@ -1,5 +1,15 @@
 import { Schema } from 'effect'
 import { Rpc, RpcGroup } from 'effect/unstable/rpc'
+import {
+  BrowserAnnotation,
+  BrowserContextError,
+  BrowserContextItem,
+  BrowserControlError,
+  BrowserControlEvent,
+  BrowserControlHost,
+  BrowserControlOperation,
+  BrowserControlResponse,
+} from './browser-control.js'
 import { SLACK_MESSAGE_URL_MAX_LENGTH } from './slack-url.js'
 import { TerminalStatus, WorkspaceStatus } from './types.js'
 
@@ -560,6 +570,8 @@ const ConfigResponse = Schema.Struct({
   shortNameAliases: ConfigResolvedValueStringArray,
   worktreeDir: ConfigResolvedValueString,
   setupScripts: ConfigResolvedValueStringArray,
+  /** Configured local preview URLs from the owning laborer.json layer. */
+  previewUrls: ConfigResolvedValueStringArray,
   watchIgnore: ConfigResolvedValueStringArray,
 })
 
@@ -636,6 +648,65 @@ export const FileNode = Schema.Struct({
 export type FileNode = typeof FileNode.Type
 
 /**
+ * One entry in the recursive worktree listing returned by
+ * `file.listEntries`.
+ *
+ * Modeled on t3code's `ProjectEntry`: the explorer's tree component wants a
+ * flat list of relative paths tagged file-or-directory, not a nested
+ * structure or per-level pages.
+ */
+export const FileEntry = Schema.Struct({
+  /** Path relative to the worktree root. */
+  path: Schema.String,
+  /** Whether this entry is a file or directory. */
+  kind: Schema.Literals(['file', 'directory']),
+})
+
+export type FileEntry = typeof FileEntry.Type
+
+/**
+ * The recursive worktree listing returned by `file.listEntries`.
+ *
+ * `truncated` is the server admitting it stopped walking at the entry cap;
+ * the explorer can render what it has and say the listing is partial.
+ */
+export const FileEntriesResult = Schema.Struct({
+  entries: Schema.Array(FileEntry),
+  truncated: Schema.Boolean,
+})
+
+export type FileEntriesResult = typeof FileEntriesResult.Type
+
+/**
+ * A text file's verbatim contents returned by `file.readText`.
+ *
+ * Modeled on t3code's `ProjectReadFileResult`: unlike {@link FileContent}
+ * (which trims and pairs the text with a diff), this is what an editor
+ * surface needs — the exact bytes as UTF-8, the file's true size, and an
+ * honest flag when the preview cap cut the text short.
+ */
+export const FileTextContent = Schema.Struct({
+  /** Path relative to the worktree root, echoed back. */
+  relativePath: Schema.String,
+  /** UTF-8 contents, verbatim up to the preview cap. */
+  contents: Schema.String,
+  /** The file's full size in bytes, even when truncated. */
+  byteLength: NonNegativeInt,
+  /** True when `contents` stops at the preview cap before the file does. */
+  truncated: Schema.Boolean,
+})
+
+export type FileTextContent = typeof FileTextContent.Type
+
+/** Acknowledgement returned by `file.write`. */
+export const FileWriteResult = Schema.Struct({
+  /** Path relative to the worktree root, echoed back. */
+  relativePath: Schema.String,
+})
+
+export type FileWriteResult = typeof FileWriteResult.Type
+
+/**
  * A file change event streamed to the client from `file.watcher.subscribe`.
  *
  * The `file` path is relative to the worktree root. The `event` type maps
@@ -655,6 +726,327 @@ export const FileWatcherEvent = Schema.Struct({
 })
 
 export type FileWatcherEvent = typeof FileWatcherEvent.Type
+
+// ---------------------------------------------------------------------------
+// Browser Preview Schemas
+// ---------------------------------------------------------------------------
+
+export const PREVIEW_URL_MAX_LENGTH = 2048
+export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32
+
+const PreviewUrl = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH)
+)
+
+const PreviewWorkspaceId = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1)
+)
+
+export const ConfiguredLocalServerUrls = Schema.Array(PreviewUrl).check(
+  Schema.isMaxLength(CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS)
+)
+
+export const PreviewTabId = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(128)
+)
+export type PreviewTabId = typeof PreviewTabId.Type
+
+export const PREVIEW_VIEWPORT_MIN_DIMENSION = 240
+export const PREVIEW_VIEWPORT_MAX_DIMENSION = 3840
+export const PREVIEW_VIEWPORT_MAX_AREA = 3840 * 2160
+
+const PreviewViewportDimension = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(PREVIEW_VIEWPORT_MIN_DIMENSION),
+  Schema.isLessThanOrEqualTo(PREVIEW_VIEWPORT_MAX_DIMENSION)
+)
+
+const previewViewportArea = Schema.makeFilter(
+  ({ width, height }: { readonly height: number; readonly width: number }) =>
+    width * height <= PREVIEW_VIEWPORT_MAX_AREA ||
+    `Viewport area must not exceed ${String(PREVIEW_VIEWPORT_MAX_AREA)} pixels.`
+)
+
+export const PreviewViewportSize = Schema.Struct({
+  height: PreviewViewportDimension,
+  width: PreviewViewportDimension,
+}).check(previewViewportArea)
+export type PreviewViewportSize = typeof PreviewViewportSize.Type
+
+export const PreviewRenderedViewportSize = Schema.Struct({
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+export type PreviewRenderedViewportSize =
+  typeof PreviewRenderedViewportSize.Type
+
+export const PREVIEW_VIEWPORT_PRESET_IDS = [
+  'iphone-se',
+  'iphone-xr',
+  'iphone-12-pro',
+  'iphone-14-pro-max',
+  'pixel-7',
+  'samsung-galaxy-s8-plus',
+  'samsung-galaxy-s20-ultra',
+  'ipad-mini',
+  'ipad-air',
+  'ipad-pro',
+  'surface-pro-7',
+  'surface-duo',
+  'galaxy-z-fold-5',
+  'asus-zenbook-fold',
+  'samsung-galaxy-a51-71',
+  'nest-hub',
+  'nest-hub-max',
+] as const
+
+export const PreviewViewportPresetId = Schema.Literals(
+  PREVIEW_VIEWPORT_PRESET_IDS
+)
+export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type
+
+const StoredPreviewViewportPresetId = Schema.Literals([
+  ...PREVIEW_VIEWPORT_PRESET_IDS,
+  'desktop-1920x1080',
+  'desktop-1440x900',
+  'laptop-1366x768',
+  'laptop-1280x800',
+  'ipad-pro-11',
+  'iphone-15-pro',
+  'pixel-8',
+  'galaxy-s24',
+])
+
+export const PreviewViewportSetting = Schema.Union([
+  Schema.TaggedStruct('fill', {}),
+  Schema.TaggedStruct('freeform', {
+    ...PreviewViewportSize.fields,
+  }).check(previewViewportArea),
+  Schema.TaggedStruct('preset', {
+    ...PreviewViewportSize.fields,
+    presetId: StoredPreviewViewportPresetId,
+  }).check(previewViewportArea),
+])
+export type PreviewViewportSetting = typeof PreviewViewportSetting.Type
+
+export const FILL_PREVIEW_VIEWPORT = {
+  _tag: 'fill',
+} as const satisfies PreviewViewportSetting
+
+export const PREVIEW_ZOOM_LEVELS = [
+  0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4,
+  5,
+] as const
+export const PreviewZoomFactor = Schema.Literals(PREVIEW_ZOOM_LEVELS)
+export type PreviewZoomFactor = typeof PreviewZoomFactor.Type
+export const DEFAULT_PREVIEW_ZOOM_FACTOR: PreviewZoomFactor = 1
+
+export const PreviewAppearancePreference = Schema.Literals([
+  'system',
+  'light',
+  'dark',
+])
+export type PreviewAppearancePreference =
+  typeof PreviewAppearancePreference.Type
+export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = 'system'
+
+const PreviewTitle = Schema.String.check(Schema.isMaxLength(512))
+
+export const PreviewNavStatus = Schema.Union([
+  Schema.TaggedStruct('Idle', {}),
+  Schema.TaggedStruct('Loading', {
+    title: PreviewTitle,
+    url: PreviewUrl,
+  }),
+  Schema.TaggedStruct('Success', {
+    title: PreviewTitle,
+    url: PreviewUrl,
+  }),
+  Schema.TaggedStruct('LoadFailed', {
+    code: Schema.Int,
+    description: Schema.String,
+    title: PreviewTitle,
+    url: PreviewUrl,
+  }),
+])
+export type PreviewNavStatus = typeof PreviewNavStatus.Type
+
+export const PreviewSessionSnapshot = Schema.Struct({
+  canGoBack: Schema.Boolean,
+  canGoForward: Schema.Boolean,
+  navStatus: PreviewNavStatus,
+  tabId: PreviewTabId,
+  updatedAt: Schema.String,
+  viewport: Schema.optional(PreviewViewportSetting),
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type
+
+export const PreviewOpenInput = Schema.Struct({
+  url: Schema.optional(PreviewUrl),
+  viewport: Schema.optional(PreviewViewportSetting),
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewOpenInput = typeof PreviewOpenInput.Type
+
+export const PreviewNavigateInput = Schema.Struct({
+  resolvedTitle: Schema.optional(PreviewTitle),
+  tabId: PreviewTabId,
+  url: PreviewUrl,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewNavigateInput = typeof PreviewNavigateInput.Type
+
+export const PreviewResizeInput = Schema.Struct({
+  tabId: PreviewTabId,
+  viewport: PreviewViewportSetting,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewResizeInput = typeof PreviewResizeInput.Type
+
+export const PreviewRefreshInput = Schema.Struct({
+  tabId: PreviewTabId,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewRefreshInput = typeof PreviewRefreshInput.Type
+
+export const PreviewCloseInput = Schema.Struct({
+  tabId: Schema.optional(PreviewTabId),
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewCloseInput = typeof PreviewCloseInput.Type
+
+export const PreviewListInput = Schema.Struct({
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewListInput = typeof PreviewListInput.Type
+
+export const PreviewReportStatusInput = Schema.Struct({
+  canGoBack: Schema.Boolean,
+  canGoForward: Schema.Boolean,
+  navStatus: PreviewNavStatus,
+  tabId: PreviewTabId,
+  workspaceId: PreviewWorkspaceId,
+})
+export type PreviewReportStatusInput = typeof PreviewReportStatusInput.Type
+
+export const PreviewListResult = Schema.Struct({
+  revision: NonNegativeInt,
+  serverEpoch: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1)),
+  sessions: Schema.Array(PreviewSessionSnapshot),
+})
+export type PreviewListResult = typeof PreviewListResult.Type
+
+const PreviewEventBase = Schema.Struct({
+  createdAt: Schema.String,
+  revision: PositiveInt,
+  serverEpoch: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1)),
+  tabId: PreviewTabId,
+  workspaceId: PreviewWorkspaceId,
+})
+
+export const PreviewEvent = Schema.Union([
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    snapshot: PreviewSessionSnapshot,
+    type: Schema.Literal('opened'),
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    snapshot: PreviewSessionSnapshot,
+    type: Schema.Literal('navigated'),
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    snapshot: PreviewSessionSnapshot,
+    type: Schema.Literal('resized'),
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    code: Schema.Int,
+    description: Schema.String,
+    title: PreviewTitle,
+    type: Schema.Literal('failed'),
+    url: PreviewUrl,
+  }),
+  Schema.Struct({
+    ...PreviewEventBase.fields,
+    type: Schema.Literal('closed'),
+  }),
+])
+export type PreviewEvent = typeof PreviewEvent.Type
+
+export const DiscoveredLocalServer = Schema.Struct({
+  host: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1)),
+  pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  port: Schema.Int.check(
+    Schema.isGreaterThan(0),
+    Schema.isLessThanOrEqualTo(65_535)
+  ),
+  processName: Schema.NullOr(
+    Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1))
+  ),
+  terminal: Schema.NullOr(
+    Schema.Struct({
+      terminalId: Schema.String.check(
+        Schema.isTrimmed(),
+        Schema.isMinLength(1)
+      ),
+      workspaceId: PreviewWorkspaceId,
+    })
+  ),
+  url: PreviewUrl,
+})
+export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type
+
+export const DiscoveredLocalServerList = Schema.Struct({
+  configuredUrlProbing: Schema.optional(Schema.Literal(true)),
+  scannedAt: Schema.String,
+  servers: Schema.Array(DiscoveredLocalServer),
+})
+export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type
+
+export class PreviewSessionLookupError extends Schema.TaggedError<PreviewSessionLookupError>()(
+  'PreviewSessionLookupError',
+  {
+    tabId: Schema.String,
+    workspaceId: Schema.String,
+  }
+) {
+  override get message(): string {
+    return `Unknown preview session: workspace=${this.workspaceId}, tab=${this.tabId}`
+  }
+}
+
+export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrlError>()(
+  'PreviewInvalidUrlError',
+  {
+    cause: Schema.Defect(),
+    inputLength: Schema.Number,
+    protocol: Schema.optional(Schema.String),
+    reason: Schema.Literals([
+      'empty',
+      'parse',
+      'unsupported-protocol',
+      'unexpected',
+    ]),
+  }
+) {
+  override get message(): string {
+    const protocol = this.protocol === undefined ? '' : `: ${this.protocol}`
+    return `Invalid preview URL (${this.reason}${protocol}; input length ${String(this.inputLength)}).`
+  }
+}
+
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+])
+export type PreviewError = typeof PreviewError.Type
 
 /**
  * A single hunk within a structured patch, representing a contiguous
@@ -984,6 +1376,32 @@ export const PullRequestReviewState = Schema.Literals([
 export type PullRequestReviewState = typeof PullRequestReviewState.Type
 
 /**
+ * The eight reactions GitHub takes, under Laborer's own camelCase spellings.
+ */
+export const PullRequestReactionContent = Schema.Literals([
+  'thumbsUp',
+  'thumbsDown',
+  'laugh',
+  'hooray',
+  'confused',
+  'heart',
+  'rocket',
+  'eyes',
+])
+
+export type PullRequestReactionContent = typeof PullRequestReactionContent.Type
+
+/** One reaction pill: what it is, how many stand behind it, and whether the
+ *  reader is one of them — which is what pressing the pill toggles. */
+export const PullRequestReaction = Schema.Struct({
+  content: PullRequestReactionContent,
+  count: Schema.Int,
+  viewerHasReacted: Schema.Boolean,
+})
+
+export type PullRequestReaction = typeof PullRequestReaction.Type
+
+/**
  * One entry in a pull request's conversation, normalized across the three
  * GitHub endpoints that feed it: issue comments, reviews, and review
  * comments. Every entry can be rendered as the same timeline item — an
@@ -1018,6 +1436,14 @@ export const PullRequestComment = Schema.Struct({
   line: Schema.NullOr(Schema.Int),
   /** The id of the entry this one replies to, for threaded review comments. */
   inReplyToId: Schema.NullOr(Schema.Int),
+  /**
+   * GitHub's GraphQL node id, when the activity read resolved one. It is what
+   * `pullRequest.setReaction` addresses; an entry without one cannot be
+   * reacted to from the timeline.
+   */
+  nodeId: Schema.optional(Schema.String),
+  /** Reactions on this entry, when the activity read carried them. */
+  reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 })
 
 export type PullRequestComment = typeof PullRequestComment.Type
@@ -1038,6 +1464,337 @@ export const PullRequestConversation = Schema.Struct({
 })
 
 export type PullRequestConversation = typeof PullRequestConversation.Type
+
+// ---------------------------------------------------------------------------
+// Pull Request Panel — detail, activity, diff, and mutations
+// ---------------------------------------------------------------------------
+
+/** Somebody GitHub names: a user, a bot, or a team wearing its slug. */
+export const PullRequestActor = Schema.Struct({
+  avatarUrl: Schema.NullOr(Schema.String),
+  login: Schema.String,
+  name: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestActor = typeof PullRequestActor.Type
+
+export const PullRequestLabel = Schema.Struct({
+  /** Hex color without the `#`, as GitHub reports it. Null when unknown. */
+  color: Schema.NullOr(Schema.String),
+  name: Schema.String,
+})
+
+export type PullRequestLabel = typeof PullRequestLabel.Type
+
+export const PullRequestCheckStatus = Schema.Literals([
+  'pending',
+  'success',
+  'failure',
+  'skipped',
+  'neutral',
+  'cancelled',
+])
+
+export type PullRequestCheckStatus = typeof PullRequestCheckStatus.Type
+
+export const PullRequestCheck = Schema.Struct({
+  description: Schema.NullOr(Schema.String),
+  name: Schema.String,
+  status: PullRequestCheckStatus,
+  url: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestCheck = typeof PullRequestCheck.Type
+
+export const PullRequestState = Schema.Literals(['open', 'closed', 'merged'])
+
+export type PullRequestState = typeof PullRequestState.Type
+
+export const PullRequestMergeability = Schema.Literals([
+  'mergeable',
+  'conflicting',
+  'unknown',
+])
+
+export type PullRequestMergeability = typeof PullRequestMergeability.Type
+
+export const PullRequestMergeMethod = Schema.Literals([
+  'merge',
+  'squash',
+  'rebase',
+])
+
+export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type
+
+/** How a stale branch catches up with its base. */
+export const PullRequestUpdateMethod = Schema.Literals(['merge', 'rebase'])
+
+export type PullRequestUpdateMethod = typeof PullRequestUpdateMethod.Type
+
+/**
+ * The lifecycle actions `pullRequest.action` can carry out, each mapping to
+ * one `gh pr` subcommand.
+ */
+export const PullRequestActionKind = Schema.Literals([
+  'merge',
+  'ready',
+  'draft',
+  'close',
+  'reopen',
+  'updateBranch',
+  'enableAutoMerge',
+  'disableAutoMerge',
+])
+
+export type PullRequestActionKind = typeof PullRequestActionKind.Type
+
+/** The merge strategies the repository's own settings allow. */
+export const PullRequestMergeCapabilities = Schema.Struct({
+  merge: Schema.Boolean,
+  rebase: Schema.Boolean,
+  squash: Schema.Boolean,
+})
+
+export type PullRequestMergeCapabilities =
+  typeof PullRequestMergeCapabilities.Type
+
+/**
+ * The fast, header-shaped half of a pull request: everything the summary tab
+ * and the action bar need, read in one round trip. The conversation and the
+ * diff are separate reads so a long review history cannot hold the title,
+ * checks, and buttons off screen.
+ */
+export const PullRequestDetail = Schema.Struct({
+  additions: Schema.Int,
+  author: Schema.NullOr(PullRequestActor),
+  /**
+   * Whether GitHub is already armed to merge this on its own. Null when
+   * GitHub did not answer for auto-merge at all, which is not the same as
+   * off: offering to arm something already armed is a write nobody asked for.
+   */
+  autoMergeEnabled: Schema.NullOr(Schema.Boolean),
+  baseBranch: Schema.String,
+  body: Schema.String,
+  changedFiles: Schema.Int,
+  checks: Schema.Array(PullRequestCheck),
+  closedAt: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  deletions: Schema.Int,
+  headBranch: Schema.String,
+  isDraft: Schema.Boolean,
+  labels: Schema.Array(PullRequestLabel),
+  mergeability: PullRequestMergeability,
+  mergeCapabilities: PullRequestMergeCapabilities,
+  mergedAt: Schema.NullOr(Schema.String),
+  number: Schema.Int,
+  reviewDecision: Schema.NullOr(PullRequestReviewDecision),
+  /** Outstanding review requests. The full roster arrives with the activity. */
+  reviewers: Schema.Array(PullRequestActor),
+  state: PullRequestState,
+  title: Schema.String,
+  updatedAt: Schema.String,
+  url: Schema.String,
+  /** Who GitHub says the reader is, for telling their remarks from others'. */
+  viewer: Schema.NullOr(Schema.String),
+  /** Whether the viewer's role on the repository can push, which is what
+   *  merging and closing somebody else's pull request need. */
+  viewerCanWrite: Schema.Boolean,
+})
+
+export type PullRequestDetail = typeof PullRequestDetail.Type
+
+/**
+ * Which file a diff line belongs to: `left` is the version before the
+ * change, `right` the version after.
+ */
+export const PullRequestDiffSide = Schema.Literals(['left', 'right'])
+
+export type PullRequestDiffSide = typeof PullRequestDiffSide.Type
+
+/** One remark inside a review thread, addressed by its GraphQL node id. */
+export const PullRequestThreadComment = Schema.Struct({
+  author: Schema.NullOr(PullRequestActor),
+  body: Schema.String,
+  createdAt: Schema.String,
+  /** GraphQL node id — what replies, edits, and reactions address. */
+  id: Schema.String,
+  reactions: Schema.Array(PullRequestReaction),
+  url: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestThreadComment = typeof PullRequestThreadComment.Type
+
+/**
+ * A conversation anchored to a line of the diff. The activity carries these
+ * alongside the flat `comments` timeline: the same remarks, read two ways —
+ * chronological for the timeline, whole threads pinned to a line for the
+ * diff.
+ */
+export const PullRequestReviewThread = Schema.Struct({
+  comments: Schema.Array(PullRequestThreadComment),
+  /** GraphQL node id — what `pullRequest.replyToThread` and
+   *  `pullRequest.setThreadResolution` address. */
+  id: Schema.String,
+  /** The line the thread was written against has left the diff, so it is
+   *  listed rather than pinned to a line it no longer has. */
+  isOutdated: Schema.Boolean,
+  isResolved: Schema.Boolean,
+  /** Null when the thread anchors to a file rather than a line. */
+  line: Schema.NullOr(Schema.Int),
+  path: Schema.String,
+  side: PullRequestDiffSide,
+})
+
+export type PullRequestReviewThread = typeof PullRequestReviewThread.Type
+
+export const PullRequestCommit = Schema.Struct({
+  additions: Schema.NullOr(Schema.Int),
+  authors: Schema.Array(PullRequestActor),
+  committedDate: Schema.String,
+  deletions: Schema.NullOr(Schema.Int),
+  messageHeadline: Schema.String,
+  oid: Schema.String,
+})
+
+export type PullRequestCommit = typeof PullRequestCommit.Type
+
+/**
+ * The conversation-shaped half of a pull request, returned by
+ * `pullRequest.activity`.
+ */
+export const PullRequestActivity = Schema.Struct({
+  /** Every timeline entry, oldest first, enriched with node ids and
+   *  reactions where GitHub's GraphQL read resolved them. */
+  comments: Schema.Array(PullRequestComment),
+  /** The newest hundred commits, oldest first. */
+  commits: Schema.Array(PullRequestCommit),
+  /** Reactions on the pull request's own description. */
+  reactions: Schema.Array(PullRequestReaction),
+  /** Everyone on the review: still asked, or already answered. */
+  reviewers: Schema.Array(PullRequestActor),
+  reviewThreads: Schema.Array(PullRequestReviewThread),
+  /** A bound of the read stopped before GitHub ran out of threads. */
+  threadsTruncated: Schema.Boolean,
+})
+
+export type PullRequestActivity = typeof PullRequestActivity.Type
+
+/** Real line counts for a file whose hunks GitHub withheld from the patch. */
+export const PullRequestOmittedFileStat = Schema.Struct({
+  additions: Schema.Int,
+  deletions: Schema.Int,
+  path: Schema.String,
+})
+
+export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type
+
+/**
+ * One slice of the pull request's unified patch — a whole number of files,
+ * never a file cut in half, so each slice parses on its own.
+ */
+export const PullRequestDiffResult = Schema.Struct({
+  /** Where the next slice starts, or null once the diff is whole. */
+  nextCursor: Schema.NullOr(Schema.String),
+  /** GitHub's own counts for files whose hunks it withheld. */
+  omittedFileStats: Schema.Array(PullRequestOmittedFileStat),
+  patch: Schema.String,
+  /** Something inside this slice could not be shown — a binary file, or a
+   *  hunk GitHub declined to inline. Not the same as there being more
+   *  slices, which `nextCursor` answers. */
+  truncated: Schema.Boolean,
+})
+
+export type PullRequestDiffResult = typeof PullRequestDiffResult.Type
+
+/** How one file in the pull request diff changed, for content expansion. */
+export const PullRequestDiffChangeType = Schema.Literals([
+  'change',
+  'rename-pure',
+  'rename-changed',
+  'new',
+  'deleted',
+])
+
+export type PullRequestDiffChangeType = typeof PullRequestDiffChangeType.Type
+
+/** Both sides of one diff file in full, for expanding omitted context. */
+export const PullRequestFileContents = Schema.Struct({
+  newContents: Schema.String,
+  oldContents: Schema.String,
+})
+
+export type PullRequestFileContents = typeof PullRequestFileContents.Type
+
+/** What submitting a review says about the change, beyond the words in it. */
+export const PullRequestReviewVerdict = Schema.Literals([
+  'approve',
+  'comment',
+  'requestChanges',
+])
+
+export type PullRequestReviewVerdict = typeof PullRequestReviewVerdict.Type
+
+/** The coordinates of one line in a pull request diff. */
+export const PullRequestReviewPosition = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal('added'),
+    newLine: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('deleted'),
+    oldLine: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('context'),
+    newLine: Schema.Int,
+    oldLine: Schema.Int,
+    /** Which copy of an unchanged line the reviewer selected in a split diff. */
+    side: PullRequestDiffSide,
+  }),
+])
+
+export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type
+
+/** One remark in a review that has not been sent yet, anchored to a line. */
+export const PullRequestReviewCommentDraft = Schema.Struct({
+  body: Schema.String,
+  path: Schema.String,
+  position: PullRequestReviewPosition,
+})
+
+export type PullRequestReviewCommentDraft =
+  typeof PullRequestReviewCommentDraft.Type
+
+/** Whether a reviewer is a person or a team GitHub addresses as one. */
+export const PullRequestReviewerKind = Schema.Literals(['user', 'team'])
+
+export type PullRequestReviewerKind = typeof PullRequestReviewerKind.Type
+
+/** Somebody a review may be asked of. */
+export const PullRequestReviewerCandidate = Schema.Struct({
+  avatarUrl: Schema.NullOr(Schema.String),
+  /** How GitHub addresses this reviewer: a login, or a team slug. */
+  id: Schema.String,
+  /** A review has already been asked of them, so pressing them takes the
+   *  request back. */
+  isRequested: Schema.Boolean,
+  kind: PullRequestReviewerKind,
+  login: Schema.String,
+  name: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestReviewerCandidate =
+  typeof PullRequestReviewerCandidate.Type
+
+export const PullRequestReviewerCandidateList = Schema.Struct({
+  /** Never includes the author: GitHub refuses a self-request. */
+  candidates: Schema.Array(PullRequestReviewerCandidate),
+  /** GitHub has more people with access than one read returns. */
+  truncated: Schema.Boolean,
+})
+
+export type PullRequestReviewerCandidateList =
+  typeof PullRequestReviewerCandidateList.Type
 
 // ---------------------------------------------------------------------------
 // RPC Definitions
@@ -1348,6 +2105,7 @@ export class LaborerRpcs extends RpcGroup.make(
         shortName: Schema.optional(Schema.String),
         worktreeDir: Schema.optional(Schema.String),
         setupScripts: Schema.optional(Schema.Array(Schema.String)),
+        previewUrls: Schema.optional(ConfiguredLocalServerUrls),
       }),
     },
   }),
@@ -1497,6 +2255,120 @@ export class LaborerRpcs extends RpcGroup.make(
     },
   }),
 
+  // -----------------------------------------------------------------------
+  // Browser Preview RPCs
+  // -----------------------------------------------------------------------
+  Rpc.make('preview.open', {
+    success: PreviewSessionSnapshot,
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewOpenInput.fields,
+  }),
+
+  Rpc.make('preview.navigate', {
+    success: PreviewSessionSnapshot,
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewNavigateInput.fields,
+  }),
+
+  Rpc.make('preview.resize', {
+    success: PreviewSessionSnapshot,
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewResizeInput.fields,
+  }),
+
+  Rpc.make('preview.refresh', {
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewRefreshInput.fields,
+  }),
+
+  Rpc.make('preview.close', {
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewCloseInput.fields,
+  }),
+
+  Rpc.make('preview.list', {
+    success: PreviewListResult,
+    error: RpcError,
+    payload: PreviewListInput.fields,
+  }),
+
+  Rpc.make('preview.reportStatus', {
+    error: Schema.Union([PreviewError, RpcError]),
+    payload: PreviewReportStatusInput.fields,
+  }),
+
+  Rpc.make('preview.events', {
+    success: PreviewEvent,
+    stream: true,
+  }),
+
+  Rpc.make('preview.discoveredLocalServers', {
+    success: DiscoveredLocalServerList,
+    error: RpcError,
+    stream: true,
+    payload: {
+      workspaceId: PreviewWorkspaceId,
+      configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
+    },
+  }),
+
+  Rpc.make('browserControl.connect', {
+    success: BrowserControlEvent,
+    error: RpcError,
+    stream: true,
+    payload: BrowserControlHost.fields,
+  }),
+  Rpc.make('browserControl.respond', {
+    error: BrowserControlError,
+    payload: BrowserControlResponse.fields,
+  }),
+  Rpc.make('browserControl.invoke', {
+    success: Schema.Unknown,
+    error: Schema.Union([BrowserControlError, RpcError]),
+    payload: {
+      workspaceId: PreviewWorkspaceId,
+      controllerId: Schema.String,
+      tabId: Schema.optional(PreviewTabId),
+      operation: BrowserControlOperation,
+      input: Schema.Unknown,
+      timeoutMs: Schema.optional(Schema.Int),
+    },
+  }),
+  Rpc.make('browserControl.cancel', {
+    payload: { workspaceId: PreviewWorkspaceId, controllerId: Schema.String },
+  }),
+  Rpc.make('browserContext.deliver', {
+    success: BrowserContextItem,
+    error: Schema.Union([BrowserContextError, RpcError]),
+    payload: { workspaceId: PreviewWorkspaceId, annotation: BrowserAnnotation },
+  }),
+  Rpc.make('browserContext.list', {
+    success: Schema.Array(BrowserContextItem),
+    error: Schema.Union([BrowserContextError, RpcError]),
+    payload: {
+      workspaceId: PreviewWorkspaceId,
+      includeConsumed: Schema.optional(Schema.Boolean),
+    },
+  }),
+  Rpc.make('browserContext.consume', {
+    success: BrowserContextItem,
+    error: Schema.Union([BrowserContextError, RpcError]),
+    payload: { workspaceId: PreviewWorkspaceId, id: Schema.String },
+  }),
+
+  /** Mint a scoped daemon URL for one browser-previewable workspace file. */
+  Rpc.make('workspace.assetUrl', {
+    success: Schema.Struct({
+      expiresAt: Schema.Number,
+      relativeUrl: Schema.String,
+    }),
+    error: RpcError,
+    payload: {
+      relativePath: PreviewUrl,
+      workspaceId: PreviewWorkspaceId,
+    },
+  }),
+
   /** Spawn a shell using the task's shared-db worktree path as plain cwd. */
   Rpc.make('task.terminal.attach', {
     success: Schema.Struct({
@@ -1599,6 +2471,64 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       dir: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * List every file and directory in a workspace's worktree as one flat,
+   * recursive listing.
+   *
+   * This backs the right panel's file explorer (`@pierre/trees` wants the
+   * whole path list up front). Noisy directories, OS metadata files, and
+   * gitignored entries are skipped; the walk stops at an entry cap and
+   * reports `truncated` instead of unbounded output.
+   */
+  Rpc.make('file.listEntries', {
+    success: FileEntriesResult,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Read a text file's verbatim contents for the file preview/editor
+   * surface.
+   *
+   * Unlike `file.read` this does not trim trailing whitespace or compute a
+   * diff — an editor must see the file exactly as it is — and it caps the
+   * text at a preview limit (1 MB), reporting the file's true byte length
+   * and a `truncated` flag instead of shipping the whole file.
+   *
+   * Fails with code `BINARY_FILE` for files that are not text (the image
+   * preview keeps using `file.read`, which serves base64), `NOT_FOUND`
+   * when the path does not exist, and `PATH_TRAVERSAL` when the path
+   * escapes the worktree.
+   */
+  Rpc.make('file.readText', {
+    success: FileTextContent,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      filePath: Schema.String,
+    },
+  }),
+
+  /**
+   * Write a text file inside a workspace's worktree, creating parent
+   * directories as needed.
+   *
+   * Backs the file editor's debounced save. The path must stay inside the
+   * worktree (`PATH_TRAVERSAL` otherwise); the contents are written
+   * verbatim as UTF-8.
+   */
+  Rpc.make('file.write', {
+    success: FileWriteResult,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      filePath: Schema.String,
+      contents: Schema.String,
     },
   }),
 
@@ -1742,6 +2672,180 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * The header-shaped half of the workspace's pull request: title, body,
+   * author, state, branches, checks, labels, mergeability, and what the
+   * repository's settings and the viewer's role allow.
+   *
+   * Fails with code `PR_NOT_FOUND` when the workspace's branch has no pull
+   * request yet, like every read below.
+   */
+  Rpc.make('pullRequest.detail', {
+    success: PullRequestDetail,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * The conversation-shaped half: the flat timeline, review threads pinned
+   * to their diff lines, commits, the reviewer roster, and reactions.
+   */
+  Rpc.make('pullRequest.activity', {
+    success: PullRequestActivity,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * One slice of the pull request's unified patch, assembled from GitHub's
+   * files API so it pages a whole number of files at a time. An omitted
+   * `cursor` asks for the first slice; `commit` narrows the diff to one
+   * commit of the change.
+   */
+  Rpc.make('pullRequest.diff', {
+    success: PullRequestDiffResult,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      cursor: Schema.optional(Schema.String),
+      commit: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * Both sides of one diff file in full, for expanding context the patch
+   * does not carry. The old side reads at the base (or parent-commit)
+   * revision, the new side at the head.
+   */
+  Rpc.make('pullRequest.diffContents', {
+    success: PullRequestFileContents,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      changeType: PullRequestDiffChangeType,
+      oldPath: Schema.String,
+      newPath: Schema.String,
+      commit: Schema.optional(Schema.String),
+    },
+  }),
+
+  /** Post a conversation comment on the workspace's pull request. */
+  Rpc.make('pullRequest.comment', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      body: Schema.String,
+    },
+  }),
+
+  /**
+   * Rewrite the pull request's own title and/or body. A field left out is
+   * kept as it was; a request naming neither is refused.
+   */
+  Rpc.make('pullRequest.edit', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      title: Schema.optional(Schema.String),
+      body: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * Run one lifecycle action: merge, ready/draft, close/reopen, update the
+   * branch, or arm/disarm auto-merge. `mergeMethod` is read for `merge` and
+   * `enableAutoMerge`; `updateMethod` only for `updateBranch`.
+   */
+  Rpc.make('pullRequest.action', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      action: PullRequestActionKind,
+      mergeMethod: Schema.optional(PullRequestMergeMethod),
+      updateMethod: Schema.optional(PullRequestUpdateMethod),
+    },
+  }),
+
+  /**
+   * Submit a whole review in one request — verdict, summary, and any line
+   * comments — so nothing is visible to anyone else until it is sent.
+   */
+  Rpc.make('pullRequest.submitReview', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      verdict: PullRequestReviewVerdict,
+      body: Schema.String,
+      comments: Schema.Array(PullRequestReviewCommentDraft),
+    },
+  }),
+
+  /** Reply to a review thread, named by its GraphQL node id. */
+  Rpc.make('pullRequest.replyToThread', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      threadId: Schema.String,
+      body: Schema.String,
+    },
+  }),
+
+  /** Mark a review thread resolved, or unresolved again. */
+  Rpc.make('pullRequest.setThreadResolution', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      threadId: Schema.String,
+      resolved: Schema.Boolean,
+    },
+  }),
+
+  /**
+   * Add a reaction to a remark, or take it back. An omitted `subjectId`
+   * reacts to the pull request itself, which is where its description's
+   * reactions live.
+   */
+  Rpc.make('pullRequest.setReaction', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      subjectId: Schema.optional(Schema.String),
+      content: PullRequestReactionContent,
+      reacted: Schema.Boolean,
+    },
+  }),
+
+  /** Who this pull request may be sent to, and who it already has been. */
+  Rpc.make('pullRequest.reviewerCandidates', {
+    success: PullRequestReviewerCandidateList,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Ask somebody for a review, or take the request back — one operation
+   * with `requested` turned around.
+   */
+  Rpc.make('pullRequest.requestReviewers', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      reviewers: Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          kind: PullRequestReviewerKind,
+        })
+      ),
+      requested: Schema.Boolean,
     },
   }),
 

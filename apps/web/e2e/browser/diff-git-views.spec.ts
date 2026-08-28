@@ -203,19 +203,13 @@ test.describe('diff and git view journeys', () => {
       const frame = page.locator(
         `[data-testid="workspace-frame"][data-workspace-id="${journey.workspaceId}"]`
       )
-      await frame.getByRole('button', { name: 'Open file tree' }).click()
-      const tree = frame.getByTestId('tree-pane')
-      await expect(tree).toBeVisible()
-      await expect(
-        tree
-          .getByRole('treeitem', { name: 'README.md' })
-          .getByText('M', { exact: true })
-      ).toBeVisible()
-      await expect(
-        tree
-          .getByRole('treeitem', { name: 'added.ts' })
-          .getByText('A', { exact: true })
-      ).toBeVisible()
+      await frame.getByRole('button', { name: 'Open file explorer' }).click()
+      const explorer = frame.locator(
+        `[data-file-browser-panel="${journey.workspaceId}"]`
+      )
+      await expect(explorer).toBeVisible()
+      await expect(explorer.getByText('README.md')).toBeVisible()
+      await expect(explorer.getByText('added.ts')).toBeVisible()
     } finally {
       await cleanDiffJourney(daemon, journey)
     }

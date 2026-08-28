@@ -25,9 +25,13 @@ import type {
   FileContent,
   FileDiffContents,
   FileDiffEntry,
+  FileEntriesResult,
+  FileEntry,
   FileInfo,
   FileNode,
+  FileTextContent,
   FileWatcherEvent,
+  FileWriteResult,
   WatchFileEvent,
 } from '@laborer/shared/rpc'
 import {
@@ -48,6 +52,11 @@ import {
 } from 'effect'
 import ignore from 'ignore'
 import { type GitProbeResult, resolveBaseRef } from '../lib/base-ref.js'
+import {
+  type FilesystemContainmentError,
+  readContainedFile,
+  writeContainedFile,
+} from '../lib/filesystem-containment.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { FileWatcherClient } from './file-watcher-client.js'
 import {
@@ -367,6 +376,145 @@ const readAndBuildNodes = (
 
     return pipe(nodes, Arr.sort(fileNodeOrder))
   })
+
+// ── Recursive worktree listing ──────────────────────────────────
+// Backs `file.listEntries`: the right panel's explorer renders with
+// `@pierre/trees`, which wants the whole flat path list up front rather
+// than per-level pages.
+
+/**
+ * Entry cap for `file.listEntries`. The walk stops here and reports
+ * `truncated: true` instead of shipping an unbounded listing for
+ * pathological worktrees.
+ */
+const MAX_FILE_ENTRIES = 20_000
+
+/** Directory-first, then name — the same order `file.list` sorts one level. */
+const compareDirents = (
+  a: { name: string; isDirectory(): boolean },
+  b: { name: string; isDirectory(): boolean }
+): number => {
+  if (a.isDirectory() !== b.isDirectory()) {
+    return a.isDirectory() ? -1 : 1
+  }
+  return a.name.localeCompare(b.name)
+}
+
+/** One walkable dirent classified against the ignore rules, or null. */
+const classifyWalkDirent = (
+  dirent: {
+    name: string
+    isDirectory(): boolean
+    isFile(): boolean
+    isSymbolicLink(): boolean
+  },
+  parentDir: string,
+  worktreeRoot: string,
+  isIgnored: (relativePath: string) => boolean
+): { entry: FileEntry; absolute: string } | null => {
+  const name = String(dirent.name)
+  const absolute = join(parentDir, name)
+  const relPath = relative(worktreeRoot, absolute)
+
+  if (dirent.isDirectory()) {
+    if (IGNORED_DIRECTORIES.has(name) || isIgnored(`${relPath}/`)) {
+      return null
+    }
+    return { entry: { path: relPath, kind: 'directory' }, absolute }
+  }
+  if (dirent.isFile() || dirent.isSymbolicLink()) {
+    if (IGNORED_FILES.has(name) || isIgnored(relPath)) {
+      return null
+    }
+    return { entry: { path: relPath, kind: 'file' }, absolute }
+  }
+  return null
+}
+
+/**
+ * Walk the worktree depth-first, skipping noisy directories, OS metadata
+ * files, and gitignored entries, stopping at {@link MAX_FILE_ENTRIES}.
+ */
+const walkWorktreeEntries = (
+  worktreeRoot: string,
+  isIgnored: (relativePath: string) => boolean
+): Effect.Effect<FileEntriesResult, RpcError> =>
+  Effect.tryPromise({
+    try: async (): Promise<FileEntriesResult> => {
+      const entries: FileEntry[] = []
+      let truncated = false
+
+      const walk = async (dir: string): Promise<void> => {
+        const dirents = (await readdir(dir, { withFileTypes: true })).sort(
+          compareDirents
+        )
+        for (const dirent of dirents) {
+          if (truncated) {
+            return
+          }
+          const classified = classifyWalkDirent(
+            dirent,
+            dir,
+            worktreeRoot,
+            isIgnored
+          )
+          if (classified === null) {
+            continue
+          }
+          if (entries.length >= MAX_FILE_ENTRIES) {
+            truncated = true
+            return
+          }
+          entries.push(classified.entry)
+          if (classified.entry.kind === 'directory') {
+            await walk(classified.absolute)
+          }
+        }
+      }
+
+      await walk(worktreeRoot)
+      return { entries, truncated }
+    },
+    catch: (error) =>
+      new RpcError({
+        message: `Failed to list worktree entries: ${String(error)}`,
+        code: 'READDIR_FAILED',
+      }),
+  })
+
+// ── Verbatim text reads and writes ──────────────────────────────
+// Back `file.readText` and `file.write`: the file preview/editor surface
+// needs the exact bytes (no trimEnd, no diff) with an honest preview cap,
+// and a place to persist debounced edits.
+
+/**
+ * Preview cap for `file.readText`, mirroring t3code's 1 MB read limit.
+ * The response reports the file's true size so the client can tell the
+ * reader what was cut.
+ */
+const MAX_READ_TEXT_BYTES = 1024 * 1024
+const FILE_NOT_FOUND_ERROR = /ENOENT|ENOTDIR/
+
+const containmentRpcError = (
+  error: FilesystemContainmentError,
+  operation: 'read' | 'write',
+  filePath: string
+) => {
+  if (error.reason === 'PATH_TRAVERSAL') {
+    return new RpcError({ message: error.message, code: 'PATH_TRAVERSAL' })
+  }
+  const notFound = FILE_NOT_FOUND_ERROR.test(error.message)
+  let code = operation === 'read' ? 'READ_FAILED' : 'WRITE_FAILED'
+  if (notFound) {
+    code = 'NOT_FOUND'
+  }
+  return new RpcError({
+    message: notFound
+      ? `File not found: ${filePath}`
+      : `Failed to ${operation} file: ${error.message}`,
+    code,
+  })
+}
 
 // ── Event type mapping ──────────────────────────────────────────
 // Maps internal watcher event types to client-facing types.
@@ -1153,6 +1301,45 @@ class FileService extends Context.Service<
     ) => Effect.Effect<readonly FileNode[], RpcError>
 
     /**
+     * List every file and directory in the worktree as one flat recursive
+     * listing for the explorer, capped at {@link MAX_FILE_ENTRIES}.
+     *
+     * @param workspaceId - ID of the workspace
+     */
+    readonly listEntries: (
+      workspaceId: string
+    ) => Effect.Effect<FileEntriesResult, RpcError>
+
+    /**
+     * Read a text file verbatim (no trimEnd, no diff) up to the 1 MB
+     * preview cap, reporting the file's true size and a truncation flag.
+     *
+     * Fails with `BINARY_FILE` for non-text files, `NOT_FOUND` when the
+     * path does not exist, `PATH_TRAVERSAL` when it escapes the worktree.
+     *
+     * @param workspaceId - ID of the workspace
+     * @param filePath - Path of the file relative to the worktree root
+     */
+    readonly readText: (
+      workspaceId: string,
+      filePath: string
+    ) => Effect.Effect<FileTextContent, RpcError>
+
+    /**
+     * Write a text file inside the worktree, creating parent directories
+     * as needed. Backs the file editor's debounced save.
+     *
+     * @param workspaceId - ID of the workspace
+     * @param filePath - Path of the file relative to the worktree root
+     * @param contents - Full UTF-8 contents to write verbatim
+     */
+    readonly write: (
+      workspaceId: string,
+      filePath: string,
+      contents: string
+    ) => Effect.Effect<FileWriteResult, RpcError>
+
+    /**
      * Read a single file's content and compute its diff against HEAD.
      *
      * Returns `FileContent` with the file text (or base64 for images),
@@ -1290,6 +1477,80 @@ class FileService extends Context.Service<
           const isIgnored = yield* loadIgnorePatterns(worktreeRoot)
 
           return yield* readAndBuildNodes(targetDir, worktreeRoot, isIgnored)
+        })
+
+      const listEntries = (
+        workspaceId: string
+      ): Effect.Effect<FileEntriesResult, RpcError> =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
+          const worktreeRoot = workspace.worktreePath
+          const isIgnored = yield* loadIgnorePatterns(worktreeRoot)
+          return yield* walkWorktreeEntries(worktreeRoot, isIgnored)
+        })
+
+      const readText = (
+        workspaceId: string,
+        filePath: string
+      ): Effect.Effect<FileTextContent, RpcError> =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
+          const worktreeRoot = workspace.worktreePath
+          if (isBinaryByExtension(filePath) || isImageByExtension(filePath)) {
+            return yield* new RpcError({
+              message: `${filePath} is not a text file.`,
+              code: 'BINARY_FILE',
+            })
+          }
+
+          const contained = yield* Effect.tryPromise({
+            try: () =>
+              readContainedFile(worktreeRoot, filePath, MAX_READ_TEXT_BYTES),
+            catch: (error) =>
+              containmentRpcError(
+                error as FilesystemContainmentError,
+                'read',
+                filePath
+              ),
+          })
+          const result: FileTextContent = {
+            relativePath: filePath,
+            contents: contained.contents.toString('utf-8'),
+            byteLength: contained.byteLength,
+            truncated: contained.byteLength > MAX_READ_TEXT_BYTES,
+          }
+
+          // Extension checks miss extensionless binaries; sniff the decoded
+          // text so the editor never renders mangled bytes as source.
+          if (looksBinary(result.contents)) {
+            return yield* new RpcError({
+              message: `${filePath} is not a text file.`,
+              code: 'BINARY_FILE',
+            })
+          }
+
+          return result
+        })
+
+      const write = (
+        workspaceId: string,
+        filePath: string,
+        contents: string
+      ): Effect.Effect<FileWriteResult, RpcError> =>
+        Effect.gen(function* () {
+          const workspace = yield* lookupWorkspace(laborerDatabase, workspaceId)
+          const worktreeRoot = workspace.worktreePath
+          yield* Effect.tryPromise({
+            try: () => writeContainedFile(worktreeRoot, filePath, contents),
+            catch: (error) =>
+              containmentRpcError(
+                error as FilesystemContainmentError,
+                'write',
+                filePath
+              ),
+          })
+
+          return { relativePath: filePath }
         })
 
       const read = (
@@ -1589,11 +1850,14 @@ class FileService extends Context.Service<
 
       return FileService.of({
         list,
+        listEntries,
         read,
+        readText,
         status,
         diff,
         diffContents,
         watcherSubscribe,
+        write,
       })
     })
   )

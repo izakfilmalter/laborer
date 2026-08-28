@@ -82,6 +82,8 @@ interface WorkspaceFrameHeaderProps {
   readonly dragHandleRef?:
     | { readonly current: HTMLDivElement | null }
     | undefined
+  /** Whether the right panel's Files surface is active for the workspace. */
+  readonly filesIsOpen?: boolean | undefined
   /** Whether this workspace frame is the currently active/focused one. */
   readonly isActiveFrame?: boolean | undefined
   /** Whether the workspace frame is minimized (collapsed to header only). */
@@ -127,8 +129,6 @@ interface WorkspaceFrameHeaderProps {
   readonly prUrl: string | null
   /** Project-scoped task number, absent for the root workspace. */
   readonly taskNumber: number | null
-  /** Whether the file tree pane is currently open for the active workspace. */
-  readonly treeIsOpen?: boolean | undefined
   /** The workspace ID, used for the close-workspace action. */
   readonly workspaceId: string | undefined
   /** Visible sidebar path for the workspace, excluding the project name. */
@@ -193,25 +193,27 @@ function WorkspaceFrameTitle({
 }
 
 /**
- * Icon-only file tree toggle button.
+ * Icon-only toggle for the right panel's Files surface.
  */
-function TreeToggleButton({
+function FilesToggleButton({
   disabled,
   onClick,
-  treeIsOpen,
+  filesIsOpen,
 }: {
   readonly disabled: boolean
   readonly onClick: () => void
-  readonly treeIsOpen: boolean
+  readonly filesIsOpen: boolean
 }) {
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            aria-label={treeIsOpen ? 'Close file tree' : 'Open file tree'}
-            aria-pressed={treeIsOpen}
-            className={treeIsOpen ? 'bg-accent text-foreground' : ''}
+            aria-label={
+              filesIsOpen ? 'Close file explorer' : 'Open file explorer'
+            }
+            aria-pressed={filesIsOpen}
+            className={filesIsOpen ? 'bg-accent text-foreground' : ''}
             disabled={disabled}
             onClick={onClick}
             size="icon-sm"
@@ -222,7 +224,7 @@ function TreeToggleButton({
         <FolderTree className="size-3.5" />
       </TooltipTrigger>
       <TooltipContent>
-        {treeIsOpen ? 'Close file tree' : 'Open file tree'}
+        {filesIsOpen ? 'Close file explorer' : 'Open file explorer'}
         <KbdGroup>
           <Kbd>^</Kbd>
           <Kbd>B</Kbd>
@@ -303,7 +305,7 @@ function ExpandedFrameActions({
   projectId,
   projectName,
   taskBackedWorkspaceId,
-  treeIsOpen,
+  filesIsOpen,
   withFocus,
   workspaceId,
 }: {
@@ -316,7 +318,7 @@ function ExpandedFrameActions({
   readonly projectId: string | undefined
   readonly projectName: string | undefined
   readonly taskBackedWorkspaceId: string | null
-  readonly treeIsOpen: boolean
+  readonly filesIsOpen: boolean
   readonly withFocus: (fn: (paneId: string) => void) => () => void
   readonly workspaceId: string | undefined
 }) {
@@ -360,10 +362,10 @@ function ExpandedFrameActions({
           />
         </>
       ) : null}
-      <TreeToggleButton
+      <FilesToggleButton
         disabled={!hasActivePane}
-        onClick={withFocus((paneId) => actions?.toggleTreePane(paneId))}
-        treeIsOpen={treeIsOpen}
+        filesIsOpen={filesIsOpen}
+        onClick={withFocus((paneId) => actions?.toggleFilesPane(paneId))}
       />
       <Tooltip>
         <TooltipTrigger
@@ -448,7 +450,7 @@ function WorkspaceFrameHeader({
   projectName,
   projectShortName,
   taskNumber,
-  treeIsOpen = false,
+  filesIsOpen = false,
   workspaceId,
   workspacePath,
 }: WorkspaceFrameHeaderProps) {
@@ -604,12 +606,12 @@ function WorkspaceFrameHeader({
             branchName={branchName}
             commentsIsOpen={commentsIsOpen}
             diffIsOpen={diffIsOpen}
+            filesIsOpen={filesIsOpen}
             hasActivePane={hasActivePane}
             prNumber={prNumber}
             projectId={projectId}
             projectName={projectName}
             taskBackedWorkspaceId={taskBackedWorkspaceId}
-            treeIsOpen={treeIsOpen}
             withFocus={withFocus}
             workspaceId={workspaceId}
           />

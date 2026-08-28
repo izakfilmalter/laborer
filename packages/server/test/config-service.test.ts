@@ -105,6 +105,26 @@ afterAll(() => {
 
 describe('ConfigService', () => {
   describe('resolveConfig', () => {
+    it.effect(
+      'decodes configured preview URLs and preserves declared order',
+      () =>
+        Effect.gen(function* () {
+          const projectDir = join(testRoot, 'preview-urls')
+          mkdirSync(projectDir, { recursive: true })
+          const configPath = writeConfig(projectDir, {
+            previewUrls: [
+              'http://localhost:5173/docs',
+              'http://127.0.0.1:3000',
+            ],
+          })
+
+          const result = yield* resolveConfig(projectDir, 'preview-urls')
+          assert.deepStrictEqual(result.previewUrls, {
+            source: configPath,
+            value: ['http://localhost:5173/docs', 'http://127.0.0.1:3000'],
+          })
+        })
+    )
     it.effect('should re-read config file on each resolve call', () =>
       Effect.gen(function* () {
         const projectDir = join(testRoot, 'no-cache-between-calls')

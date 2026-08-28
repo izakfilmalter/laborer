@@ -1,12 +1,15 @@
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { NodeRuntime, NodeStdio } from '@effect/platform-node'
+import { NodeRuntime, NodeSocket, NodeStdio } from '@effect/platform-node'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Effect, Layer, Logger } from 'effect'
+import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import { AgentTaskService } from './services/agent-task-service.js'
+import { BrowserAgentClient } from './services/browser-mcp.js'
 import { LaborerDatabase } from './services/laborer-database.js'
 import {
+  BrowserMcpToolsLayer,
   TaskMcpStdioProtocolLayer,
   TaskMcpToolsLayer,
 } from './services/task-mcp.js'
@@ -40,11 +43,24 @@ const writeLog = (message: string): void => {
 
 const databasePath = taskDatabasePath()
 const databaseLayer = LaborerDatabase.layer(databasePath).pipe(Layer.orDie)
-const serverLayer = TaskMcpToolsLayer.pipe(
+const daemonPort = process.env.LABORER_DAEMON_PORT ?? '2100'
+const daemonProtocol = RpcClient.layerProtocolSocket({
+  retryTransientErrors: true,
+}).pipe(
+  Layer.provide(
+    Layer.merge(
+      NodeSocket.layerWebSocket(`ws://127.0.0.1:${daemonPort}/ws`),
+      RpcSerialization.layerJson
+    )
+  )
+)
+const serverLayer = Layer.merge(TaskMcpToolsLayer, BrowserMcpToolsLayer).pipe(
   Layer.provideMerge(TaskMcpStdioProtocolLayer),
   Layer.provide(AgentTaskService.layer(databasePath)),
   Layer.provide(databaseLayer),
   Layer.provide(NodeStdio.layer),
+  Layer.provide(BrowserAgentClient.layer),
+  Layer.provide(daemonProtocol),
   Layer.provide(Logger.layer([]))
 )
 

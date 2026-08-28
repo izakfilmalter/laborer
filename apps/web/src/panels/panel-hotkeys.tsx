@@ -12,6 +12,7 @@
  * - Cmd+Option+ArrowRight → move focus to pane on the right
  * - Cmd+Option+ArrowUp → move focus to pane above
  * - Cmd+Option+ArrowDown → move focus to pane below
+ * - Cmd+Option+B → toggle the focused workspace's right panel
  *
  * Tmux-style prefix key sequences (Ctrl+b then action key):
  * - Ctrl+b then h → split horizontal (side-by-side)
@@ -20,7 +21,7 @@
  * - Ctrl+b then Shift+x → close active window tab (browser-safe Cmd+Shift+W)
  * - Ctrl+b then o → cycle focus to next pane
  * - Ctrl+b then p → cycle focus to previous pane
- * - Ctrl+b then d → create diff panel in right-side split
+ * - Ctrl+b then d → toggle the right panel's Diff surface
  * - Ctrl+b then s → toggle dev server terminal alongside active terminal pane
  * - Ctrl+b then z → toggle fullscreen for active terminal pane (zoom)
  * - Ctrl+b then ArrowLeft → move focus left
@@ -48,6 +49,7 @@ import type { LeafNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useCallback, useEffect, useRef } from 'react'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
+import { KEYBINDS, matchesKeybind } from '@/lib/keybinds'
 import { localApi } from '@/lib/local-api'
 import { useActivePaneId, usePanelActions } from '@/panels/panel-context'
 import type { NavigationDirection } from '@/panels/panel-tree-utils'
@@ -56,6 +58,7 @@ import {
   findPaneInActiveTab,
   navigateDirection as navigateDirectionInLayout,
 } from '@/panels/window-layout-utils'
+import { useRightPanelStore } from '@/right-panel-store'
 
 /** Timeout for the prefix key sequence (ms). */
 const SEQUENCE_TIMEOUT = 1500
@@ -457,29 +460,40 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Ctrl+b then d → create a new diff panel in a right-side split
+  // Ctrl+b then d → toggle the right panel's Diff surface for the focused
+  // workspace (was: create a diff pane in a right-side split)
   useHotkeySequence(
     ['Control+B', 'D'],
     (event) => {
       event.preventDefault()
-      if (!actions) {
-        return
-      }
-      if (activePaneId && activeWorkspaceId) {
-        // Split right with a diff pane inheriting the workspace context
-        actions.splitPane(activePaneId, 'horizontal', {
-          paneType: 'diff',
-          workspaceId: activeWorkspaceId,
-        } as Partial<LeafNode>)
-      } else if (activeWorkspaceId) {
-        // No active pane — add as a new panel tab
-        actions.addPanelTab?.(activeWorkspaceId, 'diff')
+      if (actions && activePaneId) {
+        actions.toggleDiffPane(activePaneId)
       }
     },
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Ctrl+b then t → toggle file tree panel on the left side
+  // Cmd+Option+B → toggle the focused workspace's right panel.
+  // Raw keydown handler matched on the physical key because Option+B
+  // produces "∫" on macOS layouts, which TanStack Hotkeys cannot name.
+  useEffect(() => {
+    const handleToggleRightPanel = (event: KeyboardEvent) => {
+      if (!matchesKeybind(event, KEYBINDS.TOGGLE_RIGHT_PANEL)) {
+        return
+      }
+      event.preventDefault()
+      if (activeWorkspaceId) {
+        useRightPanelStore.getState().toggleVisibility(activeWorkspaceId)
+      }
+    }
+    window.addEventListener('keydown', handleToggleRightPanel)
+    return () => {
+      window.removeEventListener('keydown', handleToggleRightPanel)
+    }
+  }, [activeWorkspaceId])
+
+  // Ctrl+b then t → toggle the right panel's Files surface for the focused
+  // workspace (was: toggle the left file-tree panel, now retired)
   useHotkeySequence(
     ['Control+B', 'T'],
     (event) => {
@@ -488,7 +502,7 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
         return
       }
       if (activePaneId) {
-        actions.toggleTreePane(activePaneId)
+        actions.toggleFilesPane(activePaneId)
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

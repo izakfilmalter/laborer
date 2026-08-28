@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   app,
   BrowserWindow,
@@ -49,6 +50,8 @@ import {
   refreshLaborerMcpSymlink,
 } from './laborer-mcp-symlink.js'
 import { configureApplicationMenu } from './menu.js'
+import { PreviewManager } from './preview/Manager.js'
+import { enforcePreviewWebviewSecurity } from './preview/WebviewSecurity.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
 import { type WindowRecord, WindowStateManager } from './window-state.js'
@@ -174,6 +177,7 @@ const isDev = Boolean(VITE_DEV_SERVER_URL)
 const desktopSmokeTestFile = process.env.LABORER_DESKTOP_SMOKE_TEST_FILE
 let daemonOrigin: string | null = VITE_DEV_SERVER_URL ?? null
 let daemonSupervisor: DesktopDaemonSupervisor | null = null
+let previewManager: PreviewManager | null = null
 
 /**
  * Version of the daemon currently serving `daemonOrigin`; null in dev mode
@@ -356,6 +360,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
       additionalArguments: buildWindowBootstrapArgs({ windowId }),
       // Hidden windows throttle timers and requestAnimationFrame by
       // default, which stalls xterm.js rendering during hidden E2E runs.
@@ -394,6 +399,23 @@ function createWindow(record?: WindowRecord): BrowserWindow {
       shell.openExternal(url).catch(console.error)
     }
   })
+  window.webContents.on(
+    'will-attach-webview',
+    (event, webPreferences, params) => {
+      enforcePreviewWebviewSecurity(
+        event,
+        webPreferences,
+        params,
+        previewManager?.pickPreloadUrl
+          ? {
+              isApprovedPartition: (partition) =>
+                previewManager?.isBrowserPartition(partition) === true,
+              preloadUrl: previewManager.pickPreloadUrl,
+            }
+          : null
+      )
+    }
+  )
 
   window.once('ready-to-show', () => {
     if (!hideWindowsForTests) {
@@ -446,6 +468,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   })
 
   window.on('closed', () => {
+    previewManager?.disposeWindow(window.webContents)
     openWindows.delete(window)
     daemonWindowReloadTracker.forget(window)
     removeWindowPresence(window)
@@ -480,6 +503,17 @@ app
         scriptPath: laborerMcpBundleScriptPath(process.resourcesPath),
       })
     }
+
+    previewManager = new PreviewManager({
+      artifactDirectory: join(app.getPath('userData'), 'browser-artifacts'),
+      pickPreloadUrl: pathToFileURL(
+        join(import.meta.dirname, 'preview-pick-preload.cjs')
+      ).href,
+      pictureInPicturePreloadPath: join(
+        import.meta.dirname,
+        'preview-pip-preload.cjs'
+      ),
+    })
 
     if (!isDev) {
       const appRoot = join(import.meta.dirname, '..', '..', '..')
@@ -555,7 +589,7 @@ app
     // Register IPC handlers once for the DesktopBridge contract.
     // Handlers use event.sender to resolve the requesting window,
     // so they work correctly regardless of which window invokes them.
-    registerIpcHandlers(() => getMainWindow())
+    registerIpcHandlers(() => getMainWindow(), previewManager)
     ipcMain.handle('desktop:ensure-daemon', async () => {
       if (!daemonSupervisor) {
         return
@@ -612,7 +646,20 @@ app
     // Build the macOS-native application menu (About, Settings, Edit, View, Window).
     configureApplicationMenu(
       () => getMainWindow(),
-      () => createWindow()
+      () => createWindow(),
+      (direction) => {
+        const window = getMainWindow()
+        if (!window || window.isDestroyed()) {
+          return
+        }
+        const contents = window.webContents
+        contents.setZoomLevel(
+          direction === 'reset'
+            ? 0
+            : contents.getZoomLevel() + (direction === 'in' ? 0.5 : -0.5)
+        )
+        previewManager?.reapplyZoom(contents)
+      }
     )
 
     // Create the system tray icon with dynamic tooltip and context menu.
@@ -687,6 +734,8 @@ let forceExitTimer: ReturnType<typeof setTimeout> | null = null
  * Called once during shutdown — idempotent via `isQuitting`.
  */
 function cleanupMainProcessResources(): void {
+  previewManager?.dispose()
+  previewManager = null
   // Unregister the global shortcut.
   if (unregisterShortcut) {
     unregisterShortcut()

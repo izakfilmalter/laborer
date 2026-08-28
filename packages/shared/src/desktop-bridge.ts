@@ -162,6 +162,683 @@ export interface WorkspaceNotificationContext {
 }
 
 // ---------------------------------------------------------------------------
+// Desktop browser preview types
+// ---------------------------------------------------------------------------
+
+export type DesktopPreviewColorScheme = 'system' | 'light' | 'dark'
+
+const PreviewNonEmptyString = Schema.String.check(Schema.isMinLength(1))
+const PreviewTabIdSchema = PreviewNonEmptyString.check(
+  Schema.isTrimmed(),
+  Schema.isMaxLength(4096)
+)
+const previewUrlProtocol = Schema.makeFilter((rawUrl: string) => {
+  const input = rawUrl.trim()
+  try {
+    const candidate = input.includes('://') ? input : `https://${input}`
+    const protocol = new URL(candidate).protocol
+    return (
+      protocol === 'http:' ||
+      protocol === 'https:' ||
+      'Preview URL must use HTTP or HTTPS.'
+    )
+  } catch {
+    return 'Preview URL must be valid.'
+  }
+})
+const PreviewUrlSchema = PreviewNonEmptyString.check(
+  Schema.isMaxLength(2048),
+  previewUrlProtocol
+)
+const PreviewArtifactPathSchema = PreviewNonEmptyString.check(
+  Schema.isMaxLength(4096)
+)
+const PreviewFinitePositive = Schema.Finite.check(Schema.isGreaterThan(0))
+const PreviewTimeoutSchema = Schema.Int.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(60_000)
+)
+const PreviewAutomationTargetSchema = {
+  locator: Schema.optionalKey(
+    PreviewNonEmptyString.check(Schema.isMaxLength(4096))
+  ),
+  selector: Schema.optionalKey(
+    PreviewNonEmptyString.check(Schema.isMaxLength(4096))
+  ),
+}
+
+export const PreviewTabRequestSchema = Schema.Struct({
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewCreateTabRequestSchema = Schema.Struct({
+  colorScheme: Schema.optionalKey(Schema.Literals(['system', 'light', 'dark'])),
+  tabId: PreviewTabIdSchema,
+  zoomFactor: Schema.optionalKey(PreviewFinitePositive),
+})
+export const PreviewRegisterWebviewRequestSchema = Schema.Struct({
+  tabId: PreviewTabIdSchema,
+  webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+export const PreviewNavigateRequestSchema = Schema.Struct({
+  tabId: PreviewTabIdSchema,
+  url: PreviewUrlSchema,
+})
+export const PreviewSetColorSchemeRequestSchema = Schema.Struct({
+  colorScheme: Schema.Literals(['system', 'light', 'dark']),
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewSetAudioMutedRequestSchema = Schema.Struct({
+  audioMuted: Schema.Boolean,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewGetConfigRequestSchema = Schema.Struct({
+  environmentId: PreviewNonEmptyString.check(Schema.isMaxLength(1024)),
+})
+
+const PreviewThemeValueSchema = Schema.String.check(Schema.isMaxLength(4096))
+export const DesktopPreviewAnnotationThemeSchema = Schema.Struct({
+  accent: PreviewThemeValueSchema,
+  accentForeground: PreviewThemeValueSchema,
+  background: PreviewThemeValueSchema,
+  border: PreviewThemeValueSchema,
+  colorScheme: Schema.Literals(['light', 'dark']),
+  fontMono: PreviewThemeValueSchema,
+  fontSans: PreviewThemeValueSchema,
+  foreground: PreviewThemeValueSchema,
+  input: PreviewThemeValueSchema,
+  muted: PreviewThemeValueSchema,
+  mutedForeground: PreviewThemeValueSchema,
+  popover: PreviewThemeValueSchema,
+  popoverForeground: PreviewThemeValueSchema,
+  primary: PreviewThemeValueSchema,
+  primaryForeground: PreviewThemeValueSchema,
+  radius: PreviewThemeValueSchema,
+  ring: PreviewThemeValueSchema,
+})
+export const PreviewEmptyRequestSchema = Schema.Undefined
+export const PreviewStartPickEventSchema = Schema.UndefinedOr(
+  DesktopPreviewAnnotationThemeSchema
+)
+export const PreviewSetAnnotationThemeRequestSchema = Schema.Struct({
+  theme: DesktopPreviewAnnotationThemeSchema,
+})
+export const PreviewArtifactRequestSchema = Schema.Struct({
+  path: PreviewArtifactPathSchema,
+})
+export const PreviewRecordingSaveRequestSchema = Schema.Struct({
+  data: Schema.Uint8Array.check(
+    Schema.makeFilter(
+      (data: Uint8Array) =>
+        data.byteLength <= 1024 * 1024 * 1024 ||
+        'Recording data must not exceed 1 GiB.'
+    )
+  ),
+  mimeType: PreviewNonEmptyString.check(Schema.isMaxLength(256)),
+  tabId: PreviewTabIdSchema,
+})
+
+export const PreviewAutomationClickInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
+  x: Schema.optionalKey(Schema.Finite),
+  y: Schema.optionalKey(Schema.Finite),
+})
+export const PreviewAutomationTypeInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  clear: Schema.optionalKey(Schema.Boolean),
+  text: Schema.String.check(Schema.isMaxLength(64_000)),
+  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
+})
+export const PreviewAutomationPressInputSchema = Schema.Struct({
+  key: PreviewNonEmptyString.check(Schema.isMaxLength(256)),
+  modifiers: Schema.optionalKey(
+    Schema.Array(Schema.Literals(['Alt', 'Control', 'Meta', 'Shift'])).check(
+      Schema.isMaxLength(4)
+    )
+  ),
+})
+export const PreviewAutomationScrollInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  deltaX: Schema.optionalKey(Schema.Finite),
+  deltaY: Schema.optionalKey(Schema.Finite),
+})
+export const PreviewAutomationEvaluateInputSchema = Schema.Struct({
+  awaitPromise: Schema.optionalKey(Schema.Boolean),
+  expression: PreviewNonEmptyString.check(Schema.isMaxLength(64_000)),
+  returnByValue: Schema.optionalKey(Schema.Boolean),
+})
+export const PreviewAutomationWaitForInputSchema = Schema.Struct({
+  ...PreviewAutomationTargetSchema,
+  text: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64_000))),
+  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
+  urlIncludes: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(2048))
+  ),
+})
+
+export const PreviewAutomationClickRequestSchema = Schema.Struct({
+  input: PreviewAutomationClickInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationTypeRequestSchema = Schema.Struct({
+  input: PreviewAutomationTypeInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationPressRequestSchema = Schema.Struct({
+  input: PreviewAutomationPressInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationScrollRequestSchema = Schema.Struct({
+  input: PreviewAutomationScrollInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationEvaluateRequestSchema = Schema.Struct({
+  input: PreviewAutomationEvaluateInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+export const PreviewAutomationWaitForRequestSchema = Schema.Struct({
+  input: PreviewAutomationWaitForInputSchema,
+  tabId: PreviewTabIdSchema,
+})
+
+export class PreviewIpcDecodeError extends Schema.TaggedError<PreviewIpcDecodeError>()(
+  'PreviewIpcDecodeError',
+  { channel: Schema.String, message: Schema.String }
+) {}
+
+export type DesktopPreviewNavStatus =
+  | { readonly kind: 'Idle' }
+  | { readonly kind: 'Loading'; readonly title: string; readonly url: string }
+  | { readonly kind: 'Success'; readonly title: string; readonly url: string }
+  | {
+      readonly kind: 'LoadFailed'
+      readonly code: number
+      readonly description: string
+      readonly title: string
+      readonly url: string
+    }
+
+export interface DesktopPreviewFavicon {
+  readonly capturedAt: number
+  readonly dataUrl: string
+  readonly pageUrl: string
+}
+
+export interface DesktopPreviewTabState {
+  readonly audible: boolean
+  readonly audioMuted: boolean
+  readonly canGoBack: boolean
+  readonly canGoForward: boolean
+  readonly colorScheme: DesktopPreviewColorScheme
+  readonly controller: 'agent' | 'human' | 'none'
+  readonly favicon?: DesktopPreviewFavicon
+  readonly navStatus: DesktopPreviewNavStatus
+  readonly pictureInPicture: boolean
+  readonly tabId: string
+  readonly updatedAt: string
+  readonly webContentsId: number | null
+  readonly zoomFactor: number
+}
+
+export interface DesktopPreviewTabDefaults {
+  readonly colorScheme?: DesktopPreviewColorScheme
+  readonly zoomFactor?: number
+}
+
+export interface DesktopPreviewWebviewConfig {
+  readonly partition: string
+  readonly preloadUrl: string | null
+  readonly webPreferences: string
+}
+
+export interface DesktopPreviewAnnotationTheme {
+  readonly accent: string
+  readonly accentForeground: string
+  readonly background: string
+  readonly border: string
+  readonly colorScheme: 'light' | 'dark'
+  readonly fontMono: string
+  readonly fontSans: string
+  readonly foreground: string
+  readonly input: string
+  readonly muted: string
+  readonly mutedForeground: string
+  readonly popover: string
+  readonly popoverForeground: string
+  readonly primary: string
+  readonly primaryForeground: string
+  readonly radius: string
+  readonly ring: string
+}
+
+export interface PickedElementStackFrame {
+  readonly columnNumber: number | null
+  readonly fileName: string | null
+  readonly functionName: string | null
+  readonly lineNumber: number | null
+}
+
+export interface PickedElementPayload {
+  readonly componentName: string | null
+  readonly htmlPreview: string
+  readonly pageTitle: string | null
+  readonly pageUrl: string
+  readonly pickedAt: string
+  readonly selector: string | null
+  readonly source: PickedElementStackFrame | null
+  readonly stack: readonly PickedElementStackFrame[]
+  readonly styles: string
+  readonly tagName: string
+}
+
+export interface PreviewAnnotationRect {
+  readonly height: number
+  readonly width: number
+  readonly x: number
+  readonly y: number
+}
+
+export interface PreviewAnnotationPayload {
+  readonly comment: string
+  readonly createdAt: string
+  readonly elements: readonly {
+    readonly element: PickedElementPayload
+    readonly id: string
+    readonly rect: PreviewAnnotationRect
+  }[]
+  readonly id: string
+  readonly pageTitle: string | null
+  readonly pageUrl: string
+  readonly regions: readonly {
+    readonly id: string
+    readonly rect: PreviewAnnotationRect
+  }[]
+  readonly screenshot: {
+    readonly cropRect: PreviewAnnotationRect
+    readonly dataUrl: string
+    readonly height: number
+    readonly width: number
+  } | null
+  readonly strokes: readonly {
+    readonly bounds: PreviewAnnotationRect
+    readonly color: string
+    readonly id: string
+    readonly points: readonly { readonly x: number; readonly y: number }[]
+    readonly width: number
+  }[]
+  readonly styleChanges: readonly {
+    readonly previousValue: string
+    readonly property: string
+    readonly selector: string | null
+    readonly targetId: string
+    readonly value: string
+  }[]
+}
+
+export interface PreviewAnnotationSubmissionResult {
+  readonly annotation: PreviewAnnotationPayload
+  readonly submission: 'attach' | 'send'
+}
+
+export interface DesktopPreviewArtifact {
+  readonly createdAt: string
+  readonly id: string
+  readonly mimeType: string
+  readonly path: string
+  readonly sizeBytes: number
+  readonly tabId: string
+}
+
+export interface DesktopPreviewScreenshotArtifact
+  extends DesktopPreviewArtifact {
+  readonly mimeType: 'image/png'
+}
+
+export type DesktopPreviewRecordingArtifact = DesktopPreviewArtifact
+
+export interface DesktopPreviewRecordingFrame {
+  readonly data: string
+  readonly height: number
+  readonly receivedAt: string
+  readonly tabId: string
+  readonly width: number
+}
+
+export interface DesktopPreviewPointerEvent {
+  readonly createdAt: string
+  readonly phase: 'click' | 'move'
+  readonly sequence: number
+  readonly tabId: string
+  readonly x: number
+  readonly y: number
+}
+
+const PreviewAnnotationRectSchema = Schema.Struct({
+  height: PreviewFinitePositive,
+  width: PreviewFinitePositive,
+  x: Schema.Finite,
+  y: Schema.Finite,
+})
+const PreviewPickedElementSchema = Schema.Struct({
+  componentName: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1024))),
+  htmlPreview: Schema.String.check(Schema.isMaxLength(4000)),
+  pageTitle: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+  pageUrl: PreviewUrlSchema,
+  pickedAt: Schema.String,
+  selector: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+  source: Schema.NullOr(
+    Schema.Struct({
+      columnNumber: Schema.NullOr(Schema.Int),
+      fileName: Schema.NullOr(Schema.String),
+      functionName: Schema.NullOr(Schema.String),
+      lineNumber: Schema.NullOr(Schema.Int),
+    })
+  ),
+  stack: Schema.Array(
+    Schema.Struct({
+      columnNumber: Schema.NullOr(Schema.Int),
+      fileName: Schema.NullOr(Schema.String),
+      functionName: Schema.NullOr(Schema.String),
+      lineNumber: Schema.NullOr(Schema.Int),
+    })
+  ).check(Schema.isMaxLength(100)),
+  styles: Schema.String.check(Schema.isMaxLength(64_000)),
+  tagName: PreviewNonEmptyString.check(Schema.isMaxLength(256)),
+})
+export const PreviewAnnotationPayloadSchema = Schema.Struct({
+  comment: Schema.String.check(Schema.isMaxLength(10_000)),
+  createdAt: Schema.String,
+  elements: Schema.Array(
+    Schema.Struct({
+      element: PreviewPickedElementSchema,
+      id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+      rect: PreviewAnnotationRectSchema,
+    })
+  ).check(Schema.isMaxLength(200)),
+  id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+  pageTitle: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+  pageUrl: PreviewUrlSchema,
+  regions: Schema.Array(
+    Schema.Struct({
+      id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+      rect: PreviewAnnotationRectSchema,
+    })
+  ).check(Schema.isMaxLength(200)),
+  screenshot: Schema.Null,
+  strokes: Schema.Array(
+    Schema.Struct({
+      bounds: PreviewAnnotationRectSchema,
+      color: Schema.String,
+      id: PreviewNonEmptyString.check(Schema.isMaxLength(128)),
+      points: Schema.Array(
+        Schema.Struct({ x: Schema.Finite, y: Schema.Finite })
+      ).check(Schema.isMaxLength(10_000)),
+      width: PreviewFinitePositive,
+    })
+  ).check(Schema.isMaxLength(200)),
+  styleChanges: Schema.Array(
+    Schema.Struct({
+      previousValue: Schema.String,
+      property: Schema.String,
+      selector: Schema.NullOr(Schema.String),
+      targetId: Schema.String,
+      value: Schema.String,
+    })
+  ).check(Schema.isMaxLength(200)),
+})
+export const PreviewElementPickedEventSchema = Schema.Union([
+  Schema.Tuple([Schema.Null]),
+  Schema.Tuple([
+    PreviewAnnotationPayloadSchema,
+    PreviewAnnotationRectSchema,
+    Schema.Literals(['attach', 'send']),
+  ]),
+])
+export const PreviewHumanInputEventSchema = Schema.Union([
+  Schema.Struct({
+    button: Schema.Int,
+    kind: Schema.Literal('pointer'),
+    x: Schema.Finite,
+    y: Schema.Finite,
+  }),
+  Schema.Struct({
+    code: Schema.String.check(Schema.isMaxLength(256)),
+    key: Schema.String.check(Schema.isMaxLength(256)),
+    kind: Schema.Literal('key'),
+  }),
+])
+export const PreviewMouseNavigateEventSchema = Schema.Struct({
+  direction: Schema.Literals(['back', 'forward']),
+})
+
+const DesktopPreviewNavStatusSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('Idle') }),
+  Schema.Struct({
+    kind: Schema.Literals(['Loading', 'Success']),
+    title: Schema.String,
+    url: Schema.String,
+  }),
+  Schema.Struct({
+    code: Schema.Int,
+    description: Schema.String,
+    kind: Schema.Literal('LoadFailed'),
+    title: Schema.String,
+    url: Schema.String,
+  }),
+])
+export const DesktopPreviewTabStateSchema = Schema.Struct({
+  audible: Schema.Boolean,
+  audioMuted: Schema.Boolean,
+  canGoBack: Schema.Boolean,
+  canGoForward: Schema.Boolean,
+  colorScheme: Schema.Literals(['system', 'light', 'dark']),
+  controller: Schema.Literals(['agent', 'human', 'none']),
+  favicon: Schema.optionalKey(
+    Schema.Struct({
+      capturedAt: Schema.Finite,
+      dataUrl: Schema.String,
+      pageUrl: Schema.String,
+    })
+  ),
+  navStatus: DesktopPreviewNavStatusSchema,
+  pictureInPicture: Schema.Boolean,
+  tabId: PreviewTabIdSchema,
+  updatedAt: Schema.String,
+  webContentsId: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  zoomFactor: PreviewFinitePositive,
+})
+export const DesktopPreviewStateChangeEventSchema = Schema.Tuple([
+  PreviewTabIdSchema,
+  DesktopPreviewTabStateSchema,
+])
+export const DesktopPreviewRecordingFrameSchema = Schema.Struct({
+  data: Schema.String.check(Schema.isMaxLength(20_000_000)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+  receivedAt: Schema.String,
+  tabId: PreviewTabIdSchema,
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+})
+export const DesktopPreviewPointerEventSchema = Schema.Struct({
+  createdAt: Schema.String,
+  phase: Schema.Literals(['click', 'move']),
+  sequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  tabId: PreviewTabIdSchema,
+  x: Schema.Finite,
+  y: Schema.Finite,
+})
+
+export interface PreviewAutomationStatus {
+  readonly available: boolean
+  readonly loading: boolean
+  readonly tabId: string | null
+  readonly title: string | null
+  readonly url: string | null
+  readonly viewport?: { readonly height: number; readonly width: number }
+  readonly visible: boolean
+}
+
+export interface PreviewAutomationTarget {
+  readonly locator?: string
+  readonly selector?: string
+}
+
+export interface PreviewAutomationClickInput extends PreviewAutomationTarget {
+  readonly timeoutMs?: number
+  readonly x?: number
+  readonly y?: number
+}
+
+export interface PreviewAutomationTypeInput extends PreviewAutomationTarget {
+  readonly clear?: boolean
+  readonly text: string
+  readonly timeoutMs?: number
+}
+
+export interface PreviewAutomationPressInput {
+  readonly key: string
+  readonly modifiers?: readonly ('Alt' | 'Control' | 'Meta' | 'Shift')[]
+}
+
+export interface PreviewAutomationScrollInput extends PreviewAutomationTarget {
+  readonly deltaX?: number
+  readonly deltaY?: number
+}
+
+export interface PreviewAutomationEvaluateInput {
+  readonly awaitPromise?: boolean
+  readonly expression: string
+  readonly returnByValue?: boolean
+}
+
+export interface PreviewAutomationWaitForInput extends PreviewAutomationTarget {
+  readonly text?: string
+  readonly timeoutMs?: number
+  readonly urlIncludes?: string
+}
+
+export interface PreviewAutomationSnapshot {
+  readonly accessibilityTree: unknown
+  readonly actionTimeline: readonly unknown[]
+  readonly consoleEntries: readonly unknown[]
+  readonly interactiveElements: readonly {
+    readonly height: number
+    readonly name: string
+    readonly role: string | null
+    readonly selector: string
+    readonly tag: string
+    readonly width: number
+    readonly x: number
+    readonly y: number
+  }[]
+  readonly loading: boolean
+  readonly networkEntries: readonly unknown[]
+  readonly screenshot: {
+    readonly data: string
+    readonly height: number
+    readonly mimeType: 'image/png'
+    readonly width: number
+  }
+  readonly title: string
+  readonly url: string
+  readonly visibleText: string
+}
+
+export interface DesktopPreviewBridge {
+  readonly automation: {
+    readonly click: (
+      tabId: string,
+      input: PreviewAutomationClickInput
+    ) => Promise<void>
+    readonly evaluate: (
+      tabId: string,
+      input: PreviewAutomationEvaluateInput
+    ) => Promise<unknown>
+    readonly press: (
+      tabId: string,
+      input: PreviewAutomationPressInput
+    ) => Promise<void>
+    readonly scroll: (
+      tabId: string,
+      input: PreviewAutomationScrollInput
+    ) => Promise<void>
+    readonly snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>
+    readonly status: (tabId: string) => Promise<PreviewAutomationStatus>
+    readonly type: (
+      tabId: string,
+      input: PreviewAutomationTypeInput
+    ) => Promise<void>
+    readonly waitFor: (
+      tabId: string,
+      input: PreviewAutomationWaitForInput
+    ) => Promise<void>
+  }
+  readonly cancelPickElement: (tabId: string) => Promise<void>
+  readonly captureScreenshot: (
+    tabId: string
+  ) => Promise<DesktopPreviewScreenshotArtifact>
+  readonly clearCache: () => Promise<void>
+  readonly clearCookies: () => Promise<void>
+  readonly closeTab: (tabId: string) => Promise<void>
+  readonly copyArtifactToClipboard: (path: string) => Promise<void>
+  readonly createTab: (
+    tabId: string,
+    defaults?: DesktopPreviewTabDefaults
+  ) => Promise<void>
+  readonly getPreviewConfig: (
+    environmentId: string
+  ) => Promise<DesktopPreviewWebviewConfig>
+  readonly goBack: (tabId: string) => Promise<void>
+  readonly goForward: (tabId: string) => Promise<void>
+  readonly hardReload: (tabId: string) => Promise<void>
+  readonly navigate: (tabId: string, url: string) => Promise<void>
+  readonly onPointerEvent: (
+    listener: (event: DesktopPreviewPointerEvent) => void
+  ) => () => void
+  readonly onStateChange: (
+    listener: (tabId: string, state: DesktopPreviewTabState) => void
+  ) => () => void
+  readonly openDevTools: (tabId: string) => Promise<void>
+  readonly pickElement: (
+    tabId: string
+  ) => Promise<PreviewAnnotationSubmissionResult | null>
+  readonly pictureInPicture: {
+    readonly close: (tabId: string) => Promise<void>
+    readonly open: (tabId: string) => Promise<void>
+  }
+  readonly recording: {
+    readonly onFrame: (
+      listener: (frame: DesktopPreviewRecordingFrame) => void
+    ) => () => void
+    readonly save: (
+      tabId: string,
+      mimeType: string,
+      data: Uint8Array
+    ) => Promise<DesktopPreviewRecordingArtifact>
+    readonly startScreencast: (tabId: string) => Promise<void>
+    readonly stopScreencast: (tabId: string) => Promise<void>
+  }
+  readonly refresh: (tabId: string) => Promise<void>
+  readonly registerWebview: (
+    tabId: string,
+    webContentsId: number
+  ) => Promise<void>
+  readonly resetZoom: (tabId: string) => Promise<void>
+  readonly revealArtifact: (path: string) => Promise<void>
+  readonly setAnnotationTheme: (
+    theme: DesktopPreviewAnnotationTheme
+  ) => Promise<void>
+  readonly setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>
+  readonly setColorScheme: (
+    tabId: string,
+    colorScheme: DesktopPreviewColorScheme
+  ) => Promise<void>
+  /** Stop an in-flight page load without discarding the current document. */
+  readonly stop: (tabId: string) => Promise<void>
+  readonly zoomIn: (tabId: string) => Promise<void>
+  readonly zoomOut: (tabId: string) => Promise<void>
+}
+
+// ---------------------------------------------------------------------------
 // DesktopBridge interface
 // ---------------------------------------------------------------------------
 
@@ -259,6 +936,9 @@ export interface DesktopBridge {
 
   /** Opens a native macOS folder picker dialog. Returns the selected path, or null if cancelled. */
   pickFolder: () => Promise<string | null>
+
+  /** Desktop-only Chromium preview host. Feature-detect this in browser builds. */
+  preview?: DesktopPreviewBridge
   /** Continues an already-confirmed application quit. */
   quitApp: () => void
 

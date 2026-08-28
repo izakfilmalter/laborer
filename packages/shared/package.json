@@ -20,7 +20,8 @@
     "./slack-url": "./src/slack-url.ts",
     "./branch-name": "./src/branch-name.ts",
     "./browser-agent-rpc": "./src/browser-agent-rpc.ts",
-    "./browser-control": "./src/browser-control.ts"
+    "./browser-control": "./src/browser-control.ts",
+    "./source-control-writing": "./src/source-control-writing.ts"
   },
   "dependencies": {
     "effect": "catalog:"

@@ -1,6 +1,47 @@
 @import "@laborer/ui/globals.css";
 
 /*
+ * Frosted-glass dialog chrome for the command palette, ported from t3code.
+ * Falls back to opaque surfaces when backdrop-filter is unsupported.
+ */
+@utility dialog-glass {
+  background: color-mix(
+    in srgb,
+    var(--background) var(--glass-opacity),
+    transparent
+  );
+  border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+
+  @variant dark {
+    border-color: color-mix(in srgb, #fff 8%, transparent);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 4%),
+      0 24px 72px -20px rgb(0 0 0 / 90%);
+  }
+
+  @supports not (
+      (-webkit-backdrop-filter: blur(1px)) or
+      (backdrop-filter: blur(1px))
+    ) {
+    background: var(--popover) !important;
+  }
+}
+
+@utility dialog-backdrop {
+  background: color-mix(in srgb, var(--background) 60%, transparent);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+
+  @variant dark {
+    background: color-mix(in srgb, var(--background) 64%, transparent);
+  }
+}
+
+/*
  * Code-surface tokens for the diff viewer.
  *
  * `@pierre/diffs` renders into a shadow root, so its internals are
@@ -13,6 +54,13 @@
  * a change row needs more of the accent in dark mode to read as tinted.
  */
 :root {
+  /* Command palette chrome — ported from t3code's dialog styling. */
+  --glass-blur: 12px;
+  --glass-opacity: 80%;
+  --glass-saturation: 1.14;
+  --command-shell-inset: 0.5rem;
+  --command-content-inset: 1rem;
+
   --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
   --code-foreground: var(--foreground);
 

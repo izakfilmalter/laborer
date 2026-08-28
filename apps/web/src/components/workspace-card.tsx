@@ -56,6 +56,7 @@ import { CardShell } from '@/components/card-shell'
 import { CopyableValue } from '@/components/copyable-value'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { EditTaskCardButton } from '@/components/edit-task-card-button'
+import { GitActionsControl } from '@/components/git-actions-control'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
@@ -723,6 +724,12 @@ function WorkspaceCard({
     <CardShell
       actions={
         <>
+          {/* Only until the work has a pull request: after that the PR badge
+              in the status rail is what speaks for the branch. */}
+          <GitActionsControl
+            hasPullRequest={workspace.prNumber !== null}
+            workspaceId={workspace.id}
+          />
           <WorkspaceSyncStatus workspaceId={workspace.id} />
           {!isRootWorkspace && showCreateSubWorkspaceAction && (
             <CreateWorkspaceForm

@@ -58,6 +58,11 @@
     "web-haptics": {
       "repository": "lochie/web-haptics",
       "description": "Use for WebHaptics APIs, framework integrations, implementation patterns, tests, and examples"
+    },
+    "collab-public": {
+      "repository": "collabs-inc/collab-public",
+      "branch": "main",
+      "description": "Use for Collaborator agent-development UX, Electron architecture, terminal orchestration, and canvas implementation patterns"
     }
   }
 }

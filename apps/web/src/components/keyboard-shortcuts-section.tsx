@@ -52,6 +52,13 @@ const SHORTCUT_GROUPS: readonly {
   readonly title: string
 }[] = [
   {
+    title: 'General',
+    rows: [
+      { label: 'Command palette', hint: keys('⌘', 'K') },
+      { label: 'Toggle task board', hint: keys('⇧', '⌘', 'K') },
+    ],
+  },
+  {
     title: 'Closing',
     rows: [
       {

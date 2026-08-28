@@ -52,6 +52,7 @@ import {
   NativeLaborerDatabase,
 } from '../services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../services/node-task-board-database.js'
+import { OpenCodeModels } from '../services/opencode-models.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { PreviewManager } from '../services/preview-manager.js'
 import { PreviewPortDiscovery } from '../services/preview-port-discovery.js'
@@ -1640,6 +1641,11 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'globalConfig.get': handleGlobalConfigGet,
     'globalConfig.update': handleGlobalConfigUpdate,
+    'opencode.models': () =>
+      Effect.gen(function* () {
+        const openCodeModels = yield* OpenCodeModels
+        return { models: yield* openCodeModels.list() }
+      }),
 
     // -------------------------------------------------------------------
 
@@ -1737,6 +1743,16 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
       Effect.gen(function* () {
         const workspaceSyncService = yield* WorkspaceSyncService
         return yield* workspaceSyncService.pull(workspaceId)
+      }),
+    'workspace.commit': ({ message, workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.commit(workspaceId, message)
+      }),
+    'workspace.createPr': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspaceSyncService = yield* WorkspaceSyncService
+        return yield* workspaceSyncService.createPullRequest(workspaceId)
       }),
     // -------------------------------------------------------------------
     // Terminal RPCs (Issue #50-59, #143)

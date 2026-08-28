@@ -71,5 +71,6 @@ OpenCode-managed references are readable under `~/.local/share/opencode/repos/`:
 - `@xterm` — `github.com/xtermjs/xterm.js`
 - `@tanstack-db` — `github.com/TanStack/db`
 - `@web-haptics` — `github.com/lochie/web-haptics`
+- `@collab-public` — `github.com/collabs-inc/collab-public`
 
 Use them for specifications, implementation patterns, tests, and examples. Prefer this repository's installed dependency versions when APIs differ.

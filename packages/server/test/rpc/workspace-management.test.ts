@@ -1037,6 +1037,8 @@ describe('LaborerRpcs workspace management', () => {
         assert.deepStrictEqual(result, {
           aheadCount: 1,
           behindCount: 1,
+          hasChanges: false,
+          hasUpstream: true,
         })
       })
     )
@@ -1079,6 +1081,8 @@ describe('LaborerRpcs workspace management', () => {
         assert.deepStrictEqual(result, {
           aheadCount: 0,
           behindCount: 0,
+          hasChanges: false,
+          hasUpstream: true,
         })
         assert.strictEqual(git('rev-list --count main', remotePath), '2')
       })
@@ -1129,6 +1133,8 @@ describe('LaborerRpcs workspace management', () => {
         assert.deepStrictEqual(result, {
           aheadCount: 0,
           behindCount: 0,
+          hasChanges: false,
+          hasUpstream: true,
         })
         assert.strictEqual(
           git('show HEAD:pulled.txt', localPath),

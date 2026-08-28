@@ -29,6 +29,7 @@ import {
   LaborerDatabase,
   LaborerDatabaseLive,
 } from './services/laborer-database.js'
+import { OpenCodeModels } from './services/opencode-models.js'
 import { PowerProfileService } from './services/power-profile.js'
 import { PrTaskTransitions } from './services/pr-task-transitions.js'
 import { PrWatcher } from './services/pr-watcher.js'
@@ -240,6 +241,9 @@ const provideInfrastructureCore = <ROut, RIn>(
     // A cached `gh pr list` per project root, on the same terms: nothing runs
     // until the sidebar asks for an author's open pull requests.
     Layer.provideMerge(GithubPullRequests.layer),
+    // A cached `opencode2 models` listing, on the same terms: nothing is
+    // spawned until settings asks which models the operator can pick.
+    Layer.provideMerge(OpenCodeModels.layer),
     Layer.provideMerge(PowerProfileService.layer),
     Layer.provideMerge(PreviewManager.layer),
     Layer.provideMerge(PreviewPortDiscovery.live),

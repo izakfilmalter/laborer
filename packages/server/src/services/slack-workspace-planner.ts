@@ -1,20 +1,19 @@
 import { RpcError } from '@laborer/shared/rpc'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { Effect } from 'effect'
-import { spawn } from '../lib/spawn.js'
+import {
+  buildOpenCodeCommand,
+  executeOpenCodeProcess,
+  extractOpenCodeText,
+  stripJsonCodeFence,
+} from './opencode-runner.js'
 
 const OPENCODE_MODEL = 'openai/gpt-5.6-sol-fast'
 const OPENCODE_TIMEOUT_MS = 180_000
-const PROCESS_KILL_GRACE_MS = 2000
-const MAX_ERROR_LENGTH = 2000
-const MAX_STDERR_BYTES = 64 * 1024
-const MAX_STDOUT_BYTES = 1024 * 1024
 const MAX_SLUG_LENGTH = 48
 const SLACK_NAME_PREFIX_PATTERN = /^slack\s*[/-]+\s*/u
 const SLUG_INVALID_CHARACTERS_PATTERN = /[^a-z0-9]+/gu
 const SLUG_BOUNDARY_HYPHENS_PATTERN = /^-+|-+$/gu
-const JSON_CODE_FENCE_START_PATTERN = /^```(?:json)?\s*/iu
-const JSON_CODE_FENCE_END_PATTERN = /\s*```$/u
 
 type SlackWorkType = 'bug' | 'feature'
 
@@ -23,14 +22,6 @@ interface SlackWorkspacePlan {
   readonly initialPrompt: string
   readonly title: string
   readonly workType: SlackWorkType
-}
-
-interface OpenCodeTextEvent {
-  readonly part?: {
-    readonly text?: unknown
-    readonly type?: unknown
-  }
-  readonly type?: unknown
 }
 
 interface RawSlackWorkspacePlan {
@@ -83,32 +74,6 @@ const normalizeWorkspaceName = (value: string): string => {
   return `slack/${slug}`
 }
 
-const extractOpenCodeText = (stdout: string): string => {
-  const textParts: string[] = []
-
-  for (const line of stdout.split('\n')) {
-    if (!line.trimStart().startsWith('{')) {
-      continue
-    }
-
-    try {
-      const event = JSON.parse(line) as OpenCodeTextEvent
-      if (
-        event.type === 'text' &&
-        event.part?.type === 'text' &&
-        typeof event.part.text === 'string'
-      ) {
-        textParts.push(event.part.text)
-      }
-    } catch {
-      // OpenCode emits JSONL. Ignore malformed diagnostic lines and continue
-      // looking for valid text events.
-    }
-  }
-
-  return textParts.join('\n').trim()
-}
-
 const buildInitialPrompt = (
   workType: SlackWorkType,
   slackUrl: string,
@@ -153,10 +118,7 @@ const parseSlackWorkspacePlan = (
   assistantText: string,
   slackUrl: string
 ): SlackWorkspacePlan => {
-  const jsonText = assistantText
-    .trim()
-    .replace(JSON_CODE_FENCE_START_PATTERN, '')
-    .replace(JSON_CODE_FENCE_END_PATTERN, '')
+  const jsonText = stripJsonCodeFence(assistantText)
 
   let rawPlan: RawSlackWorkspacePlan
   try {
@@ -230,65 +192,8 @@ Return exactly one valid JSON object and no markdown or commentary:
 }
 `.trim()
 
-const buildOpenCodeArgs = (prompt: string): string[] => [
-  'opencode2',
-  'run',
-  '--format',
-  'json',
-  '--model',
-  OPENCODE_MODEL,
-  '--auto',
-  prompt,
-]
-
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, milliseconds)
-  })
-
-const readBoundedText = async (
-  stream: ReadableStream<Uint8Array>,
-  maximumBytes: number,
-  label: string
-): Promise<string> => {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let bytesRead = 0
-  let text = ''
-  try {
-    while (true) {
-      const result = await reader.read()
-      if (result.done) {
-        return text + decoder.decode()
-      }
-      bytesRead += result.value.byteLength
-      if (bytesRead > maximumBytes) {
-        throw new Error(`OpenCode ${label} exceeded the output limit.`)
-      }
-      text += decoder.decode(result.value, { stream: true })
-    }
-  } finally {
-    reader.releaseLock()
-  }
-}
-
-const terminateProcess = async (
-  childProcess: ReturnType<typeof spawn>
-): Promise<void> => {
-  childProcess.kill('SIGTERM')
-  const exitedDuringGracePeriod = await Promise.race([
-    childProcess.exited.then(
-      () => true,
-      () => true
-    ),
-    delay(PROCESS_KILL_GRACE_MS).then(() => false),
-  ])
-
-  if (!exitedDuringGracePeriod) {
-    childProcess.kill('SIGKILL')
-    await childProcess.exited.catch(() => undefined)
-  }
-}
+const buildOpenCodeArgs = (prompt: string): string[] =>
+  buildOpenCodeCommand(OPENCODE_MODEL, prompt)
 
 interface PlannerProcessOptions {
   readonly argv: readonly string[]
@@ -297,66 +202,26 @@ interface PlannerProcessOptions {
   readonly timeoutMs?: number
 }
 
-const executePlannerProcess = async ({
+/**
+ * Run the planner's OpenCode child, naming the deadline in Slack's terms.
+ *
+ * Reading a thread is the slowest thing mission control asks a model to do,
+ * so it keeps the generous three-minute budget the shared runner does not
+ * impose on shorter questions.
+ */
+const executePlannerProcess = ({
   argv,
   cwd,
   signal,
   timeoutMs = OPENCODE_TIMEOUT_MS,
-}: PlannerProcessOptions): Promise<string> => {
-  const childProcess = spawn([...argv], cwd === undefined ? {} : { cwd })
-  let termination: Promise<void> | undefined
-  const startTermination = (): Promise<void> => {
-    termination ??= terminateProcess(childProcess)
-    return termination
-  }
-  const abortProcess = (): void => {
-    startTermination().catch(() => undefined)
-  }
-  signal.addEventListener('abort', abortProcess, { once: true })
-
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => {
-      // Reject before the SIGTERM lands. A terminated OpenCode exits with a
-      // nonzero status during the kill grace period, and that exit must not
-      // win the race below and masquerade as a process failure — the card
-      // badge then blames OpenCode ("exited with status 130") for what was a
-      // deadline.
-      startTermination().catch(() => undefined)
-      reject(new Error('OpenCode timed out while reading Slack.'))
-    }, timeoutMs)
+}: PlannerProcessOptions): Promise<string> =>
+  executeOpenCodeProcess({
+    argv,
+    cwd,
+    signal,
+    timeoutMessage: 'OpenCode timed out while reading Slack.',
+    timeoutMs,
   })
-
-  try {
-    const result = await Promise.race([
-      Promise.all([
-        childProcess.exited,
-        readBoundedText(childProcess.stdout, MAX_STDOUT_BYTES, 'stdout'),
-        readBoundedText(childProcess.stderr, MAX_STDERR_BYTES, 'stderr'),
-      ]),
-      timeoutPromise,
-    ])
-    const [exitCode, stdout, stderr] = result
-
-    if (exitCode !== 0) {
-      const detail = stderr.trim().slice(-MAX_ERROR_LENGTH)
-      throw new Error(
-        detail || `OpenCode exited with status ${String(exitCode)}.`
-      )
-    }
-
-    return stdout
-  } catch (error) {
-    await startTermination().catch(() => undefined)
-    throw error
-  } finally {
-    signal.removeEventListener('abort', abortProcess)
-    if (timeout !== undefined) {
-      clearTimeout(timeout)
-    }
-    await termination
-  }
-}
 
 /**
  * Read the Slack thread with OpenCode and turn it into a workspace plan.
@@ -412,7 +277,6 @@ export {
   buildOpenCodeArgs,
   buildSlackPlannerPrompt,
   executePlannerProcess,
-  extractOpenCodeText,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,
   planSlackWorkspace,

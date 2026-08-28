@@ -39,14 +39,8 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
-import {
-  FileCode2,
-  FileDiff,
-  Files,
-  GitPullRequest,
-  Globe2,
-  Plus,
-} from 'lucide-react'
+import { FileDiff, Files, GitPullRequest, Globe2, Plus } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import {
   type ReactElement,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -57,6 +51,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { PierreEntryIcon } from '@/components/files/pierre-icons'
 import { resolvePullRequestState } from '@/components/pull-request/presentation'
 import type { RightPanelSurface } from '@/right-panel-store'
 import { PanelTabCloseButton } from './panel-tab-close-button'
@@ -95,7 +90,7 @@ interface RightPanelTabsProps {
 
 const SURFACE_DISABLED_REASONS = {
   browser: 'Browser previews are only available in the desktop app.',
-  files: 'The file explorer is coming soon.',
+  files: 'Files are only available inside a workspace.',
   diff: 'Diff is only available inside a workspace.',
   pullRequest: "This workspace's branch has no pull request yet.",
 } as const
@@ -116,7 +111,7 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
 /** One-line unavailability hints for the empty-state cards. */
 const SURFACE_UNAVAILABLE_HINTS = {
   browser: 'Only available in the desktop app.',
-  files: 'Coming soon.',
+  files: 'Available inside a workspace.',
   diff: 'Available inside a workspace.',
   pullRequest: 'No pull request on this branch yet.',
 } as const
@@ -507,6 +502,7 @@ function SurfaceIcon({
   surface: RightPanelSurface
   pullRequestStatus?: PullRequestTabStatus | null | undefined
 }) {
+  const { resolvedTheme } = useTheme()
   switch (surface.kind) {
     case 'preview':
       return <Globe2 className="size-3 shrink-0" />
@@ -515,7 +511,14 @@ function SurfaceIcon({
     case 'files':
       return <Files className="size-3 shrink-0" />
     case 'file':
-      return <FileCode2 className="size-3 shrink-0" />
+      return (
+        <PierreEntryIcon
+          className="size-3"
+          kind="file"
+          pathValue={surface.relativePath}
+          theme={resolvedTheme === 'light' ? 'light' : 'dark'}
+        />
+      )
     case 'pull-request': {
       // The tab mirrors the PR's state the way t3's compact chrome did:
       // merged violet, closed red, draft zinc, open emerald.

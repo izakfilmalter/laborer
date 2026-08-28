@@ -104,9 +104,13 @@ function nextZoom(current: number, direction: 'in' | 'out'): number {
 export class PreviewManager {
   readonly #tabs = new Map<string, ManagedPreviewTab>()
   readonly #browserSessions = new BrowserSession()
-  readonly #automation = new PreviewAutomation((owner, tabId) =>
-    this.#requireGuest(owner, tabId)
-  )
+  readonly #automation = new PreviewAutomation({
+    getPointerOwner: (tabId) => {
+      const tab = this.#tabs.get(tabId)
+      return tab && !tab.owner.isDestroyed() ? tab.owner : null
+    },
+    requireGuest: (owner, tabId) => this.#requireGuest(owner, tabId),
+  })
   readonly #artifacts: PreviewArtifacts
   readonly #capture: PreviewCapture
   readonly #guests: PreviewGuestLifecycle
@@ -415,7 +419,11 @@ export class PreviewManager {
   async openPictureInPicture(owner: WebContents, tabId: string): Promise<void> {
     await this.#capture.openPictureInPicture(
       tabId,
-      this.#requireGuest(owner, tabId)
+      this.#requireGuest(owner, tabId),
+      () =>
+        this.#update(this.#requireTab(owner, tabId), {
+          pictureInPicture: true,
+        })
     )
   }
 

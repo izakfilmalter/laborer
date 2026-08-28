@@ -30,17 +30,23 @@ const KEY_MODIFIERS = {
 >
 
 type RequireGuest = (owner: WebContents, tabId: string) => WebContents
+type GetPointerOwner = (tabId: string) => WebContents | null
 type DebuggerSend = (
   method: string,
   params?: Record<string, unknown>
 ) => Promise<unknown>
 
 export class PreviewAutomation {
+  readonly #getPointerOwner: GetPointerOwner
   readonly #requireGuest: RequireGuest
   #pointerSequence = 0
 
-  constructor(requireGuest: RequireGuest) {
-    this.#requireGuest = requireGuest
+  constructor(options: {
+    getPointerOwner: GetPointerOwner
+    requireGuest: RequireGuest
+  }) {
+    this.#getPointerOwner = options.getPointerOwner
+    this.#requireGuest = options.requireGuest
   }
 
   openDevTools(owner: WebContents, tabId: string): void {
@@ -153,9 +159,9 @@ export class PreviewAutomation {
       if (!(point && Number.isFinite(point.x) && Number.isFinite(point.y))) {
         throw new Error('Preview automation target was not found')
       }
-      this.#emitPointer(owner, tabId, 'move', point.x, point.y)
+      this.#emitPointer(tabId, 'move', point.x, point.y)
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
-      this.#emitPointer(owner, tabId, 'click', point.x, point.y)
+      this.#emitPointer(tabId, 'click', point.x, point.y)
       await send('Input.dispatchMouseEvent', {
         button: 'left',
         clickCount: 1,
@@ -358,13 +364,13 @@ export class PreviewAutomation {
   }
 
   #emitPointer(
-    owner: WebContents,
     tabId: string,
     phase: 'click' | 'move',
     x: number,
     y: number
   ): void {
-    if (owner.isDestroyed()) {
+    const owner = this.#getPointerOwner(tabId)
+    if (!owner) {
       return
     }
     const event: DesktopPreviewPointerEvent = {

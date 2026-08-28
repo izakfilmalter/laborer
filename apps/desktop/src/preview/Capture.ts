@@ -46,7 +46,11 @@ export class PreviewCapture {
     this.#setPictureInPicture = options.setPictureInPicture
   }
 
-  async openPictureInPicture(tabId: string, guest: WebContents): Promise<void> {
+  async openPictureInPicture(
+    tabId: string,
+    guest: WebContents,
+    markOpen: () => void
+  ): Promise<void> {
     const existing = this.#windows.get(tabId)
     if (existing && !existing.isDestroyed()) {
       existing.showInactive()
@@ -89,7 +93,7 @@ export class PreviewCapture {
     })
     await window.loadURL(buildPictureInPictureDataUrl())
     this.#startFrameCapture(tabId, 'picture-in-picture')
-    this.#setPictureInPicture(tabId, true)
+    markOpen()
     window.showInactive()
   }
 

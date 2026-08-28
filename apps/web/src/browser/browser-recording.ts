@@ -9,6 +9,7 @@ interface Recording {
   readonly chunks: Blob[]
   readonly context: CanvasRenderingContext2D
   readonly recorder: MediaRecorder
+  readonly startedAt: string
   readonly tabId: string
 }
 
@@ -65,9 +66,15 @@ const preferredMimeType = () => {
   )
 }
 
-export async function startBrowserRecording(tabId: string): Promise<void> {
+export async function startBrowserRecording(tabId: string): Promise<string> {
   const preview = window.desktopBridge?.preview
-  if (!preview || active) {
+  if (!preview) {
+    throw new Error('Browser recording is unavailable.')
+  }
+  if (active?.tabId === tabId) {
+    return active.startedAt
+  }
+  if (active) {
     throw new Error('Browser recording is unavailable or already active.')
   }
   const canvas = document.createElement('canvas')
@@ -85,13 +92,16 @@ export async function startBrowserRecording(tabId: string): Promise<void> {
       chunks.push(event.data)
     }
   })
-  active = { canvas, chunks, context, recorder, tabId }
+  const startedAt = new Date().toISOString()
+  active = { canvas, chunks, context, recorder, startedAt, tabId }
   unsubscribeFrames ??= preview.recording.onFrame(drawFrame)
   try {
     await preview.recording.startScreencast(tabId)
     recorder.start(1000)
     useBrowserRecordingStore.getState().setActiveTabId(tabId)
+    return startedAt
   } catch (error) {
+    await preview.recording.stopScreencast(tabId).catch(() => undefined)
     active = null
     unsubscribeFrames?.()
     unsubscribeFrames = null
@@ -99,10 +109,15 @@ export async function startBrowserRecording(tabId: string): Promise<void> {
   }
 }
 
-export async function stopBrowserRecording(): Promise<DesktopPreviewRecordingArtifact | null> {
+export async function stopBrowserRecording(
+  tabId?: string
+): Promise<DesktopPreviewRecordingArtifact | null> {
   const preview = window.desktopBridge?.preview
   const recording = active
   if (!(preview && recording)) {
+    return null
+  }
+  if (tabId !== undefined && recording.tabId !== tabId) {
     return null
   }
   active = null
@@ -121,4 +136,20 @@ export async function stopBrowserRecording(): Promise<DesktopPreviewRecordingArt
     recording.recorder.mimeType,
     new Uint8Array(await blob.arrayBuffer())
   )
+}
+
+export async function cancelBrowserRecording(tabId: string): Promise<void> {
+  const preview = window.desktopBridge?.preview
+  const recording = active
+  if (!(preview && recording?.tabId === tabId)) {
+    return
+  }
+  active = null
+  useBrowserRecordingStore.getState().setActiveTabId(null)
+  await preview.recording.stopScreencast(tabId).catch(() => undefined)
+  if (recording.recorder.state !== 'inactive') {
+    recording.recorder.stop()
+  }
+  unsubscribeFrames?.()
+  unsubscribeFrames = null
 }

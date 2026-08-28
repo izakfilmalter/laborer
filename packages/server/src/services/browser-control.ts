@@ -150,7 +150,15 @@ export class BrowserControl extends Context.Service<
           }
           const pending = new Map(current.pending)
           pending.delete(response.requestId)
-          return [value, { ...current, pending }] as const
+          const owners = new Map(current.owners)
+          if (
+            ![...pending.values()].some(
+              (entry) => entry.host.workspaceId === value.host.workspaceId
+            )
+          ) {
+            owners.delete(value.host.workspaceId)
+          }
+          return [value, { ...current, owners, pending }] as const
         })
         if (!entry) {
           return

@@ -1,6 +1,15 @@
 import { realpathSync } from 'node:fs'
 import { BrowserAgentRpcs } from '@laborer/shared/browser-agent-rpc'
-import { BrowserContextItem } from '@laborer/shared/browser-control'
+import {
+  BrowserContextItem,
+  BrowserControlNavigateInput,
+  BrowserControlOpenInput,
+  BrowserControlRecordingArtifact,
+  BrowserControlRecordingStatus,
+  BrowserControlResizeInput,
+  BrowserControlResizeResult,
+  BrowserControlStatus,
+} from '@laborer/shared/browser-control'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Context, Effect, Layer, Schema } from 'effect'
 import { Tool, Toolkit } from 'effect/unstable/ai'
@@ -18,7 +27,46 @@ const PreviewStatus = Tool.make('preview_status', {
   description:
     'Report the current collaborative browser tab URL, title, visibility, and loading state. Pass tab_id to inspect a specific tab.',
   parameters: Schema.Struct(Target),
-  success: Schema.Unknown,
+  success: BrowserControlStatus,
+  failure: AgentTaskError,
+})
+const PreviewOpen = Tool.make('preview_open', {
+  description:
+    'Initialize a collaborative browser tab. Reuses the current tab by default; set reuse_existing_tab=false to create another tab.',
+  parameters: Schema.Struct({
+    ...Target,
+    url: BrowserControlOpenInput.fields.url,
+    open: BrowserControlOpenInput.fields.open,
+    reuse_existing_tab: BrowserControlOpenInput.fields.reuseExistingTab,
+  }),
+  success: BrowserControlStatus,
+  failure: AgentTaskError,
+})
+const PreviewNavigate = Tool.make('preview_navigate', {
+  description:
+    'Navigate the selected collaborative browser tab and optionally wait for load or DOM readiness.',
+  parameters: Schema.Struct({
+    ...Target,
+    url: BrowserControlNavigateInput.fields.url,
+    readiness: BrowserControlNavigateInput.fields.readiness,
+    timeout_ms: Timeout,
+  }),
+  success: BrowserControlStatus,
+  failure: AgentTaskError,
+})
+const PreviewResize = Tool.make('preview_resize', {
+  description:
+    'Resize the selected browser tab using fill, exact freeform dimensions, or a named device preset.',
+  parameters: Schema.Struct({
+    ...Target,
+    mode: BrowserControlResizeInput.fields.mode,
+    preset: BrowserControlResizeInput.fields.preset,
+    width: BrowserControlResizeInput.fields.width,
+    height: BrowserControlResizeInput.fields.height,
+    orientation: BrowserControlResizeInput.fields.orientation,
+    timeout_ms: Timeout,
+  }),
+  success: BrowserControlResizeResult,
   failure: AgentTaskError,
 })
 const PreviewSnapshot = Tool.make('preview_snapshot', {
@@ -108,6 +156,19 @@ const PreviewWaitFor = Tool.make('preview_wait_for', {
   success: ActionResult,
   failure: AgentTaskError,
 })
+const PreviewRecordingStart = Tool.make('preview_recording_start', {
+  description: 'Start recording the selected collaborative browser tab.',
+  parameters: Schema.Struct(Target),
+  success: BrowserControlRecordingStatus,
+  failure: AgentTaskError,
+})
+const PreviewRecordingStop = Tool.make('preview_recording_stop', {
+  description:
+    'Stop recording the selected collaborative browser tab and save a local evidence artifact.',
+  parameters: Schema.Struct(Target),
+  success: BrowserControlRecordingArtifact,
+  failure: AgentTaskError,
+})
 const ListBrowserContext = Tool.make('list_browser_context', {
   description:
     'List pending structured browser annotations delivered by the human for this workspace.',
@@ -124,6 +185,9 @@ const ConsumeBrowserContext = Tool.make('consume_browser_context', {
 
 export const BrowserToolkit = Toolkit.make(
   PreviewStatus,
+  PreviewOpen,
+  PreviewNavigate,
+  PreviewResize,
   PreviewSnapshot,
   PreviewClick,
   PreviewType,
@@ -131,6 +195,8 @@ export const BrowserToolkit = Toolkit.make(
   PreviewScroll,
   PreviewEvaluate,
   PreviewWaitFor,
+  PreviewRecordingStart,
+  PreviewRecordingStop,
   ListBrowserContext,
   ConsumeBrowserContext
 )
@@ -220,13 +286,18 @@ const invoke = (
   client: DaemonClient,
   operation:
     | 'status'
+    | 'open'
+    | 'navigate'
+    | 'resize'
     | 'snapshot'
     | 'click'
     | 'type'
     | 'press'
     | 'scroll'
     | 'evaluate'
-    | 'waitFor',
+    | 'waitFor'
+    | 'recordingStart'
+    | 'recordingStop',
   values: { readonly [key: string]: unknown }
 ) =>
   Effect.gen(function* () {
@@ -243,7 +314,24 @@ export const BrowserToolkitHandlers = BrowserToolkit.toLayer(
   Effect.gen(function* () {
     const { client } = yield* BrowserAgentClient
     return BrowserToolkit.of({
-      preview_status: (input) => invoke(client, 'status', input ?? {}),
+      preview_status: (input) =>
+        invoke(client, 'status', input ?? {}).pipe(
+          Effect.map((result) => result as typeof BrowserControlStatus.Type)
+        ),
+      preview_open: (input) =>
+        invoke(client, 'open', input).pipe(
+          Effect.map((result) => result as typeof BrowserControlStatus.Type)
+        ),
+      preview_navigate: (input) =>
+        invoke(client, 'navigate', input).pipe(
+          Effect.map((result) => result as typeof BrowserControlStatus.Type)
+        ),
+      preview_resize: (input) =>
+        invoke(client, 'resize', input).pipe(
+          Effect.map(
+            (result) => result as typeof BrowserControlResizeResult.Type
+          )
+        ),
       preview_snapshot: (input) => invoke(client, 'snapshot', input ?? {}),
       preview_click: (input) =>
         invoke(client, 'click', input).pipe(Effect.as({})),
@@ -259,6 +347,18 @@ export const BrowserToolkitHandlers = BrowserToolkit.toLayer(
         ),
       preview_wait_for: (input) =>
         invoke(client, 'waitFor', input).pipe(Effect.as({})),
+      preview_recording_start: (input) =>
+        invoke(client, 'recordingStart', input ?? {}).pipe(
+          Effect.map(
+            (result) => result as typeof BrowserControlRecordingStatus.Type
+          )
+        ),
+      preview_recording_stop: (input) =>
+        invoke(client, 'recordingStop', input ?? {}).pipe(
+          Effect.map(
+            (result) => result as typeof BrowserControlRecordingArtifact.Type
+          )
+        ),
       list_browser_context: () =>
         currentWorkspaceId.pipe(
           Effect.flatMap((workspaceId) =>

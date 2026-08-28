@@ -20,10 +20,14 @@
  * The component renders nothing while the panel is hidden (`isOpen` false);
  * tab state survives in the store, so reopening restores the same tabs.
  */
+
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { PullRequestState } from '@laborer/shared/rpc'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useCallback, useMemo } from 'react'
+import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import { FilePreviewPanel } from '@/components/files/file-preview-panel'
+import { PreviewPanel } from '@/components/preview/preview-panel'
 import { PullRequestPanel } from '@/components/pull-request/detail-panel'
 import {
   projectCollection,
@@ -31,6 +35,7 @@ import {
   workspaceViewsFromRows,
 } from '@/db/shared-state'
 import { DiffPane } from '@/panes/diff-pane'
+import { usePreviewStateStore } from '@/preview-state-store'
 import {
   type RightPanelSurface,
   selectWorkspaceRightPanelState,
@@ -104,15 +109,7 @@ function useWorkspacePullRequestStatus(
   }, [projects, tasks, workspaceId])
 }
 
-function SurfaceUnavailable({ label }: { readonly label: string }) {
-  return (
-    <div className="flex flex-1 items-center justify-center">
-      <p className="text-muted-foreground text-sm">
-        {label} is not available yet.
-      </p>
-    </div>
-  )
-}
+const closePreviewMutation = BrowserDaemonClient.mutation('preview.close')
 
 export function WorkspaceRightPanel({
   workspaceId,
@@ -129,6 +126,7 @@ export function WorkspaceRightPanel({
   const pullRequestNumber = useWorkspacePullRequestNumber(workspaceId)
   const pullRequestStatus = useWorkspacePullRequestStatus(workspaceId)
   const projectName = useWorkspaceProjectName(workspaceId)
+  const closePreview = useAtomSet(closePreviewMutation, { mode: 'promise' })
 
   const activeSurface = useMemo(
     () =>
@@ -142,30 +140,65 @@ export function WorkspaceRightPanel({
   const handleActivate = useCallback(
     (surface: RightPanelSurface) => {
       store().activateSurface(workspaceId, surface.id)
+      if (surface.kind === 'preview' && surface.resourceId) {
+        usePreviewStateStore
+          .getState()
+          .setActive(workspaceId, surface.resourceId)
+      }
     },
     [workspaceId]
+  )
+  const closeBrowserResources = useCallback(
+    (surfaces: readonly RightPanelSurface[]) => {
+      for (const surface of surfaces) {
+        if (surface.kind !== 'preview' || !surface.resourceId) {
+          continue
+        }
+        const tabId = surface.resourceId
+        const snapshot =
+          usePreviewStateStore.getState().byWorkspaceId[workspaceId]?.sessions[
+            tabId
+          ]
+        usePreviewStateStore.getState().beginClose(workspaceId, tabId)
+        closePreview({
+          payload: { workspaceId, tabId },
+        }).catch(() => {
+          usePreviewStateStore
+            .getState()
+            .cancelClose(workspaceId, tabId, snapshot)
+        })
+      }
+    },
+    [closePreview, workspaceId]
   )
   const handleCloseSurface = useCallback(
     (surface: RightPanelSurface) => {
+      closeBrowserResources([surface])
       store().closeSurface(workspaceId, surface.id)
     },
-    [workspaceId]
+    [closeBrowserResources, workspaceId]
   )
   const handleCloseOtherSurfaces = useCallback(
     (surface: RightPanelSurface) => {
+      closeBrowserResources(
+        state.surfaces.filter((entry) => entry.id !== surface.id)
+      )
       store().closeOtherSurfaces(workspaceId, surface.id)
     },
-    [workspaceId]
+    [closeBrowserResources, state.surfaces, workspaceId]
   )
   const handleCloseSurfacesToRight = useCallback(
     (surface: RightPanelSurface) => {
+      const index = state.surfaces.findIndex((entry) => entry.id === surface.id)
+      closeBrowserResources(state.surfaces.slice(index + 1))
       store().closeSurfacesToRight(workspaceId, surface.id)
     },
-    [workspaceId]
+    [closeBrowserResources, state.surfaces, workspaceId]
   )
   const handleCloseAllSurfaces = useCallback(() => {
+    closeBrowserResources(state.surfaces)
     store().closeAllSurfaces(workspaceId)
-  }, [workspaceId])
+  }, [closeBrowserResources, state.surfaces, workspaceId])
   const handleAddDiff = useCallback(() => {
     store().open(workspaceId, 'diff')
   }, [workspaceId])
@@ -188,7 +221,7 @@ export function WorkspaceRightPanel({
   return (
     <RightPanelTabs
       activeSurfaceId={state.activeSurfaceId}
-      browserAvailable={false}
+      browserAvailable={Boolean(window.desktopBridge?.preview)}
       diffAvailable={true}
       filesAvailable={true}
       onActivate={handleActivate}
@@ -205,6 +238,7 @@ export function WorkspaceRightPanel({
       pullRequestStatus={pullRequestStatus}
       surfaces={state.surfaces}
       widthStorageKey={rightPanelWidthStorageKey(workspaceId)}
+      workspaceId={workspaceId}
     >
       {activeSurface ? (
         <ActiveSurfaceContent
@@ -244,7 +278,13 @@ function ActiveSurfaceContent({
     case 'pull-request':
       return <PullRequestPanel workspaceId={workspaceId} />
     case 'preview':
-      return <SurfaceUnavailable label="Browser" />
+      return (
+        <PreviewPanel
+          tabId={surface.resourceId}
+          visible
+          workspaceId={workspaceId}
+        />
+      )
     case 'files':
       return (
         <FilePreviewPanel

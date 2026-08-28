@@ -47,6 +47,7 @@ import {
   Code2,
   Eye,
   FolderTree,
+  Globe2,
   LoaderCircle,
   SquareArrowOutUpRight,
 } from 'lucide-react'
@@ -168,6 +169,13 @@ export function isWorkspaceImagePreviewPath(path: string): boolean {
   }
   return IMAGE_PREVIEW_EXTENSIONS.has(path.slice(dotIndex + 1).toLowerCase())
 }
+
+const BROWSER_PREVIEW_FILE_EXTENSION = /\.(?:html?|pdf)$/i
+const FILE_QUERY_OR_HASH = /[?#]/
+const isBrowserPreviewFile = (path: string): boolean =>
+  BROWSER_PREVIEW_FILE_EXTENSION.test(
+    path.split(FILE_QUERY_OR_HASH, 1)[0] ?? ''
+  )
 
 /** Mutation atoms shared across all panel instances. */
 const fileWriteMutation = LaborerClient.mutation('file.write')
@@ -858,6 +866,27 @@ export function FilePreviewPanel({
             />
             <TooltipContent>Open file in editor</TooltipContent>
           </Tooltip>
+          {isBrowserPreviewFile(relativePath) ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    aria-label="Open file in browser preview"
+                    className="shrink-0"
+                    disabled
+                    pressed={false}
+                    size="sm"
+                  >
+                    <Globe2 className="size-3.5" />
+                  </Toggle>
+                }
+              />
+              <TooltipContent>
+                Browser file preview needs a workspace asset URL from the
+                daemon.
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           {isMarkdown ? (
             <Tooltip>
               <TooltipTrigger

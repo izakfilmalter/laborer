@@ -10,6 +10,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import type { PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import { LaborerClient } from '@/atoms/laborer-client'
 import { AddProjectForm } from '@/components/add-project-form'
 import { TaskBoard } from '@/components/kanban/task-board'
@@ -55,6 +56,7 @@ import {
   resolveActiveWorkspaceId,
 } from '@/panels/window-layout-utils'
 import { getWorkspaceTileLeaves } from '@/panels/workspace-tile-utils'
+import { usePreviewStateStore } from '@/preview-state-store'
 import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
 import {
   CloseAppDialog,
@@ -85,6 +87,8 @@ export const Route = createFileRoute('/')({
 })
 
 const destroyWorkspaceMutation = LaborerClient.mutation('workspace.destroy')
+const closeWorkspacePreviewsMutation =
+  BrowserDaemonClient.mutation('preview.close')
 
 function HomeComponent() {
   const {
@@ -147,6 +151,9 @@ function HomeComponent() {
   const hasProjects = projectList.length > 0
 
   const destroyWorkspace = useAtomSet(destroyWorkspaceMutation, {
+    mode: 'promise',
+  })
+  const closeWorkspacePreviews = useAtomSet(closeWorkspacePreviewsMutation, {
     mode: 'promise',
   })
 
@@ -331,11 +338,17 @@ function HomeComponent() {
       return
     }
     const destroyedIds = destroyedWorkspaceKey.split('\n')
+    for (const workspaceId of destroyedIds) {
+      closeWorkspacePreviews({ payload: { workspaceId } }).catch(
+        () => undefined
+      )
+      usePreviewStateStore.getState().removeWorkspace(workspaceId)
+    }
     useRightPanelStore.getState().removeWorkspaces(destroyedIds)
     for (const workspaceId of destroyedIds) {
       window.localStorage.removeItem(rightPanelWidthStorageKey(workspaceId))
     }
-  }, [destroyedWorkspaceKey])
+  }, [closeWorkspacePreviews, destroyedWorkspaceKey])
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
   // state (not a ref) so that changes trigger a re-render, allowing the

@@ -1,3 +1,5 @@
+// biome-ignore-all lint/complexity/noVoid: native preview context-menu actions are intentionally best-effort.
+// biome-ignore-all lint/style/noNestedTernary: compact tab status rendering mirrors the source browser chrome.
 /**
  * Tab strip, add-surface menu, and empty-state launcher for the workspace
  * right panel. Ported from t3code's `RightPanelTabs`.
@@ -22,6 +24,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@laborer/ui/components/context-menu'
 import {
@@ -39,7 +42,15 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
-import { FileDiff, Files, GitPullRequest, Globe2, Plus } from 'lucide-react'
+import {
+  FileDiff,
+  Files,
+  GitPullRequest,
+  Globe2,
+  Plus,
+  Volume2,
+  VolumeX,
+} from 'lucide-react'
 import { useTheme } from 'next-themes'
 import {
   type ReactElement,
@@ -53,6 +64,12 @@ import {
 } from 'react'
 import { PierreEntryIcon } from '@/components/files/pierre-icons'
 import { resolvePullRequestState } from '@/components/pull-request/presentation'
+import {
+  emptyWorkspacePreviewState,
+  type PreviewDesktopOverlay,
+  previewRuntimeTabId,
+  usePreviewStateStore,
+} from '@/preview-state-store'
 import type { RightPanelSurface } from '@/right-panel-store'
 import { PanelTabCloseButton } from './panel-tab-close-button'
 import { RightPanelShell } from './right-panel-shell'
@@ -86,6 +103,7 @@ interface RightPanelTabsProps {
   readonly surfaces: readonly RightPanelSurface[]
   /** localStorage key this panel persists its width under. */
   readonly widthStorageKey: string
+  readonly workspaceId: string
 }
 
 const SURFACE_DISABLED_REASONS = {
@@ -473,7 +491,8 @@ function RightPanelEmptyState(props: {
 
 function surfaceTitle(
   surface: RightPanelSurface,
-  pullRequestNumber: number | null | undefined
+  pullRequestNumber: number | null | undefined,
+  browserTitle?: string
 ): string {
   switch (surface.kind) {
     case 'diff':
@@ -489,23 +508,35 @@ function surfaceTitle(
         ? 'Pull request'
         : `#${pullRequestNumber}`
     case 'preview':
-      return 'Browser'
+      return browserTitle || 'Browser'
     default:
       return surface satisfies never
   }
 }
 
 function SurfaceIcon({
+  browserOverlay,
   surface,
   pullRequestStatus,
 }: {
   surface: RightPanelSurface
+  browserOverlay?: PreviewDesktopOverlay | null | undefined
   pullRequestStatus?: PullRequestTabStatus | null | undefined
 }) {
   const { resolvedTheme } = useTheme()
   switch (surface.kind) {
     case 'preview':
-      return <Globe2 className="size-3 shrink-0" />
+      return browserOverlay?.favicon?.dataUrl ? (
+        <img
+          alt=""
+          className="size-3 shrink-0 rounded-sm"
+          height={12}
+          src={browserOverlay.favicon.dataUrl}
+          width={12}
+        />
+      ) : (
+        <Globe2 className="size-3 shrink-0" />
+      )
     case 'diff':
       return <FileDiff className="size-3 shrink-0" />
     case 'files':
@@ -540,6 +571,8 @@ function SurfaceIcon({
 /** One tab in the strip, wrapped in a right-click close context menu. */
 function RightPanelTab({
   active,
+  browserOverlay,
+  browserRuntimeTabId,
   onActivate,
   onCloseAll,
   onCloseOthers,
@@ -552,6 +585,8 @@ function RightPanelTab({
   title,
 }: {
   readonly active: boolean
+  readonly browserOverlay?: PreviewDesktopOverlay | null | undefined
+  readonly browserRuntimeTabId?: string | null
   readonly onActivate: () => void
   readonly onCloseAll: () => void
   readonly onCloseOthers: () => void
@@ -603,6 +638,7 @@ function RightPanelTab({
               onClick={onCloseSurface}
             >
               <SurfaceIcon
+                browserOverlay={browserOverlay}
                 pullRequestStatus={pullRequestStatus}
                 surface={surface}
               />
@@ -616,6 +652,13 @@ function RightPanelTab({
                     type="button"
                   >
                     <span className="truncate">{title}</span>
+                    {browserOverlay?.audible ? (
+                      browserOverlay.audioMuted ? (
+                        <VolumeX className="ml-1 size-3 shrink-0" />
+                      ) : (
+                        <Volume2 className="ml-1 size-3 shrink-0" />
+                      )
+                    ) : null}
                   </button>
                 }
               />
@@ -625,6 +668,22 @@ function RightPanelTab({
         }
       />
       <ContextMenuContent>
+        {surface.kind === 'preview' && browserRuntimeTabId ? (
+          <>
+            <ContextMenuItem
+              onClick={() =>
+                void window.desktopBridge?.preview?.setAudioMuted(
+                  browserRuntimeTabId,
+                  !(browserOverlay?.audioMuted ?? false)
+                )
+              }
+            >
+              {browserOverlay?.audioMuted ? <Volume2 /> : <VolumeX />}
+              {browserOverlay?.audioMuted ? 'Unmute site' : 'Mute site'}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
         <ContextMenuItem onClick={onCloseSurface}>Close</ContextMenuItem>
         <ContextMenuItem disabled={surfaceCount <= 1} onClick={onCloseOthers}>
           Close others
@@ -646,6 +705,10 @@ function RightPanelTab({
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null)
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false)
+  const previewState = usePreviewStateStore(
+    (state) =>
+      state.byWorkspaceId[props.workspaceId] ?? emptyWorkspacePreviewState
+  )
 
   const addSurfaceActions = [
     {
@@ -727,22 +790,51 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             className="flex h-full w-max min-w-full items-center gap-1"
             ref={tabListRef}
           >
-            {props.surfaces.map((surface, surfaceIndex) => (
-              <RightPanelTab
-                active={surface.id === props.activeSurfaceId}
-                key={surface.id}
-                onActivate={() => props.onActivate(surface)}
-                onCloseAll={props.onCloseAllSurfaces}
-                onCloseOthers={() => props.onCloseOtherSurfaces(surface)}
-                onCloseSurface={() => props.onCloseSurface(surface)}
-                onCloseToRight={() => props.onCloseSurfacesToRight(surface)}
-                pullRequestStatus={props.pullRequestStatus}
-                surface={surface}
-                surfaceCount={props.surfaces.length}
-                surfaceIndex={surfaceIndex}
-                title={surfaceTitle(surface, props.pullRequestNumber)}
-              />
-            ))}
+            {props.surfaces.map((surface, surfaceIndex) => {
+              const browserSnapshot =
+                surface.kind === 'preview' && surface.resourceId
+                  ? previewState.sessions[surface.resourceId]
+                  : null
+              const browserOverlay =
+                surface.kind === 'preview' && surface.resourceId
+                  ? previewState.desktopByTabId[surface.resourceId]
+                  : null
+              const browserTitle =
+                browserSnapshot && browserSnapshot.navStatus._tag !== 'Idle'
+                  ? browserSnapshot.navStatus.title ||
+                    browserSnapshot.navStatus.url
+                  : undefined
+              const browserRuntimeTabId =
+                surface.kind === 'preview' && surface.resourceId
+                  ? previewRuntimeTabId(
+                      props.workspaceId,
+                      previewState.serverEpoch,
+                      surface.resourceId
+                    )
+                  : null
+              return (
+                <RightPanelTab
+                  active={surface.id === props.activeSurfaceId}
+                  browserOverlay={browserOverlay}
+                  browserRuntimeTabId={browserRuntimeTabId}
+                  key={surface.id}
+                  onActivate={() => props.onActivate(surface)}
+                  onCloseAll={props.onCloseAllSurfaces}
+                  onCloseOthers={() => props.onCloseOtherSurfaces(surface)}
+                  onCloseSurface={() => props.onCloseSurface(surface)}
+                  onCloseToRight={() => props.onCloseSurfacesToRight(surface)}
+                  pullRequestStatus={props.pullRequestStatus}
+                  surface={surface}
+                  surfaceCount={props.surfaces.length}
+                  surfaceIndex={surfaceIndex}
+                  title={surfaceTitle(
+                    surface,
+                    props.pullRequestNumber,
+                    browserTitle
+                  )}
+                />
+              )
+            })}
             {props.surfaces.length > 0 ? (
               <DropdownMenu
                 onOpenChange={setAddSurfaceMenuOpen}

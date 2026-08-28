@@ -82,11 +82,17 @@ export function dispatchMenuAction(
  */
 export function configureApplicationMenu(
   getMainWindow: () => BrowserWindow | null,
-  createWindowFn?: CreateWindowFn
+  createWindowFn?: CreateWindowFn,
+  zoomMainWindow?: (direction: 'in' | 'out' | 'reset') => void
 ): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
-      buildApplicationMenuTemplate(getMainWindow, createWindowFn)
+      buildApplicationMenuTemplate(
+        getMainWindow,
+        createWindowFn,
+        process.platform,
+        zoomMainWindow
+      )
     )
   )
 }
@@ -94,7 +100,8 @@ export function configureApplicationMenu(
 export function buildApplicationMenuTemplate(
   getMainWindow: () => BrowserWindow | null,
   createWindowFn?: CreateWindowFn,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  zoomMainWindow?: (direction: 'in' | 'out' | 'reset') => void
 ): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = []
 
@@ -188,7 +195,34 @@ export function buildApplicationMenuTemplate(
   // Standard role menus
   template.push(
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    zoomMainWindow
+      ? {
+          label: 'View',
+          submenu: [
+            { role: 'reload' },
+            { role: 'forceReload' },
+            { role: 'toggleDevTools' },
+            { type: 'separator' },
+            {
+              label: 'Actual Size',
+              accelerator: 'CmdOrCtrl+0',
+              click: () => zoomMainWindow('reset'),
+            },
+            {
+              label: 'Zoom In',
+              accelerator: 'CmdOrCtrl+Plus',
+              click: () => zoomMainWindow('in'),
+            },
+            {
+              label: 'Zoom Out',
+              accelerator: 'CmdOrCtrl+-',
+              click: () => zoomMainWindow('out'),
+            },
+            { type: 'separator' },
+            { role: 'togglefullscreen' },
+          ],
+        }
+      : { role: 'viewMenu' },
     // Explicit Window menu instead of `{ role: 'windowMenu' }` because
     // Electron's built-in windowMenu on macOS includes a native "New Tab"
     // item bound to Cmd+T at the Chromium level, which fires before the

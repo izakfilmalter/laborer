@@ -162,6 +162,350 @@ export interface WorkspaceNotificationContext {
 }
 
 // ---------------------------------------------------------------------------
+// Desktop browser preview types
+// ---------------------------------------------------------------------------
+
+export type DesktopPreviewColorScheme = 'system' | 'light' | 'dark'
+
+export type DesktopPreviewNavStatus =
+  | { readonly kind: 'Idle' }
+  | { readonly kind: 'Loading'; readonly title: string; readonly url: string }
+  | { readonly kind: 'Success'; readonly title: string; readonly url: string }
+  | {
+      readonly kind: 'LoadFailed'
+      readonly code: number
+      readonly description: string
+      readonly title: string
+      readonly url: string
+    }
+
+export interface DesktopPreviewFavicon {
+  readonly capturedAt: number
+  readonly dataUrl: string
+  readonly pageUrl: string
+}
+
+export interface DesktopPreviewTabState {
+  readonly audible: boolean
+  readonly audioMuted: boolean
+  readonly canGoBack: boolean
+  readonly canGoForward: boolean
+  readonly colorScheme: DesktopPreviewColorScheme
+  readonly controller: 'agent' | 'human' | 'none'
+  readonly favicon?: DesktopPreviewFavicon
+  readonly navStatus: DesktopPreviewNavStatus
+  readonly pictureInPicture: boolean
+  readonly tabId: string
+  readonly updatedAt: string
+  readonly webContentsId: number | null
+  readonly zoomFactor: number
+}
+
+export interface DesktopPreviewTabDefaults {
+  readonly colorScheme?: DesktopPreviewColorScheme
+  readonly zoomFactor?: number
+}
+
+export interface DesktopPreviewWebviewConfig {
+  readonly partition: string
+  readonly preloadUrl: string | null
+  readonly webPreferences: string
+}
+
+export interface DesktopPreviewAnnotationTheme {
+  readonly accent: string
+  readonly accentForeground: string
+  readonly background: string
+  readonly border: string
+  readonly colorScheme: 'light' | 'dark'
+  readonly fontMono: string
+  readonly fontSans: string
+  readonly foreground: string
+  readonly input: string
+  readonly muted: string
+  readonly mutedForeground: string
+  readonly popover: string
+  readonly popoverForeground: string
+  readonly primary: string
+  readonly primaryForeground: string
+  readonly radius: string
+  readonly ring: string
+}
+
+export interface PickedElementStackFrame {
+  readonly columnNumber: number | null
+  readonly fileName: string | null
+  readonly functionName: string | null
+  readonly lineNumber: number | null
+}
+
+export interface PickedElementPayload {
+  readonly componentName: string | null
+  readonly htmlPreview: string
+  readonly pageTitle: string | null
+  readonly pageUrl: string
+  readonly pickedAt: string
+  readonly selector: string | null
+  readonly source: PickedElementStackFrame | null
+  readonly stack: readonly PickedElementStackFrame[]
+  readonly styles: string
+  readonly tagName: string
+}
+
+export interface PreviewAnnotationRect {
+  readonly height: number
+  readonly width: number
+  readonly x: number
+  readonly y: number
+}
+
+export interface PreviewAnnotationPayload {
+  readonly comment: string
+  readonly createdAt: string
+  readonly elements: readonly {
+    readonly element: PickedElementPayload
+    readonly id: string
+    readonly rect: PreviewAnnotationRect
+  }[]
+  readonly id: string
+  readonly pageTitle: string | null
+  readonly pageUrl: string
+  readonly regions: readonly {
+    readonly id: string
+    readonly rect: PreviewAnnotationRect
+  }[]
+  readonly screenshot: {
+    readonly cropRect: PreviewAnnotationRect
+    readonly dataUrl: string
+    readonly height: number
+    readonly width: number
+  } | null
+  readonly strokes: readonly {
+    readonly bounds: PreviewAnnotationRect
+    readonly color: string
+    readonly id: string
+    readonly points: readonly { readonly x: number; readonly y: number }[]
+    readonly width: number
+  }[]
+  readonly styleChanges: readonly {
+    readonly previousValue: string
+    readonly property: string
+    readonly selector: string | null
+    readonly targetId: string
+    readonly value: string
+  }[]
+}
+
+export interface PreviewAnnotationSubmissionResult {
+  readonly annotation: PreviewAnnotationPayload
+  readonly submission: 'attach' | 'send'
+}
+
+export interface DesktopPreviewArtifact {
+  readonly createdAt: string
+  readonly id: string
+  readonly mimeType: string
+  readonly path: string
+  readonly sizeBytes: number
+  readonly tabId: string
+}
+
+export interface DesktopPreviewScreenshotArtifact
+  extends DesktopPreviewArtifact {
+  readonly mimeType: 'image/png'
+}
+
+export type DesktopPreviewRecordingArtifact = DesktopPreviewArtifact
+
+export interface DesktopPreviewRecordingFrame {
+  readonly data: string
+  readonly height: number
+  readonly receivedAt: string
+  readonly tabId: string
+  readonly width: number
+}
+
+export interface DesktopPreviewPointerEvent {
+  readonly createdAt: string
+  readonly phase: 'click' | 'move'
+  readonly sequence: number
+  readonly tabId: string
+  readonly x: number
+  readonly y: number
+}
+
+export interface PreviewAutomationStatus {
+  readonly available: boolean
+  readonly loading: boolean
+  readonly tabId: string | null
+  readonly title: string | null
+  readonly url: string | null
+  readonly viewport?: { readonly height: number; readonly width: number }
+  readonly visible: boolean
+}
+
+export interface PreviewAutomationTarget {
+  readonly locator?: string
+  readonly selector?: string
+}
+
+export interface PreviewAutomationClickInput extends PreviewAutomationTarget {
+  readonly timeoutMs?: number
+  readonly x?: number
+  readonly y?: number
+}
+
+export interface PreviewAutomationTypeInput extends PreviewAutomationTarget {
+  readonly clear?: boolean
+  readonly text: string
+  readonly timeoutMs?: number
+}
+
+export interface PreviewAutomationPressInput {
+  readonly key: string
+  readonly modifiers?: readonly ('Alt' | 'Control' | 'Meta' | 'Shift')[]
+}
+
+export interface PreviewAutomationScrollInput extends PreviewAutomationTarget {
+  readonly deltaX?: number
+  readonly deltaY?: number
+}
+
+export interface PreviewAutomationEvaluateInput {
+  readonly awaitPromise?: boolean
+  readonly expression: string
+  readonly returnByValue?: boolean
+}
+
+export interface PreviewAutomationWaitForInput extends PreviewAutomationTarget {
+  readonly text?: string
+  readonly timeoutMs?: number
+  readonly urlIncludes?: string
+}
+
+export interface PreviewAutomationSnapshot {
+  readonly accessibilityTree: unknown
+  readonly actionTimeline: readonly unknown[]
+  readonly consoleEntries: readonly unknown[]
+  readonly interactiveElements: readonly {
+    readonly height: number
+    readonly name: string
+    readonly role: string | null
+    readonly selector: string
+    readonly tag: string
+    readonly width: number
+    readonly x: number
+    readonly y: number
+  }[]
+  readonly loading: boolean
+  readonly networkEntries: readonly unknown[]
+  readonly screenshot: {
+    readonly data: string
+    readonly height: number
+    readonly mimeType: 'image/png'
+    readonly width: number
+  }
+  readonly title: string
+  readonly url: string
+  readonly visibleText: string
+}
+
+export interface DesktopPreviewBridge {
+  readonly automation: {
+    readonly click: (
+      tabId: string,
+      input: PreviewAutomationClickInput
+    ) => Promise<void>
+    readonly evaluate: (
+      tabId: string,
+      input: PreviewAutomationEvaluateInput
+    ) => Promise<unknown>
+    readonly press: (
+      tabId: string,
+      input: PreviewAutomationPressInput
+    ) => Promise<void>
+    readonly scroll: (
+      tabId: string,
+      input: PreviewAutomationScrollInput
+    ) => Promise<void>
+    readonly snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>
+    readonly status: (tabId: string) => Promise<PreviewAutomationStatus>
+    readonly type: (
+      tabId: string,
+      input: PreviewAutomationTypeInput
+    ) => Promise<void>
+    readonly waitFor: (
+      tabId: string,
+      input: PreviewAutomationWaitForInput
+    ) => Promise<void>
+  }
+  readonly cancelPickElement: (tabId: string) => Promise<void>
+  readonly captureScreenshot: (
+    tabId: string
+  ) => Promise<DesktopPreviewScreenshotArtifact>
+  readonly clearCache: () => Promise<void>
+  readonly clearCookies: () => Promise<void>
+  readonly closeTab: (tabId: string) => Promise<void>
+  readonly copyArtifactToClipboard: (path: string) => Promise<void>
+  readonly createTab: (
+    tabId: string,
+    defaults?: DesktopPreviewTabDefaults
+  ) => Promise<void>
+  readonly getPreviewConfig: (
+    environmentId: string
+  ) => Promise<DesktopPreviewWebviewConfig>
+  readonly goBack: (tabId: string) => Promise<void>
+  readonly goForward: (tabId: string) => Promise<void>
+  readonly hardReload: (tabId: string) => Promise<void>
+  readonly navigate: (tabId: string, url: string) => Promise<void>
+  readonly onPointerEvent: (
+    listener: (event: DesktopPreviewPointerEvent) => void
+  ) => () => void
+  readonly onStateChange: (
+    listener: (tabId: string, state: DesktopPreviewTabState) => void
+  ) => () => void
+  readonly openDevTools: (tabId: string) => Promise<void>
+  readonly pickElement: (
+    tabId: string
+  ) => Promise<PreviewAnnotationSubmissionResult | null>
+  readonly pictureInPicture: {
+    readonly close: (tabId: string) => Promise<void>
+    readonly open: (tabId: string) => Promise<void>
+  }
+  readonly recording: {
+    readonly onFrame: (
+      listener: (frame: DesktopPreviewRecordingFrame) => void
+    ) => () => void
+    readonly save: (
+      tabId: string,
+      mimeType: string,
+      data: Uint8Array
+    ) => Promise<DesktopPreviewRecordingArtifact>
+    readonly startScreencast: (tabId: string) => Promise<void>
+    readonly stopScreencast: (tabId: string) => Promise<void>
+  }
+  readonly refresh: (tabId: string) => Promise<void>
+  readonly registerWebview: (
+    tabId: string,
+    webContentsId: number
+  ) => Promise<void>
+  readonly resetZoom: (tabId: string) => Promise<void>
+  readonly revealArtifact: (path: string) => Promise<void>
+  readonly setAnnotationTheme: (
+    theme: DesktopPreviewAnnotationTheme
+  ) => Promise<void>
+  readonly setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>
+  readonly setColorScheme: (
+    tabId: string,
+    colorScheme: DesktopPreviewColorScheme
+  ) => Promise<void>
+  /** Stop an in-flight page load without discarding the current document. */
+  readonly stop: (tabId: string) => Promise<void>
+  readonly zoomIn: (tabId: string) => Promise<void>
+  readonly zoomOut: (tabId: string) => Promise<void>
+}
+
+// ---------------------------------------------------------------------------
 // DesktopBridge interface
 // ---------------------------------------------------------------------------
 
@@ -259,6 +603,9 @@ export interface DesktopBridge {
 
   /** Opens a native macOS folder picker dialog. Returns the selected path, or null if cancelled. */
   pickFolder: () => Promise<string | null>
+
+  /** Desktop-only Chromium preview host. Feature-detect this in browser builds. */
+  preview?: DesktopPreviewBridge
   /** Continues an already-confirmed application quit. */
   quitApp: () => void
 

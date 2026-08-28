@@ -15,6 +15,9 @@ import {
   type OpenDialogOptions,
   shell,
 } from 'electron'
+// biome-ignore lint/performance/noNamespaceImport: keeps the isolated preview channel surface auditable.
+import * as PreviewChannels from './preview/channels.js'
+import type { PreviewManager } from './preview/Manager.js'
 import { WindowWorkspacePresenceRegistry } from './window-workspace-presence.js'
 
 // ---------------------------------------------------------------------------
@@ -269,7 +272,8 @@ export async function askRenderersBeforeQuit(
  * Each handler mirrors a method on the `DesktopBridge` interface.
  */
 export function registerIpcHandlers(
-  getFallbackWindow: () => BrowserWindow | null
+  getFallbackWindow: () => BrowserWindow | null,
+  previewManager?: PreviewManager
 ): void {
   // -- Folder picker -------------------------------------------------------
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL)
@@ -515,4 +519,345 @@ export function registerIpcHandlers(
       `&state=${state}`
     await shell.openExternal(url)
   })
+
+  if (previewManager) {
+    registerPreviewIpcHandlers(previewManager)
+  }
+}
+
+function previewPayload(payload: unknown): Record<string, unknown> {
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
+    throw new Error('Invalid preview IPC payload')
+  }
+  return payload as Record<string, unknown>
+}
+
+function previewTabId(payload: unknown): string {
+  const tabId = previewPayload(payload).tabId
+  if (
+    typeof tabId !== 'string' ||
+    tabId.length === 0 ||
+    tabId.length > 4096 ||
+    tabId.trim() !== tabId
+  ) {
+    throw new Error('Invalid preview tab id')
+  }
+  return tabId
+}
+
+function previewString(
+  payload: Record<string, unknown>,
+  key: string,
+  maximum: number
+): string {
+  const value = payload[key]
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > maximum
+  ) {
+    throw new Error(`Invalid preview ${key}`)
+  }
+  return value
+}
+
+function previewBoolean(
+  payload: Record<string, unknown>,
+  key: string
+): boolean {
+  const value = payload[key]
+  if (typeof value !== 'boolean') {
+    throw new Error(`Invalid preview ${key}`)
+  }
+  return value
+}
+
+function previewOwner(event: Electron.IpcMainInvokeEvent) {
+  if (!BrowserWindow.fromWebContents(event.sender)) {
+    throw new Error('Preview IPC must come from a Laborer renderer window')
+  }
+  return event.sender
+}
+
+export function registerPreviewIpcHandlers(manager: PreviewManager): void {
+  const handle = (
+    channel: string,
+    handler: (event: Electron.IpcMainInvokeEvent, payload: unknown) => unknown
+  ) => {
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, handler)
+  }
+  const tabMethod = (
+    channel: string,
+    method: (owner: Electron.WebContents, tabId: string) => unknown
+  ) => {
+    handle(channel, (event, payload) =>
+      method(previewOwner(event), previewTabId(payload))
+    )
+  }
+
+  handle(PreviewChannels.PREVIEW_CREATE_TAB_CHANNEL, (event, rawPayload) => {
+    const payload = previewPayload(rawPayload)
+    const tabId = previewTabId(payload)
+    const zoomFactor = payload.zoomFactor
+    const colorScheme = payload.colorScheme
+    if (
+      zoomFactor !== undefined &&
+      (typeof zoomFactor !== 'number' ||
+        !Number.isFinite(zoomFactor) ||
+        zoomFactor <= 0)
+    ) {
+      throw new Error('Invalid preview zoom factor')
+    }
+    if (
+      colorScheme !== undefined &&
+      colorScheme !== 'system' &&
+      colorScheme !== 'light' &&
+      colorScheme !== 'dark'
+    ) {
+      throw new Error('Invalid preview color scheme')
+    }
+    manager.createTab(previewOwner(event), tabId, {
+      ...(colorScheme === undefined ? {} : { colorScheme }),
+      ...(zoomFactor === undefined ? {} : { zoomFactor }),
+    })
+  })
+  tabMethod(PreviewChannels.PREVIEW_CLOSE_TAB_CHANNEL, (owner, tabId) =>
+    manager.closeTab(owner, tabId)
+  )
+  handle(
+    PreviewChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL,
+    (event, rawPayload) => {
+      const payload = previewPayload(rawPayload)
+      const webContentsId = payload.webContentsId
+      if (!Number.isInteger(webContentsId) || (webContentsId as number) <= 0) {
+        throw new Error('Invalid preview webContents id')
+      }
+      return manager.registerWebview(
+        previewOwner(event),
+        previewTabId(payload),
+        webContentsId as number
+      )
+    }
+  )
+  handle(PreviewChannels.PREVIEW_NAVIGATE_CHANNEL, (event, rawPayload) => {
+    const payload = previewPayload(rawPayload)
+    return manager.navigate(
+      previewOwner(event),
+      previewTabId(payload),
+      previewString(payload, 'url', 2048)
+    )
+  })
+  tabMethod(PreviewChannels.PREVIEW_GO_BACK_CHANNEL, (owner, tabId) =>
+    manager.goBack(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_GO_FORWARD_CHANNEL, (owner, tabId) =>
+    manager.goForward(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_REFRESH_CHANNEL, (owner, tabId) =>
+    manager.refresh(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_STOP_CHANNEL, (owner, tabId) =>
+    manager.stop(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_HARD_RELOAD_CHANNEL, (owner, tabId) =>
+    manager.hardReload(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_ZOOM_IN_CHANNEL, (owner, tabId) =>
+    manager.zoomIn(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_ZOOM_OUT_CHANNEL, (owner, tabId) =>
+    manager.zoomOut(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_RESET_ZOOM_CHANNEL, (owner, tabId) =>
+    manager.resetZoom(owner, tabId)
+  )
+  handle(
+    PreviewChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL,
+    (event, rawPayload) => {
+      const payload = previewPayload(rawPayload)
+      const colorScheme = payload.colorScheme
+      if (
+        colorScheme !== 'system' &&
+        colorScheme !== 'light' &&
+        colorScheme !== 'dark'
+      ) {
+        throw new Error('Invalid preview color scheme')
+      }
+      return manager.setColorScheme(
+        previewOwner(event),
+        previewTabId(payload),
+        colorScheme
+      )
+    }
+  )
+  handle(
+    PreviewChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL,
+    (event, rawPayload) => {
+      const payload = previewPayload(rawPayload)
+      return manager.setAudioMuted(
+        previewOwner(event),
+        previewTabId(payload),
+        previewBoolean(payload, 'audioMuted')
+      )
+    }
+  )
+  tabMethod(PreviewChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, (owner, tabId) =>
+    manager.openDevTools(owner, tabId)
+  )
+  handle(PreviewChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, () =>
+    manager.clearCookies()
+  )
+  handle(PreviewChannels.PREVIEW_CLEAR_CACHE_CHANNEL, () =>
+    manager.clearCache()
+  )
+  handle(PreviewChannels.PREVIEW_GET_CONFIG_CHANNEL, (event, rawPayload) => {
+    previewOwner(event)
+    const payload = previewPayload(rawPayload)
+    const environmentId = previewString(payload, 'environmentId', 1024)
+    manager.getBrowserSession(environmentId)
+    return {
+      partition: manager.getBrowserPartition(environmentId),
+      preloadUrl: manager.pickPreloadUrl,
+      webPreferences: manager.webviewPreferences,
+    }
+  })
+  handle(
+    PreviewChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL,
+    (_event, rawPayload) => {
+      const theme = previewPayload(rawPayload).theme
+      if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
+        throw new Error('Invalid preview annotation theme')
+      }
+      const values = Object.values(theme)
+      if (
+        values.length !== 17 ||
+        values.some((value) => typeof value !== 'string')
+      ) {
+        throw new Error('Invalid preview annotation theme')
+      }
+      manager.setAnnotationTheme(
+        theme as Parameters<typeof manager.setAnnotationTheme>[0]
+      )
+    }
+  )
+  tabMethod(PreviewChannels.PREVIEW_PICK_ELEMENT_CHANNEL, (owner, tabId) =>
+    manager.pickElement(owner, tabId)
+  )
+  tabMethod(
+    PreviewChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
+    (owner, tabId) => manager.cancelPickElement(owner, tabId)
+  )
+  tabMethod(
+    PreviewChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL,
+    (owner, tabId) => manager.captureScreenshot(owner, tabId)
+  )
+  handle(
+    PreviewChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
+    (_event, rawPayload) => {
+      const payload = previewPayload(rawPayload)
+      return manager.revealArtifact(previewString(payload, 'path', 4096))
+    }
+  )
+  handle(
+    PreviewChannels.PREVIEW_COPY_ARTIFACT_CHANNEL,
+    (_event, rawPayload) => {
+      const payload = previewPayload(rawPayload)
+      return manager.copyArtifactToClipboard(
+        previewString(payload, 'path', 4096)
+      )
+    }
+  )
+  tabMethod(
+    PreviewChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
+    (owner, tabId) => manager.openPictureInPicture(owner, tabId)
+  )
+  tabMethod(
+    PreviewChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL,
+    (owner, tabId) => manager.closePictureInPicture(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_RECORDING_START_CHANNEL, (owner, tabId) =>
+    manager.startRecording(owner, tabId)
+  )
+  tabMethod(PreviewChannels.PREVIEW_RECORDING_STOP_CHANNEL, (owner, tabId) =>
+    manager.stopRecording(owner, tabId)
+  )
+  handle(
+    PreviewChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
+    (event, rawPayload) => {
+      const payload = previewPayload(rawPayload)
+      const data = payload.data
+      if (
+        !(data instanceof Uint8Array) ||
+        data.byteLength > 1024 * 1024 * 1024
+      ) {
+        throw new Error('Invalid preview recording data')
+      }
+      return manager.saveRecording(
+        previewOwner(event),
+        previewTabId(payload),
+        previewString(payload, 'mimeType', 256),
+        data
+      )
+    }
+  )
+  tabMethod(PreviewChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, (owner, tabId) =>
+    manager.automationStatus(owner, tabId)
+  )
+  tabMethod(
+    PreviewChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL,
+    (owner, tabId) => manager.automationSnapshot(owner, tabId)
+  )
+  const automationMethod = (
+    channel: string,
+    method: (
+      owner: Electron.WebContents,
+      tabId: string,
+      input: never
+    ) => unknown
+  ) => {
+    handle(channel, (event, rawPayload) => {
+      const payload = previewPayload(rawPayload)
+      if (!isRecord(payload.input)) {
+        throw new Error('Invalid preview automation input')
+      }
+      return method(
+        previewOwner(event),
+        previewTabId(payload),
+        payload.input as never
+      )
+    })
+  }
+  automationMethod(
+    PreviewChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL,
+    manager.automationClick.bind(manager)
+  )
+  automationMethod(
+    PreviewChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL,
+    manager.automationType.bind(manager)
+  )
+  automationMethod(
+    PreviewChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL,
+    manager.automationPress.bind(manager)
+  )
+  automationMethod(
+    PreviewChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL,
+    manager.automationScroll.bind(manager)
+  )
+  automationMethod(
+    PreviewChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL,
+    manager.automationEvaluate.bind(manager)
+  )
+  automationMethod(
+    PreviewChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL,
+    manager.automationWaitFor.bind(manager)
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

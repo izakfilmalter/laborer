@@ -6,9 +6,12 @@
  * - The native desktop context menu is replaced with `@laborer/ui`'s
  *   Base UI context menu (Close / Close others / Close to the right /
  *   Close all).
- * - Preview session, desktop-overlay (favicon/audio), and terminal label
- *   plumbing is left out until those surfaces exist; titles and icons fall
- *   back to static names.
+ * - Preview-session and desktop-overlay (favicon/audio) plumbing is left
+ *   out until those surfaces exist; titles and icons fall back to static
+ *   names.
+ * - There is no Terminal surface: Laborer terminals live in the main panel
+ *   tabs/splits, so the launcher offers five cards and the `T` shortcut is
+ *   unassigned.
  * - The tab bar is `h-8`, matching Laborer's workspace chrome (frame header
  *   and pane tab bars) instead of t3's `--workspace-topbar-height`.
  */
@@ -42,7 +45,6 @@ import {
   GitPullRequest,
   Globe2,
   Plus,
-  TerminalSquare,
 } from 'lucide-react'
 import {
   type ReactElement,
@@ -73,7 +75,6 @@ interface RightPanelTabsProps {
   readonly onAddDiff: () => void
   readonly onAddFiles: () => void
   readonly onAddPullRequest: () => void
-  readonly onAddTerminal: () => void
   readonly onCloseAllSurfaces: () => void
   readonly onCloseOtherSurfaces: (surface: RightPanelSurface) => void
   readonly onCloseSurface: (surface: RightPanelSurface) => void
@@ -82,14 +83,12 @@ interface RightPanelTabsProps {
   /** The workspace's PR number, used for the pull-request tab title. */
   readonly pullRequestNumber?: number | null | undefined
   readonly surfaces: readonly RightPanelSurface[]
-  readonly terminalAvailable: boolean
   /** localStorage key this panel persists its width under. */
   readonly widthStorageKey: string
 }
 
 const SURFACE_DISABLED_REASONS = {
   browser: 'Browser previews are only available in the desktop app.',
-  terminal: 'Terminal surfaces are coming soon.',
   files: 'The file explorer is coming soon.',
   diff: 'Diff is only available inside a workspace.',
   pullRequest: "This workspace's branch has no pull request yet.",
@@ -112,7 +111,6 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
 /** One-line unavailability hints for the empty-state cards. */
 const SURFACE_UNAVAILABLE_HINTS = {
   browser: 'Only available in the desktop app.',
-  terminal: 'Coming soon.',
   files: 'Coming soon.',
   diff: 'Available inside a workspace.',
   pullRequest: 'No pull request on this branch yet.',
@@ -227,13 +225,11 @@ function SurfaceMenuItem(props: {
  */
 function RightPanelEmptyState(props: {
   onAddBrowser: () => void
-  onAddTerminal: () => void
   onAddDiff: () => void
   onAddFiles: () => void
   onAddPullRequest: () => void
   onAddAgents: () => void
   browserAvailable: boolean
-  terminalAvailable: boolean
   diffAvailable: boolean
   filesAvailable: boolean
   pullRequestAvailable: boolean
@@ -252,16 +248,6 @@ function RightPanelEmptyState(props: {
       available: props.browserAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
       onClick: props.onAddBrowser,
-      badgeCount: 0,
-    },
-    {
-      label: 'Terminal',
-      description: 'Start a shell in this workspace.',
-      icon: TerminalSquare,
-      shortcut: 'T',
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
-      onClick: props.onAddTerminal,
       badgeCount: 0,
     },
     {
@@ -512,8 +498,6 @@ function surfaceTitle(
       return surface.relativePath.slice(
         surface.relativePath.lastIndexOf('/') + 1
       )
-    case 'terminal':
-      return 'Terminal'
     case 'pull-request':
       return pullRequestNumber == null
         ? 'Pull request'
@@ -537,8 +521,6 @@ function SurfaceIcon({ surface }: { surface: RightPanelSurface }) {
       return <Files className="size-3 shrink-0" />
     case 'file':
       return <FileCode2 className="size-3 shrink-0" />
-    case 'terminal':
-      return <TerminalSquare className="size-3 shrink-0" />
     case 'pull-request':
       return <GitPullRequest className="size-3 shrink-0" />
     case 'agents':
@@ -661,14 +643,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.browserAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.browser,
       onClick: props.onAddBrowser,
-    },
-    {
-      label: 'Terminal',
-      icon: TerminalSquare,
-      shortcut: 'T',
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
-      onClick: props.onAddTerminal,
     },
     {
       label: 'Files',
@@ -825,9 +799,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
-            onAddTerminal={props.onAddTerminal}
             pullRequestAvailable={props.pullRequestAvailable}
-            terminalAvailable={props.terminalAvailable}
           />
         ) : (
           props.children

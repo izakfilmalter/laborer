@@ -9,7 +9,8 @@
  *   toolbar; the panel tab strip replaces its close button).
  * - Pull request renders the existing `CommentsPane` (a later bullet
  *   replaces it with t3's full PR panel).
- * - Browser / Terminal / Files / Agents are disabled launcher cards.
+ * - Browser / Files / Agents are disabled launcher cards. There is no
+ *   Terminal surface: terminals live in the main panel tabs/splits.
  *
  * The component renders nothing while the panel is hidden (`isOpen` false);
  * tab state survives in the store, so reopening restores the same tabs.
@@ -124,9 +125,6 @@ export function WorkspaceRightPanel({
   const handleAddAgents = useCallback(() => {
     store().open(workspaceId, 'agents')
   }, [workspaceId])
-  const handleAddTerminal = useCallback(() => {
-    // Terminal surfaces need a terminal id; wired up by the Terminal bullet.
-  }, [])
 
   if (!state.isOpen) {
     return null
@@ -145,7 +143,6 @@ export function WorkspaceRightPanel({
       onAddDiff={handleAddDiff}
       onAddFiles={handleAddFiles}
       onAddPullRequest={handleAddPullRequest}
-      onAddTerminal={handleAddTerminal}
       onCloseAllSurfaces={handleCloseAllSurfaces}
       onCloseOtherSurfaces={handleCloseOtherSurfaces}
       onCloseSurface={handleCloseSurface}
@@ -153,7 +150,6 @@ export function WorkspaceRightPanel({
       pullRequestAvailable={pullRequestNumber !== null}
       pullRequestNumber={pullRequestNumber}
       surfaces={state.surfaces}
-      terminalAvailable={false}
       widthStorageKey={rightPanelWidthStorageKey(workspaceId)}
     >
       {activeSurface ? (
@@ -181,8 +177,6 @@ function ActiveSurfaceContent({
       return <CommentsPane workspaceId={workspaceId} />
     case 'preview':
       return <SurfaceUnavailable label="Browser" />
-    case 'terminal':
-      return <SurfaceUnavailable label="Terminal" />
     case 'files':
       return <SurfaceUnavailable label="Files" />
     case 'file':

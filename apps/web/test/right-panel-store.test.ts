@@ -288,7 +288,7 @@ describe('migratePersistedRightPanelState', () => {
     })
   })
 
-  it('normalizes file surfaces and validates terminal surfaces', () => {
+  it('normalizes file surfaces', () => {
     const migrated = migratePersistedRightPanelState({
       byWorkspaceId: {
         [WS]: {
@@ -301,14 +301,6 @@ describe('migratePersistedRightPanelState', () => {
               relativePath: 'src/a.ts',
               revealLine: Number.NaN,
               revealRequestId: 'bogus',
-            },
-            { id: 'terminal:mismatch', kind: 'terminal', resourceId: 'other' },
-            {
-              id: 'terminal:t1',
-              kind: 'terminal',
-              resourceId: 't1',
-              terminalIds: ['t1', 't2', 't2'],
-              activeTerminalId: 'gone',
             },
           ],
         },
@@ -323,13 +315,63 @@ describe('migratePersistedRightPanelState', () => {
         revealLine: null,
         revealRequestId: 0,
       },
-      {
-        id: 'terminal:t1',
-        kind: 'terminal',
-        resourceId: 't1',
-        terminalIds: ['t1', 't2'],
-        activeTerminalId: 't1',
-      },
     ])
+  })
+
+  it('drops persisted terminal surfaces and falls back the active tab', () => {
+    // Laborer has no Terminal surface: terminals live in the main panel
+    // tabs/splits, so a persisted terminal descriptor (e.g. from a build
+    // that still wrote one) must vanish without reopening an empty panel
+    // or leaving the active id dangling.
+    const migrated = migratePersistedRightPanelState({
+      byWorkspaceId: {
+        [WS]: {
+          isOpen: true,
+          activeSurfaceId: 'terminal:t1',
+          surfaces: [
+            {
+              id: 'terminal:t1',
+              kind: 'terminal',
+              resourceId: 't1',
+              terminalIds: ['t1'],
+              activeTerminalId: 't1',
+            },
+            { id: 'diff', kind: 'diff' },
+          ],
+        },
+      },
+    })
+
+    expect(migrated.byWorkspaceId[WS]).toEqual({
+      isOpen: true,
+      activeSurfaceId: 'diff',
+      surfaces: [{ id: 'diff', kind: 'diff' }],
+    })
+  })
+
+  it('closes the panel when terminal surfaces were all it had', () => {
+    const migrated = migratePersistedRightPanelState({
+      byWorkspaceId: {
+        [WS]: {
+          isOpen: true,
+          activeSurfaceId: 'terminal:t1',
+          surfaces: [
+            {
+              id: 'terminal:t1',
+              kind: 'terminal',
+              resourceId: 't1',
+              terminalIds: ['t1'],
+              activeTerminalId: 't1',
+            },
+          ],
+        },
+      },
+    })
+
+    expect(migrated.byWorkspaceId[WS]).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    })
   })
 })

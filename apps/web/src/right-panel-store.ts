@@ -4,15 +4,18 @@
  * Ported from t3code's `rightPanelStore.ts`. This is intentionally a shallow
  * workspace model: it owns an ordered set of surface descriptors and the
  * active surface, while each feature continues to own its durable resource
- * state. Browser surfaces point at preview tab ids, terminal surfaces point
- * at terminal session ids, file surfaces point at workspace paths, and
- * diff/files/pull-request/agents remain singleton surfaces.
+ * state. Browser surfaces point at preview tab ids, file surfaces point at
+ * workspace paths, and diff/files/pull-request/agents remain singleton
+ * surfaces.
  *
- * Laborer adaptation: t3 scopes the panel per thread
+ * Laborer adaptations: t3 scopes the panel per thread
  * (`environmentId:threadId`); Laborer scopes it per workspace, so the map is
  * keyed by `workspaceId`. The pull-request surface is a singleton rather
  * than keyed by reference, because a Laborer workspace has at most one pull
- * request (the workspace id carries the identity).
+ * request (the workspace id carries the identity). t3's terminal surface is
+ * dropped entirely — Laborer terminals live in the main panel tabs/splits,
+ * not the right panel — and migration silently discards any persisted
+ * terminal descriptors.
  */
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
@@ -22,7 +25,6 @@ export const RIGHT_PANEL_KINDS = [
   'files',
   'file',
   'preview',
-  'terminal',
   'pull-request',
   'agents',
 ] as const
@@ -31,14 +33,6 @@ export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number]
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: 'preview'; resourceId: string }
   | { id: 'browser:new'; kind: 'preview'; resourceId: null }
-  | {
-      id: `terminal:${string}`
-      kind: 'terminal'
-      resourceId: string
-      terminalIds: string[]
-      activeTerminalId: string
-      splitDirection?: 'horizontal' | 'vertical'
-    }
   | { id: 'diff'; kind: 'diff' }
   | { id: 'files'; kind: 'files' }
   | {
@@ -61,39 +55,22 @@ export interface WorkspaceRightPanelState {
 }
 
 /** The kinds a caller can open without extra identity (singleton surfaces). */
-type SingletonKind = Exclude<RightPanelKind, 'file' | 'terminal' | 'preview'>
+type SingletonKind = Exclude<RightPanelKind, 'file' | 'preview'>
 
 interface RightPanelStoreState {
   activateSurface: (workspaceId: string, surfaceId: string) => void
-  activateTerminal: (
-    workspaceId: string,
-    surfaceId: string,
-    terminalId: string
-  ) => void
   byWorkspaceId: Record<string, WorkspaceRightPanelState>
   close: (workspaceId: string) => void
   closeAllSurfaces: (workspaceId: string) => void
   closeOtherSurfaces: (workspaceId: string, surfaceId: string) => void
   closeSurface: (workspaceId: string, surfaceId: string) => void
   closeSurfacesToRight: (workspaceId: string, surfaceId: string) => void
-  closeTerminal: (
-    workspaceId: string,
-    surfaceId: string,
-    terminalId: string
-  ) => void
   open: (workspaceId: string, kind: SingletonKind | 'preview') => void
   openBrowser: (workspaceId: string, tabId: string | null) => void
   openFile: (workspaceId: string, relativePath: string, line?: number) => void
-  openTerminal: (workspaceId: string, terminalId: string) => void
   /** Drop panel state for workspaces that no longer exist. */
   removeWorkspaces: (workspaceIds: readonly string[]) => void
   show: (workspaceId: string) => void
-  splitTerminal: (
-    workspaceId: string,
-    surfaceId: string,
-    terminalId: string,
-    direction?: 'horizontal' | 'vertical'
-  ) => void
   toggle: (workspaceId: string, kind: SingletonKind | 'preview') => void
   toggleVisibility: (workspaceId: string) => void
 }
@@ -134,14 +111,6 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
-})
-
-const terminalSurface = (terminalId: string): RightPanelSurface => ({
-  id: `terminal:${terminalId}`,
-  kind: 'terminal',
-  resourceId: terminalId,
-  terminalIds: [terminalId],
-  activeTerminalId: terminalId,
 })
 
 const upsertSurface = (
@@ -208,44 +177,11 @@ function sanitizeFileSurface(
   return [{ ...surface, revealLine, revealRequestId }]
 }
 
-/** A persisted terminal surface, or nothing when its identity is broken. */
-function sanitizeTerminalSurface(
-  surface: Extract<RightPanelSurface, { kind: 'terminal' }>
-): RightPanelSurface[] {
-  if (
-    !('resourceId' in surface) ||
-    typeof surface.resourceId !== 'string' ||
-    surface.id !== `terminal:${surface.resourceId}`
-  ) {
-    return []
-  }
-  const terminalIds =
-    'terminalIds' in surface && Array.isArray(surface.terminalIds)
-      ? [
-          ...new Set(
-            surface.terminalIds.filter(
-              (terminalId): terminalId is string =>
-                typeof terminalId === 'string'
-            )
-          ),
-        ]
-      : [surface.resourceId]
-  const activeTerminalId =
-    'activeTerminalId' in surface &&
-    typeof surface.activeTerminalId === 'string' &&
-    terminalIds.includes(surface.activeTerminalId)
-      ? surface.activeTerminalId
-      : (terminalIds[0] ?? surface.resourceId)
-  return [
-    {
-      ...surface,
-      terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
-      activeTerminalId,
-    },
-  ]
-}
-
-/** A persisted surface in the current shape, or nothing when malformed. */
+/**
+ * A persisted surface in the current shape, or nothing when malformed.
+ * Unknown kinds — including t3's terminal surfaces, which Laborer never
+ * hosts in the right panel — are silently dropped.
+ */
 function sanitizePersistedSurface(surface: unknown): RightPanelSurface[] {
   if (!surface || typeof surface !== 'object') {
     return []
@@ -256,9 +192,6 @@ function sanitizePersistedSurface(surface: unknown): RightPanelSurface[] {
   }
   if (candidate.kind === 'file') {
     return sanitizeFileSurface(candidate)
-  }
-  if (candidate.kind === 'terminal') {
-    return sanitizeTerminalSurface(candidate)
   }
   return [candidate]
 }
@@ -388,121 +321,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                       entry.id === surface.id ? surface : entry
                     )
                   : [...withoutStandaloneExplorer, surface],
-              }
-            }
-          ),
-        })),
-      openTerminal: (workspaceId, terminalId) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) => upsertSurface(current, terminalSurface(terminalId))
-          ),
-        })),
-      splitTerminal: (
-        workspaceId,
-        surfaceId,
-        terminalId,
-        direction = 'horizontal'
-      ) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) => ({
-              ...current,
-              isOpen: true,
-              activeSurfaceId: surfaceId,
-              surfaces: current.surfaces.map((surface) => {
-                if (surface.id !== surfaceId || surface.kind !== 'terminal') {
-                  return surface
-                }
-                const { splitDirection: _splitDirection, ...baseSurface } =
-                  surface
-                return {
-                  ...baseSurface,
-                  terminalIds: surface.terminalIds.includes(terminalId)
-                    ? surface.terminalIds
-                    : [...surface.terminalIds, terminalId],
-                  activeTerminalId: terminalId,
-                  ...(direction === 'vertical'
-                    ? { splitDirection: 'vertical' as const }
-                    : {}),
-                }
-              }),
-            })
-          ),
-        })),
-      activateTerminal: (workspaceId, surfaceId, terminalId) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) => ({
-              ...current,
-              activeSurfaceId: surfaceId,
-              surfaces: current.surfaces.map((surface) =>
-                surface.id === surfaceId &&
-                surface.kind === 'terminal' &&
-                surface.terminalIds.includes(terminalId)
-                  ? { ...surface, activeTerminalId: terminalId }
-                  : surface
-              ),
-            })
-          ),
-        })),
-      closeTerminal: (workspaceId, surfaceId, terminalId) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) => {
-              const surface = current.surfaces.find(
-                (entry) => entry.id === surfaceId && entry.kind === 'terminal'
-              )
-              if (!surface || surface.kind !== 'terminal') {
-                return current
-              }
-              const terminalIds = surface.terminalIds.filter(
-                (id) => id !== terminalId
-              )
-              if (terminalIds.length === 0) {
-                const index = current.surfaces.findIndex(
-                  (entry) => entry.id === surfaceId
-                )
-                const surfaces = current.surfaces.filter(
-                  (entry) => entry.id !== surfaceId
-                )
-                const fallback =
-                  surfaces[Math.min(index, surfaces.length - 1)] ?? null
-                return {
-                  ...current,
-                  isOpen: surfaces.length > 0 && current.isOpen,
-                  surfaces,
-                  activeSurfaceId:
-                    current.activeSurfaceId === surfaceId
-                      ? (fallback?.id ?? null)
-                      : current.activeSurfaceId,
-                }
-              }
-              return {
-                ...current,
-                surfaces: current.surfaces.map((entry) => {
-                  if (entry.id !== surfaceId || entry.kind !== 'terminal') {
-                    return entry
-                  }
-                  const nextActiveTerminalId =
-                    entry.activeTerminalId === terminalId
-                      ? (terminalIds.at(-1) ?? terminalIds[0])
-                      : entry.activeTerminalId
-                  return {
-                    ...entry,
-                    terminalIds,
-                    activeTerminalId:
-                      nextActiveTerminalId ?? entry.activeTerminalId,
-                  }
-                }),
               }
             }
           ),

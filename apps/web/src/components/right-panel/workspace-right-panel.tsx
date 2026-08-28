@@ -208,7 +208,7 @@ export function WorkspaceRightPanel({
   // Disabled in this tracer; the launcher never invokes these, but the
   // registry keeps the callbacks so enabling a surface is one flag away.
   const handleAddBrowser = useCallback(() => {
-    store().open(workspaceId, 'preview')
+    store().openBrowser(workspaceId, null)
   }, [workspaceId])
   const handleAddFiles = useCallback(() => {
     store().open(workspaceId, 'files')

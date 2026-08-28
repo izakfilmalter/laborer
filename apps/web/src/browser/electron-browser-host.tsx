@@ -5,7 +5,7 @@ import type {
   DesktopPreviewWebviewConfig,
 } from '@laborer/shared/desktop-bridge'
 import { FILL_PREVIEW_VIEWPORT } from '@laborer/shared/rpc'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import {
   previewRuntimeTabId,
@@ -72,6 +72,15 @@ function HostedBrowserWebview(props: {
   const preview = window.desktopBridge?.preview
   const reportStatus = useAtomSet(reportStatusMutation, { mode: 'promise' })
   const [config, setConfig] = useState<DesktopPreviewWebviewConfig | null>(null)
+  const [tabReady] = useState(() => {
+    let resolve!: () => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve
+      reject = onReject
+    })
+    return { promise, reject, resolve }
+  })
   const presentation = useBrowserSurfaceStore(
     (state) => state.byTabId[props.runtimeTabId]
   )
@@ -91,18 +100,26 @@ function HostedBrowserWebview(props: {
     }
   }, [preview, props.workspaceId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!preview) {
       return
     }
-    void preview.createTab(props.runtimeTabId)
+    preview
+      .createTab(props.runtimeTabId)
+      .then(tabReady.resolve, tabReady.reject)
     return () => {
       usePreviewStateStore
         .getState()
         .applyDesktopState(props.workspaceId, props.serverTabId, null)
       void preview.closeTab(props.runtimeTabId)
     }
-  }, [preview, props.runtimeTabId, props.serverTabId, props.workspaceId])
+  }, [
+    preview,
+    props.runtimeTabId,
+    props.serverTabId,
+    props.workspaceId,
+    tabReady,
+  ])
 
   useEffect(() => {
     if (!preview) {
@@ -177,14 +194,29 @@ function HostedBrowserWebview(props: {
             return
           }
           const webview = node as unknown as ElectronWebview
-          const register = () => {
-            const id = webview.getWebContentsId()
-            if (Number.isInteger(id) && id > 0) {
-              void preview.registerWebview(props.runtimeTabId, id)
+          let disposed = false
+          const register = async () => {
+            try {
+              await tabReady.promise
+              if (disposed) {
+                return
+              }
+              const id = webview.getWebContentsId()
+              if (Number.isInteger(id) && id > 0) {
+                await preview.registerWebview(props.runtimeTabId, id)
+              }
+            } catch {
+              // did-attach and dom-ready independently retry transient races.
             }
           }
-          webview.addEventListener('did-attach', register, { once: true })
-          webview.addEventListener('dom-ready', register, { once: true })
+          webview.addEventListener('did-attach', register)
+          webview.addEventListener('dom-ready', register)
+          register()
+          return () => {
+            disposed = true
+            webview.removeEventListener('did-attach', register)
+            webview.removeEventListener('dom-ready', register)
+          }
         }}
         src={props.initialUrl ?? 'about:blank'}
         style={{ width, height }}

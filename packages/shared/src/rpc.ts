@@ -975,6 +975,32 @@ export const PullRequestReviewState = Schema.Literals([
 export type PullRequestReviewState = typeof PullRequestReviewState.Type
 
 /**
+ * The eight reactions GitHub takes, under Laborer's own camelCase spellings.
+ */
+export const PullRequestReactionContent = Schema.Literals([
+  'thumbsUp',
+  'thumbsDown',
+  'laugh',
+  'hooray',
+  'confused',
+  'heart',
+  'rocket',
+  'eyes',
+])
+
+export type PullRequestReactionContent = typeof PullRequestReactionContent.Type
+
+/** One reaction pill: what it is, how many stand behind it, and whether the
+ *  reader is one of them — which is what pressing the pill toggles. */
+export const PullRequestReaction = Schema.Struct({
+  content: PullRequestReactionContent,
+  count: Schema.Int,
+  viewerHasReacted: Schema.Boolean,
+})
+
+export type PullRequestReaction = typeof PullRequestReaction.Type
+
+/**
  * One entry in a pull request's conversation, normalized across the three
  * GitHub endpoints that feed it: issue comments, reviews, and review
  * comments. Every entry can be rendered as the same timeline item — an
@@ -1009,6 +1035,14 @@ export const PullRequestComment = Schema.Struct({
   line: Schema.NullOr(Schema.Int),
   /** The id of the entry this one replies to, for threaded review comments. */
   inReplyToId: Schema.NullOr(Schema.Int),
+  /**
+   * GitHub's GraphQL node id, when the activity read resolved one. It is what
+   * `pullRequest.setReaction` addresses; an entry without one cannot be
+   * reacted to from the timeline.
+   */
+  nodeId: Schema.optional(Schema.String),
+  /** Reactions on this entry, when the activity read carried them. */
+  reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 })
 
 export type PullRequestComment = typeof PullRequestComment.Type
@@ -1029,6 +1063,337 @@ export const PullRequestConversation = Schema.Struct({
 })
 
 export type PullRequestConversation = typeof PullRequestConversation.Type
+
+// ---------------------------------------------------------------------------
+// Pull Request Panel — detail, activity, diff, and mutations
+// ---------------------------------------------------------------------------
+
+/** Somebody GitHub names: a user, a bot, or a team wearing its slug. */
+export const PullRequestActor = Schema.Struct({
+  avatarUrl: Schema.NullOr(Schema.String),
+  login: Schema.String,
+  name: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestActor = typeof PullRequestActor.Type
+
+export const PullRequestLabel = Schema.Struct({
+  /** Hex color without the `#`, as GitHub reports it. Null when unknown. */
+  color: Schema.NullOr(Schema.String),
+  name: Schema.String,
+})
+
+export type PullRequestLabel = typeof PullRequestLabel.Type
+
+export const PullRequestCheckStatus = Schema.Literals([
+  'pending',
+  'success',
+  'failure',
+  'skipped',
+  'neutral',
+  'cancelled',
+])
+
+export type PullRequestCheckStatus = typeof PullRequestCheckStatus.Type
+
+export const PullRequestCheck = Schema.Struct({
+  description: Schema.NullOr(Schema.String),
+  name: Schema.String,
+  status: PullRequestCheckStatus,
+  url: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestCheck = typeof PullRequestCheck.Type
+
+export const PullRequestState = Schema.Literals(['open', 'closed', 'merged'])
+
+export type PullRequestState = typeof PullRequestState.Type
+
+export const PullRequestMergeability = Schema.Literals([
+  'mergeable',
+  'conflicting',
+  'unknown',
+])
+
+export type PullRequestMergeability = typeof PullRequestMergeability.Type
+
+export const PullRequestMergeMethod = Schema.Literals([
+  'merge',
+  'squash',
+  'rebase',
+])
+
+export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type
+
+/** How a stale branch catches up with its base. */
+export const PullRequestUpdateMethod = Schema.Literals(['merge', 'rebase'])
+
+export type PullRequestUpdateMethod = typeof PullRequestUpdateMethod.Type
+
+/**
+ * The lifecycle actions `pullRequest.action` can carry out, each mapping to
+ * one `gh pr` subcommand.
+ */
+export const PullRequestActionKind = Schema.Literals([
+  'merge',
+  'ready',
+  'draft',
+  'close',
+  'reopen',
+  'updateBranch',
+  'enableAutoMerge',
+  'disableAutoMerge',
+])
+
+export type PullRequestActionKind = typeof PullRequestActionKind.Type
+
+/** The merge strategies the repository's own settings allow. */
+export const PullRequestMergeCapabilities = Schema.Struct({
+  merge: Schema.Boolean,
+  rebase: Schema.Boolean,
+  squash: Schema.Boolean,
+})
+
+export type PullRequestMergeCapabilities =
+  typeof PullRequestMergeCapabilities.Type
+
+/**
+ * The fast, header-shaped half of a pull request: everything the summary tab
+ * and the action bar need, read in one round trip. The conversation and the
+ * diff are separate reads so a long review history cannot hold the title,
+ * checks, and buttons off screen.
+ */
+export const PullRequestDetail = Schema.Struct({
+  additions: Schema.Int,
+  author: Schema.NullOr(PullRequestActor),
+  /**
+   * Whether GitHub is already armed to merge this on its own. Null when
+   * GitHub did not answer for auto-merge at all, which is not the same as
+   * off: offering to arm something already armed is a write nobody asked for.
+   */
+  autoMergeEnabled: Schema.NullOr(Schema.Boolean),
+  baseBranch: Schema.String,
+  body: Schema.String,
+  changedFiles: Schema.Int,
+  checks: Schema.Array(PullRequestCheck),
+  closedAt: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  deletions: Schema.Int,
+  headBranch: Schema.String,
+  isDraft: Schema.Boolean,
+  labels: Schema.Array(PullRequestLabel),
+  mergeability: PullRequestMergeability,
+  mergeCapabilities: PullRequestMergeCapabilities,
+  mergedAt: Schema.NullOr(Schema.String),
+  number: Schema.Int,
+  reviewDecision: Schema.NullOr(PullRequestReviewDecision),
+  /** Outstanding review requests. The full roster arrives with the activity. */
+  reviewers: Schema.Array(PullRequestActor),
+  state: PullRequestState,
+  title: Schema.String,
+  updatedAt: Schema.String,
+  url: Schema.String,
+  /** Who GitHub says the reader is, for telling their remarks from others'. */
+  viewer: Schema.NullOr(Schema.String),
+  /** Whether the viewer's role on the repository can push, which is what
+   *  merging and closing somebody else's pull request need. */
+  viewerCanWrite: Schema.Boolean,
+})
+
+export type PullRequestDetail = typeof PullRequestDetail.Type
+
+/**
+ * Which file a diff line belongs to: `left` is the version before the
+ * change, `right` the version after.
+ */
+export const PullRequestDiffSide = Schema.Literals(['left', 'right'])
+
+export type PullRequestDiffSide = typeof PullRequestDiffSide.Type
+
+/** One remark inside a review thread, addressed by its GraphQL node id. */
+export const PullRequestThreadComment = Schema.Struct({
+  author: Schema.NullOr(PullRequestActor),
+  body: Schema.String,
+  createdAt: Schema.String,
+  /** GraphQL node id — what replies, edits, and reactions address. */
+  id: Schema.String,
+  reactions: Schema.Array(PullRequestReaction),
+  url: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestThreadComment = typeof PullRequestThreadComment.Type
+
+/**
+ * A conversation anchored to a line of the diff. The activity carries these
+ * alongside the flat `comments` timeline: the same remarks, read two ways —
+ * chronological for the timeline, whole threads pinned to a line for the
+ * diff.
+ */
+export const PullRequestReviewThread = Schema.Struct({
+  comments: Schema.Array(PullRequestThreadComment),
+  /** GraphQL node id — what `pullRequest.replyToThread` and
+   *  `pullRequest.setThreadResolution` address. */
+  id: Schema.String,
+  /** The line the thread was written against has left the diff, so it is
+   *  listed rather than pinned to a line it no longer has. */
+  isOutdated: Schema.Boolean,
+  isResolved: Schema.Boolean,
+  /** Null when the thread anchors to a file rather than a line. */
+  line: Schema.NullOr(Schema.Int),
+  path: Schema.String,
+  side: PullRequestDiffSide,
+})
+
+export type PullRequestReviewThread = typeof PullRequestReviewThread.Type
+
+export const PullRequestCommit = Schema.Struct({
+  additions: Schema.NullOr(Schema.Int),
+  authors: Schema.Array(PullRequestActor),
+  committedDate: Schema.String,
+  deletions: Schema.NullOr(Schema.Int),
+  messageHeadline: Schema.String,
+  oid: Schema.String,
+})
+
+export type PullRequestCommit = typeof PullRequestCommit.Type
+
+/**
+ * The conversation-shaped half of a pull request, returned by
+ * `pullRequest.activity`.
+ */
+export const PullRequestActivity = Schema.Struct({
+  /** Every timeline entry, oldest first, enriched with node ids and
+   *  reactions where GitHub's GraphQL read resolved them. */
+  comments: Schema.Array(PullRequestComment),
+  /** The newest hundred commits, oldest first. */
+  commits: Schema.Array(PullRequestCommit),
+  /** Reactions on the pull request's own description. */
+  reactions: Schema.Array(PullRequestReaction),
+  /** Everyone on the review: still asked, or already answered. */
+  reviewers: Schema.Array(PullRequestActor),
+  reviewThreads: Schema.Array(PullRequestReviewThread),
+  /** A bound of the read stopped before GitHub ran out of threads. */
+  threadsTruncated: Schema.Boolean,
+})
+
+export type PullRequestActivity = typeof PullRequestActivity.Type
+
+/** Real line counts for a file whose hunks GitHub withheld from the patch. */
+export const PullRequestOmittedFileStat = Schema.Struct({
+  additions: Schema.Int,
+  deletions: Schema.Int,
+  path: Schema.String,
+})
+
+export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type
+
+/**
+ * One slice of the pull request's unified patch — a whole number of files,
+ * never a file cut in half, so each slice parses on its own.
+ */
+export const PullRequestDiffResult = Schema.Struct({
+  /** Where the next slice starts, or null once the diff is whole. */
+  nextCursor: Schema.NullOr(Schema.String),
+  /** GitHub's own counts for files whose hunks it withheld. */
+  omittedFileStats: Schema.Array(PullRequestOmittedFileStat),
+  patch: Schema.String,
+  /** Something inside this slice could not be shown — a binary file, or a
+   *  hunk GitHub declined to inline. Not the same as there being more
+   *  slices, which `nextCursor` answers. */
+  truncated: Schema.Boolean,
+})
+
+export type PullRequestDiffResult = typeof PullRequestDiffResult.Type
+
+/** How one file in the pull request diff changed, for content expansion. */
+export const PullRequestDiffChangeType = Schema.Literals([
+  'change',
+  'rename-pure',
+  'rename-changed',
+  'new',
+  'deleted',
+])
+
+export type PullRequestDiffChangeType = typeof PullRequestDiffChangeType.Type
+
+/** Both sides of one diff file in full, for expanding omitted context. */
+export const PullRequestFileContents = Schema.Struct({
+  newContents: Schema.String,
+  oldContents: Schema.String,
+})
+
+export type PullRequestFileContents = typeof PullRequestFileContents.Type
+
+/** What submitting a review says about the change, beyond the words in it. */
+export const PullRequestReviewVerdict = Schema.Literals([
+  'approve',
+  'comment',
+  'requestChanges',
+])
+
+export type PullRequestReviewVerdict = typeof PullRequestReviewVerdict.Type
+
+/** The coordinates of one line in a pull request diff. */
+export const PullRequestReviewPosition = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal('added'),
+    newLine: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('deleted'),
+    oldLine: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal('context'),
+    newLine: Schema.Int,
+    oldLine: Schema.Int,
+    /** Which copy of an unchanged line the reviewer selected in a split diff. */
+    side: PullRequestDiffSide,
+  }),
+])
+
+export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type
+
+/** One remark in a review that has not been sent yet, anchored to a line. */
+export const PullRequestReviewCommentDraft = Schema.Struct({
+  body: Schema.String,
+  path: Schema.String,
+  position: PullRequestReviewPosition,
+})
+
+export type PullRequestReviewCommentDraft =
+  typeof PullRequestReviewCommentDraft.Type
+
+/** Whether a reviewer is a person or a team GitHub addresses as one. */
+export const PullRequestReviewerKind = Schema.Literals(['user', 'team'])
+
+export type PullRequestReviewerKind = typeof PullRequestReviewerKind.Type
+
+/** Somebody a review may be asked of. */
+export const PullRequestReviewerCandidate = Schema.Struct({
+  avatarUrl: Schema.NullOr(Schema.String),
+  /** How GitHub addresses this reviewer: a login, or a team slug. */
+  id: Schema.String,
+  /** A review has already been asked of them, so pressing them takes the
+   *  request back. */
+  isRequested: Schema.Boolean,
+  kind: PullRequestReviewerKind,
+  login: Schema.String,
+  name: Schema.NullOr(Schema.String),
+})
+
+export type PullRequestReviewerCandidate =
+  typeof PullRequestReviewerCandidate.Type
+
+export const PullRequestReviewerCandidateList = Schema.Struct({
+  /** Never includes the author: GitHub refuses a self-request. */
+  candidates: Schema.Array(PullRequestReviewerCandidate),
+  /** GitHub has more people with access than one read returns. */
+  truncated: Schema.Boolean,
+})
+
+export type PullRequestReviewerCandidateList =
+  typeof PullRequestReviewerCandidateList.Type
 
 // ---------------------------------------------------------------------------
 // RPC Definitions
@@ -1698,6 +2063,180 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * The header-shaped half of the workspace's pull request: title, body,
+   * author, state, branches, checks, labels, mergeability, and what the
+   * repository's settings and the viewer's role allow.
+   *
+   * Fails with code `PR_NOT_FOUND` when the workspace's branch has no pull
+   * request yet, like every read below.
+   */
+  Rpc.make('pullRequest.detail', {
+    success: PullRequestDetail,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * The conversation-shaped half: the flat timeline, review threads pinned
+   * to their diff lines, commits, the reviewer roster, and reactions.
+   */
+  Rpc.make('pullRequest.activity', {
+    success: PullRequestActivity,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * One slice of the pull request's unified patch, assembled from GitHub's
+   * files API so it pages a whole number of files at a time. An omitted
+   * `cursor` asks for the first slice; `commit` narrows the diff to one
+   * commit of the change.
+   */
+  Rpc.make('pullRequest.diff', {
+    success: PullRequestDiffResult,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      cursor: Schema.optional(Schema.String),
+      commit: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * Both sides of one diff file in full, for expanding context the patch
+   * does not carry. The old side reads at the base (or parent-commit)
+   * revision, the new side at the head.
+   */
+  Rpc.make('pullRequest.diffContents', {
+    success: PullRequestFileContents,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      changeType: PullRequestDiffChangeType,
+      oldPath: Schema.String,
+      newPath: Schema.String,
+      commit: Schema.optional(Schema.String),
+    },
+  }),
+
+  /** Post a conversation comment on the workspace's pull request. */
+  Rpc.make('pullRequest.comment', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      body: Schema.String,
+    },
+  }),
+
+  /**
+   * Rewrite the pull request's own title and/or body. A field left out is
+   * kept as it was; a request naming neither is refused.
+   */
+  Rpc.make('pullRequest.edit', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      title: Schema.optional(Schema.String),
+      body: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * Run one lifecycle action: merge, ready/draft, close/reopen, update the
+   * branch, or arm/disarm auto-merge. `mergeMethod` is read for `merge` and
+   * `enableAutoMerge`; `updateMethod` only for `updateBranch`.
+   */
+  Rpc.make('pullRequest.action', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      action: PullRequestActionKind,
+      mergeMethod: Schema.optional(PullRequestMergeMethod),
+      updateMethod: Schema.optional(PullRequestUpdateMethod),
+    },
+  }),
+
+  /**
+   * Submit a whole review in one request — verdict, summary, and any line
+   * comments — so nothing is visible to anyone else until it is sent.
+   */
+  Rpc.make('pullRequest.submitReview', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      verdict: PullRequestReviewVerdict,
+      body: Schema.String,
+      comments: Schema.Array(PullRequestReviewCommentDraft),
+    },
+  }),
+
+  /** Reply to a review thread, named by its GraphQL node id. */
+  Rpc.make('pullRequest.replyToThread', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      threadId: Schema.String,
+      body: Schema.String,
+    },
+  }),
+
+  /** Mark a review thread resolved, or unresolved again. */
+  Rpc.make('pullRequest.setThreadResolution', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      threadId: Schema.String,
+      resolved: Schema.Boolean,
+    },
+  }),
+
+  /**
+   * Add a reaction to a remark, or take it back. An omitted `subjectId`
+   * reacts to the pull request itself, which is where its description's
+   * reactions live.
+   */
+  Rpc.make('pullRequest.setReaction', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      subjectId: Schema.optional(Schema.String),
+      content: PullRequestReactionContent,
+      reacted: Schema.Boolean,
+    },
+  }),
+
+  /** Who this pull request may be sent to, and who it already has been. */
+  Rpc.make('pullRequest.reviewerCandidates', {
+    success: PullRequestReviewerCandidateList,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Ask somebody for a review, or take the request back — one operation
+   * with `requested` turned around.
+   */
+  Rpc.make('pullRequest.requestReviewers', {
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      reviewers: Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          kind: PullRequestReviewerKind,
+        })
+      ),
+      requested: Schema.Boolean,
     },
   }),
 

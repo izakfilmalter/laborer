@@ -51,6 +51,21 @@ import {
 } from '../services/project-task-identifiers.js'
 import { fetchPullRequestComments } from '../services/pull-request-comments.js'
 import {
+  commentOnPullRequest,
+  editPullRequest,
+  fetchPullRequestActivity,
+  fetchPullRequestDetail,
+  fetchPullRequestDiff,
+  fetchPullRequestDiffFileContents,
+  fetchReviewerCandidates,
+  replyToReviewThread,
+  runPullRequestAction,
+  setPullRequestReaction,
+  setReviewerRequest,
+  setReviewThreadResolution,
+  submitPullRequestReview,
+} from '../services/pull-request-panel.js'
+import {
   HUMAN_AUTHOR,
   ReviewCommentAuthorMismatchError,
   ReviewCommentInvalidError,
@@ -168,6 +183,63 @@ const getProject = (projectId: string) =>
     const registry = yield* ProjectRegistry
     return yield* registry.getProject(projectId)
   })
+
+/**
+ * Resolve a workspace to the pull request every `pullRequest.*` RPC speaks
+ * about: the worktree to run `gh` in, the repository the pull request lives
+ * in, and its number.
+ *
+ * PrWatcher already knows whether the branch has a pull request, so a
+ * branch without one fails with `PR_NOT_FOUND` rather than asking GitHub a
+ * slower way to learn no. The number alone does not say which repository to
+ * ask: on a fork clone the pull request usually lives upstream while origin
+ * is the fork, so the URL PrWatcher persisted alongside the number is what
+ * decides. Guessing origin would read a stranger's conversation at that
+ * number, or none at all.
+ */
+const resolvePullRequestWorkspace = (workspaceId: string) =>
+  Effect.gen(function* () {
+    const workspaceProvider = yield* WorkspaceProvider
+    const workspace = yield* workspaceProvider.findWorkspaceForTask(workspaceId)
+
+    if (workspace === null) {
+      return yield* new RpcError({
+        message: `Workspace not found: ${workspaceId}`,
+        code: 'NOT_FOUND',
+      })
+    }
+
+    if (workspace.prNumber === null) {
+      return yield* new RpcError({
+        message: `No pull request for ${workspace.branchName}`,
+        code: 'PR_NOT_FOUND',
+      })
+    }
+
+    const repoSlug =
+      workspace.prUrl === null
+        ? null
+        : parsePullRequestRepoSlug(workspace.prUrl)
+
+    if (repoSlug === null) {
+      return yield* new RpcError({
+        message: `Could not tell which GitHub repository pull request #${workspace.prNumber} lives in: ${workspace.prUrl ?? 'no pull request URL recorded'}`,
+        code: 'GH_FAILED',
+      })
+    }
+
+    return {
+      prNumber: workspace.prNumber,
+      prTitle: workspace.prTitle,
+      prUrl: workspace.prUrl,
+      repoSlug,
+      worktreePath: workspace.worktreePath,
+    }
+  })
+
+/** One expected `gh` failure as the RPC error every panel read reports. */
+const ghFailed = (failure: { readonly message: string }) =>
+  new RpcError({ message: failure.message, code: 'GH_FAILED' })
 
 export const handleConfigGet = ({ projectId }: { projectId: string }) =>
   Effect.gen(function* () {
@@ -1823,53 +1895,13 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
     // -------------------------------------------------------------------
     'pullRequest.comments': ({ workspaceId }) =>
       Effect.gen(function* () {
-        const workspaceProvider = yield* WorkspaceProvider
-        const workspace =
-          yield* workspaceProvider.findWorkspaceForTask(workspaceId)
-
-        if (workspace === null) {
-          return yield* new RpcError({
-            message: `Workspace not found: ${workspaceId}`,
-            code: 'NOT_FOUND',
-          })
-        }
-
-        // PrWatcher already knows whether the branch has a pull request.
-        // Asking GitHub again here would just be a slower way to learn no.
-        if (workspace.prNumber === null) {
-          return yield* new RpcError({
-            message: `No pull request for ${workspace.branchName}`,
-            code: 'PR_NOT_FOUND',
-          })
-        }
-
-        // The number alone does not say which repository to ask: on a fork
-        // clone the pull request usually lives upstream while origin is the
-        // fork, so the URL PrWatcher persisted alongside the number is what
-        // decides. Guessing origin here reads a stranger's conversation at
-        // that number, or none at all.
-        const repoSlug =
-          workspace.prUrl === null
-            ? null
-            : parsePullRequestRepoSlug(workspace.prUrl)
-
-        if (repoSlug === null) {
-          return yield* new RpcError({
-            message: `Could not tell which GitHub repository pull request #${workspace.prNumber} lives in: ${workspace.prUrl ?? 'no pull request URL recorded'}`,
-            code: 'GH_FAILED',
-          })
-        }
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
 
         const comments = yield* fetchPullRequestComments(
           workspace.worktreePath,
-          repoSlug,
+          workspace.repoSlug,
           workspace.prNumber
-        ).pipe(
-          Effect.mapError(
-            (failure) =>
-              new RpcError({ message: failure.message, code: 'GH_FAILED' })
-          )
-        )
+        ).pipe(Effect.mapError(ghFailed))
 
         return {
           number: workspace.prNumber,
@@ -1877,6 +1909,153 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
           url: workspace.prUrl,
           comments,
         }
+      }),
+
+    'pullRequest.detail': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestDetail(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.activity': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestActivity(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.diff': ({ workspaceId, cursor, commit }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestDiff(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { commit, cursor }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.diffContents': ({
+      workspaceId,
+      changeType,
+      oldPath,
+      newPath,
+      commit,
+    }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchPullRequestDiffFileContents(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { changeType, commit, newPath, oldPath }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.comment': ({ workspaceId, body }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* commentOnPullRequest(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          body
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.edit': ({ workspaceId, title, body }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* editPullRequest(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { body, title }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.action': ({
+      workspaceId,
+      action,
+      mergeMethod,
+      updateMethod,
+    }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* runPullRequestAction(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { action, mergeMethod, updateMethod }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.submitReview': ({ workspaceId, verdict, body, comments }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* submitPullRequestReview(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { body, comments, verdict }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.replyToThread': ({ workspaceId, threadId, body }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* replyToReviewThread(workspace.worktreePath, threadId, body).pipe(
+          Effect.mapError(ghFailed)
+        )
+      }),
+
+    'pullRequest.setThreadResolution': ({ workspaceId, threadId, resolved }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* setReviewThreadResolution(
+          workspace.worktreePath,
+          threadId,
+          resolved
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.setReaction': ({ workspaceId, subjectId, content, reacted }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* setPullRequestReaction(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { content, reacted, subjectId }
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.reviewerCandidates': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        return yield* fetchReviewerCandidates(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber
+        ).pipe(Effect.mapError(ghFailed))
+      }),
+
+    'pullRequest.requestReviewers': ({ workspaceId, reviewers, requested }) =>
+      Effect.gen(function* () {
+        const workspace = yield* resolvePullRequestWorkspace(workspaceId)
+        yield* setReviewerRequest(
+          workspace.worktreePath,
+          workspace.repoSlug,
+          workspace.prNumber,
+          { requested, reviewers }
+        ).pipe(Effect.mapError(ghFailed))
       }),
 
     // -------------------------------------------------------------------

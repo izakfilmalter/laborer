@@ -595,6 +595,15 @@ const PrStatusResponse = Schema.Struct({
 const WorkspaceSyncStatusResponse = Schema.Struct({
   aheadCount: Schema.NullOr(Schema.Int),
   behindCount: Schema.NullOr(Schema.Int),
+  /**
+   * Whether the worktree has uncommitted work — tracked edits or untracked
+   * files. It rides along with the ahead/behind counts because one
+   * `git status --porcelain=v2 --branch` answers both, and the git action
+   * button needs all three to know whether its next step is a commit.
+   */
+  hasChanges: Schema.Boolean,
+  /** Whether the branch tracks an upstream, so a plain `git push` resolves. */
+  hasUpstream: Schema.Boolean,
 })
 
 // ---------------------------------------------------------------------------
@@ -1353,6 +1362,17 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
   }),
 
+  /**
+   * The `provider/model` ids OpenCode has credentials for on this machine.
+   *
+   * Read from OpenCode rather than kept as a list here, so the picker can
+   * never offer a model that would fail the moment it was used.
+   */
+  Rpc.make('opencode.models', {
+    success: Schema.Struct({ models: Schema.Array(Schema.String) }),
+    error: RpcError,
+  }),
+
   Rpc.make('globalConfig.update', {
     error: RpcError,
     payload: {
@@ -1433,6 +1453,30 @@ export class LaborerRpcs extends RpcGroup.make(
 
   Rpc.make('workspace.pull', {
     success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Stage everything in the worktree and commit it under one message.
+   *
+   * Omitting the message asks the server to have a model write one from the
+   * staged diff, which is what the one-click button does.
+   */
+  Rpc.make('workspace.commit', {
+    success: WorkspaceSyncStatusResponse,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      message: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+    },
+  }),
+
+  /** Open a pull request for the workspace's branch via the GitHub CLI. */
+  Rpc.make('workspace.createPr', {
+    success: PrStatusResponse,
     error: RpcError,
     payload: {
       workspaceId: Schema.String,

@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isSlackMessageUrl } from '@laborer/shared/slack-url'
 import { describe, expect, it } from 'vitest'
+import { extractOpenCodeText } from '../src/services/opencode-runner.js'
 import {
   buildInitialPrompt,
   buildOpenCodeArgs,
   buildSlackPlannerPrompt,
   executePlannerProcess,
-  extractOpenCodeText,
   normalizeWorkspaceName,
   parseSlackWorkspacePlan,
 } from '../src/services/slack-workspace-planner.js'

@@ -34,6 +34,7 @@ import { useAppSettings } from '@/components/app-settings-context'
 import { KeyboardShortcutsSection } from '@/components/keyboard-shortcuts-section'
 import { LabelSettingsSection } from '@/components/labels/label-settings-section'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { SourceControlWritingSettings } from '@/components/source-control-writing-settings'
 import { setSetting as setSettingOptimistically } from '@/db/shared-mutations'
 import { settingCollection } from '@/db/shared-state'
 import { useWhenPhase } from '@/hooks/use-when-phase'
@@ -342,6 +343,9 @@ export function AppSettingsModal() {
                 </FieldDescription>
               </Field>
             </FieldSet>
+
+            {/* How generated commit messages and PR descriptions read */}
+            <SourceControlWritingSettings />
 
             {/* Labels Section — app-wide, shared by every project */}
             <LabelSettingsSection />

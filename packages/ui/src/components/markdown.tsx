@@ -54,14 +54,46 @@ const components: Components = {
 function Markdown({
   children,
   className,
+  onTaskListChange,
 }: {
   readonly children: string
   readonly className?: string
+  readonly onTaskListChange?:
+    | ((change: { checked: boolean; markerOffset: number }) => void)
+    | undefined
 }) {
+  let taskIndex = 0
+  const taskOffsets = Array.from(
+    children.matchAll(/\[[ xX]\]/g),
+    (match) => match.index
+  )
+  const interactiveComponents: Components = {
+    ...components,
+    input: ({ checked, type, ...props }) => {
+      if (type !== 'checkbox' || !onTaskListChange) {
+        return <input checked={checked} type={type} {...props} />
+      }
+      const markerOffset = taskOffsets[taskIndex] ?? -1
+      taskIndex += 1
+      return (
+        <input
+          checked={checked}
+          onChange={(event) =>
+            onTaskListChange({
+              checked: event.currentTarget.checked,
+              markerOffset,
+            })
+          }
+          type="checkbox"
+          {...props}
+        />
+      )
+    },
+  }
   return (
     <div className={cn('markdown-body', className)}>
       <ReactMarkdown
-        components={components}
+        components={interactiveComponents}
         rehypePlugins={rehypePlugins}
         remarkPlugins={remarkPlugins}
       >

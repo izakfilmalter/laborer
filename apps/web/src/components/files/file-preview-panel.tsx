@@ -15,12 +15,12 @@
  * Laborer adaptations:
  * - Queries key by workspace id (t3: environment + cwd), backed by the
  *   `file.readText` / `file.write` RPCs.
- * - t3's composer review-comment annotations, drag mentions, and the
- *   browser annotations are left out (no chat composer); its OpenInPicker becomes a plain open-in-editor
- *   button on the `editor.open` RPC.
- * - Rendered markdown uses `@laborer/ui`'s read-only `Markdown` (no task
- *   checkbox toggling), and word wrap is fixed off rather than read from
- *   t3's client settings.
+ * - Review annotations persist through Laborer's review-comment domain.
+ *   Browser-openable files enter the existing Browser Context flow through
+ *   the preview surface; the editor action maps to Laborer's configured
+ *   `editor.open` RPC because Laborer has no per-request editor picker.
+ * - Rendered Markdown task toggles write through the same save coordinator,
+ *   and word wrap comes from Laborer's shared app settings.
  */
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
@@ -49,6 +49,7 @@ import {
   Globe2,
   LoaderCircle,
   SquareArrowOutUpRight,
+  WrapText,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import {
@@ -60,7 +61,12 @@ import {
   useState,
 } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
+import {
+  DiffCommentAnnotation,
+  DiffCommentComposer,
+} from '@/components/diff-comment-annotation'
 import { FileBrowserPanel } from '@/components/files/file-browser-panel'
+import { fileCommentAnnotations } from '@/components/files/file-comment-annotations'
 import {
   fileCacheKey,
   fileEditorCacheKey,
@@ -68,16 +74,23 @@ import {
 import { installFileEditorDismissal } from '@/components/files/file-editor-dismissal'
 import { resolveCenteredFileLineScrollTop } from '@/components/files/file-line-reveal'
 import { fileBreadcrumbs } from '@/components/files/file-path'
-import { isMarkdownPreviewFile } from '@/components/files/file-preview-mode'
+import {
+  isMarkdownPreviewFile,
+  setMarkdownTaskChecked,
+} from '@/components/files/file-preview-mode'
 import {
   FileSaveCoordinator,
   type FileSaveOutcome,
 } from '@/components/files/file-save-coordinator'
 import {
   confirmFileQueryData,
+  getOptimisticFileQueryData,
   setFileQueryData,
   useFileTextQuery,
 } from '@/components/files/project-files-query-state'
+import { useDiffReviewComments } from '@/hooks/use-diff-review-comments'
+import { formatDiffCommentAnchorLabel } from '@/lib/diff-comment-anchor'
+import type { DiffCommentAnnotationGroup } from '@/lib/diff-comment-threads'
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from '@/lib/diff-rendering'
 import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
@@ -87,6 +100,7 @@ import {
 } from '@/preview-state-store'
 import { useRightPanelStore } from '@/right-panel-store'
 import { isBrowserPreviewFile, openFileInBrowser } from './open-file-in-browser'
+import { useWordWrapSetting } from './use-word-wrap-setting'
 
 interface FilePreviewPanelProps {
   onOpenFile: (relativePath: string) => void
@@ -145,9 +159,6 @@ const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `
 type FilePostRender = NonNullable<FileOptions<unknown>['onPostRender']>
-
-/** Word wrap is fixed off; t3 read this from its client settings. */
-const WORD_WRAP = false
 
 /** Extensions the image preview serves, matching the server's list. */
 const IMAGE_PREVIEW_EXTENSIONS = new Set([
@@ -505,6 +516,7 @@ interface EditableFileSurfaceProps {
   relativePath: string
   resolvedTheme: 'light' | 'dark'
   revealRequestId: number
+  wordWrap: boolean
   workspaceId: string
 }
 
@@ -566,8 +578,10 @@ function EditableFileSurface({
   revealRequestId,
   onPostRender,
   onPendingChange,
+  wordWrap,
 }: EditableFileSurfaceProps) {
   const registry = useContext(RegistryContext)
+  const comments = useDiffReviewComments(workspaceId)
   const [selectionOverride, setSelectionOverride] =
     useState<FileSelectionOverride | null>(null)
   const selectedRange =
@@ -587,6 +601,13 @@ function EditableFileSurface({
     relativePath,
     onPendingChange,
   })
+  const threads = comments.threadsByFile.get(relativePath) ?? []
+  const draft =
+    comments.draft?.anchor.filePath === relativePath ? comments.draft : null
+  const lineAnnotations = useMemo(
+    () => fileCommentAnnotations(relativePath, threads, draft),
+    [draft, relativePath, threads]
+  )
 
   // The installed @pierre/diffs owns the editor lifecycle: `File` asks the
   // EditProvider factory to create one and cleans it up itself (t3's newer
@@ -601,11 +622,11 @@ function EditableFileSurface({
     setFileQueryData(registry, workspaceId, relativePath, nextContents)
     saveCoordinator.change(nextContents)
   }
-  const createEditor = useCallback<CreateEditor<unknown>>(
-    (options) => new Editor<unknown>(options),
+  const createEditor = useCallback<CreateEditor<DiffCommentAnnotationGroup>>(
+    (options) => new Editor<DiffCommentAnnotationGroup>(options),
     []
   )
-  const editorOptions = useMemo<EditorOptions<unknown>>(
+  const editorOptions = useMemo<EditorOptions<DiffCommentAnnotationGroup>>(
     () => ({
       persistState: true,
       persistStateStorage: 'inMemory',
@@ -630,10 +651,34 @@ function EditableFileSurface({
         setSelections: (selections) =>
           editorRef.current?.setSelections(selections),
       },
-      isBlocked: () => false,
+      isBlocked: () => draft !== null,
       onDismiss: () => setSelectedRange(null),
     })
-  }, [setSelectedRange])
+  }, [draft, setSelectedRange])
+
+  const handleLineSelectionEnd = useCallback(
+    (range: SelectedLineRange | null) => {
+      setSelectedRange(range)
+      if (!range) {
+        return
+      }
+      const startLine = Math.min(range.start, range.end)
+      const endLine = Math.max(range.start, range.end)
+      comments.startComment({
+        endLine,
+        filePath: relativePath,
+        label: formatDiffCommentAnchorLabel({
+          endLine,
+          filePath: relativePath,
+          side: 'additions',
+          startLine,
+        }),
+        side: 'additions',
+        startLine,
+      })
+    },
+    [comments, relativePath, setSelectedRange]
+  )
 
   const handlePostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
@@ -668,7 +713,7 @@ function EditableFileSurface({
             intersectionObserverMargin: 1200,
           }}
         >
-          <File
+          <File<DiffCommentAnnotationGroup>
             className="min-h-full"
             edit
             editorOptions={editorOptions}
@@ -682,21 +727,97 @@ function EditableFileSurface({
                 editorRef.current?.getFile()
               ),
             }}
+            lineAnnotations={lineAnnotations}
             options={{
               disableFileHeader: true,
-              enableLineSelection: true,
-              onLineSelectionEnd: setSelectedRange,
-              overflow: WORD_WRAP ? 'wrap' : 'scroll',
+              enableGutterUtility: draft === null,
+              enableLineSelection: draft === null,
+              onGutterUtilityClick: setSelectedRange,
+              onLineSelectionChange: setSelectedRange,
+              onLineSelectionEnd: handleLineSelectionEnd,
+              overflow: wordWrap ? 'wrap' : 'scroll',
               theme: resolvedTheme === 'light' ? 'pierre-light' : 'pierre-dark',
               themeType: resolvedTheme,
               unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
               onPostRender: handlePostRender,
+            }}
+            renderAnnotation={(annotation) => {
+              const draftOnLine =
+                draft?.anchor.endLine === annotation.lineNumber ? draft : null
+              return (
+                <DiffCommentAnnotation
+                  busy={comments.busy}
+                  composer={
+                    draftOnLine ? (
+                      <DiffCommentComposer
+                        anchorLabel={draftOnLine.anchor.label}
+                        busy={comments.busy}
+                        onCancel={comments.cancelDraft}
+                        onChange={comments.changeDraft}
+                        onSubmit={comments.submitDraft}
+                        value={draftOnLine.body}
+                      />
+                    ) : undefined
+                  }
+                  group={annotation.metadata}
+                  now={Date.now()}
+                  onDelete={comments.deleteThread}
+                  onReply={comments.startReply}
+                  onSetStatus={comments.setStatus}
+                  replyingToThreadId={
+                    draftOnLine?.kind === 'reply'
+                      ? draftOnLine.threadId
+                      : undefined
+                  }
+                />
+              )
             }}
             selectedLines={selectedRange}
           />
         </Virtualizer>
       </div>
     </EditProvider>
+  )
+}
+
+function RenderedMarkdownSurface({
+  workspaceId,
+  relativePath,
+  contents,
+  onPendingChange,
+}: Pick<
+  EditableFileSurfaceProps,
+  'workspaceId' | 'relativePath' | 'contents' | 'onPendingChange'
+>) {
+  const registry = useContext(RegistryContext)
+  const saveCoordinator = useFileSaveCoordinator({
+    workspaceId,
+    relativePath,
+    onPendingChange,
+  })
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <Markdown
+        className="mx-auto max-w-4xl px-6 py-5"
+        onTaskListChange={({ markerOffset, checked }) => {
+          const currentContents =
+            getOptimisticFileQueryData(registry, workspaceId, relativePath)
+              ?.contents ?? contents
+          const nextContents = setMarkdownTaskChecked(
+            currentContents,
+            markerOffset,
+            checked
+          )
+          if (nextContents === currentContents) {
+            return
+          }
+          setFileQueryData(registry, workspaceId, relativePath, nextContents)
+          saveCoordinator.change(nextContents)
+        }}
+      >
+        {contents}
+      </Markdown>
+    </ScrollArea>
   )
 }
 
@@ -736,6 +857,7 @@ export function FilePreviewPanel({
   const openEditor = useAtomSet(editorOpenMutation, { mode: 'promise' })
   const createAssetUrl = useAtomSet(assetUrlMutation, { mode: 'promise' })
   const openPreview = useAtomSet(previewOpenMutation, { mode: 'promise' })
+  const [wordWrap, setWordWrap] = useWordWrapSetting()
   const isImage =
     relativePath !== null && isWorkspaceImagePreviewPath(relativePath)
   const file = useFileTextQuery(workspaceId, relativePath, !isImage)
@@ -959,6 +1081,26 @@ export function FilePreviewPanel({
               render={
                 <Toggle
                   aria-label={
+                    wordWrap ? 'Disable line wrapping' : 'Enable line wrapping'
+                  }
+                  className="shrink-0"
+                  onPressedChange={(pressed) => setWordWrap(Boolean(pressed))}
+                  pressed={wordWrap}
+                  size="sm"
+                >
+                  <WrapText className="size-3.5" />
+                </Toggle>
+              }
+            />
+            <TooltipContent>
+              {wordWrap ? 'Disable line wrapping' : 'Enable line wrapping'}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={
                     explorerOpen ? 'Hide file explorer' : 'Show file explorer'
                   }
                   className="shrink-0"
@@ -1006,11 +1148,12 @@ export function FilePreviewPanel({
             </div>
           ) : relativePath && file.data ? (
             isMarkdown && renderMarkdown ? (
-              <ScrollArea className="min-h-0 flex-1">
-                <Markdown className="mx-auto max-w-4xl px-6 py-5">
-                  {file.data.contents}
-                </Markdown>
-              </ScrollArea>
+              <RenderedMarkdownSurface
+                contents={file.data.contents}
+                onPendingChange={onPendingChange}
+                relativePath={relativePath}
+                workspaceId={workspaceId}
+              />
             ) : file.data.truncated ? (
               <Virtualizer
                 className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
@@ -1033,7 +1176,7 @@ export function FilePreviewPanel({
                   }}
                   options={{
                     disableFileHeader: true,
-                    overflow: WORD_WRAP ? 'wrap' : 'scroll',
+                    overflow: wordWrap ? 'wrap' : 'scroll',
                     theme:
                       resolvedTheme === 'light'
                         ? 'pierre-light'
@@ -1053,6 +1196,7 @@ export function FilePreviewPanel({
                 relativePath={relativePath}
                 resolvedTheme={resolvedTheme}
                 revealRequestId={revealRequestId}
+                wordWrap={wordWrap}
                 workspaceId={workspaceId}
               />
             )

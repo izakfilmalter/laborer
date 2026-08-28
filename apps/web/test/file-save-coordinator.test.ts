@@ -95,4 +95,23 @@ describe('FileSaveCoordinator', () => {
     expect(onPendingChange).toHaveBeenCalledWith(true)
     expect(onPendingChange).not.toHaveBeenCalledWith(false)
   })
+
+  it('flushes and clears pending state when its file surface unmounts', async () => {
+    const onPendingChange = vi.fn()
+    const persist = vi.fn().mockResolvedValue(success)
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist,
+      onPendingChange,
+      onConfirmed: vi.fn(),
+    })
+
+    coordinator.change('latest')
+    coordinator.dispose()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(persist).toHaveBeenCalledWith('latest')
+    expect(onPendingChange.mock.calls.at(-1)).toEqual([false])
+  })
 })

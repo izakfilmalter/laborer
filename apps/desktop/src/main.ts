@@ -51,6 +51,7 @@ import {
 } from './laborer-mcp-symlink.js'
 import { configureApplicationMenu } from './menu.js'
 import { PreviewManager } from './preview/Manager.js'
+import { enforcePreviewWebviewSecurity } from './preview/WebviewSecurity.js'
 import { registerGlobalShortcut, TrayManager } from './tray.js'
 import { buildWindowBootstrapArgs, createWindowId } from './window-identity.js'
 import { type WindowRecord, WindowStateManager } from './window-state.js'
@@ -401,19 +402,18 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   window.webContents.on(
     'will-attach-webview',
     (event, webPreferences, params) => {
-      if (
-        typeof params.partition !== 'string' ||
-        !previewManager?.isBrowserPartition(params.partition)
-      ) {
-        event.preventDefault()
-        return
-      }
-      webPreferences.sandbox = true
-      webPreferences.nodeIntegration = false
-      webPreferences.nodeIntegrationInSubFrames = false
-      // The sandboxed picker preload shares the page world to inspect component
-      // metadata; Node integration remains forcibly disabled above.
-      webPreferences.contextIsolation = false
+      enforcePreviewWebviewSecurity(
+        event,
+        webPreferences,
+        params,
+        previewManager?.pickPreloadUrl
+          ? {
+              isApprovedPartition: (partition) =>
+                previewManager?.isBrowserPartition(partition) === true,
+              preloadUrl: previewManager.pickPreloadUrl,
+            }
+          : null
+      )
     }
   )
 

@@ -13,7 +13,17 @@ describe('preview webview preferences', () => {
 
   it('contains only canonical security-critical boolean preferences', () => {
     expect(Object.keys(preferences).toSorted()).toEqual(
-      ['contextIsolation', 'nodeIntegration', 'sandbox'].toSorted()
+      [
+        'allowRunningInsecureContent',
+        'contextIsolation',
+        'experimentalFeatures',
+        'nodeIntegration',
+        'nodeIntegrationInSubFrames',
+        'nodeIntegrationInWorker',
+        'sandbox',
+        'webSecurity',
+        'webviewTag',
+      ].toSorted()
     )
     expect(PREVIEW_WEBVIEW_PREFERENCES).not.toMatch(WHITESPACE_PATTERN)
     expect(
@@ -23,11 +33,17 @@ describe('preview webview preferences', () => {
     ).toBe(true)
   })
 
-  it('shares the page world without exposing Node', () => {
+  it('isolates and sandboxes the guest without exposing Node', () => {
     expect(preferences).toEqual({
-      contextIsolation: 'false',
+      allowRunningInsecureContent: 'false',
+      contextIsolation: 'true',
+      experimentalFeatures: 'false',
       nodeIntegration: 'false',
+      nodeIntegrationInSubFrames: 'false',
+      nodeIntegrationInWorker: 'false',
       sandbox: 'true',
+      webSecurity: 'true',
+      webviewTag: 'false',
     })
   })
 })

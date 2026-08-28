@@ -2,9 +2,8 @@
 /**
  * Canonical Electron `<webview webpreferences>` string from t3code.
  *
- * The picker preload intentionally shares the page world so it can inspect
- * React metadata. The renderer remains OS-sandboxed and has no Node access.
- * `main.ts` force-applies these flags again in `will-attach-webview`.
+ * `main.ts` force-applies these flags and the approved preload again in
+ * `will-attach-webview`; this string is only the renderer's declarative copy.
  */
 export const PREVIEW_WEBVIEW_PREFERENCES =
-  'contextIsolation=false,sandbox=true,nodeIntegration=false'
+  'contextIsolation=true,sandbox=true,nodeIntegration=false,nodeIntegrationInSubFrames=false,nodeIntegrationInWorker=false,webSecurity=true,allowRunningInsecureContent=false,experimentalFeatures=false,webviewTag=false'

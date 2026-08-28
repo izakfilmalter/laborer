@@ -18,6 +18,7 @@ import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
 import {
   startBrowserRecording,
   stopBrowserRecording,
+  useBrowserRecordingStore,
 } from '@/browser/browser-recording'
 import { usePreviewMiniPlayerStore } from '@/preview-mini-player-store'
 import {
@@ -113,10 +114,34 @@ interface BrowserAutomationTarget extends AutomationTabTarget {
     readonly tabId: string
     readonly viewport: PreviewViewportSetting
   }) => Promise<PreviewSessionSnapshot>
+  readonly resolveRecordingTarget?: () => AutomationTabTarget
   readonly resolveTarget?: () => AutomationTabTarget
   readonly reveal?: (tabId: string) => void
   readonly upsert?: (snapshot: PreviewSessionSnapshot) => void
   readonly workspaceId?: string
+}
+
+export function resolveActiveBrowserRecordingTarget(
+  workspaceId: string
+): AutomationTabTarget {
+  const runtimeTabId = useBrowserRecordingStore.getState().activeTabId
+  const state = usePreviewStateStore.getState().byWorkspaceId[workspaceId]
+  const snapshot = Object.values(state?.sessions ?? {}).find(
+    (session) =>
+      runtimeTabId !== null &&
+      previewRuntimeTabId(
+        workspaceId,
+        state?.serverEpoch ?? null,
+        session.tabId
+      ) === runtimeTabId
+  )
+  return {
+    runtimeTabId: snapshot ? runtimeTabId : null,
+    serverTabId: snapshot?.tabId ?? null,
+    ...(snapshot?.viewport === undefined
+      ? {}
+      : { viewportSetting: snapshot.viewport }),
+  }
 }
 
 const waitFor = async <A,>(
@@ -219,6 +244,22 @@ export async function runBrowserAutomation(
       request.timeoutMs,
       'Browser tab did not become ready'
     )
+  }
+  if (request.operation === 'recordingStop') {
+    const stopTarget =
+      request.tabId === undefined
+        ? (target.resolveRecordingTarget?.() ?? resolveTarget())
+        : resolveTarget()
+    const stopTabId = stopTarget.serverTabId
+    const artifact = stopTarget.runtimeTabId
+      ? await stopBrowserRecording(stopTarget.runtimeTabId)
+      : null
+    if (!(artifact && stopTabId)) {
+      throw new Error(
+        `No active browser recording was found for ${request.tabId ?? stopTabId ?? 'the active recording'}`
+      )
+    }
+    return { ...artifact, tabId: stopTabId }
   }
   ;({ runtimeTabId, serverTabId } = resolveTarget())
   if (!(runtimeTabId && serverTabId)) {
@@ -327,15 +368,6 @@ export async function runBrowserAutomation(
       const startedAt = await startBrowserRecording(runtimeTabId)
       return { tabId: serverTabId, recording: true, startedAt }
     }
-    case 'recordingStop': {
-      const artifact = await stopBrowserRecording(runtimeTabId)
-      if (!artifact) {
-        throw new Error(
-          `No active browser recording was found for ${serverTabId}`
-        )
-      }
-      return { ...artifact, tabId: serverTabId }
-    }
     default:
       return request.operation satisfies never
   }
@@ -413,6 +445,8 @@ async function handleBrowserRequest(input: {
           ...resolveTarget(),
           workspaceId,
           resolveTarget,
+          resolveRecordingTarget: () =>
+            resolveActiveBrowserRecordingTarget(workspaceId),
           open: (payload) => open({ payload }),
           navigate: (payload) => navigate({ payload }),
           resize: (payload) => resize({ payload }),

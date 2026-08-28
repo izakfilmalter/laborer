@@ -97,8 +97,15 @@ describe('file tab interactions', () => {
       </RightPanelTabs>
     )
 
-    expect(screen.getByText('Unsaved changes')).toBeDefined()
-    const tab = screen.getByRole('button', { name: 'Close a.ts' }).parentElement
+    const close = screen.getByRole('button', { name: 'Close a.ts' })
+    const identity = close.firstElementChild
+    expect(identity?.querySelector('[data-pierre-icon]')).not.toBeNull()
+    const pending = identity?.querySelector('[data-pending-indicator]')
+    expect(pending).not.toBeNull()
+    expect(pending?.className).toContain('-right-0.5')
+    expect(pending?.className).toContain('-bottom-0.5')
+    expect(pending?.className).toContain('size-1.5')
+    const tab = close.parentElement
     expect(tab).not.toBeNull()
     if (!tab) {
       return

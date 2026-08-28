@@ -2,38 +2,11 @@ import { Markdown } from '@laborer/ui/components/markdown'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fileCommentAnnotations } from '@/components/files/file-comment-annotations'
-import {
-  COMPOSER_MENTION_DRAG_TYPE,
-  createFileTreeDragMentionController,
-  serializeFileMention,
-} from '@/components/files/file-tree-drag-mention'
+import { serializeFileMention } from '@/components/files/file-mention'
 
 afterEach(cleanup)
 
-describe('file drag mentions', () => {
-  it('writes the exact structured mention payload and suppresses drag selection', () => {
-    const deselect = vi.fn()
-    const setData = vi.fn()
-    const controller = createFileTreeDragMentionController({ deselect })
-    controller.handleSelectionChange(['src/a.ts', 'src/b.ts'])
-    controller.handleDragStart({
-      dataTransfer: { setData },
-      composedPath: () => [
-        {
-          getAttribute: (name: string) =>
-            name === 'data-item-path' ? 'src/a.ts' : null,
-        },
-      ],
-    })
-    expect(setData).toHaveBeenCalledWith(
-      COMPOSER_MENTION_DRAG_TYPE,
-      '[a.ts](src/a.ts) [b.ts](src/b.ts)'
-    )
-    expect(controller.isDragInProgress()).toBe(true)
-    controller.handleDragEnd()
-    expect(deselect.mock.calls).toEqual([['src/a.ts'], ['src/b.ts']])
-  })
-
+describe('file mentions', () => {
   it('escapes file mentions like t3', () => {
     expect(serializeFileMention('docs/My File (draft).md')).toBe(
       '[My File (draft).md](docs/My%20File%20%28draft%29.md)'

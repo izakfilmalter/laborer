@@ -3,6 +3,7 @@ import type { DesktopPreviewBridge } from '@laborer/shared/desktop-bridge'
 import { describe, expect, it, vi } from 'vitest'
 import {
   enqueueBrowserRequest,
+  resolveActiveBrowserRecordingTarget,
   runBrowserAutomation,
 } from '@/components/preview/browser-automation-host'
 import { cleanupWorkspacePreview } from '@/components/preview/preview-session-hosts'
@@ -10,6 +11,7 @@ import { usePreviewMiniPlayerStore } from '@/preview-mini-player-store'
 import { usePreviewStateStore } from '@/preview-state-store'
 
 const recording = vi.hoisted(() => ({
+  activeTabId: null as string | null,
   start: vi.fn(async () => '2026-08-28T12:00:00.000Z'),
   stop: vi.fn(async () => ({
     id: 'artifact-1',
@@ -26,6 +28,9 @@ vi.mock('@/browser/browser-recording', () => ({
   startBrowserRecording: recording.start,
   stopBrowserRecording: recording.stop,
   cancelBrowserRecording: recording.cancel,
+  useBrowserRecordingStore: {
+    getState: () => ({ activeTabId: recording.activeTabId }),
+  },
 }))
 
 const request = (
@@ -280,6 +285,71 @@ describe('browser automation host', () => {
       path: '/artifacts/recording.webm',
     })
     expect(recording.stop).toHaveBeenCalledWith('runtime-tab')
+  })
+
+  it('stops the active recording instead of the currently selected browser tab', async () => {
+    await expect(
+      runBrowserAutomation(request('recordingStop'), {
+        preview: {
+          automation: automation(),
+        } as unknown as DesktopPreviewBridge,
+        runtimeTabId: 'runtime-browsing',
+        serverTabId: 'server-browsing',
+        resolveRecordingTarget: () => ({
+          runtimeTabId: 'runtime-tab',
+          serverTabId: 'server-recording',
+        }),
+      })
+    ).resolves.toMatchObject({ tabId: 'server-recording' })
+    expect(recording.stop).toHaveBeenLastCalledWith('runtime-tab')
+  })
+
+  it('maps the recording store runtime tab back to its server tab', () => {
+    usePreviewStateStore
+      .getState()
+      .upsert('workspace-1', snapshot('server-recording'))
+    recording.activeTabId = 'workspace-1:pending:server-recording'
+    expect(resolveActiveBrowserRecordingTarget('workspace-1')).toMatchObject({
+      runtimeTabId: 'workspace-1:pending:server-recording',
+      serverTabId: 'server-recording',
+    })
+    recording.activeTabId = null
+  })
+
+  it('prefers an explicitly requested recording tab and reports inactive recordings', async () => {
+    await expect(
+      runBrowserAutomation(
+        { ...request('recordingStop'), tabId: 'server-explicit' },
+        {
+          preview: {
+            automation: automation(),
+          } as unknown as DesktopPreviewBridge,
+          runtimeTabId: 'runtime-explicit',
+          serverTabId: 'server-explicit',
+          resolveRecordingTarget: () => ({
+            runtimeTabId: 'runtime-tab',
+            serverTabId: 'server-recording',
+          }),
+        }
+      )
+    ).resolves.toMatchObject({ tabId: 'server-explicit' })
+    expect(recording.stop).toHaveBeenLastCalledWith('runtime-explicit')
+
+    recording.stop.mockResolvedValueOnce(null)
+    await expect(
+      runBrowserAutomation(
+        { ...request('recordingStop'), tabId: 'server-inactive' },
+        {
+          preview: {
+            automation: automation(),
+          } as unknown as DesktopPreviewBridge,
+          runtimeTabId: 'runtime-inactive',
+          serverTabId: 'server-inactive',
+        }
+      )
+    ).rejects.toThrow(
+      'No active browser recording was found for server-inactive'
+    )
   })
 
   it('times out when a cold desktop tab never becomes automation-ready', async () => {

@@ -5,9 +5,9 @@
  * Laborer adaptations:
  * - Entries come from the `file.listEntries` RPC keyed by workspace id
  *   rather than t3's environment/cwd pair.
- * - Rows preserve t3's structured composer-mention drag payload. Laborer has
- *   no mission-control composer/drop target, so no synthetic drop behavior is
- *   added here.
+ * - Laborer has no mission-control composer/drop target, so t3's file-row
+ *   dragging is disabled. Copy mention and Copy path provide the native
+ *   handoff instead.
  * - Git-status decorations ride along: `@pierre/trees` accepts status
  *   entries natively, so the tree tints changed files the way the old
  *   left tree pane did, fed by `file.status`.
@@ -45,10 +45,7 @@ import { useTheme } from 'next-themes'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fileWatcherEventsAtom } from '@/atoms/file-watcher'
 import { LaborerClient } from '@/atoms/laborer-client'
-import {
-  createFileTreeDragMentionController,
-  serializeFileMention,
-} from '@/components/files/file-tree-drag-mention'
+import { serializeFileMention } from '@/components/files/file-mention'
 import { LABORER_PIERRE_ICONS } from '@/components/files/pierre-icons'
 import { useFileEntriesQuery } from '@/components/files/project-files-query-state'
 import { toast } from '@/lib/toast'
@@ -177,16 +174,6 @@ export function FileBrowserPanel({
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(
     null
   )
-  const treeModelRef = useRef<ReturnType<typeof useFileTree>['model'] | null>(
-    null
-  )
-  const dragMention = useMemo(
-    () =>
-      createFileTreeDragMentionController({
-        deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
-      }),
-    []
-  )
   const contextMenuPointerRef = useRef<{
     x: number
     y: number
@@ -244,15 +231,10 @@ export function FileBrowserPanel({
     flattenEmptyDirectories: true,
     initialExpansion: 1,
     icons: LABORER_PIERRE_ICONS,
-    dragAndDrop: { canDrop: () => false },
     onSelectionChange: (selectedPaths) => {
-      dragMention.handleSelectionChange(selectedPaths)
       // Selection changes driven by the reveal sync below are echoes of an
       // already-open file, not a request to open it again.
       if (syncingSelectionRef.current) {
-        return
-      }
-      if (dragMention.isDragInProgress()) {
         return
       }
       const changedPath = selectedPaths
@@ -268,25 +250,6 @@ export function FileBrowserPanel({
     unsafeCSS: TREE_UNSAFE_CSS,
   })
   const search = useFileTreeSearch(model)
-  const panelRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    treeModelRef.current = model
-  }, [model])
-  useEffect(() => {
-    const panel = panelRef.current
-    if (!panel) {
-      return
-    }
-    const handleDragStart = (event: DragEvent) =>
-      dragMention.handleDragStart(event)
-    const handleDragEnd = () => dragMention.handleDragEnd()
-    panel.addEventListener('dragstart', handleDragStart, true)
-    panel.addEventListener('dragend', handleDragEnd)
-    return () => {
-      panel.removeEventListener('dragstart', handleDragStart, true)
-      panel.removeEventListener('dragend', handleDragEnd)
-    }
-  }, [dragMention])
   const handleSearchValueChange = (value: string) => {
     if (value.trim().length === 0) {
       search.close()
@@ -444,7 +407,6 @@ export function FileBrowserPanel({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={workspaceId}
-      ref={panelRef}
     >
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-border/60 border-b bg-background px-2"

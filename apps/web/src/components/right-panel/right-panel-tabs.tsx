@@ -661,21 +661,18 @@ function RightPanelTab({
               label={`Close ${title}`}
               onClick={onCloseSurface}
             >
+              <SurfaceIcon
+                browserOverlay={browserOverlay}
+                pullRequestStatus={pullRequestStatus}
+                surface={surface}
+              />
               {pending ? (
-                <>
-                  <span
-                    aria-hidden
-                    className="size-2 rounded-full bg-foreground"
-                  />
-                  <span className="sr-only">Unsaved changes</span>
-                </>
-              ) : (
-                <SurfaceIcon
-                  browserOverlay={browserOverlay}
-                  pullRequestStatus={pullRequestStatus}
-                  surface={surface}
+                <span
+                  aria-hidden
+                  className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                  data-pending-indicator
                 />
-              )}
+              ) : null}
             </PanelTabCloseButton>
             <Tooltip>
               <TooltipTrigger

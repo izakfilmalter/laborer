@@ -732,7 +732,7 @@ describe('eighth reference coding Application review', () => {
                 'ses_6cbad5829b1f21a13aa316a0275ce71ea4b8c5beeddea27dce82f53313f7',
               prompt: 'Continue after restart.',
               promptId:
-                'msg_d96e0d8b1e1d1f1fb07ace4c4e3f6cbe1fa7a8d3018f8c39dbfe4ab1580bee2c',
+                'msg_5de764edd0a66ca6832995959cf6a86931a3c8827a37677255c1db4740cdd55d',
               workingDirectory: '/tmp/completed-restart',
             },
           ])

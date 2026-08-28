@@ -627,6 +627,65 @@ export const FileNode = Schema.Struct({
 export type FileNode = typeof FileNode.Type
 
 /**
+ * One entry in the recursive worktree listing returned by
+ * `file.listEntries`.
+ *
+ * Modeled on t3code's `ProjectEntry`: the explorer's tree component wants a
+ * flat list of relative paths tagged file-or-directory, not a nested
+ * structure or per-level pages.
+ */
+export const FileEntry = Schema.Struct({
+  /** Path relative to the worktree root. */
+  path: Schema.String,
+  /** Whether this entry is a file or directory. */
+  kind: Schema.Literals(['file', 'directory']),
+})
+
+export type FileEntry = typeof FileEntry.Type
+
+/**
+ * The recursive worktree listing returned by `file.listEntries`.
+ *
+ * `truncated` is the server admitting it stopped walking at the entry cap;
+ * the explorer can render what it has and say the listing is partial.
+ */
+export const FileEntriesResult = Schema.Struct({
+  entries: Schema.Array(FileEntry),
+  truncated: Schema.Boolean,
+})
+
+export type FileEntriesResult = typeof FileEntriesResult.Type
+
+/**
+ * A text file's verbatim contents returned by `file.readText`.
+ *
+ * Modeled on t3code's `ProjectReadFileResult`: unlike {@link FileContent}
+ * (which trims and pairs the text with a diff), this is what an editor
+ * surface needs — the exact bytes as UTF-8, the file's true size, and an
+ * honest flag when the preview cap cut the text short.
+ */
+export const FileTextContent = Schema.Struct({
+  /** Path relative to the worktree root, echoed back. */
+  relativePath: Schema.String,
+  /** UTF-8 contents, verbatim up to the preview cap. */
+  contents: Schema.String,
+  /** The file's full size in bytes, even when truncated. */
+  byteLength: NonNegativeInt,
+  /** True when `contents` stops at the preview cap before the file does. */
+  truncated: Schema.Boolean,
+})
+
+export type FileTextContent = typeof FileTextContent.Type
+
+/** Acknowledgement returned by `file.write`. */
+export const FileWriteResult = Schema.Struct({
+  /** Path relative to the worktree root, echoed back. */
+  relativePath: Schema.String,
+})
+
+export type FileWriteResult = typeof FileWriteResult.Type
+
+/**
  * A file change event streamed to the client from `file.watcher.subscribe`.
  *
  * The `file` path is relative to the worktree root. The `event` type maps
@@ -1920,6 +1979,64 @@ export class LaborerRpcs extends RpcGroup.make(
     payload: {
       workspaceId: Schema.String,
       dir: Schema.optional(Schema.String),
+    },
+  }),
+
+  /**
+   * List every file and directory in a workspace's worktree as one flat,
+   * recursive listing.
+   *
+   * This backs the right panel's file explorer (`@pierre/trees` wants the
+   * whole path list up front). Noisy directories, OS metadata files, and
+   * gitignored entries are skipped; the walk stops at an entry cap and
+   * reports `truncated` instead of unbounded output.
+   */
+  Rpc.make('file.listEntries', {
+    success: FileEntriesResult,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+    },
+  }),
+
+  /**
+   * Read a text file's verbatim contents for the file preview/editor
+   * surface.
+   *
+   * Unlike `file.read` this does not trim trailing whitespace or compute a
+   * diff — an editor must see the file exactly as it is — and it caps the
+   * text at a preview limit (1 MB), reporting the file's true byte length
+   * and a `truncated` flag instead of shipping the whole file.
+   *
+   * Fails with code `BINARY_FILE` for files that are not text (the image
+   * preview keeps using `file.read`, which serves base64), `NOT_FOUND`
+   * when the path does not exist, and `PATH_TRAVERSAL` when the path
+   * escapes the worktree.
+   */
+  Rpc.make('file.readText', {
+    success: FileTextContent,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      filePath: Schema.String,
+    },
+  }),
+
+  /**
+   * Write a text file inside a workspace's worktree, creating parent
+   * directories as needed.
+   *
+   * Backs the file editor's debounced save. The path must stay inside the
+   * worktree (`PATH_TRAVERSAL` otherwise); the contents are written
+   * verbatim as UTF-8.
+   */
+  Rpc.make('file.write', {
+    success: FileWriteResult,
+    error: RpcError,
+    payload: {
+      workspaceId: Schema.String,
+      filePath: Schema.String,
+      contents: Schema.String,
     },
   }),
 

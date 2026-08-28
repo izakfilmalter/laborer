@@ -1850,10 +1850,28 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         return yield* fileService.list(workspaceId, dir)
       }),
 
+    'file.listEntries': ({ workspaceId }) =>
+      Effect.gen(function* () {
+        const fileService = yield* FileService
+        return yield* fileService.listEntries(workspaceId)
+      }),
+
     'file.read': ({ workspaceId, filePath }) =>
       Effect.gen(function* () {
         const fileService = yield* FileService
         return yield* fileService.read(workspaceId, filePath)
+      }),
+
+    'file.readText': ({ workspaceId, filePath }) =>
+      Effect.gen(function* () {
+        const fileService = yield* FileService
+        return yield* fileService.readText(workspaceId, filePath)
+      }),
+
+    'file.write': ({ workspaceId, filePath, contents }) =>
+      Effect.gen(function* () {
+        const fileService = yield* FileService
+        return yield* fileService.write(workspaceId, filePath, contents)
       }),
 
     'file.status': ({ workspaceId }) =>

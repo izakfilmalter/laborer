@@ -81,20 +81,43 @@ export class PreviewCapture {
         sandbox: true,
       },
     })
-    this.#windows.set(tabId, window)
-    window.setVisibleOnAllWorkspaces(true, { skipTransformProcessType: true })
-    window.once('closed', () => {
-      if (this.#windows.get(tabId) === window) {
+    let opened = false
+    try {
+      this.#windows.set(tabId, window)
+      window.setVisibleOnAllWorkspaces(true, { skipTransformProcessType: true })
+      window.once('closed', () => {
+        if (this.#windows.get(tabId) === window) {
+          this.#windows.delete(tabId)
+          this.#aspectRatios.delete(tabId)
+          this.#stopFrameCapture(tabId, 'picture-in-picture')
+          this.#setPictureInPicture(tabId, false)
+        }
+      })
+      await window.loadURL(buildPictureInPictureDataUrl())
+      if (this.#windows.get(tabId) !== window || window.isDestroyed()) {
+        throw new Error('Picture-in-picture window closed while opening')
+      }
+      markOpen()
+      if (this.#windows.get(tabId) !== window || window.isDestroyed()) {
+        throw new Error('Picture-in-picture window closed while opening')
+      }
+      this.#startFrameCapture(tabId, 'picture-in-picture')
+      window.showInactive()
+      opened = true
+    } finally {
+      if (!opened && this.#windows.get(tabId) === window) {
         this.#windows.delete(tabId)
         this.#aspectRatios.delete(tabId)
         this.#stopFrameCapture(tabId, 'picture-in-picture')
-        this.#setPictureInPicture(tabId, false)
+        try {
+          if (!window.isDestroyed()) {
+            window.close()
+          }
+        } finally {
+          this.#setPictureInPicture(tabId, false)
+        }
       }
-    })
-    await window.loadURL(buildPictureInPictureDataUrl())
-    this.#startFrameCapture(tabId, 'picture-in-picture')
-    markOpen()
-    window.showInactive()
+    }
   }
 
   closePictureInPicture(tabId: string): void {

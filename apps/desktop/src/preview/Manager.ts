@@ -417,14 +417,15 @@ export class PreviewManager {
   }
 
   async openPictureInPicture(owner: WebContents, tabId: string): Promise<void> {
-    await this.#capture.openPictureInPicture(
-      tabId,
-      this.#requireGuest(owner, tabId),
-      () =>
-        this.#update(this.#requireTab(owner, tabId), {
-          pictureInPicture: true,
-        })
-    )
+    const tab = this.#requireTab(owner, tabId)
+    const guest = this.#guest(tab, true) as WebContents
+    await this.#capture.openPictureInPicture(tabId, guest, () => {
+      this.#assertOwner(tab, owner)
+      if (this.#tabs.get(tabId) !== tab || this.#guest(tab, false) !== guest) {
+        throw new Error(`Preview tab changed while opening PiP: ${tabId}`)
+      }
+      this.#update(tab, { pictureInPicture: true })
+    })
   }
 
   closePictureInPicture(owner: WebContents, tabId: string): Promise<void> {

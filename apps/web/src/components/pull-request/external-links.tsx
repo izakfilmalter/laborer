@@ -18,7 +18,8 @@
 import type * as React from 'react'
 import { localApi } from '@/lib/local-api'
 
-const openExternally = (url: string) => {
+/** Leave the app the way the host platform expects, ignoring a failed hand-off. */
+export const openExternally = (url: string) => {
   localApi.openExternal(url).catch(() => {
     // The link is still a real anchor; a failed hand-off is not worth a toast.
   })

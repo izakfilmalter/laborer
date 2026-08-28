@@ -10,9 +10,9 @@ import { Array, Cause, Option, pipe } from 'effect'
 import { AsyncResult as Result } from 'effect/unstable/reactivity'
 import { MessageSquare, TriangleAlert } from 'lucide-react'
 import { type ReactElement, useMemo } from 'react'
+import { pullRequestConversationQuery } from '@/components/pull-request/conversation-query'
+import { CommentTimelineItem } from '@/components/pull-request/timeline-item'
 import { extractErrorMessage } from '@/lib/errors'
-import { pullRequestConversationQuery } from '@/panes/comments-pane/conversation-query'
-import { CommentTimelineItem } from '@/panes/comments-pane/timeline-item'
 
 const PREVIEW_COMMENT_COUNT = 3
 // The Base UI default is 600 ms, long enough for a small status icon to feel

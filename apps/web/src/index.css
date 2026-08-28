@@ -70,3 +70,22 @@
   scrollbar-color: color-mix(in srgb, transparent 80%, var(--foreground))
     transparent;
 }
+
+/*
+ * Pull request panel loading ghosts: one opacity animation on the
+ * container however many bars sit under it (see
+ * components/pull-request/ghosts.tsx, ported from t3code).
+ */
+@keyframes ghost-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.animate-ghost-pulse {
+  animation: ghost-pulse 1.6s ease-in-out infinite;
+}

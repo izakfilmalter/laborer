@@ -44,12 +44,12 @@ import {
   User,
 } from 'lucide-react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { isCommentSubmitShortcut } from '@/lib/comment-submit-shortcut'
-import type { DiffCommentAnnotationGroup } from '@/lib/diff-comment-threads'
 import {
   formatAbsoluteTime,
   formatRelativeTime,
-} from '@/panes/comments-pane/relative-time'
+} from '@/components/pull-request/relative-time'
+import { isCommentSubmitShortcut } from '@/lib/comment-submit-shortcut'
+import type { DiffCommentAnnotationGroup } from '@/lib/diff-comment-threads'
 
 /** Epoch milliseconds, as every review row stores them. */
 const asIso = (epochMs: number) => new Date(epochMs).toISOString()

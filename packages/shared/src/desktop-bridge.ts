@@ -235,25 +235,30 @@ export const PreviewGetConfigRequestSchema = Schema.Struct({
   environmentId: PreviewNonEmptyString.check(Schema.isMaxLength(1024)),
 })
 
+const PreviewThemeValueSchema = Schema.String.check(Schema.isMaxLength(4096))
 export const DesktopPreviewAnnotationThemeSchema = Schema.Struct({
-  accent: Schema.String,
-  accentForeground: Schema.String,
-  background: Schema.String,
-  border: Schema.String,
+  accent: PreviewThemeValueSchema,
+  accentForeground: PreviewThemeValueSchema,
+  background: PreviewThemeValueSchema,
+  border: PreviewThemeValueSchema,
   colorScheme: Schema.Literals(['light', 'dark']),
-  fontMono: Schema.String,
-  fontSans: Schema.String,
-  foreground: Schema.String,
-  input: Schema.String,
-  muted: Schema.String,
-  mutedForeground: Schema.String,
-  popover: Schema.String,
-  popoverForeground: Schema.String,
-  primary: Schema.String,
-  primaryForeground: Schema.String,
-  radius: Schema.String,
-  ring: Schema.String,
+  fontMono: PreviewThemeValueSchema,
+  fontSans: PreviewThemeValueSchema,
+  foreground: PreviewThemeValueSchema,
+  input: PreviewThemeValueSchema,
+  muted: PreviewThemeValueSchema,
+  mutedForeground: PreviewThemeValueSchema,
+  popover: PreviewThemeValueSchema,
+  popoverForeground: PreviewThemeValueSchema,
+  primary: PreviewThemeValueSchema,
+  primaryForeground: PreviewThemeValueSchema,
+  radius: PreviewThemeValueSchema,
+  ring: PreviewThemeValueSchema,
 })
+export const PreviewEmptyRequestSchema = Schema.Undefined
+export const PreviewStartPickEventSchema = Schema.UndefinedOr(
+  DesktopPreviewAnnotationThemeSchema
+)
 export const PreviewSetAnnotationThemeRequestSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 })

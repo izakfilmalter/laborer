@@ -8,6 +8,7 @@ import {
   PreviewAutomationTypeRequestSchema,
   PreviewAutomationWaitForRequestSchema,
   PreviewCreateTabRequestSchema,
+  PreviewEmptyRequestSchema,
   PreviewGetConfigRequestSchema,
   PreviewIpcDecodeError,
   PreviewNavigateRequestSchema,
@@ -64,6 +65,15 @@ export function registerPreviewIpcHandlers(manager: PreviewManager): void {
     handle(channel, (event, payload) => {
       const request = decode(channel, PreviewTabRequestSchema, payload)
       return method(owner(event), request.tabId)
+    })
+  }
+  const emptyMethod = (
+    channel: string,
+    method: (requestOwner: WebContents) => unknown
+  ) => {
+    handle(channel, (event, payload) => {
+      decode(channel, PreviewEmptyRequestSchema, payload)
+      return method(owner(event))
     })
   }
 
@@ -158,10 +168,10 @@ export function registerPreviewIpcHandlers(manager: PreviewManager): void {
     PreviewChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
     (requestOwner, tabId) => manager.openDevTools(requestOwner, tabId)
   )
-  handle(PreviewChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, () =>
+  emptyMethod(PreviewChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, () =>
     manager.clearCookies()
   )
-  handle(PreviewChannels.PREVIEW_CLEAR_CACHE_CHANNEL, () =>
+  emptyMethod(PreviewChannels.PREVIEW_CLEAR_CACHE_CHANNEL, () =>
     manager.clearCache()
   )
   handle(PreviewChannels.PREVIEW_GET_CONFIG_CHANNEL, (event, payload) => {
@@ -180,7 +190,8 @@ export function registerPreviewIpcHandlers(manager: PreviewManager): void {
   })
   handle(
     PreviewChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL,
-    (_event, payload) => {
+    (event, payload) => {
+      owner(event)
       const request = decode(
         PreviewChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL,
         PreviewSetAnnotationThemeRequestSchema,
@@ -201,7 +212,8 @@ export function registerPreviewIpcHandlers(manager: PreviewManager): void {
     PreviewChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL,
     (requestOwner, tabId) => manager.captureScreenshot(requestOwner, tabId)
   )
-  handle(PreviewChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, (_event, payload) => {
+  handle(PreviewChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, (event, payload) => {
+    owner(event)
     const request = decode(
       PreviewChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
       PreviewArtifactRequestSchema,
@@ -209,7 +221,8 @@ export function registerPreviewIpcHandlers(manager: PreviewManager): void {
     )
     return manager.revealArtifact(request.path)
   })
-  handle(PreviewChannels.PREVIEW_COPY_ARTIFACT_CHANNEL, (_event, payload) => {
+  handle(PreviewChannels.PREVIEW_COPY_ARTIFACT_CHANNEL, (event, payload) => {
+    owner(event)
     const request = decode(
       PreviewChannels.PREVIEW_COPY_ARTIFACT_CHANNEL,
       PreviewArtifactRequestSchema,

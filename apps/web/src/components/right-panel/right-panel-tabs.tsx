@@ -15,6 +15,8 @@
  * - The tab bar is `h-8`, matching Laborer's workspace chrome (frame header
  *   and pane tab bars) instead of t3's `--workspace-topbar-height`.
  */
+
+import type { PullRequestState } from '@laborer/shared/rpc'
 import { Button } from '@laborer/ui/components/button'
 import {
   ContextMenu,
@@ -56,9 +58,16 @@ import {
   useRef,
   useState,
 } from 'react'
+import { resolvePullRequestState } from '@/components/pull-request/presentation'
 import type { RightPanelSurface } from '@/right-panel-store'
 import { PanelTabCloseButton } from './panel-tab-close-button'
 import { RightPanelShell } from './right-panel-shell'
+
+/** What the pull request tab icon needs to wear the PR's state tone. */
+export interface PullRequestTabStatus {
+  readonly isDraft: boolean
+  readonly state: PullRequestState
+}
 
 interface RightPanelTabsProps {
   readonly activeSurfaceId: string | null
@@ -82,6 +91,8 @@ interface RightPanelTabsProps {
   readonly pullRequestAvailable: boolean
   /** The workspace's PR number, used for the pull-request tab title. */
   readonly pullRequestNumber?: number | null | undefined
+  /** The PR's state, so the tab icon wears t3's state tones. */
+  readonly pullRequestStatus?: PullRequestTabStatus | null | undefined
   readonly surfaces: readonly RightPanelSurface[]
   /** localStorage key this panel persists its width under. */
   readonly widthStorageKey: string
@@ -511,7 +522,13 @@ function surfaceTitle(
   }
 }
 
-function SurfaceIcon({ surface }: { surface: RightPanelSurface }) {
+function SurfaceIcon({
+  surface,
+  pullRequestStatus,
+}: {
+  surface: RightPanelSurface
+  pullRequestStatus?: PullRequestTabStatus | null | undefined
+}) {
   switch (surface.kind) {
     case 'preview':
       return <Globe2 className="size-3 shrink-0" />
@@ -521,8 +538,19 @@ function SurfaceIcon({ surface }: { surface: RightPanelSurface }) {
       return <Files className="size-3 shrink-0" />
     case 'file':
       return <FileCode2 className="size-3 shrink-0" />
-    case 'pull-request':
-      return <GitPullRequest className="size-3 shrink-0" />
+    case 'pull-request': {
+      // The tab mirrors the PR's state the way t3's compact chrome did:
+      // merged violet, closed red, draft zinc, open emerald.
+      if (!pullRequestStatus) {
+        return <GitPullRequest className="size-3 shrink-0" />
+      }
+      const presentation = resolvePullRequestState(pullRequestStatus)
+      return (
+        <presentation.Icon
+          className={cn('size-3 shrink-0', presentation.toneClassName)}
+        />
+      )
+    }
     case 'agents':
       return <Bot className="size-3 shrink-0" />
     default:
@@ -538,6 +566,7 @@ function RightPanelTab({
   onCloseOthers,
   onCloseSurface,
   onCloseToRight,
+  pullRequestStatus,
   surface,
   surfaceCount,
   surfaceIndex,
@@ -549,6 +578,7 @@ function RightPanelTab({
   readonly onCloseOthers: () => void
   readonly onCloseSurface: () => void
   readonly onCloseToRight: () => void
+  readonly pullRequestStatus?: PullRequestTabStatus | null | undefined
   readonly surface: RightPanelSurface
   readonly surfaceCount: number
   readonly surfaceIndex: number
@@ -593,7 +623,10 @@ function RightPanelTab({
               label={`Close ${title}`}
               onClick={onCloseSurface}
             >
-              <SurfaceIcon surface={surface} />
+              <SurfaceIcon
+                pullRequestStatus={pullRequestStatus}
+                surface={surface}
+              />
             </PanelTabCloseButton>
             <Tooltip>
               <TooltipTrigger
@@ -732,6 +765,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 onCloseOthers={() => props.onCloseOtherSurfaces(surface)}
                 onCloseSurface={() => props.onCloseSurface(surface)}
                 onCloseToRight={() => props.onCloseSurfacesToRight(surface)}
+                pullRequestStatus={props.pullRequestStatus}
                 surface={surface}
                 surfaceCount={props.surfaces.length}
                 surfaceIndex={surfaceIndex}

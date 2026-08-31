@@ -472,9 +472,14 @@ export class NativeTaskDatabase {
     return { task, inserted }
   }
 
+  /**
+   * Applies a patch to one task. A numeric `expectedRevision` guards the write
+   * with revision CAS; `null` means the caller accepts last-write-wins, so the
+   * row is patched at whatever revision it currently holds.
+   */
   update(
     id: string,
-    expectedRevision: number,
+    expectedRevision: number | null,
     patch: TaskPatch,
     changedAt = Date.now()
   ): Task {
@@ -499,12 +504,21 @@ export class NativeTaskDatabase {
         ([field]) => `${PATCH_COLUMNS[field]} = ?`
       )
       const values = entries.map(([, value]) => value ?? null)
+      const guarded = expectedRevision !== null
       const result = this.#database
         .prepare(`UPDATE tasks SET ${assignments.join(', ')},
           updated_at = ?, revision = revision + 1
-          WHERE id = ? AND revision = ?`)
-        .run(...values, changedAt, id, expectedRevision)
+          WHERE id = ?${guarded ? ' AND revision = ?' : ''}`)
+        .run(
+          ...values,
+          changedAt,
+          id,
+          ...(expectedRevision === null ? [] : [expectedRevision])
+        )
       if (result.changes === 0) {
+        if (expectedRevision === null) {
+          throw new Error(`Task not found: ${id}`)
+        }
         throw new TaskStaleRevisionError(id, expectedRevision, this.find(id))
       }
       this.#appendChange(id, changedAt)
@@ -772,7 +786,7 @@ export class TaskDb extends Context.Service<
     ) => Effect.Effect<{ task: Task; inserted: boolean }, TaskDbFailure>
     readonly update: (
       id: string,
-      expectedRevision: number,
+      expectedRevision: number | null,
       patch: TaskPatch,
       changedAt?: number
     ) => Effect.Effect<Task, TaskDbFailure>
@@ -796,7 +810,7 @@ export class TaskDb extends Context.Service<
             effectTry(() => database.insert(input, changedAt)),
           update: (
             id: string,
-            expectedRevision: number,
+            expectedRevision: number | null,
             patch: TaskPatch,
             changedAt?: number
           ) =>

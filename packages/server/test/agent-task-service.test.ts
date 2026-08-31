@@ -9,6 +9,35 @@ import { LaborerDatabase } from '../src/services/laborer-database.js'
 import { NativeLaborerDatabase } from '../src/services/native-laborer-database.js'
 import { NodeTaskBoardDatabase } from '../src/services/node-task-board-database.js'
 
+/**
+ * Registers one more project against an existing fixture database, so a test
+ * can exercise how a candidate is matched across several projects.
+ */
+const registerProject = (
+  databasePath: string,
+  input: {
+    readonly id: string
+    readonly name: string
+    readonly shortName: string
+  }
+) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-agent-task-')))
+  writeFileSync(
+    join(root, 'laborer.json'),
+    `${JSON.stringify({ shortName: input.shortName })}\n`
+  )
+  const database = NativeLaborerDatabase.connect(databasePath)
+  database.insertProject({
+    canonicalGitCommonDir: root,
+    id: input.id,
+    name: input.name,
+    repoId: `repo-${input.id}`,
+    rootPath: root,
+  })
+  database.close()
+  return root
+}
+
 const fixture = () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'laborer-agent-task-')))
   const databasePath = join(root, 'tasks.sqlite')
@@ -331,7 +360,297 @@ describe('AgentTaskService', () => {
             labelIds: [],
           })).labelIds
         ).toEqual([])
+
+        // An omitted revision means last-write-wins rather than a hard error.
+        expect(
+          (yield* service.setTaskLabels({
+            id: task.id,
+            labelIds: [label.id],
+          })).labelIds
+        ).toEqual([label.id])
       }).pipe(Effect.provide(layer))
     )
+  })
+
+  it('adds and removes labels without a revision, idempotently', async () => {
+    const { layer, root } = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const first = yield* service.createLabel({ name: 'First' })
+        const second = yield* service.createLabel({ name: 'Second' })
+        const task = yield* service.createTask({ path: root, title: 'Labeled' })
+
+        const added = yield* service.addTaskLabels({
+          id: task.id,
+          labelIds: [first.id],
+        })
+        expect(added.labelIds).toEqual([first.id])
+
+        // Two agents each add their own id; neither erases the other's.
+        const both = yield* service.addTaskLabels({
+          id: task.id,
+          labelIds: [second.id],
+        })
+        expect(both.labelIds).toEqual([first.id, second.id])
+
+        const repeated = yield* service.addTaskLabels({
+          id: task.id,
+          labelIds: [first.id, second.id],
+        })
+        expect(repeated.labelIds).toEqual([first.id, second.id])
+        // A no-op leaves the revision alone, so nobody else's CAS breaks.
+        expect(repeated.revision).toBe(both.revision)
+
+        const removed = yield* service.removeTaskLabels({
+          id: task.id,
+          labelIds: [first.id],
+        })
+        expect(removed.labelIds).toEqual([second.id])
+        const removedAgain = yield* service.removeTaskLabels({
+          id: task.id,
+          labelIds: [first.id],
+        })
+        expect(removedAgain.labelIds).toEqual([second.id])
+        expect(removedAgain.revision).toBe(removed.revision)
+
+        expect(
+          (yield* Effect.flip(
+            service.addTaskLabels({
+              id: task.id,
+              labelIds: ['label-that-does-not-exist'],
+            })
+          )).code
+        ).toBe('NOT_FOUND')
+        expect(
+          (yield* Effect.flip(
+            service.addTaskLabels({
+              id: 'task-that-does-not-exist',
+              labelIds: [first.id],
+            })
+          )).code
+        ).toBe('NOT_FOUND')
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
+  it('creates a labeled task in one call and rolls back an unknown label id', async () => {
+    const { layer, root } = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const first = yield* service.createLabel({ name: 'First' })
+        const second = yield* service.createLabel({ name: 'Second' })
+
+        const labeled = yield* service.createTask({
+          labelIds: [first.id, second.id, first.id],
+          path: root,
+          title: 'Born labeled',
+        })
+        // The labels arrive with the row, so no follow-up write bumped it.
+        expect(labeled).toMatchObject({
+          identifier: 'AGT-1',
+          labelIds: [first.id, second.id],
+          revision: 1,
+        })
+        expect((yield* service.getTask(labeled.id)).labelIds).toEqual([
+          first.id,
+          second.id,
+        ])
+
+        // Omitting the ids still creates an ordinary unlabeled task.
+        const plain = yield* service.createTask({ path: root, title: 'Plain' })
+        expect(plain.labelIds).toEqual([])
+
+        const unknown = yield* Effect.flip(
+          service.createTask({
+            labelIds: [first.id, 'label-that-does-not-exist'],
+            path: root,
+            title: 'Never staged',
+          })
+        )
+        expect(unknown.code).toBe('NOT_FOUND')
+        expect(unknown.message).toContain('Unknown labels')
+        // Row and labels share one transaction, so the rejected call left no
+        // half-created task behind for the agent to clean up.
+        expect(
+          (yield* service.listTasks({})).map(({ title }) => title)
+        ).toEqual(['Born labeled', 'Plain'])
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
+  it('updates and deletes without a revision, and still honours a stale one', async () => {
+    const { layer, root } = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const task = yield* service.createTask({ path: root, title: 'Guarded' })
+
+        const retitled = yield* service.updateTask({
+          id: task.id,
+          title: 'Retitled',
+        })
+        expect(retitled.title).toBe('Retitled')
+        expect(
+          (yield* Effect.flip(
+            service.updateTask({
+              expectedRevision: task.revision,
+              id: task.id,
+              title: 'Stale',
+            })
+          )).code
+        ).toBe('CAS_CONFLICT')
+
+        const label = yield* service.createLabel({ name: 'Loose' })
+        const recolored = yield* service.updateLabel({
+          color: 'teal',
+          id: label.id,
+        })
+        expect(recolored.color).toBe('teal')
+        expect(
+          (yield* Effect.flip(
+            service.updateLabel({
+              expectedRevision: label.revision,
+              id: label.id,
+              name: 'Stale label',
+            })
+          )).code
+        ).toBe('CAS_CONFLICT')
+        expect((yield* service.deleteLabel(label.id)).id).toBe(label.id)
+
+        expect((yield* service.deleteTask(task.id)).status).toBe('cancelled')
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
+  it('resolves a project by name, short name, or path, case-insensitively', async () => {
+    const { databasePath, layer, root } = fixture()
+    const other = registerProject(databasePath, {
+      id: 'project-2',
+      name: 'Next',
+      shortName: 'NXT',
+    })
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        const byPath = yield* service.createTask({
+          path: other,
+          title: 'By path',
+        })
+        expect(byPath.rootPath).toBe(other)
+
+        // The value list_projects leads with works verbatim, in any case.
+        for (const candidate of ['Next', 'next', 'NEXT', '  next  ']) {
+          expect(
+            (yield* service.createTask({ path: candidate, title: candidate }))
+              .rootPath
+          ).toBe(other)
+        }
+        // As does the short name it reports alongside.
+        for (const candidate of ['NXT', 'nxt']) {
+          expect(
+            (yield* service.createTask({ path: candidate, title: candidate }))
+              .rootPath
+          ).toBe(other)
+        }
+
+        expect(
+          (yield* service.listTasks({ path: 'nxt' })).map(
+            ({ rootPath }) => rootPath
+          )
+        ).toEqual(Array.from({ length: 7 }, () => other))
+        expect(yield* service.listTasks({ path: 'Project' })).toEqual([])
+        expect(
+          (yield* service.createTask({ path: root, title: 'Home' })).rootPath
+        ).toBe(root)
+        expect(yield* service.listTasks({ path: 'AGT' })).toHaveLength(1)
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
+  it('resolves a retired short name and prefers a project name over another project short name', async () => {
+    const { databasePath, layer } = fixture()
+    const named = registerProject(databasePath, {
+      id: 'project-2',
+      name: 'NXT',
+      shortName: 'NAM',
+    })
+    const shortNamed = registerProject(databasePath, {
+      id: 'project-3',
+      name: 'Next',
+      shortName: 'NXT',
+    })
+    const renamed = registerProject(databasePath, {
+      id: 'project-4',
+      name: 'Renamed',
+      shortName: 'RNM',
+    })
+    writeFileSync(
+      join(renamed, 'laborer.json'),
+      '{"shortName":"RNM","shortNameAliases":["OLD"]}\n'
+    )
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        // Name beats short name: tiers are tried in order, not merged.
+        expect(
+          (yield* service.createTask({ path: 'nxt', title: 'Named wins' }))
+            .rootPath
+        ).toBe(named)
+        expect(
+          (yield* service.createTask({ path: 'Next', title: 'Short named' }))
+            .rootPath
+        ).toBe(shortNamed)
+        // A retired short name still resolves, after names and short names.
+        expect(
+          (yield* service.createTask({ path: 'old', title: 'Alias' })).rootPath
+        ).toBe(renamed)
+      }).pipe(Effect.provide(layer))
+    )
+  })
+
+  it('refuses to guess between two projects answering to the same name', async () => {
+    const { databasePath, layer } = fixture()
+    const first = registerProject(databasePath, {
+      id: 'project-2',
+      name: 'Twin',
+      shortName: 'TWA',
+    })
+    const second = registerProject(databasePath, {
+      id: 'project-3',
+      name: 'twin',
+      shortName: 'TWB',
+    })
+
+    const error = await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        return yield* Effect.flip(
+          service.createTask({ path: 'TWIN', title: 'Ambiguous' })
+        )
+      }).pipe(Effect.provide(layer))
+    )
+    expect(error.code).toBe('AMBIGUOUS_PROJECT')
+    expect(error.message).toContain(first)
+    expect(error.message).toContain(second)
+  })
+
+  it('names the accepted forms and the registered projects when nothing matches', async () => {
+    const { layer, root } = fixture()
+    const error = await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* AgentTaskService
+        return yield* Effect.flip(
+          service.createTask({ path: 'nope', title: 'Orphan' })
+        )
+      }).pipe(Effect.provide(layer))
+    )
+    expect(error.code).toBe('UNKNOWN_PROJECT')
+    expect(error.message).toContain('project name')
+    expect(error.message).toContain('short name')
+    expect(error.message).toContain(`Project (AGT) at ${root}`)
   })
 })

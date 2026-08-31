@@ -9,6 +9,7 @@ import {
   BrowserControlResizeInput,
   BrowserControlResizeResult,
   BrowserControlStatus,
+  BrowserControlViewportPresetId,
 } from '@laborer/shared/browser-control'
 import { taskDatabasePath } from '@laborer/task-db/path'
 import { Context, Effect, Layer, Schema } from 'effect'
@@ -17,9 +18,36 @@ import { RpcClient } from 'effect/unstable/rpc'
 import { AgentTaskError } from './agent-task-service.js'
 import { NativeLaborerDatabase } from './native-laborer-database.js'
 
-const Target = { tab_id: Schema.optional(Schema.String) }
-const Timeout = Schema.optional(
-  Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(60_000))
+/**
+ * Every advertised parameter here is a flat, unchecked JSON Schema type, and
+ * the constraints live in `validateInvocation` below instead. Effect's JSON
+ * Schema emitter renders a `check` as an anonymous `allOf` fragment and
+ * `Schema.optional` as an `anyOf` with a `null` member that no JSON caller can
+ * send, and MCP clients that normalise `inputSchema` drop properties they
+ * cannot map — a required one, like `preview_navigate.url`, disappearing from
+ * the signature while the server still demands it. Decoding the assembled
+ * payload against the shared browser-control contract keeps every rule,
+ * including the cross-field ones that were never enforced here before.
+ */
+const TAB_ID = Schema.String.annotate({
+  description:
+    'Which collaborative browser tab to act on. Defaults to the tab preview_status reports.',
+})
+const Target = { tab_id: Schema.optionalKey(TAB_ID) }
+const TimeoutMs = Schema.Int.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(60_000)
+)
+const Timeout = Schema.optionalKey(Schema.Int)
+const Locator = Schema.optionalKey(
+  Schema.String.annotate({
+    description: 'A locator from the latest preview_snapshot. Prefer this.',
+  })
+)
+const Selector = Schema.optionalKey(
+  Schema.String.annotate({
+    description: 'A legacy CSS selector, used only when no locator fits.',
+  })
 )
 const ActionResult = Schema.Struct({})
 
@@ -35,20 +63,40 @@ const PreviewOpen = Tool.make('preview_open', {
     'Initialize a collaborative browser tab. Reuses the current tab by default; set reuse_existing_tab=false to create another tab.',
   parameters: Schema.Struct({
     ...Target,
-    url: BrowserControlOpenInput.fields.url,
-    open: BrowserControlOpenInput.fields.open,
-    reuse_existing_tab: BrowserControlOpenInput.fields.reuseExistingTab,
+    url: Schema.optionalKey(
+      Schema.String.annotate({
+        description:
+          'Absolute URL to load into the tab. Omit it to initialize an empty tab.',
+      })
+    ),
+    open: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description: 'Set false to prepare the tab without revealing it.',
+      })
+    ),
+    reuse_existing_tab: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description:
+          'Set false to create another tab. It cannot be combined with tab_id.',
+      })
+    ),
   }),
   success: BrowserControlStatus,
   failure: AgentTaskError,
 })
 const PreviewNavigate = Tool.make('preview_navigate', {
   description:
-    'Navigate the selected collaborative browser tab and optionally wait for load or DOM readiness.',
+    'Navigate the selected collaborative browser tab and optionally wait for load or DOM readiness. timeout_ms is milliseconds, from 1 to 60000.',
   parameters: Schema.Struct({
     ...Target,
-    url: BrowserControlNavigateInput.fields.url,
-    readiness: BrowserControlNavigateInput.fields.readiness,
+    url: Schema.String.annotate({
+      description: 'Absolute URL to load into the tab.',
+    }),
+    readiness: Schema.optionalKey(
+      Schema.Literals(['load', 'domContentLoaded', 'none']).annotate({
+        description: 'How long to wait before reporting the tab state back.',
+      })
+    ),
     timeout_ms: Timeout,
   }),
   success: BrowserControlStatus,
@@ -56,14 +104,25 @@ const PreviewNavigate = Tool.make('preview_navigate', {
 })
 const PreviewResize = Tool.make('preview_resize', {
   description:
-    'Resize the selected browser tab using fill, exact freeform dimensions, or a named device preset.',
+    'Resize the selected browser tab using fill, exact freeform dimensions, or a named device preset. Freeform takes width and height only, both 240 to 3840 pixels; preset takes a preset and an optional orientation; fill takes neither.',
   parameters: Schema.Struct({
     ...Target,
-    mode: BrowserControlResizeInput.fields.mode,
-    preset: BrowserControlResizeInput.fields.preset,
-    width: BrowserControlResizeInput.fields.width,
-    height: BrowserControlResizeInput.fields.height,
-    orientation: BrowserControlResizeInput.fields.orientation,
+    mode: Schema.Literals(['fill', 'freeform', 'preset']).annotate({
+      description:
+        'Which sizing rule applies, and therefore which other keys are accepted.',
+    }),
+    preset: Schema.optionalKey(
+      BrowserControlViewportPresetId.annotate({
+        description: 'The device preset to size the tab to, in preset mode.',
+      })
+    ),
+    width: Schema.optionalKey(Schema.Int),
+    height: Schema.optionalKey(Schema.Int),
+    orientation: Schema.optionalKey(
+      Schema.Literals(['portrait', 'landscape']).annotate({
+        description: 'How to rotate the preset, in preset mode.',
+      })
+    ),
     timeout_ms: Timeout,
   }),
   success: BrowserControlResizeResult,
@@ -78,13 +137,13 @@ const PreviewSnapshot = Tool.make('preview_snapshot', {
 })
 const PreviewClick = Tool.make('preview_click', {
   description:
-    'Click one target. Prefer a snapshot-provided locator; selector accepts legacy CSS, or supply x and y coordinates.',
+    'Click one target. Prefer a snapshot-provided locator; selector accepts legacy CSS, or supply x and y coordinates. timeout_ms is milliseconds, from 1 to 60000.',
   parameters: Schema.Struct({
     ...Target,
-    locator: Schema.optional(Schema.String),
-    selector: Schema.optional(Schema.String),
-    x: Schema.optional(Schema.Finite),
-    y: Schema.optional(Schema.Finite),
+    locator: Locator,
+    selector: Selector,
+    x: Schema.optionalKey(Schema.Finite),
+    y: Schema.optionalKey(Schema.Finite),
     timeout_ms: Timeout,
   }),
   success: ActionResult,
@@ -92,13 +151,20 @@ const PreviewClick = Tool.make('preview_click', {
 })
 const PreviewType = Tool.make('preview_type', {
   description:
-    'Insert literal text into one input. Prefer a snapshot-provided locator and set clear=true to replace existing text.',
+    'Insert literal text into one input. Prefer a snapshot-provided locator and set clear=true to replace existing text. timeout_ms is milliseconds, from 1 to 60000.',
   parameters: Schema.Struct({
     ...Target,
-    locator: Schema.optional(Schema.String),
-    selector: Schema.optional(Schema.String),
-    text: Schema.String,
-    clear: Schema.optional(Schema.Boolean),
+    locator: Locator,
+    selector: Selector,
+    text: Schema.String.annotate({
+      description: 'The literal text to insert, typed as written.',
+    }),
+    clear: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description:
+          'Set true to replace the field contents instead of appending.',
+      })
+    ),
     timeout_ms: Timeout,
   }),
   success: ActionResult,
@@ -109,9 +175,13 @@ const PreviewPress = Tool.make('preview_press', {
     'Press one keyboard key, optionally with Alt, Control, Meta, or Shift modifiers.',
   parameters: Schema.Struct({
     ...Target,
-    key: Schema.String,
-    modifiers: Schema.optional(
-      Schema.Array(Schema.Literals(['Alt', 'Control', 'Meta', 'Shift']))
+    key: Schema.String.annotate({
+      description: 'The key name to press, such as Enter, Tab, or a.',
+    }),
+    modifiers: Schema.optionalKey(
+      Schema.Array(
+        Schema.Literals(['Alt', 'Control', 'Meta', 'Shift'])
+      ).annotate({ description: 'Modifiers held while the key is pressed.' })
     ),
   }),
   success: ActionResult,
@@ -122,10 +192,10 @@ const PreviewScroll = Tool.make('preview_scroll', {
     'Scroll the page or a targeted container. Positive delta_y scrolls down and positive delta_x scrolls right.',
   parameters: Schema.Struct({
     ...Target,
-    locator: Schema.optional(Schema.String),
-    selector: Schema.optional(Schema.String),
-    delta_x: Schema.optional(Schema.Finite),
-    delta_y: Schema.optional(Schema.Finite),
+    locator: Locator,
+    selector: Selector,
+    delta_x: Schema.optionalKey(Schema.Finite),
+    delta_y: Schema.optionalKey(Schema.Finite),
   }),
   success: ActionResult,
   failure: AgentTaskError,
@@ -135,22 +205,40 @@ const PreviewEvaluate = Tool.make('preview_evaluate', {
     'Evaluate JavaScript in the selected browser tab and return its serializable result.',
   parameters: Schema.Struct({
     ...Target,
-    expression: Schema.String,
-    await_promise: Schema.optional(Schema.Boolean),
-    return_by_value: Schema.optional(Schema.Boolean),
+    expression: Schema.String.annotate({
+      description: 'The JavaScript expression to evaluate in the page.',
+    }),
+    await_promise: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description: 'Set true to await a promise the expression returns.',
+      })
+    ),
+    return_by_value: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description: 'Set false to return a handle rather than a copy.',
+      })
+    ),
   }),
   success: Schema.Unknown,
   failure: AgentTaskError,
 })
 const PreviewWaitFor = Tool.make('preview_wait_for', {
   description:
-    'Wait until all supplied locator, selector, text, and URL conditions match.',
+    'Wait until all supplied locator, selector, text, and URL conditions match. timeout_ms is milliseconds, from 1 to 60000.',
   parameters: Schema.Struct({
     ...Target,
-    locator: Schema.optional(Schema.String),
-    selector: Schema.optional(Schema.String),
-    text: Schema.optional(Schema.String),
-    url_includes: Schema.optional(Schema.String),
+    locator: Locator,
+    selector: Selector,
+    text: Schema.optionalKey(
+      Schema.String.annotate({
+        description: 'Text that must appear on the page before returning.',
+      })
+    ),
+    url_includes: Schema.optionalKey(
+      Schema.String.annotate({
+        description: 'A substring the tab URL must contain before returning.',
+      })
+    ),
     timeout_ms: Timeout,
   }),
   success: ActionResult,
@@ -178,7 +266,12 @@ const ListBrowserContext = Tool.make('list_browser_context', {
 const ConsumeBrowserContext = Tool.make('consume_browser_context', {
   description:
     'Mark one browser annotation consumed after reading its metadata and screenshot artifact.',
-  parameters: Schema.Struct({ id: Schema.String }),
+  parameters: Schema.Struct({
+    id: Schema.String.annotate({
+      description:
+        'The id of the annotation, as returned by list_browser_context.',
+    }),
+  }),
   success: BrowserContextItem,
   failure: AgentTaskError,
 })
@@ -282,31 +375,91 @@ export const browserInvocation = (values: {
   }
 }
 
+type BrowserOperation =
+  | 'status'
+  | 'open'
+  | 'navigate'
+  | 'resize'
+  | 'snapshot'
+  | 'click'
+  | 'type'
+  | 'press'
+  | 'scroll'
+  | 'evaluate'
+  | 'waitFor'
+  | 'recordingStart'
+  | 'recordingStop'
+
+const invalidInput = (message: string) =>
+  new AgentTaskError({ code: 'INVALID_INPUT', message })
+
+const decodeOpen = Schema.decodeUnknownEffect(BrowserControlOpenInput)
+const decodeNavigate = Schema.decodeUnknownEffect(BrowserControlNavigateInput)
+const decodeResize = Schema.decodeUnknownEffect(BrowserControlResizeInput)
+const decodeTimeout = Schema.decodeUnknownEffect(TimeoutMs)
+
+const decodeOperationInput = (
+  operation: BrowserOperation,
+  payload: { readonly [key: string]: unknown }
+) => {
+  switch (operation) {
+    case 'open':
+      return decodeOpen(payload)
+    case 'navigate':
+      return decodeNavigate(payload)
+    case 'resize':
+      return decodeResize(payload)
+    default:
+      return undefined
+  }
+}
+
+/**
+ * The contract each operation's assembled payload must satisfy. The advertised
+ * parameter schemas are deliberately unchecked so they stay flat, so this is
+ * where a blank URL, an out-of-range viewport or timeout, or an impossible
+ * resize combination is rejected — by the same shared schemas the daemon
+ * documents, including the cross-field rules nothing checked here before.
+ */
+export const validateInvocation = (
+  operation: BrowserOperation,
+  invocation: ReturnType<typeof browserInvocation>
+) =>
+  Effect.gen(function* () {
+    const { timeoutMs } = invocation
+    if (timeoutMs !== undefined) {
+      yield* decodeTimeout(timeoutMs).pipe(
+        Effect.mapError((error) => invalidInput(`timeout_ms: ${error.message}`))
+      )
+    }
+    const payload = {
+      ...invocation.input,
+      ...('tabId' in invocation ? { tabId: invocation.tabId } : {}),
+    }
+    const decoded = decodeOperationInput(operation, payload)
+    if (decoded !== undefined) {
+      yield* decoded.pipe(
+        Effect.mapError((error) =>
+          invalidInput(`${operation}: ${error.message}`)
+        )
+      )
+    }
+  })
+
 const invoke = (
   client: DaemonClient,
-  operation:
-    | 'status'
-    | 'open'
-    | 'navigate'
-    | 'resize'
-    | 'snapshot'
-    | 'click'
-    | 'type'
-    | 'press'
-    | 'scroll'
-    | 'evaluate'
-    | 'waitFor'
-    | 'recordingStart'
-    | 'recordingStop',
+  operation: BrowserOperation,
   values: { readonly [key: string]: unknown }
 ) =>
   Effect.gen(function* () {
     const workspaceId = yield* currentWorkspaceId
+    const invocation = browserInvocation(values)
+    yield* validateInvocation(operation, invocation)
     return yield* client['browserControl.invoke']({
       workspaceId,
       controllerId: `mcp-${String(process.pid)}`,
       operation,
-      ...browserInvocation(values),
+      ...invocation,
     }).pipe(Effect.mapError(rpcFailure))
   })
 

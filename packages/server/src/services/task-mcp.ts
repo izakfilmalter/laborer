@@ -1,12 +1,53 @@
-import {
-  LabelColor,
-  PositiveInt,
-  ReviewCommentThread,
-} from '@laborer/shared/rpc'
+import { LabelColor, ReviewCommentThread } from '@laborer/shared/rpc'
 import { Effect, Layer, Schema } from 'effect'
 import { McpProtocol, McpServer, Tool, Toolkit } from 'effect/unstable/ai'
 import { AgentTaskError, AgentTaskService } from './agent-task-service.js'
 import { BrowserToolkit, BrowserToolkitHandlers } from './browser-mcp.js'
+
+/**
+ * The optimistic-concurrency guard agents may attach to a replace or update.
+ *
+ * Every shape here is chosen for what Effect's JSON Schema emitter makes of it,
+ * because MCP clients normalise the advertised `inputSchema` and drop what they
+ * cannot map:
+ *
+ * - The value is a bare `Schema.Int`. Chaining a second check onto a number —
+ *   as `PositiveInt` does with `isInt` plus `isGreaterThan(0)` — renders the
+ *   extra keyword as an anonymous `allOf` fragment
+ *   (`{"type":"integer","allOf":[{"exclusiveMinimum":0}]}`), and the key
+ *   vanished from the tool signature while the server still demanded it. A
+ *   revision below the row's is rejected by the CAS check itself, so nothing is
+ *   lost by describing it as a plain integer.
+ * - It is `optionalKey`, not `optional`. `optional` admits `undefined`, which
+ *   the emitter renders as a second `anyOf` member, so an already-nullable
+ *   value came out as `anyOf: [anyOf: [T, null], null]` — the `T | null | null`
+ *   agents were shown. JSON cannot carry `undefined` anyway; an absent key is
+ *   the only way a client can leave one out.
+ * - The `null` member is real, not an artefact: `NullOr` means an explicit
+ *   `null` is accepted and, here, means the same as omitting the key. Annotating
+ *   the `NullOr` union is also what keeps the description in the advertised
+ *   schema, since a description hung on `Schema.Int` itself is emitted as an
+ *   `allOf` fragment.
+ */
+const ExpectedRevision = Schema.optionalKey(Schema.NullOr(Schema.Int)).annotate(
+  {
+    description:
+      'Optional optimistic-concurrency guard. Omit it or pass null for last-write-wins. Pass the `revision` field of the row as returned by get_task (or list_review_comments) to have the call fail with CAS_CONFLICT when someone else changed the row first.',
+  }
+)
+
+/**
+ * The revision to compare against, where both an absent key and an explicit
+ * null mean "do not compare" — last-write-wins.
+ */
+const casRevision = (revision: number | null | undefined) =>
+  revision ?? undefined
+
+/** The same guard as a spreadable patch for the service's input records. */
+const casGuard = (revision: number | null | undefined) => {
+  const expectedRevision = casRevision(revision)
+  return expectedRevision === undefined ? {} : { expectedRevision }
+}
 
 const TaskStatus = Schema.Literals([
   'todo',
@@ -63,9 +104,25 @@ const Label = Schema.Struct({
   updatedAt: Schema.Int,
 })
 
+/**
+ * The project a task belongs to. Named `path` for compatibility with existing
+ * callers, but any of the three forms list_projects reports identifies a
+ * project, so the value list_projects leads with works verbatim.
+ */
+const PROJECT_PATH = Schema.String.annotate({
+  description:
+    'Which project this applies to: its `name` (for example "laborer"), its task-ID `shortName` (for example "LAB"), or any absolute path inside its repository, such as a worktree. Names and short names are case-insensitive; call list_projects for the registered values.',
+})
+
+/** How every task-addressed tool names the row it acts on. */
+const TASK_ID = Schema.String.annotate({
+  description:
+    'The readable identifier of the task, such as LAB-123, or its internal ULID. Both come back from get_task and list_tasks.',
+})
+
 const ListProjects = Tool.make('list_projects', {
   description:
-    'List registered Laborer projects with their task-ID short names and canonical repository paths.',
+    'List registered Laborer projects with their task-ID short names and canonical repository paths. Any of the three identifies a project wherever a `path` is asked for.',
   success: Schema.Struct({
     projects: Schema.Array(
       Schema.Struct({
@@ -79,33 +136,55 @@ const ListProjects = Tool.make('list_projects', {
 })
 const CreateTask = Tool.make('create_task', {
   description:
-    'Stage a todo task on the Laborer board. This never starts work or provisions a worktree.',
+    'Stage a todo task on the Laborer board, optionally labeled. This never starts work or provisions a worktree.',
   parameters: Schema.Struct({
-    description: Schema.optional(Schema.NullOr(Schema.String)),
-    path: Schema.String,
-    title: Schema.String,
+    description: Schema.optionalKey(Schema.NullOr(Schema.String)).annotate({
+      description:
+        'Optional markdown body for the task. Omit the key or pass null to stage it without one.',
+    }),
+    // optionalKey, not optional: an optional value also admits `undefined`,
+    // which the JSON Schema emitter renders as `anyOf: [array, null]`. An
+    // omitted key already says "no labels", so the flat array keeps the
+    // advertised signature legible to clients that normalise `inputSchema`.
+    label_ids: Schema.optionalKey(Schema.Array(Schema.String)).annotate({
+      description:
+        'Optional label ids to apply as the task is created, saving a follow-up add_labels call. Ids come from list_labels; an id that names no label fails the call and creates nothing.',
+    }),
+    path: PROJECT_PATH,
+    title: Schema.String.annotate({
+      description: 'The task title shown on the board.',
+    }),
   }),
   success: Task,
   failure: AgentTaskError,
 })
 const UpdateTask = Tool.make('update_task', {
   description:
-    'Update only the title and/or description of a non-Execution task using revision CAS. The id may be a readable identifier such as LAB-123 or the internal ULID.',
+    'Update only the title and/or description of a non-Execution task. The id may be a readable identifier such as LAB-123 or the internal ULID. Pass expected_revision to guard the write with revision CAS.',
   parameters: Schema.Struct({
-    description: Schema.optional(Schema.NullOr(Schema.String)),
-    expected_revision: PositiveInt,
-    id: Schema.String,
-    title: Schema.optional(Schema.String),
+    // Omission and an explicit null mean different things here, which is why
+    // the key is `optionalKey` over a `NullOr` rather than a plain optional:
+    // an absent key leaves the description untouched, null clears it.
+    description: Schema.optionalKey(Schema.NullOr(Schema.String)).annotate({
+      description:
+        'Replacement markdown body. Pass null to clear the existing description; omit the key to leave it unchanged.',
+    }),
+    expected_revision: ExpectedRevision,
+    id: TASK_ID,
+    title: Schema.optionalKey(Schema.String).annotate({
+      description:
+        'Replacement title. Omit the key to leave it unchanged; a call must carry a title, a description, or both.',
+    }),
   }),
   success: Task,
   failure: AgentTaskError,
 })
 const DeleteTask = Tool.make('delete_task', {
   description:
-    'Soft-delete a task by changing its status to cancelled using revision CAS. The id may be a readable identifier such as LAB-123 or the internal ULID.',
+    'Soft-delete a task by changing its status to cancelled. The id may be a readable identifier such as LAB-123 or the internal ULID. Pass expected_revision to guard the write with revision CAS.',
   parameters: Schema.Struct({
-    expected_revision: PositiveInt,
-    id: Schema.String,
+    expected_revision: ExpectedRevision,
+    id: TASK_ID,
   }),
   success: Task,
   failure: AgentTaskError,
@@ -114,10 +193,20 @@ const ListTasks = Tool.make('list_tasks', {
   description:
     'List board tasks, excluding cancelled tasks by default. Search matches identifier, title, and branch.',
   parameters: Schema.Struct({
-    include_cancelled: Schema.optional(Schema.Boolean),
-    path: Schema.optional(Schema.String),
-    search: Schema.optional(Schema.String),
-    status: Schema.optional(TaskStatus),
+    include_cancelled: Schema.optionalKey(Schema.Boolean).annotate({
+      description:
+        'Set true to include cancelled tasks, which delete_task produces and this tool otherwise hides.',
+    }),
+    // optionalKey keeps the annotated string in the advertised signature; an
+    // optional value would emit an `anyOf` that buries the description.
+    path: Schema.optionalKey(PROJECT_PATH),
+    search: Schema.optionalKey(Schema.String).annotate({
+      description:
+        'Case-insensitive substring matched against the identifier, title, and branch name.',
+    }),
+    status: Schema.optionalKey(TaskStatus).annotate({
+      description: 'Return only tasks currently in this status.',
+    }),
   }),
   success: Schema.Struct({ tasks: Schema.Array(Task) }),
   failure: AgentTaskError,
@@ -125,9 +214,20 @@ const ListTasks = Tool.make('list_tasks', {
 const GetTask = Tool.make('get_task', {
   description:
     'Fetch the full shared task row by readable identifier (for example LAB-123) or internal ULID.',
-  parameters: Schema.Struct({ id: Schema.String }),
+  parameters: Schema.Struct({ id: TASK_ID }),
   success: Task,
   failure: AgentTaskError,
+})
+
+/** How every label-addressed tool names the label it acts on. */
+const LABEL_ID = Schema.String.annotate({
+  description: 'The id of the label, as returned by list_labels.',
+})
+
+/** The label ids a tool applies, replaces, or strips. */
+const LABEL_IDS = Schema.Array(Schema.String).annotate({
+  description:
+    'Label ids from list_labels. An id that names no label fails the call and changes nothing.',
 })
 
 const ListLabels = Tool.make('list_labels', {
@@ -139,52 +239,96 @@ const CreateLabel = Tool.make('create_label', {
   description:
     'Create an app-wide label usable by tasks in any project. An omitted color is derived from the name.',
   parameters: Schema.Struct({
-    color: Schema.optional(LabelColor),
-    name: Schema.String,
+    color: Schema.optionalKey(LabelColor).annotate({
+      description:
+        'Palette color for the label. Omit the key to derive one from the name.',
+    }),
+    name: Schema.String.annotate({ description: 'The label text.' }),
   }),
   success: Label,
   failure: AgentTaskError,
 })
 const UpdateLabel = Tool.make('update_label', {
-  description: 'Rename and/or recolor a label using revision CAS.',
+  description:
+    'Rename and/or recolor a label. Pass expected_revision to guard the write with revision CAS.',
   parameters: Schema.Struct({
-    color: Schema.optional(LabelColor),
-    expected_revision: PositiveInt,
-    id: Schema.String,
-    name: Schema.optional(Schema.String),
+    color: Schema.optionalKey(LabelColor).annotate({
+      description:
+        'Replacement palette color. Omit the key to keep the current one.',
+    }),
+    expected_revision: ExpectedRevision,
+    id: LABEL_ID,
+    name: Schema.optionalKey(Schema.String).annotate({
+      description: 'Replacement label text. Omit the key to keep the current.',
+    }),
   }),
   success: Label,
   failure: AgentTaskError,
 })
 const DeleteLabel = Tool.make('delete_label', {
   description:
-    'Delete a label using revision CAS and strip its id from every task carrying it.',
+    'Delete a label and strip its id from every task carrying it. Pass expected_revision to guard the write with revision CAS.',
   parameters: Schema.Struct({
-    expected_revision: PositiveInt,
-    id: Schema.String,
+    expected_revision: ExpectedRevision,
+    id: LABEL_ID,
   }),
   success: Label,
   failure: AgentTaskError,
 })
 const SetTaskLabels = Tool.make('set_task_labels', {
   description:
-    "Replace a task's whole label set using revision CAS. Labels are app-wide, so any existing label id applies to any task.",
+    "Replace a task's whole label set, dropping every id not listed. Labels are app-wide, so any existing label id applies to any task. Prefer add_labels or remove_labels when you only mean to change some of them; those never discard a label someone else just applied.",
   parameters: Schema.Struct({
-    expected_revision: PositiveInt,
-    id: Schema.String,
-    label_ids: Schema.Array(Schema.String),
+    expected_revision: ExpectedRevision,
+    id: TASK_ID,
+    label_ids: LABEL_IDS,
   }),
   success: Task,
   failure: AgentTaskError,
+})
+const AddLabels = Tool.make('add_labels', {
+  description:
+    'Add label ids to a task, keeping every label it already carries. Idempotent and safe to run concurrently, so it needs no revision. The id may be a readable identifier such as LAB-123 or the internal ULID; labels are app-wide, so any existing label id applies to any task.',
+  parameters: Schema.Struct({
+    id: TASK_ID,
+    label_ids: LABEL_IDS,
+  }),
+  success: Task,
+  failure: AgentTaskError,
+})
+const RemoveLabels = Tool.make('remove_labels', {
+  description:
+    'Remove label ids from a task, keeping every other label it carries. Idempotent and safe to run concurrently, so it needs no revision. Ids the task does not carry are ignored.',
+  parameters: Schema.Struct({
+    id: TASK_ID,
+    label_ids: LABEL_IDS,
+  }),
+  success: Task,
+  failure: AgentTaskError,
+})
+
+/** How the review tools name the conversation they act on. */
+const THREAD_ID = Schema.String.annotate({
+  description:
+    'The id of the review comment thread, as returned by list_review_comments.',
 })
 
 const ListReviewComments = Tool.make('list_review_comments', {
   description:
     "Read the human's review comments on this workspace's diff: each is a conversation anchored to a file and line range, with every reply so far. This is how you find out what you have been asked to change. Answer each thread you act on with reply_to_review_comment, and call resolve_review_comment only once the request is actually addressed in the code — resolving means done, not read. Defaults to the workspace containing `path`, or the current working directory, and to unresolved threads only.",
   parameters: Schema.Struct({
-    include_resolved: Schema.optional(Schema.Boolean),
-    path: Schema.optional(Schema.String),
-    workspace_id: Schema.optional(Schema.String),
+    include_resolved: Schema.optionalKey(Schema.Boolean).annotate({
+      description:
+        'Set true to include threads already resolved, which this tool otherwise hides.',
+    }),
+    path: Schema.optionalKey(Schema.String).annotate({
+      description:
+        'An absolute path inside the workspace whose review threads you want. Defaults to the current working directory.',
+    }),
+    workspace_id: Schema.optionalKey(Schema.String).annotate({
+      description:
+        'The workspace to read instead of resolving one from `path`.',
+    }),
   }),
   success: Schema.Struct({ comments: Schema.Array(ReviewCommentThread) }),
   failure: AgentTaskError,
@@ -193,18 +337,24 @@ const ReplyToReviewComment = Tool.make('reply_to_review_comment', {
   description:
     'Append your answer to a review comment thread and return the whole conversation. The reply is recorded as written by the agent; you cannot post as the human.',
   parameters: Schema.Struct({
-    body: Schema.String,
-    thread_id: Schema.String,
+    body: Schema.String.annotate({
+      description: 'Your answer, as markdown, appended to the thread.',
+    }),
+    thread_id: THREAD_ID,
   }),
   success: ReviewCommentThread,
   failure: AgentTaskError,
 })
 const ResolveReviewComment = Tool.make('resolve_review_comment', {
   description:
-    'Mark a review comment thread resolved using revision CAS, once its request is addressed in the code. The revision comes from list_review_comments; a stale revision means the thread moved, so re-read it before retrying.',
+    'Mark a review comment thread resolved using revision CAS, once its request is addressed in the code. expected_revision is required here and comes from the `revision` field of the thread as returned by list_review_comments; a stale revision means the thread moved, so re-read it before retrying.',
   parameters: Schema.Struct({
-    expected_revision: PositiveInt,
-    thread_id: Schema.String,
+    // A bare Int, not PositiveInt, and left unannotated: see the
+    // ExpectedRevision note above. A description on a required integer is
+    // emitted as an `allOf` fragment, so this one lives in the tool
+    // description instead.
+    expected_revision: Schema.Int,
+    thread_id: THREAD_ID,
   }),
   success: ReviewCommentThread,
   failure: AgentTaskError,
@@ -222,6 +372,8 @@ export const TaskToolkit = Toolkit.make(
   UpdateLabel,
   DeleteLabel,
   SetTaskLabels,
+  AddLabels,
+  RemoveLabels,
   ListReviewComments,
   ReplyToReviewComment,
   ResolveReviewComment
@@ -246,10 +398,11 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
         exposeErrorCode(service.listProjects()).pipe(
           Effect.map((projects) => ({ projects }))
         ),
-      create_task: ({ description, path, title }) =>
+      create_task: ({ description, label_ids, path, title }) =>
         exposeErrorCode(
           service.createTask({
             ...(description === undefined ? {} : { description }),
+            ...(label_ids === undefined ? {} : { labelIds: label_ids }),
             path,
             title,
           })
@@ -257,14 +410,16 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
       update_task: ({ description, expected_revision, id, title }) =>
         exposeErrorCode(
           service.updateTask({
+            // An absent key leaves the description alone; an explicit null
+            // clears it, so only `undefined` may be dropped here.
             ...(description === undefined ? {} : { description }),
             ...(title === undefined ? {} : { title }),
-            expectedRevision: expected_revision,
+            ...casGuard(expected_revision),
             id,
           })
         ),
       delete_task: ({ expected_revision, id }) =>
-        exposeErrorCode(service.deleteTask(id, expected_revision)),
+        exposeErrorCode(service.deleteTask(id, casRevision(expected_revision))),
       list_tasks: ({ include_cancelled, path, search, status }) =>
         exposeErrorCode(
           service.listTasks({
@@ -293,12 +448,14 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
           service.updateLabel({
             ...(color === undefined ? {} : { color }),
             ...(name === undefined ? {} : { name }),
-            expectedRevision: expected_revision,
+            ...casGuard(expected_revision),
             id,
           })
         ),
       delete_label: ({ expected_revision, id }) =>
-        exposeErrorCode(service.deleteLabel(id, expected_revision)),
+        exposeErrorCode(
+          service.deleteLabel(id, casRevision(expected_revision))
+        ),
       list_review_comments: ({ include_resolved, path, workspace_id }) =>
         exposeErrorCode(
           service.listReviewComments({
@@ -322,11 +479,15 @@ const TaskToolkitHandlers = TaskToolkit.toLayer(
       set_task_labels: ({ expected_revision, id, label_ids }) =>
         exposeErrorCode(
           service.setTaskLabels({
-            expectedRevision: expected_revision,
+            ...casGuard(expected_revision),
             id,
             labelIds: label_ids,
           })
         ),
+      add_labels: ({ id, label_ids }) =>
+        exposeErrorCode(service.addTaskLabels({ id, labelIds: label_ids })),
+      remove_labels: ({ id, label_ids }) =>
+        exposeErrorCode(service.removeTaskLabels({ id, labelIds: label_ids })),
     })
   })
 )

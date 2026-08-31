@@ -148,6 +148,8 @@ export interface NewLaborerTask {
   readonly executionId?: string | null
   readonly executionStatus?: ExecutionStatus | null
   readonly id: string
+  /** Labels to apply as the row is inserted; every id must already exist. */
+  readonly labelIds?: readonly string[]
   readonly parentTaskId?: string | null
   readonly prApprovals?: number | null
   readonly prAuthorLogin?: string | null
@@ -413,16 +415,21 @@ export class LaborerDatabaseUnknownLabelError extends Error {
 export class LaborerDatabaseStaleRevisionError<Row> extends Error {
   readonly _tag = 'LaborerDatabaseStaleRevisionError'
   readonly current: Row | null
-  readonly expectedRevision: number
+  /** `null` when the caller asked for last-write-wins and the row was gone. */
+  readonly expectedRevision: number | null
   readonly rowId: string
   readonly table: LaborerDatabaseTable
   constructor(
     table: LaborerDatabaseTable,
     rowId: string,
-    expectedRevision: number,
+    expectedRevision: number | null,
     current: Row | null
   ) {
-    super(`${table} row ${rowId} no longer has revision ${expectedRevision}`)
+    super(
+      expectedRevision === null
+        ? `${table} row ${rowId} does not exist`
+        : `${table} row ${rowId} no longer has revision ${expectedRevision}`
+    )
     this.table = table
     this.rowId = rowId
     this.expectedRevision = expectedRevision
@@ -989,12 +996,21 @@ export class NativeLaborerDatabase {
     return boundedRows(rows, 'tasks').map(rowToTask)
   }
 
+  /**
+   * Inserts a task. `labelIds` are validated and stored inside the same
+   * IMMEDIATE transaction as the row itself, so an unknown id leaves no task
+   * behind and a created task is never briefly visible without its labels.
+   */
   insertTask(
     input: NewLaborerTask,
     operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<LaborerTask> {
     const createdAt = input.createdAt ?? changedAt
+    const labelIds = [...new Set(input.labelIds ?? [])]
+    if (labelIds.length > MAX_TASK_LABELS) {
+      throw new Error(`A task carries at most ${MAX_TASK_LABELS} labels`)
+    }
     const prAuthorLogin = input.prAuthorLogin ?? null
     const prBaseBranch = input.prBaseBranch ?? null
     const prMergeStatus = input.prMergeStatus ?? null
@@ -1002,6 +1018,7 @@ export class NativeLaborerDatabase {
     const prReviewDecision = input.prReviewDecision ?? null
     const prApprovals = input.prApprovals ?? null
     return this.#writeTransaction(() => {
+      this.#requireKnownLabels(input.id, labelIds)
       const sortOrder = taskSortOrder(this.#database, input)
       this.#database
         .prepare(`INSERT INTO tasks (
@@ -1011,9 +1028,10 @@ export class NativeLaborerDatabase {
           worktree_error, setup_completed_at, parent_task_id, base_sha,
           base_branch, pr_number, pr_url, pr_title, pr_state, pr_is_draft,
           sort_order, pr_author_login, pr_base_branch, pr_merge_status, pr_check_status,
-          pr_checks, pr_unresolved_threads, pr_review_decision, pr_approvals
+          pr_checks, pr_unresolved_threads, pr_review_decision, pr_approvals,
+          label_ids
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           input.id,
           input.rootPath,
@@ -1048,7 +1066,8 @@ export class NativeLaborerDatabase {
           serializeCheckRuns(input.prChecks),
           input.prUnresolvedThreads ?? null,
           prReviewDecision,
-          prApprovals
+          prApprovals,
+          serializeLabelIds(labelIds)
         )
       const cursor = this.#appendTaskChange(input.id, changedAt, operationId)
       return { row: this.#requireTask(input.id), cursor }
@@ -1519,9 +1538,10 @@ export class NativeLaborerDatabase {
     })
   }
 
+  /** `null` expected revision skips the CAS guard (last-write-wins). */
   updateLabel(
     id: string,
-    expectedRevision: number,
+    expectedRevision: number | null,
     patch: LabelPatch,
     operationId: string | null = null,
     changedAt = Date.now()
@@ -1532,7 +1552,10 @@ export class NativeLaborerDatabase {
     const name = patch.name === undefined ? undefined : labelName(patch.name)
     return this.#writeTransaction(() => {
       const current = this.findLabel(id)
-      if (current === null || current.revision !== expectedRevision) {
+      if (
+        current === null ||
+        (expectedRevision !== null && current.revision !== expectedRevision)
+      ) {
         throw new LaborerDatabaseStaleRevisionError(
           'labels',
           id,
@@ -1549,13 +1572,13 @@ export class NativeLaborerDatabase {
       const result = this.#database
         .prepare(`UPDATE labels
           SET name = ?, color = ?, updated_at = ?, revision = revision + 1
-          WHERE id = ? AND revision = ?`)
+          WHERE id = ?${expectedRevision === null ? '' : ' AND revision = ?'}`)
         .run(
           name ?? current.name,
           patch.color ?? current.color,
           changedAt,
           id,
-          expectedRevision
+          ...(expectedRevision === null ? [] : [expectedRevision])
         )
       if (result.changes === 0) {
         throw new LaborerDatabaseStaleRevisionError(
@@ -1582,15 +1605,18 @@ export class NativeLaborerDatabase {
    */
   deleteLabel(
     id: string,
-    expectedRevision: number,
+    expectedRevision: number | null,
     operationId: string | null = null,
     changedAt = Date.now()
   ): MutationResult<Label> {
     return this.#writeTransaction(() => {
       const row = this.findLabel(id)
-      const result = this.#database
-        .prepare('DELETE FROM labels WHERE id = ? AND revision = ?')
-        .run(id, expectedRevision)
+      const result =
+        expectedRevision === null
+          ? this.#database.prepare('DELETE FROM labels WHERE id = ?').run(id)
+          : this.#database
+              .prepare('DELETE FROM labels WHERE id = ? AND revision = ?')
+              .run(id, expectedRevision)
       if (result.changes === 0 || row === null) {
         throw new LaborerDatabaseStaleRevisionError(
           'labels',
@@ -1611,14 +1637,17 @@ export class NativeLaborerDatabase {
   }
 
   /**
-   * Replaces a task's whole label set under revision CAS. Ids are deduped in
-   * the order given and must name labels that exist, so the stored array is
-   * always a valid, ordered reference list. Labels are app-wide, so any label
-   * applies to a task in any project.
+   * Replaces a task's whole label set. Ids are deduped in the order given and
+   * must name labels that exist, so the stored array is always a valid,
+   * ordered reference list. Labels are app-wide, so any label applies to a
+   * task in any project.
+   *
+   * A numeric `expectedRevision` guards the write with revision CAS; `null`
+   * means the caller accepts last-write-wins.
    */
   setTaskLabels(
     taskId: string,
-    expectedRevision: number,
+    expectedRevision: number | null,
     labelIds: readonly string[],
     operationId: string | null = null,
     changedAt = Date.now()
@@ -1627,36 +1656,134 @@ export class NativeLaborerDatabase {
     if (requested.length > MAX_TASK_LABELS) {
       throw new Error(`A task carries at most ${MAX_TASK_LABELS} labels`)
     }
+    return this.#writeTransaction(() =>
+      this.#writeTaskLabels(
+        taskId,
+        expectedRevision,
+        requested,
+        operationId,
+        changedAt
+      )
+    )
+  }
+
+  /**
+   * Appends label ids a task does not already carry, keeping the ids it has in
+   * their existing order. Reading the current set and writing the union happen
+   * inside one IMMEDIATE transaction, so the operation commutes with any
+   * concurrent add or remove instead of clobbering it — no revision needed.
+   * Adding ids the task already carries is a no-op that still returns the row.
+   */
+  addTaskLabels(
+    taskId: string,
+    labelIds: readonly string[],
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<LaborerTask> {
     return this.#writeTransaction(() => {
-      const current = this.findTask(taskId)
-      if (current === null) {
-        throw new LaborerDatabaseStaleRevisionError(
-          'tasks',
-          taskId,
-          expectedRevision,
-          null
-        )
+      const current = this.#requireTaskForLabels(taskId)
+      const additions = [...new Set(labelIds)].filter(
+        (id) => !current.labelIds.includes(id)
+      )
+      if (additions.length === 0) {
+        // Nothing changed, so the ledger stays quiet and the revision holds.
+        this.#requireKnownLabels(taskId, [...new Set(labelIds)])
+        return { cursor: this.#taskCursor(), row: current }
       }
-      const unknown = this.#unknownLabelIds(requested)
-      if (unknown.length > 0) {
-        throw new LaborerDatabaseUnknownLabelError(taskId, unknown)
-      }
-      const result = this.#database
-        .prepare(`UPDATE tasks
-          SET label_ids = ?, updated_at = ?, revision = revision + 1
-          WHERE id = ? AND revision = ?`)
-        .run(serializeLabelIds(requested), changedAt, taskId, expectedRevision)
-      if (result.changes === 0) {
-        throw new LaborerDatabaseStaleRevisionError(
-          'tasks',
-          taskId,
-          expectedRevision,
-          this.findTask(taskId)
-        )
-      }
-      const cursor = this.#appendTaskChange(taskId, changedAt, operationId)
-      return { cursor, row: this.#requireTask(taskId) }
+      return this.#writeTaskLabels(
+        taskId,
+        null,
+        [...current.labelIds, ...additions],
+        operationId,
+        changedAt
+      )
     })
+  }
+
+  /**
+   * Drops label ids from a task, leaving the rest in their existing order.
+   * Like {@link addTaskLabels} this reads and writes inside one IMMEDIATE
+   * transaction and needs no revision, so it commutes with concurrent label
+   * edits. Removing ids the task does not carry is a no-op.
+   */
+  removeTaskLabels(
+    taskId: string,
+    labelIds: readonly string[],
+    operationId: string | null = null,
+    changedAt = Date.now()
+  ): MutationResult<LaborerTask> {
+    return this.#writeTransaction(() => {
+      const current = this.#requireTaskForLabels(taskId)
+      const removals = new Set(labelIds)
+      const remaining = current.labelIds.filter((id) => !removals.has(id))
+      if (remaining.length === current.labelIds.length) {
+        return { cursor: this.#taskCursor(), row: current }
+      }
+      return this.#writeTaskLabels(
+        taskId,
+        null,
+        remaining,
+        operationId,
+        changedAt
+      )
+    })
+  }
+
+  /**
+   * Fails unless every requested label id names an existing label. Callers
+   * run inside the write transaction that stores the ids, so a label cannot
+   * disappear between the check and the write.
+   */
+  #requireKnownLabels(taskId: string, labelIds: readonly string[]): void {
+    const unknown = this.#unknownLabelIds(labelIds)
+    if (unknown.length > 0) {
+      throw new LaborerDatabaseUnknownLabelError(taskId, unknown)
+    }
+  }
+
+  /** The task a label operation targets, or a stale-revision failure. */
+  #requireTaskForLabels(taskId: string): LaborerTask {
+    const current = this.findTask(taskId)
+    if (current === null) {
+      throw new LaborerDatabaseStaleRevisionError('tasks', taskId, null, null)
+    }
+    return current
+  }
+
+  /** Writes an already-deduped label id list. Callers hold the transaction. */
+  #writeTaskLabels(
+    taskId: string,
+    expectedRevision: number | null,
+    requested: readonly string[],
+    operationId: string | null,
+    changedAt: number
+  ): MutationResult<LaborerTask> {
+    if (requested.length > MAX_TASK_LABELS) {
+      throw new Error(`A task carries at most ${MAX_TASK_LABELS} labels`)
+    }
+    this.#requireTaskForLabels(taskId)
+    this.#requireKnownLabels(taskId, requested)
+    const guarded = expectedRevision !== null
+    const result = this.#database
+      .prepare(`UPDATE tasks
+          SET label_ids = ?, updated_at = ?, revision = revision + 1
+          WHERE id = ?${guarded ? ' AND revision = ?' : ''}`)
+      .run(
+        serializeLabelIds(requested),
+        changedAt,
+        taskId,
+        ...(expectedRevision === null ? [] : [expectedRevision])
+      )
+    if (result.changes === 0) {
+      throw new LaborerDatabaseStaleRevisionError(
+        'tasks',
+        taskId,
+        expectedRevision,
+        this.findTask(taskId)
+      )
+    }
+    const cursor = this.#appendTaskChange(taskId, changedAt, operationId)
+    return { cursor, row: this.#requireTask(taskId) }
   }
 
   /**
@@ -2315,6 +2442,10 @@ export class NativeLaborerDatabase {
 
   #stateCursor(): number {
     return this.#ledgerBounds('state_changes').maximum ?? 0
+  }
+
+  #taskCursor(): number {
+    return this.#ledgerBounds('task_changes').maximum ?? 0
   }
 
   /** Label ids requested for a task that do not exist at all. */

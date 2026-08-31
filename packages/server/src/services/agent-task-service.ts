@@ -16,7 +16,10 @@ import {
   LaborerDatabaseLabelNameConflictError,
   LaborerDatabaseStaleRevisionError,
   LaborerDatabaseUnknownLabelError,
+  type LaborerTask,
   MAX_TASK_LABELS,
+  type MutationResult,
+  type NativeLaborerDatabase,
 } from './native-laborer-database.js'
 import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 import {
@@ -148,10 +151,14 @@ const labelFailure = (failure: unknown): AgentTaskError => {
     return new AgentTaskError({ code: 'NOT_FOUND', message: cause.message })
   }
   if (cause instanceof LaborerDatabaseStaleRevisionError) {
-    return new AgentTaskError({
-      code: 'CAS_CONFLICT',
-      message: `${cause.message}. Refetch the row and retry with its latest revision.`,
-    })
+    // A null expected revision means the caller never asked for CAS, so the
+    // only way the write missed is that the row is gone.
+    return cause.expectedRevision === null
+      ? new AgentTaskError({ code: 'NOT_FOUND', message: cause.message })
+      : new AgentTaskError({
+          code: 'CAS_CONFLICT',
+          message: `${cause.message}. Refetch the row and retry with its latest revision.`,
+        })
   }
   return new AgentTaskError({
     code: 'TASK_DATABASE_ERROR',
@@ -196,9 +203,89 @@ const reviewCommentFailure = (failure: unknown): AgentTaskError => {
   })
 }
 
+/**
+ * Normalizes an agent-facing optimistic-concurrency guard for the database
+ * layer: an omitted revision is last-write-wins, which the row writers spell
+ * `null`.
+ */
+const casGuard = (expectedRevision?: number): number | null =>
+  expectedRevision ?? null
+
 const pathContains = (parent: string, child: string): boolean =>
   parent === child ||
   child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+
+/** The forms every project-scoped `path` argument accepts, for error copy. */
+const PROJECT_CANDIDATE_FORMS =
+  "a project name, its task-ID short name, or an absolute path inside the project's repository"
+
+/**
+ * Names are compared on the trimmed, case-folded candidate: short names are
+ * stored uppercase (`LAB`) while project names keep whatever case they were
+ * registered with, so `next`, `Next`, and `NEXT` all name one project.
+ */
+const foldProjectLabel = (value: string): string => value.trim().toLowerCase()
+
+/**
+ * The name tiers a candidate is matched against, most specific first: the
+ * project's own name, then its current short name, then short names it has
+ * retired. A later tier is only consulted when no project matched an earlier
+ * one, so a project named like another's short name never steals the lookup.
+ */
+const projectLabelTiers = (
+  project: AgentTaskProject
+): readonly (readonly string[])[] => [
+  [project.name],
+  [project.shortName],
+  project.aliases,
+]
+
+const PROJECT_LABEL_TIER_COUNT = 3
+
+const projectsMatchingLabel = (
+  projects: readonly AgentTaskProject[],
+  folded: string,
+  tier: number
+): readonly AgentTaskProject[] =>
+  folded.length === 0
+    ? []
+    : projects.filter((project) =>
+        (projectLabelTiers(project)[tier] ?? []).some(
+          (label) => foldProjectLabel(label) === folded
+        )
+      )
+
+/**
+ * The registered project a filesystem path sits in: the deepest registered
+ * checkout containing it, or the main checkout when the path is a linked
+ * worktree of one. A candidate that names no readable path resolves to
+ * nothing rather than failing, so name lookup still gets its turn.
+ */
+const projectAtPath = (
+  candidate: string,
+  projects: readonly AgentTaskProject[]
+): AgentTaskProject | undefined => {
+  let canonical: string
+  try {
+    canonical = realpathSync(candidate)
+  } catch {
+    return undefined
+  }
+  return (
+    nearestTaskProject(canonical, projects) ??
+    nearestTaskProject(linkedWorktreeMainPath(canonical) ?? '', projects)
+  )
+}
+
+const describeProjects = (projects: readonly AgentTaskProject[]): string =>
+  projects.length === 0
+    ? 'No Laborer projects are registered.'
+    : `Registered projects: ${projects
+        .map(
+          (project) =>
+            `${project.name} (${project.shortName}) at ${project.repoPath}`
+        )
+        .join('; ')}.`
 
 const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
   Effect.try({
@@ -226,22 +313,38 @@ const serviceTry = <A>(operation: () => A): Effect.Effect<A, AgentTaskError> =>
 export class AgentTaskService extends Context.Service<
   AgentTaskService,
   {
+    /**
+     * Adds label ids a task does not already carry. Commutative and
+     * idempotent, so it needs no revision and never clobbers a concurrent
+     * label edit.
+     */
+    readonly addTaskLabels: (input: {
+      readonly id: string
+      readonly labelIds: readonly string[]
+    }) => Effect.Effect<AgentTask, AgentTaskError>
     readonly createLabel: (input: {
       readonly color?: LabelColor
       readonly name: string
     }) => Effect.Effect<Label, AgentTaskError>
+    /**
+     * Stages a todo task. Any `labelIds` are applied as part of the insert, so
+     * a labeled task takes one call rather than a create/label round trip.
+     */
     readonly createTask: (input: {
       readonly description?: string | null
+      readonly labelIds?: readonly string[]
       readonly path: string
       readonly title: string
     }) => Effect.Effect<AgentTask, AgentTaskError>
+    /** An omitted revision is last-write-wins; a supplied one is CAS. */
     readonly deleteLabel: (
       id: string,
-      expectedRevision: number
+      expectedRevision?: number
     ) => Effect.Effect<Label, AgentTaskError>
+    /** An omitted revision is last-write-wins; a supplied one is CAS. */
     readonly deleteTask: (
       id: string,
-      expectedRevision: number
+      expectedRevision?: number
     ) => Effect.Effect<AgentTask, AgentTaskError>
     readonly getTask: (id: string) => Effect.Effect<AgentTask, AgentTaskError>
     readonly listLabels: () => Effect.Effect<readonly Label[], AgentTaskError>
@@ -267,24 +370,39 @@ export class AgentTaskService extends Context.Service<
       readonly body: string
       readonly threadId: string
     }) => Effect.Effect<ReviewCommentThread, AgentTaskError>
+    /**
+     * Drops label ids from a task. Commutative and idempotent, so it needs no
+     * revision and never clobbers a concurrent label edit.
+     */
+    readonly removeTaskLabels: (input: {
+      readonly id: string
+      readonly labelIds: readonly string[]
+    }) => Effect.Effect<AgentTask, AgentTaskError>
     readonly resolveReviewComment: (
       threadId: string,
       expectedRevision: number
     ) => Effect.Effect<ReviewCommentThread, AgentTaskError>
+    /**
+     * Replaces the whole label set. An omitted revision is last-write-wins; a
+     * supplied one is CAS. Prefer addTaskLabels/removeTaskLabels when only
+     * some ids change.
+     */
     readonly setTaskLabels: (input: {
-      readonly expectedRevision: number
+      readonly expectedRevision?: number
       readonly id: string
       readonly labelIds: readonly string[]
     }) => Effect.Effect<AgentTask, AgentTaskError>
+    /** An omitted revision is last-write-wins; a supplied one is CAS. */
     readonly updateLabel: (input: {
       readonly color?: LabelColor
-      readonly expectedRevision: number
+      readonly expectedRevision?: number
       readonly id: string
       readonly name?: string
     }) => Effect.Effect<Label, AgentTaskError>
+    /** An omitted revision is last-write-wins; a supplied one is CAS. */
     readonly updateTask: (input: {
       readonly description?: string | null
-      readonly expectedRevision: number
+      readonly expectedRevision?: number
       readonly id: string
       readonly title?: string
     }) => Effect.Effect<AgentTask, AgentTaskError>
@@ -335,30 +453,42 @@ export class AgentTaskService extends Context.Service<
               database.close()
             }
           })
+        /**
+         * Resolves the project a `path` argument names. First match wins, in
+         * order: a filesystem path inside a registered checkout (or a linked
+         * worktree of one), the project name, its short name, then a retired
+         * short name. Path first means a project whose name happens to read
+         * like a directory can never shadow the checkout that path is in.
+         * Two projects answering to the same name in one tier fail rather
+         * than resolve to an arbitrary one.
+         */
         const resolveProject = (candidate: string) =>
           Effect.gen(function* () {
-            const canonical = yield* Effect.try({
-              try: () => realpathSync(candidate),
-              catch: () =>
-                new AgentTaskError({
-                  code: 'UNKNOWN_PROJECT',
-                  message: `Path does not belong to a registered Laborer project: ${candidate}`,
-                }),
-            })
             const projects = yield* listProjects()
-            const project =
-              nearestTaskProject(canonical, projects) ??
-              nearestTaskProject(
-                linkedWorktreeMainPath(canonical) ?? '',
-                projects
-              )
-            if (!project) {
-              return yield* new AgentTaskError({
-                code: 'UNKNOWN_PROJECT',
-                message: `Path does not belong to a registered Laborer project: ${candidate}`,
-              })
+            const byPath = projectAtPath(candidate, projects)
+            if (byPath) {
+              return byPath
             }
-            return project
+            const folded = foldProjectLabel(candidate)
+            for (let tier = 0; tier < PROJECT_LABEL_TIER_COUNT; tier += 1) {
+              const matches = projectsMatchingLabel(projects, folded, tier)
+              if (matches.length > 1) {
+                return yield* new AgentTaskError({
+                  code: 'AMBIGUOUS_PROJECT',
+                  message: `More than one Laborer project answers to "${candidate}": ${matches
+                    .map((project) => project.repoPath)
+                    .join(', ')}. Pass the repository path instead.`,
+                })
+              }
+              const [match] = matches
+              if (match) {
+                return match
+              }
+            }
+            return yield* new AgentTaskError({
+              code: 'UNKNOWN_PROJECT',
+              message: `No registered Laborer project matches "${candidate}". Pass ${PROJECT_CANDIDATE_FORMS}. ${describeProjects(projects)}`,
+            })
           })
         const requireLabel = (id: string) =>
           laborerDatabase
@@ -395,6 +525,39 @@ export class AgentTaskService extends Context.Service<
                 (code, message) => new AgentTaskError({ code, message })
               )
             )
+            return exposeTask(task, projects)
+          })
+
+        /**
+         * Resolves the task reference, applies one label write, and returns
+         * the task as re-read afterwards, so every label tool answers with the
+         * same shape and the caller sees the committed revision.
+         */
+        const mutateTaskLabels = (
+          id: string,
+          write: (
+            database: NativeLaborerDatabase,
+            taskId: string
+          ) => MutationResult<LaborerTask>
+        ) =>
+          Effect.gen(function* () {
+            const resolved = yield* resolveTask(id)
+            const projects = yield* listProjects()
+            yield* laborerDatabase
+              .run('write agent task labels', (database) =>
+                write(database, resolved.id)
+              )
+              .pipe(Effect.mapError(labelFailure))
+            const task = yield* withDatabase((database) => {
+              const row = database.find(resolved.id)
+              if (!row) {
+                throw new AgentTaskError({
+                  code: 'NOT_FOUND',
+                  message: `Task not found: ${id}`,
+                })
+              }
+              return row
+            })
             return exposeTask(task, projects)
           })
 
@@ -502,24 +665,38 @@ export class AgentTaskService extends Context.Service<
                 Effect.map(({ row }) => row),
                 Effect.mapError(reviewCommentFailure)
               ),
-          createTask: ({ description, path: candidate, title }) =>
+          createTask: ({ description, labelIds, path: candidate, title }) =>
             Effect.gen(function* () {
               const project = yield* resolveProject(candidate)
               const validTitle = yield* serviceTry(() => validateTitle(title))
               const validDescription = yield* serviceTry(() =>
                 validateDescription(description)
               )
-              const task = yield* withDatabase((database) =>
-                database.insert({
-                  description: validDescription ?? null,
-                  id: createTaskUlid(),
-                  rootPath: project.repoPath,
-                  source: 'agent',
-                  status: 'todo',
-                  title: validTitle,
-                })
-              )
-              return exposeTask(task, yield* listProjects())
+              const requested = [...new Set(labelIds ?? [])]
+              if (requested.length > MAX_TASK_LABELS) {
+                return yield* invalid(
+                  `A task carries at most ${String(MAX_TASK_LABELS)} labels`
+                )
+              }
+              // Row and labels land in one transaction, so an unknown label id
+              // fails without staging a task the agent then has to clean up.
+              const created = yield* laborerDatabase
+                .run('create agent task', (database) =>
+                  database.insertTask(
+                    {
+                      description: validDescription ?? null,
+                      id: createTaskUlid(),
+                      labelIds: requested,
+                      rootPath: project.repoPath,
+                      source: 'agent',
+                      status: 'todo',
+                      title: validTitle,
+                    },
+                    createTaskUlid()
+                  )
+                )
+                .pipe(Effect.mapError(labelFailure))
+              return yield* resolveTask(created.row.id)
             }),
           getTask: resolveTask,
           listTasks: (filters) =>
@@ -580,7 +757,7 @@ export class AgentTaskService extends Context.Service<
                 }
                 const updated = database.update(
                   current.id,
-                  expectedRevision,
+                  casGuard(expectedRevision),
                   editablePatch({
                     ...(description === undefined ? {} : { description }),
                     ...(title === undefined ? {} : { title }),
@@ -618,7 +795,7 @@ export class AgentTaskService extends Context.Service<
               yield* requireLabel(id)
               const result = yield* laborerDatabase
                 .run('update agent label', (database) =>
-                  database.updateLabel(id, expectedRevision, {
+                  database.updateLabel(id, casGuard(expectedRevision), {
                     ...(color === undefined ? {} : { color }),
                     ...(validName === undefined ? {} : { name: validName }),
                   })
@@ -631,7 +808,7 @@ export class AgentTaskService extends Context.Service<
               yield* requireLabel(id)
               const result = yield* laborerDatabase
                 .run('delete agent label', (database) =>
-                  database.deleteLabel(id, expectedRevision)
+                  database.deleteLabel(id, casGuard(expectedRevision))
                 )
                 .pipe(Effect.mapError(labelFailure))
               return result.row
@@ -644,36 +821,37 @@ export class AgentTaskService extends Context.Service<
                   `A task carries at most ${String(MAX_TASK_LABELS)} labels`
                 )
               }
-              const resolved = yield* resolveTask(id)
-              const projects = yield* listProjects()
-              yield* laborerDatabase
-                .run('set agent task labels', (database) =>
-                  database.setTaskLabels(
-                    resolved.id,
-                    expectedRevision,
-                    requested,
-                    createTaskUlid()
-                  )
+              return yield* mutateTaskLabels(id, (database, taskId) =>
+                database.setTaskLabels(
+                  taskId,
+                  casGuard(expectedRevision),
+                  requested,
+                  createTaskUlid()
                 )
-                .pipe(Effect.mapError(labelFailure))
-              const task = yield* withDatabase((database) => {
-                const row = database.find(resolved.id)
-                if (!row) {
-                  throw new AgentTaskError({
-                    code: 'NOT_FOUND',
-                    message: `Task not found: ${id}`,
-                  })
-                }
-                return row
-              })
-              return exposeTask(task, projects)
+              )
             }),
+          addTaskLabels: ({ id, labelIds }) =>
+            mutateTaskLabels(id, (database, taskId) =>
+              database.addTaskLabels(
+                taskId,
+                [...new Set(labelIds)],
+                createTaskUlid()
+              )
+            ),
+          removeTaskLabels: ({ id, labelIds }) =>
+            mutateTaskLabels(id, (database, taskId) =>
+              database.removeTaskLabels(
+                taskId,
+                [...new Set(labelIds)],
+                createTaskUlid()
+              )
+            ),
           deleteTask: (id, expectedRevision) =>
             Effect.gen(function* () {
               const resolved = yield* resolveTask(id)
               const projects = yield* listProjects()
               const task = yield* withDatabase((database) =>
-                database.update(resolved.id, expectedRevision, {
+                database.update(resolved.id, casGuard(expectedRevision), {
                   status: 'cancelled',
                 })
               )

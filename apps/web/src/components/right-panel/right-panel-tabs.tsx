@@ -826,7 +826,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           scrollFade
         >
           <div
-            className="flex h-full w-max min-w-full items-center gap-1"
+            className="flex h-full w-max min-w-full items-center gap-1 pt-[3px] pb-[5px]"
             ref={tabListRef}
           >
             {props.surfaces.map((surface, surfaceIndex) => {

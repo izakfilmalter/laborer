@@ -98,9 +98,42 @@ describe('GitActionsControl', () => {
     cleanup()
   })
 
-  it('stands down once the branch has a pull request', () => {
+  it('drops the journey button once the branch has a pull request, keeping the menu', async () => {
+    const user = userEvent.setup()
     syncStatusRef.current = { ...syncStatusRef.current, hasChanges: true }
-    render(<GitActionsControl hasPullRequest workspaceId="ws-1" />)
+    render(
+      <GitActionsControl
+        branchName="feature"
+        hasPullRequest
+        workspaceId="ws-1"
+      />
+    )
+
+    expect(screen.queryByTestId('git-actions-quick-action')).toBeNull()
+
+    // Committing and pushing carry on under review; opening a second pull
+    // request is the one thing the menu no longer offers.
+    await user.click(screen.getByTestId('git-actions-menu-trigger'))
+    expect(
+      await screen.findByRole('menuitem', { name: COMMIT_MENU_ITEM_RE })
+    ).not.toBeNull()
+    expect(screen.getByRole('menuitem', { name: /push/i })).not.toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /create pr/i })).toBeNull()
+  })
+
+  it.each([
+    'main',
+    'master',
+    'dev',
+  ])('stays off %s, which work merges into rather than from', (branchName) => {
+    syncStatusRef.current = { ...syncStatusRef.current, hasChanges: true }
+    render(
+      <GitActionsControl
+        branchName={branchName}
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
 
     expect(screen.queryByRole('button', { name: ANY_ACTION_RE })).toBeNull()
   })
@@ -111,7 +144,13 @@ describe('GitActionsControl', () => {
       hasChanges: true,
       isKnown: false,
     }
-    render(<GitActionsControl hasPullRequest={false} workspaceId="ws-1" />)
+    render(
+      <GitActionsControl
+        branchName="feature"
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
 
     expect(screen.queryByRole('button', { name: ANY_ACTION_RE })).toBeNull()
   })
@@ -124,7 +163,13 @@ describe('GitActionsControl', () => {
       hasUpstream: true,
       isKnown: true,
     }
-    render(<GitActionsControl hasPullRequest={false} workspaceId="ws-1" />)
+    render(
+      <GitActionsControl
+        branchName="feature"
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
 
     expect(screen.queryByRole('button', { name: ANY_ACTION_RE })).toBeNull()
   })
@@ -132,7 +177,13 @@ describe('GitActionsControl', () => {
   it('runs the whole journey on one click, asking for nothing', async () => {
     const user = userEvent.setup()
     syncStatusRef.current = { ...syncStatusRef.current, hasChanges: true }
-    render(<GitActionsControl hasPullRequest={false} workspaceId="ws-1" />)
+    render(
+      <GitActionsControl
+        branchName="feature"
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
 
     await user.click(screen.getByRole('button', { name: COMMIT_PUSH_PR_RE }))
 
@@ -149,7 +200,13 @@ describe('GitActionsControl', () => {
   it('lets the operator write the message themselves from the menu', async () => {
     const user = userEvent.setup()
     syncStatusRef.current = { ...syncStatusRef.current, hasChanges: true }
-    render(<GitActionsControl hasPullRequest={false} workspaceId="ws-1" />)
+    render(
+      <GitActionsControl
+        branchName="feature"
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
 
     await user.click(screen.getByTestId('git-actions-menu-trigger'))
     await user.click(
@@ -177,7 +234,13 @@ describe('GitActionsControl', () => {
       hasUpstream: true,
       isKnown: true,
     }
-    render(<GitActionsControl hasPullRequest={false} workspaceId="ws-1" />)
+    render(
+      <GitActionsControl
+        branchName="feature"
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
 
     await user.click(screen.getByRole('button', { name: PUSH_PR_RE }))
 
@@ -198,7 +261,13 @@ describe('GitActionsControl', () => {
       hasUpstream: true,
       isKnown: true,
     }
-    render(<GitActionsControl hasPullRequest={false} workspaceId="ws-1" />)
+    render(
+      <GitActionsControl
+        branchName="feature"
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
 
     await user.click(screen.getByRole('button', { name: PUSH_PR_RE }))
 

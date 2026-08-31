@@ -724,12 +724,6 @@ function WorkspaceCard({
     <CardShell
       actions={
         <>
-          {/* Only until the work has a pull request: after that the PR badge
-              in the status rail is what speaks for the branch. */}
-          <GitActionsControl
-            hasPullRequest={workspace.prNumber !== null}
-            workspaceId={workspace.id}
-          />
           <WorkspaceSyncStatus workspaceId={workspace.id} />
           {!isRootWorkspace && showCreateSubWorkspaceAction && (
             <CreateWorkspaceForm
@@ -802,6 +796,15 @@ function WorkspaceCard({
               taskNumber={workspace.taskNumber}
             />
           ) : null}
+          {/* Where the pull request badge will be once there is one. The rail
+              reads as the work's progress, so the control that produces the
+              next step in that progress stands in the same place — narrowing
+              to its chevron once the badge arrives beside it. */}
+          <GitActionsControl
+            branchName={workspace.branchName}
+            hasPullRequest={workspace.prNumber !== null}
+            workspaceId={workspace.id}
+          />
           {/* The pull request is a status, not a control: it leads the rail
               because it is the furthest along the work has got, and it sits
               opposite the controls that start more of it.

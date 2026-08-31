@@ -14,9 +14,15 @@
  * and pull request description come back written. Typing a message is the
  * bypass, available under "Commit…" in the menu, not the main path.
  *
- * It appears only while there is something to do and no pull request yet: once
- * the branch has one, the PR badge is the surface that speaks for it, and a
- * second control offering to open another would be a lie.
+ * The whole-journey button appears only while there is no pull request yet:
+ * once the branch has one, the PR badge is the surface that speaks for it, and
+ * a second control offering to open another would be a lie. The chevron stays,
+ * because a branch under review still gets committed to and pushed — it just
+ * drops "Create PR" from its menu.
+ *
+ * It also stays off a trunk branch. `main`, `master`, and `dev` are what work
+ * merges into, so a pull request from one of them has no base to target, and
+ * offering the journey there would only produce a failure at the last step.
  *
  * @see apps/web/src/hooks/use-workspace-git-actions.ts — the three calls
  * @see apps/web/src/components/workspace-sync-status.tsx — push/pull alone
@@ -62,6 +68,8 @@ import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 
 interface GitActionsControlProps {
+  /** The branch the workspace is on, used to keep the control off trunk. */
+  readonly branchName: string
   readonly className?: string | undefined
   /**
    * Whether the branch already has a pull request. The control stands down
@@ -70,6 +78,17 @@ interface GitActionsControlProps {
   readonly hasPullRequest: boolean
   readonly workspaceId: string
 }
+
+/**
+ * Branches work merges into rather than branches work happens on.
+ *
+ * Matches the server's own base-ref candidates, so the branches it would pick
+ * as a pull request's base are exactly the ones the control declines to offer
+ * a pull request from.
+ *
+ * @see packages/server/src/lib/base-ref.ts
+ */
+const TRUNK_BRANCHES: ReadonlySet<string> = new Set(['dev', 'main', 'master'])
 
 /** The steps the button can run, in the order git requires them. */
 type GitStep = 'commit' | 'push' | 'createPr'
@@ -197,6 +216,7 @@ function CommitMessageDialog({
 }
 
 function GitActionsControl({
+  branchName,
   className,
   hasPullRequest,
   workspaceId,
@@ -216,7 +236,7 @@ function GitActionsControl({
     ? resolveQuickAction({ aheadCount, hasChanges, hasUpstream })
     : null
 
-  if (hasPullRequest || quickAction === null) {
+  if (quickAction === null || TRUNK_BRANCHES.has(branchName)) {
     return null
   }
 
@@ -293,28 +313,30 @@ function GitActionsControl({
   return (
     <>
       <ButtonGroup className={cn('shrink-0', className)}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={quickAction.label}
-                className="h-6 gap-1.5 px-1.5 text-xs [&>svg]:size-3.5"
-                data-testid="git-actions-quick-action"
-                disabled={!isServerReady || isRunning}
-                loading={isRunning}
-                onClick={() => start(quickAction.steps, quickAction.label)}
-                size="xs"
-                variant="outline"
-              />
-            }
-          >
-            <GitPullRequestArrow className="size-3.5" />
-            <span>{runningLabel ?? quickAction.label}</span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {quickAction.label} for this workspace
-          </TooltipContent>
-        </Tooltip>
+        {hasPullRequest ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={quickAction.label}
+                  className="h-6 gap-1.5 px-1.5 text-xs [&>svg]:size-3.5"
+                  data-testid="git-actions-quick-action"
+                  disabled={!isServerReady || isRunning}
+                  loading={isRunning}
+                  onClick={() => start(quickAction.steps, quickAction.label)}
+                  size="xs"
+                  variant="outline"
+                />
+              }
+            >
+              <GitPullRequestArrow className="size-3.5" />
+              <span>{runningLabel ?? quickAction.label}</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {quickAction.label} for this workspace
+            </TooltipContent>
+          </Tooltip>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -323,6 +345,7 @@ function GitActionsControl({
                 className="h-6 w-6"
                 data-testid="git-actions-menu-trigger"
                 disabled={!isServerReady || isRunning}
+                loading={isRunning && hasPullRequest}
                 size="icon-xs"
                 variant="outline"
               >
@@ -345,15 +368,19 @@ function GitActionsControl({
               <ArrowUpToLine className="size-3.5" />
               Push
             </DropdownMenuItem>
-            <DropdownMenuItem
-              // A pull request can only describe commits the remote has, so
-              // it waits behind anything still uncommitted or unpushed.
-              disabled={hasChanges || canPush}
-              onClick={() => start(['createPr'], 'Create PR')}
-            >
-              <GitPullRequestArrow className="size-3.5" />
-              Create PR
-            </DropdownMenuItem>
+            {/* The branch already has its pull request; a second one is not an
+                option worth listing. */}
+            {hasPullRequest ? null : (
+              <DropdownMenuItem
+                // A pull request can only describe commits the remote has, so
+                // it waits behind anything still uncommitted or unpushed.
+                disabled={hasChanges || canPush}
+                onClick={() => start(['createPr'], 'Create PR')}
+              >
+                <GitPullRequestArrow className="size-3.5" />
+                Create PR
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </ButtonGroup>

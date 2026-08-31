@@ -14,7 +14,6 @@
  */
 
 import { useAtomSet } from '@effect/atom-react/Hooks'
-import { rootWorkspaceId } from '@laborer/shared/root-workspace'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,7 +46,6 @@ import {
   CreateWorkspaceButton,
   CreateWorkspaceComposer,
 } from '@/components/create-workspace-composer'
-import { GitActionsControl } from '@/components/git-actions-control'
 import type { ComposerCloseReason } from '@/components/inline-composer'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
@@ -222,13 +220,6 @@ function ProjectGroup({
             </span>
           </CollapsibleTrigger>
           <div className="flex shrink-0 items-center gap-0.5">
-            {/* The main checkout's own next step. Edits made straight in the
-                repo root have no card to carry them, so the project heading
-                is where they get committed, pushed, and reviewed. */}
-            <GitActionsControl
-              hasPullRequest={false}
-              workspaceId={rootWorkspaceId(project.id)}
-            />
             <CreateWorkspaceButton
               composerId={composerId}
               disabled={!isServerReady}

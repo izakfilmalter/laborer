@@ -141,7 +141,34 @@ function OpenCommandPalette(
     []
   )
 
+  /**
+   * Commit a workspace creation. Mirrors the inline composers' confirmation
+   * copy; the palette closes, so late failures land as toasts.
+   */
+  const runCreateWorkspace = useCallback(
+    async (projectId: string, trimmed: string) => {
+      const intent = createWorkspaceIntent(trimmed)
+      await createWorkspace({ branchNameOrSlackUrl: trimmed, projectId })
+      toast.success(
+        intent === 'slack'
+          ? 'Slack link added — reading the thread in the background.'
+          : `Creating ${trimmed === '' ? 'an auto-named workspace' : `"${trimmed}"`}…`
+      )
+    },
+    [createWorkspace]
+  )
+
   const rootGroups = useMemo((): readonly CommandPaletteGroup[] => {
+    const activeWorkspace = props.workspaces.find(
+      (workspace) =>
+        workspace.id === activeWorkspaceId && workspace.status !== 'destroyed'
+    )
+    const activeProject = activeWorkspace
+      ? props.projects.find(
+          (project) => project.id === activeWorkspace.projectId
+        )
+      : undefined
+
     const newWorkspaceItems: CommandPaletteActionItem[] = props.projects.map(
       (project) => ({
         icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
@@ -158,6 +185,24 @@ function OpenCommandPalette(
     )
 
     const actionItems: CommandPaletteEntry[] = [
+      ...(activeProject
+        ? [
+            {
+              description: activeProject.rootPath,
+              icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
+              kind: 'action',
+              run: () => runCreateWorkspace(activeProject.id, ''),
+              searchTerms: [
+                'new workspace',
+                'create workspace',
+                activeProject.name,
+                activeProject.rootPath,
+              ],
+              title: `New workspace in ${activeProject.name}`,
+              value: `action:new-workspace-in-active-project:${activeProject.id}`,
+            } satisfies CommandPaletteActionItem,
+          ]
+        : []),
       {
         icon: <KanbanIcon className={ITEM_ICON_CLASS} />,
         kind: 'action',
@@ -347,25 +392,9 @@ function OpenCommandPalette(
     pullWorkspace,
     pushCreateWorkspaceView,
     pushWorkspace,
+    runCreateWorkspace,
     setTheme,
   ])
-
-  /**
-   * Commit the create-workspace step. Mirrors the inline composers'
-   * confirmation copy; the palette closes, so late failures land as toasts.
-   */
-  const runCreateWorkspace = useCallback(
-    async (projectId: string, trimmed: string) => {
-      const intent = createWorkspaceIntent(trimmed)
-      await createWorkspace({ branchNameOrSlackUrl: trimmed, projectId })
-      toast.success(
-        intent === 'slack'
-          ? 'Slack link added — reading the thread in the background.'
-          : `Creating ${trimmed === '' ? 'an auto-named workspace' : `"${trimmed}"`}…`
-      )
-    },
-    [createWorkspace]
-  )
 
   const displayedGroups = useMemo(() => {
     if (currentView?.kind === 'create-workspace') {

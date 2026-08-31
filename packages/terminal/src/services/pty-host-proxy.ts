@@ -52,8 +52,19 @@ export const PTY_HOST_HEARTBEAT_INTERVAL_MS_DEFAULT = 5000
 export const PTY_HOST_HEARTBEAT_WARN_MS_DEFAULT = 6000
 export const PTY_HOST_HEARTBEAT_UNRESPONSIVE_MS_DEFAULT = 15_000
 export const PTY_HOST_MAX_RESTARTS_DEFAULT = 5
+/**
+ * Control-plane calls (liveness and shutdown) must fail fast: they exist to
+ * decide whether the host is answering at all.
+ */
+export const PTY_HOST_CONTROL_TIMEOUT_MS_DEFAULT = 5000
+/**
+ * Data-plane calls are patient. A busy-but-healthy host queues them behind bulk
+ * terminal output on the same socket and behind its serialized request lane, so
+ * a short deadline turns load into a false pane disconnect. Slowness is
+ * surfaced by the advisory heartbeat instead (ADR 0003).
+ */
+export const PTY_HOST_REQUEST_TIMEOUT_MS_DEFAULT = 30_000
 
-const REQUEST_TIMEOUT_MS = 5000
 const MAX_PROTOCOL_FRAME_BYTES = 1024 * 1024
 let explicitHostShutdown = false
 
@@ -78,6 +89,31 @@ const maxRestarts = positiveIntegerFromEnv(
   'LABORER_PTY_HOST_MAX_RESTARTS',
   PTY_HOST_MAX_RESTARTS_DEFAULT
 )
+const controlTimeoutMs = positiveIntegerFromEnv(
+  'LABORER_PTY_HOST_CONTROL_TIMEOUT_MS',
+  PTY_HOST_CONTROL_TIMEOUT_MS_DEFAULT
+)
+const dataTimeoutMs = positiveIntegerFromEnv(
+  'LABORER_PTY_HOST_REQUEST_TIMEOUT_MS',
+  PTY_HOST_REQUEST_TIMEOUT_MS_DEFAULT
+)
+
+export type PtyHostRequestClass = 'control' | 'data'
+
+const CONTROL_PLANE_METHODS: ReadonlySet<PtyHostMethod> = new Set([
+  'health',
+  'shutdown',
+  'shutdownIfEmpty',
+])
+
+/** Liveness and shutdown are control plane; every terminal operation is data. */
+export const ptyHostRequestClass = (
+  method: PtyHostMethod
+): PtyHostRequestClass =>
+  CONTROL_PLANE_METHODS.has(method) ? 'control' : 'data'
+
+export const ptyHostRequestTimeoutMs = (method: PtyHostMethod): number =>
+  ptyHostRequestClass(method) === 'control' ? controlTimeoutMs : dataTimeoutMs
 
 const processExists = (pid: number): boolean => {
   try {
@@ -125,7 +161,7 @@ const readHostHealth = async (
       const timeout = setTimeout(() => {
         activeSocket.destroy()
         resolveHealth(undefined)
-      }, REQUEST_TIMEOUT_MS)
+      }, controlTimeoutMs)
       let buffer = ''
       activeSocket.setEncoding('utf8')
       activeSocket.on('data', (chunk: string) => {
@@ -180,7 +216,7 @@ const requestHostShutdown = async (
     const timeout = setTimeout(() => {
       socket.destroy()
       reject(new Error('Timed out waiting for PTY host shutdown response'))
-    }, REQUEST_TIMEOUT_MS)
+    }, controlTimeoutMs)
     let buffer = ''
     socket.setEncoding('utf8')
     socket.once('error', (error) => {
@@ -218,7 +254,7 @@ const requestHostShutdownIfEmpty = async (
     const timeout = setTimeout(
       () =>
         finish(new Error('Timed out waiting for PTY host shutdown response')),
-      REQUEST_TIMEOUT_MS
+      controlTimeoutMs
     )
     let buffer = ''
     socket.setEncoding('utf8')
@@ -430,7 +466,7 @@ export const ptyHostProxyLayer = Layer.effect(
             waiter.reject(
               new Error(`PTY host request timed out: ${String(method)}`)
             )
-          }, REQUEST_TIMEOUT_MS)
+          }, ptyHostRequestTimeoutMs(method))
           pending.set(requestId, {
             resolve: resolveRequest as (value: unknown) => void,
             reject,
@@ -594,14 +630,14 @@ export const ptyHostProxyLayer = Layer.effect(
       }
 
       const waitForExit = async (pid: number): Promise<void> => {
-        const deadline = Date.now() + REQUEST_TIMEOUT_MS
+        const deadline = Date.now() + controlTimeoutMs
         while (processExists(pid) && Date.now() < deadline) {
           await delay(25)
         }
         if (processExists(pid)) {
           // This path is reachable only after an explicit operator action.
           process.kill(pid, 'SIGTERM')
-          const escalationDeadline = Date.now() + REQUEST_TIMEOUT_MS
+          const escalationDeadline = Date.now() + controlTimeoutMs
           while (processExists(pid) && Date.now() < escalationDeadline) {
             await delay(25)
           }

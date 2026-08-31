@@ -44,12 +44,16 @@ const retryDelay = (failureCount: number): number =>
   ] ?? 16_000
 
 /**
- * The sole owner of browser reconnect timing. RPC transports get one attempt;
- * a successful reconnection advances generation so mounted atoms acquire
- * fresh transports while retaining their last successful values. The initial
- * lease keeps generation zero only when its first attempt succeeds because the
- * RPC runtime is already being built; invalidating it during uninterrupted
- * startup can interrupt its first requests.
+ * The sole owner of browser reconnect timing. Each RPC transport still gets a
+ * single attempt of its own — it never retries internally, because Effect's
+ * `RpcClient` does not re-send in-flight requests across an internal reconnect.
+ * Instead a dead transport reports itself through `notifyTransportFailure`,
+ * which drops this supervisor's lease so the normal backoff path recycles the
+ * connection. A successful reconnection advances generation so mounted atoms
+ * acquire fresh transports while retaining their last successful values. The
+ * initial lease keeps generation zero only when its first attempt succeeds
+ * because the RPC runtime is already being built; invalidating it during
+ * uninterrupted startup can interrupt its first requests.
  */
 export class RendererConnectionSupervisor {
   private readonly connect: RendererConnector
@@ -65,6 +69,11 @@ export class RendererConnectionSupervisor {
   private running = false
   private stopped = false
   private interrupt: (() => void) | undefined
+  /**
+   * Drops the live lease without the manual-interrupt semantics of
+   * `interrupt`; defined only while a lease is connected.
+   */
+  private dropLease: (() => void) | undefined
 
   constructor(connect: RendererConnector, now: () => number = Date.now) {
     this.connect = connect
@@ -99,6 +108,24 @@ export class RendererConnectionSupervisor {
 
   retryNow(): void {
     this.interrupt?.()
+  }
+
+  /**
+   * Reports that a transport built on the current connection died on its own —
+   * an RPC ping timeout, for instance, which leaves the supervisor's own idle
+   * socket open and would otherwise strand every pane on a dead runtime.
+   *
+   * This is treated as a lost connection, not a manual retry: the lease is
+   * dropped so the run loop takes the backoff ladder and advances generation on
+   * the next successful connect. It is a no-op unless a lease is currently
+   * connected, so redundant reports and teardown races cannot cycle the
+   * connection.
+   */
+  notifyTransportFailure(): void {
+    if (this.state.phase !== 'connected') {
+      return
+    }
+    this.dropLease?.()
   }
 
   private publish(next: RendererConnectionState): void {
@@ -161,13 +188,27 @@ export class RendererConnectionSupervisor {
           session: sessionSequence,
         })
         await new Promise<void>((resolve) => {
-          this.interrupt = () => {
-            manuallyInterrupted = true
+          // Reports can arrive several times in one tick, before the loop has
+          // published anything a phase guard could catch, so the lease itself
+          // is only ever dropped once.
+          let dropped = false
+          const drop = () => {
+            if (dropped) {
+              return
+            }
+            dropped = true
+            this.dropLease = undefined
             lease.close()
             resolve()
           }
+          this.dropLease = drop
+          this.interrupt = () => {
+            manuallyInterrupted = true
+            drop()
+          }
           lease.closed.then(resolve, resolve)
         })
+        this.dropLease = undefined
         if (this.now() - connectedAt >= RENDERER_RECONNECT_STABILITY_RESET_MS) {
           failureCount = 0
         }
@@ -185,6 +226,7 @@ export class RendererConnectionSupervisor {
         }
       } finally {
         this.interrupt = undefined
+        this.dropLease = undefined
       }
       if (this.stopped) {
         break

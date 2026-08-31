@@ -18,6 +18,24 @@ const INPUT_WRITE_BYTES = 64 * 1024
 const INPUT_PENDING_BYTES = 64 * 1024
 const encoder = new TextEncoder()
 
+/**
+ * How long a pane waits before reopening an attach that failed, indexed by the
+ * number of failures that came before it. The attach protocol resumes from the
+ * cursor the canvas has drawn to, so a reattach is cheap; the delays exist to
+ * keep a pane from hammering a daemon that is shedding load — which is exactly
+ * what most attach failures mean — rather than to protect the pane.
+ *
+ * Named after `RENDERER_RECONNECT_DELAYS_MS`, but deliberately shorter: that
+ * supervisor re-establishes the whole transport, while this only reopens one
+ * terminal's stream over a transport that is still up.
+ */
+export const TERMINAL_REATTACH_DELAYS_MS = [1000, 2000, 4000, 8000] as const
+
+const reattachDelay = (failureCount: number): number =>
+  TERMINAL_REATTACH_DELAYS_MS[
+    Math.min(failureCount, TERMINAL_REATTACH_DELAYS_MS.length - 1)
+  ] ?? 8000
+
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 type TerminalStatus = 'running' | 'stopped' | 'restarted'
 type ReplayStatus = 'idle' | 'replaying' | 'complete'
@@ -315,6 +333,19 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
    * output generation rather than the pane's.
    */
   const [screenRebuilds, setScreenRebuilds] = useState(0)
+  /**
+   * Counts reattach requests, so a failed attach — or a write that could not
+   * be delivered — reopens the stream instead of leaving the pane showing a
+   * "reconnecting" banner that nothing is acting on.
+   */
+  const [attachAttempt, setAttachAttempt] = useState(0)
+  /**
+   * Consecutive attaches that failed without delivering anything. A stream
+   * that produced even one event proves the daemon is reachable, so the next
+   * failure starts the backoff over rather than escalating a flap that has
+   * already recovered once.
+   */
+  const attachFailuresRef = useRef(0)
   /** The furthest chunk the canvas has taken, parsed or still in its queue. */
   const queuedRef = useRef<TerminalResumePoint | undefined>(undefined)
   /** The furthest chunk xterm has reported parsed. */
@@ -368,9 +399,12 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
     ackedRef.current = undefined
     epochRef.current = undefined
     attachHistoryRef.current = createAttachHistory()
+    // The backoff describes how badly the previous terminal's stream was
+    // faring. A fresh terminal deserves its first retry immediately.
+    attachFailuresRef.current = 0
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `screenRebuilds` is the trigger, not a value the body reads — a rebuilt screen needs a fresh attach to redraw onto the new canvas.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `screenRebuilds` and `attachAttempt` are triggers, not values the body reads — a rebuilt screen needs a fresh attach to redraw onto the new canvas, and a failed attach or write needs the stream reopened.
   useEffect(() => {
     if (runtimeResult._tag !== 'Success') {
       return
@@ -380,6 +414,7 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
     /** The canvas this attach draws onto for as long as it lives. */
     const generation = screen.generation()
     let active = true
+    let reattachTimer: ReturnType<typeof setTimeout> | undefined
 
     // Attaching resets the daemon's flow-control debt (ADR 0002), so the pane
     // starts counting unacknowledged output from zero rather than carrying a
@@ -459,6 +494,9 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
       if (!isCurrent()) {
         return
       }
+      // Any frame proves this attach reached the daemon, so the next failure
+      // is a new incident rather than a continuation of the last one.
+      attachFailuresRef.current = 0
       switch (event._tag) {
         case 'Reset':
           queuedRef.current = undefined
@@ -560,6 +598,20 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
             return
           }
           setStatus('disconnected')
+          // Attach failures under load — a server-side queue overflow, a
+          // pty-host request timing out, a transport error — are transient,
+          // and the pane already tells the operator it is reconnecting. Make
+          // that true: reopen the stream, which resumes from the cursor this
+          // canvas has drawn to or falls back to a snapshot.
+          const failures = attachFailuresRef.current
+          attachFailuresRef.current = failures + 1
+          reattachTimer = setTimeout(() => {
+            reattachTimer = undefined
+            if (!isCurrent()) {
+              return
+            }
+            setAttachAttempt((count) => count + 1)
+          }, reattachDelay(failures))
         })
       )
     )
@@ -581,9 +633,15 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
     return () => {
       active = false
       unsubscribe()
+      // A pending retry belongs to this attach. Unmounting the pane or handing
+      // it another terminal retires the attach that scheduled it.
+      if (reattachTimer !== undefined) {
+        clearTimeout(reattachTimer)
+        reattachTimer = undefined
+      }
       Effect.runFork(Fiber.interrupt(fiber))
     }
-  }, [runtimeResult, screen, screenRebuilds, terminalId])
+  }, [attachAttempt, runtimeResult, screen, screenRebuilds, terminalId])
 
   const inputRuntime =
     runtimeResult._tag === 'Success' ? runtimeResult.value : undefined
@@ -622,6 +680,10 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
           `Terminal input overflow for ${terminalId}; input was not dropped silently`
         )
         setStatus('disconnected')
+        // The lane is backed up, which says nothing about the screen. Reopen
+        // the attach so the pane resyncs and reports what it finds instead of
+        // holding "disconnected" over a terminal that may be perfectly live.
+        setAttachAttempt((count) => count + 1)
         return
       }
       lane.queue.push({ data, bytes })
@@ -653,6 +715,12 @@ export function useTerminalRpc({ onStatus, screen, terminalId }: Options) {
             console.error('Terminal input write failed', error)
             if (lane.active) {
               setStatus('disconnected')
+              // Output and input travel separately, so a failed write leaves
+              // the pane unable to say what the terminal is doing. Reopen the
+              // attach at once — this is the first sign of trouble, so there
+              // is no backoff to serve yet — and let the stream report the
+              // truth, including whichever of these keystrokes landed.
+              setAttachAttempt((count) => count + 1)
             }
             // A failed RPC has ambiguous delivery. Never retain later
             // keystrokes for an automatic retry: replaying terminal input can

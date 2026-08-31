@@ -81,6 +81,8 @@ const COMMIT_PUSH_PR_RE = /commit, push & pr/i
 const PUSH_PR_RE = /push & pr/i
 const ANY_ACTION_RE = /commit|push|pr/i
 const COMMIT_MENU_ITEM_RE = /commit/i
+const PUSH_MENU_ITEM_RE = /push/i
+const CREATE_PR_MENU_ITEM_RE = /create pr/i
 
 describe('GitActionsControl', () => {
   beforeEach(() => {
@@ -117,8 +119,12 @@ describe('GitActionsControl', () => {
     expect(
       await screen.findByRole('menuitem', { name: COMMIT_MENU_ITEM_RE })
     ).not.toBeNull()
-    expect(screen.getByRole('menuitem', { name: /push/i })).not.toBeNull()
-    expect(screen.queryByRole('menuitem', { name: /create pr/i })).toBeNull()
+    expect(
+      screen.getByRole('menuitem', { name: PUSH_MENU_ITEM_RE })
+    ).not.toBeNull()
+    expect(
+      screen.queryByRole('menuitem', { name: CREATE_PR_MENU_ITEM_RE })
+    ).toBeNull()
   })
 
   it.each([

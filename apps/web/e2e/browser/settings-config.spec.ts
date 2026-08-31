@@ -70,6 +70,14 @@ test.describe('settings and config journeys', () => {
       await page.getByTestId('open-app-settings').click()
       const settings = page.getByTestId('app-settings')
       await expect(settings).toBeVisible()
+
+      // Settings only ever scrolls vertically; controls with bleeding hit
+      // targets must not push the panel sideways.
+      const scrollOverflow = await settings
+        .locator('[data-slot="scroll-area-viewport"]')
+        .evaluate((el) => el.scrollWidth - el.clientWidth)
+      expect(scrollOverflow).toBe(0)
+
       await settings.getByTestId('default-agent-select').click()
       await page.getByTestId('default-agent-option-codex').click()
       await settings.getByTestId('save-default-agent').click()

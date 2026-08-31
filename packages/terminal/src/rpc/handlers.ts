@@ -26,6 +26,7 @@
 
 import {
   type AgentStatusSnapshot,
+  type TerminalAttachEvent,
   type TerminalLifecycleEventSchema,
   TerminalRpcError,
   TerminalRpcs,
@@ -35,7 +36,64 @@ import {
   type TerminalLifecycleEvent,
   TerminalManager,
 } from '../services/terminal-manager.js'
-import { TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT } from '../services/terminal-transport.js'
+import {
+  positiveIntegerFromEnv,
+  TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT,
+} from '../services/terminal-transport.js'
+
+/**
+ * Builds the `terminal.attach` event stream for one subscriber.
+ *
+ * Events are buffered in a bounded callback queue sized by
+ * `attachCallbackItems`. The queue deliberately fails the stream on overflow
+ * instead of dropping: attach events carry terminal output and cursor
+ * progression, so a silent drop would desynchronize the renderer's replay
+ * cursor. Flow control (ADR 0002) is what keeps the queue within its bound, so
+ * an overflow means that contract was violated upstream and must be visible.
+ */
+export const makeAttachStream = (
+  tm: TerminalManager['Service'],
+  attachCallbackItems: number,
+  payload: {
+    readonly cursor?: number | undefined
+    readonly epoch?: string | undefined
+    readonly id: string
+    readonly leaseId: string
+  }
+) =>
+  Stream.callback<TerminalAttachEvent, TerminalRpcError>(
+    (queue) =>
+      Effect.acquireRelease(
+        tm.attach(
+          payload.id,
+          {
+            ...(payload.cursor === undefined ? {} : { cursor: payload.cursor }),
+            ...(payload.epoch === undefined ? {} : { epoch: payload.epoch }),
+            leaseId: payload.leaseId,
+          },
+          (event) => {
+            const offered = Queue.offerUnsafe(queue, event)
+            if (!offered) {
+              Queue.failCauseUnsafe(
+                queue,
+                Cause.fail(
+                  new TerminalRpcError({
+                    message: `Terminal attach callback buffer overflowed at ${attachCallbackItems} pending events; PTY flow control (ADR 0002) pauses the PTY on unacknowledged characters long before this bound, so this indicates a flow-control contract violation`,
+                    code: 'TERMINAL_ATTACH_OVERFLOW',
+                  })
+                )
+              )
+            }
+            return offered
+          }
+        ),
+        ({ subscriberId }) => tm.unsubscribe(payload.id, subscriberId)
+      ),
+    {
+      bufferSize: attachCallbackItems,
+      strategy: 'dropping',
+    }
+  )
 
 /**
  * Converts a TerminalLifecycleEvent (from TerminalManager's PubSub) to
@@ -150,6 +208,10 @@ export const toTerminalInfo = (record: {
 export const TerminalRpcsLive = TerminalRpcs.toLayer(
   Effect.gen(function* () {
     const tm = yield* TerminalManager
+    const attachCallbackItems = positiveIntegerFromEnv(
+      'TERMINAL_ATTACH_CALLBACK_ITEMS',
+      TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT
+    )
 
     return {
       // -------------------------------------------------------------------
@@ -185,39 +247,12 @@ export const TerminalRpcsLive = TerminalRpcs.toLayer(
       'terminal.write': ({ id, data }) => tm.write(id, data),
 
       'terminal.attach': ({ id, leaseId, cursor, epoch }) =>
-        Stream.callback(
-          (queue) =>
-            Effect.acquireRelease(
-              tm.attach(
-                id,
-                {
-                  ...(cursor === undefined ? {} : { cursor }),
-                  ...(epoch === undefined ? {} : { epoch }),
-                  leaseId,
-                },
-                (event) => {
-                  const offered = Queue.offerUnsafe(queue, event)
-                  if (!offered) {
-                    Queue.failCauseUnsafe(
-                      queue,
-                      Cause.fail(
-                        new TerminalRpcError({
-                          message: 'Terminal attach callback buffer overflowed',
-                          code: 'TERMINAL_ATTACH_OVERFLOW',
-                        })
-                      )
-                    )
-                  }
-                  return offered
-                }
-              ),
-              ({ subscriberId }) => tm.unsubscribe(id, subscriberId)
-            ),
-          {
-            bufferSize: TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT,
-            strategy: 'dropping',
-          }
-        ),
+        makeAttachStream(tm, attachCallbackItems, {
+          cursor,
+          epoch,
+          id,
+          leaseId,
+        }),
 
       'terminal.ack': ({ id, leaseId, cursor }) =>
         tm.acknowledge(id, leaseId, cursor),

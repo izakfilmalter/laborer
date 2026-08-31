@@ -8,7 +8,27 @@ export const TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT = 16 * 1024
 export const TERMINAL_SNAPSHOT_BYTES_DEFAULT = 512 * 1024
 export const TERMINAL_INPUT_WRITE_BYTES_DEFAULT = 64 * 1024
 export const TERMINAL_INPUT_PENDING_BYTES_DEFAULT = 64 * 1024
-export const TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT = 64
+/**
+ * Item bound for the `terminal.attach` callback queue.
+ *
+ * Flow control (ADR 0002, `pty-direct.ts`) bounds *characters* in flight —
+ * it pauses the PTY at `TERMINAL_FLOW_PAUSE_CHARS_DEFAULT` (100_000) unacked
+ * chars — while this queue bounds *events*. PTY output is coalesced per
+ * terminal on an 8–16ms window (`coalescing-data-handler.ts`,
+ * `power-profile.ts`), so a chatty TUI emits ~60–125 small deltas per second.
+ * A WS consumer that stalls for 5s under system load therefore leaves
+ * ~625 events in flight, plus one replay snapshot
+ * (`TERMINAL_SNAPSHOT_BYTES_DEFAULT` / `TERMINAL_OUTPUT_CHUNK_BYTES_DEFAULT`
+ * = 32 wire chunks) and the Meta/Reset/ReplayComplete envelope. 4096 clears
+ * that worst case with room to spare.
+ *
+ * Memory stays bounded by the flow-control char ceiling plus snapshot bytes,
+ * not by this count, so the larger bound does not raise the memory ceiling.
+ * Overflow at 4096 means the flow-control contract itself was violated
+ * (chars in flight far past the pause watermark), which must still fail loudly
+ * rather than silently drop terminal output.
+ */
+export const TERMINAL_ATTACH_CALLBACK_ITEMS_DEFAULT = 4096
 export const TERMINAL_ACK_BATCH_CHARS_DEFAULT = 5000
 
 export const utf8Bytes = (value: string): number => encoder.encode(value).length

@@ -190,8 +190,11 @@ function OpenCommandPalette(
             {
               description: activeProject.rootPath,
               icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
+              keepOpen: true,
               kind: 'action',
-              run: () => runCreateWorkspace(activeProject.id, ''),
+              run: () => {
+                pushCreateWorkspaceView(activeProject)
+              },
               searchTerms: [
                 'new workspace',
                 'create workspace',
@@ -392,7 +395,6 @@ function OpenCommandPalette(
     pullWorkspace,
     pushCreateWorkspaceView,
     pushWorkspace,
-    runCreateWorkspace,
     setTheme,
   ])
 

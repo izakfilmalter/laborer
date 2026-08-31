@@ -122,13 +122,31 @@ describe('CommandPalette contextual workspace creation', () => {
     expect(options[1]?.textContent).toContain('Toggle task board')
   })
 
-  it('creates an auto-named project-level workspace in the focused project', () => {
+  it('opens the shared creation input for the focused project', async () => {
     openPalette()
 
     fireEvent.click(screen.getByText('New workspace in Beta'))
+    const input = screen.getByLabelText('Branch name or Slack URL for Beta')
+    fireEvent.change(input, { target: { value: 'my feature' } })
+    fireEvent.click(await screen.findByText('Create “my-feature”'))
 
     expect(mocks.createWorkspace).toHaveBeenCalledWith({
-      branchNameOrSlackUrl: '',
+      branchNameOrSlackUrl: 'my-feature',
+      projectId: 'project-b',
+    })
+  })
+
+  it('uses the same creation flow from the project picker', async () => {
+    openPalette()
+
+    fireEvent.click(screen.getByText('New workspace in...'))
+    fireEvent.click(screen.getByText('Beta'))
+    const input = screen.getByLabelText('Branch name or Slack URL for Beta')
+    fireEvent.change(input, { target: { value: 'picked feature' } })
+    fireEvent.click(await screen.findByText('Create “picked-feature”'))
+
+    expect(mocks.createWorkspace).toHaveBeenCalledWith({
+      branchNameOrSlackUrl: 'picked-feature',
       projectId: 'project-b',
     })
   })

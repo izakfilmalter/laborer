@@ -89,6 +89,7 @@
       "devDependencies": {
         "@laborer/config": "workspace:*",
         "@types/node": "^22.13.14",
+        "acorn": "^8.16.0",
         "electron-builder": "^26.0.12",
         "tsdown": "^0.20.3",
         "typescript": "catalog:",

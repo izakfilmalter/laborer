@@ -21,7 +21,12 @@ export default defineConfig([
   },
   {
     ...shared,
-    entry: ['src/preview-pick-preload.ts', 'src/preview-pip-preload.ts'],
+    entry: ['src/preview-pick-preload.ts'],
+    noExternal: (id: string) => id.startsWith('@laborer/'),
+  },
+  {
+    ...shared,
+    entry: ['src/preview-pip-preload.ts'],
     noExternal: (id: string) => id.startsWith('@laborer/'),
   },
 ])

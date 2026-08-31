@@ -1,11 +1,10 @@
-import {
-  type DesktopBridge,
-  DesktopPreviewPointerEventSchema,
-  DesktopPreviewRecordingFrameSchema,
-  DesktopPreviewStateChangeEventSchema,
-  type WorkspaceActivationIntent,
+import type {
+  DesktopBridge,
+  DesktopPreviewPointerEvent,
+  DesktopPreviewRecordingFrame,
+  DesktopPreviewTabState,
+  WorkspaceActivationIntent,
 } from '@laborer/shared/desktop-bridge'
-import { Schema } from 'effect'
 import { contextBridge, ipcRenderer } from 'electron'
 // biome-ignore lint/performance/noNamespaceImport: mirrors the isolated preview channel surface.
 import * as PreviewChannels from './preview/channels.js'
@@ -337,15 +336,10 @@ contextBridge.exposeInMainWorld('desktopBridge', {
         }),
       onFrame: (listener) => {
         const wrapped = (_event: Electron.IpcRendererEvent, frame: unknown) => {
-          try {
-            listener(
-              Schema.decodeUnknownSync(DesktopPreviewRecordingFrameSchema)(
-                frame
-              )
-            )
-          } catch {
-            // Ignore malformed main-process events at the bridge boundary.
+          if (typeof frame !== 'object' || frame === null) {
+            return
           }
+          listener(frame as DesktopPreviewRecordingFrame)
         }
         ipcRenderer.on(PreviewChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrapped)
         return () =>
@@ -410,14 +404,14 @@ contextBridge.exposeInMainWorld('desktopBridge', {
         tabId: unknown,
         state: unknown
       ) => {
-        try {
-          const decoded = Schema.decodeUnknownSync(
-            DesktopPreviewStateChangeEventSchema
-          )([tabId, state])
-          listener(decoded[0], decoded[1])
-        } catch {
-          // Ignore malformed main-process events at the bridge boundary.
+        if (
+          typeof tabId !== 'string' ||
+          typeof state !== 'object' ||
+          state === null
+        ) {
+          return
         }
+        listener(tabId, state as DesktopPreviewTabState)
       }
       ipcRenderer.on(PreviewChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrapped)
       return () =>
@@ -428,13 +422,10 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     },
     onPointerEvent: (listener) => {
       const wrapped = (_event: Electron.IpcRendererEvent, value: unknown) => {
-        try {
-          listener(
-            Schema.decodeUnknownSync(DesktopPreviewPointerEventSchema)(value)
-          )
-        } catch {
-          // Ignore malformed main-process events at the bridge boundary.
+        if (typeof value !== 'object' || value === null) {
+          return
         }
+        listener(value as DesktopPreviewPointerEvent)
       }
       ipcRenderer.on(PreviewChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrapped)
       return () =>

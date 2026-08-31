@@ -1,12 +1,9 @@
-import {
-  type DesktopPreviewAnnotationTheme,
-  DesktopPreviewAnnotationThemeSchema,
-  type PickedElementPayload,
-  type PreviewAnnotationPayload,
-  type PreviewAnnotationRect,
-  PreviewStartPickEventSchema,
+import type {
+  DesktopPreviewAnnotationTheme,
+  PickedElementPayload,
+  PreviewAnnotationPayload,
+  PreviewAnnotationRect,
 } from '@laborer/shared/desktop-bridge'
-import { Option, Schema } from 'effect'
 import { ipcRenderer } from 'electron'
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -209,21 +206,20 @@ for (const eventName of ['mousedown', 'mouseup', 'auxclick'] as const) {
   )
 }
 
-ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: unknown) => {
-  const decoded = Option.getOrUndefined(
-    Schema.decodeUnknownOption(PreviewStartPickEventSchema)(theme)
-  )
-  if (decoded !== undefined || theme === undefined) {
-    startPicker(decoded)
+ipcRenderer.on(
+  START_PICK_CHANNEL,
+  (_event, theme: DesktopPreviewAnnotationTheme | undefined) => {
+    if (theme) {
+      annotationTheme = theme
+    }
+    startPicker(theme)
   }
-})
+)
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => teardownPicker?.())
 ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, () => teardownPicker?.())
-ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: unknown) => {
-  const decoded = Option.getOrUndefined(
-    Schema.decodeUnknownOption(DesktopPreviewAnnotationThemeSchema)(theme)
-  )
-  if (decoded) {
-    annotationTheme = decoded
+ipcRenderer.on(
+  ANNOTATION_THEME_CHANNEL,
+  (_event, theme: DesktopPreviewAnnotationTheme) => {
+    annotationTheme = theme
   }
-})
+)

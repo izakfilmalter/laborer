@@ -48,6 +48,7 @@ import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { EditTaskCardButton } from '@/components/edit-task-card-button'
+import { GitActionsControl } from '@/components/git-actions-control'
 import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
@@ -560,6 +561,18 @@ function WorkspaceFrameHeader({
             projectId={projectId}
             projectShortName={projectShortName}
             taskNumber={taskNumber}
+          />
+        ) : null}
+        {/* The same place it holds on the sidebar card: immediately before the
+            pull request badge, so the frame and the card put the branch's next
+            step in one recognizable spot. */}
+        {/* Not while minimized: the whole header is the button that reopens
+            the frame there, and a click meant for a commit would expand it. */}
+        {!isMinimized && branchName && workspaceId ? (
+          <GitActionsControl
+            branchName={branchName}
+            hasPullRequest={prNumber != null}
+            workspaceId={workspaceId}
           />
         ) : null}
         {/* The frame that owns the conversation pane is the one surface that

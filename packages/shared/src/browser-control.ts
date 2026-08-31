@@ -54,7 +54,8 @@ export const BrowserControlNavigateInput = Schema.Struct({
 export type BrowserControlNavigateInput =
   typeof BrowserControlNavigateInput.Type
 
-const BrowserControlViewportPresetId = Schema.Literals([
+/** The device presets a viewport may be sized to, shared with the MCP tools. */
+export const BrowserControlViewportPresetId = Schema.Literals([
   'iphone-se',
   'iphone-xr',
   'iphone-12-pro',

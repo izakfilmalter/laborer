@@ -230,9 +230,10 @@ export class NodeTaskBoardDatabase {
     return result.task
   }
 
+  /** `null` expected revision skips the CAS guard (last-write-wins). */
   update(
     id: string,
-    expectedRevision: number,
+    expectedRevision: number | null,
     patch: TaskPatch,
     changedAt = Date.now()
   ): Task {

@@ -282,7 +282,10 @@ export function AppSettingsModal() {
         {/* Constrained so the shortcut reference can't push the dialog past
             the viewport on short screens. */}
         <ScrollArea className="h-auto max-h-[60vh]" scrollbarGutter>
-          <div className="space-y-6 py-2">
+          {/* `overflow-x-clip` keeps controls whose enlarged hit targets bleed
+              past their box — the Switch's `-inset-x-3` halo sitting flush
+              against the right edge — from making settings scroll sideways. */}
+          <div className="space-y-6 overflow-x-clip py-2">
             {/* Default Agent Section */}
             <FieldSet>
               <Field>

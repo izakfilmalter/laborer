@@ -127,6 +127,30 @@ describe('GitActionsControl', () => {
     ).toBeNull()
   })
 
+  it('hangs off the pull request pill as a bare segment, not its own button', async () => {
+    const user = userEvent.setup()
+    syncStatusRef.current = { ...syncStatusRef.current, hasChanges: true }
+    render(
+      <GitActionsControl
+        appearance="segment"
+        branchName="feature"
+        hasPullRequest
+        workspaceId="ws-1"
+      />
+    )
+
+    const trigger = screen.getByTestId('git-actions-menu-trigger')
+    // No button group and no border of its own: inside the pill the seam is
+    // the segment divider, so a second frame would break the one-object read.
+    expect(trigger.closest('[data-slot="button-group"]')).toBeNull()
+    expect(trigger.className).toContain('border-l')
+
+    await user.click(trigger)
+    expect(
+      await screen.findByRole('menuitem', { name: PUSH_MENU_ITEM_RE })
+    ).not.toBeNull()
+  })
+
   it.each([
     'main',
     'master',

@@ -719,6 +719,17 @@ function WorkspaceCard({
   // A root workspace has no lifecycle of its own to report, and a healthy one
   // has nothing worth reporting.
   const showsStatus = !isRootWorkspace && showsWorkspaceStatus(workspace.status)
+  // Once the pull request exists it owns this spot on the rail, and the git
+  // menu rides inside it instead of standing beside it.
+  const hasPullRequest = workspace.prNumber !== null
+  const gitActions = (
+    <GitActionsControl
+      appearance={hasPullRequest ? 'segment' : 'standalone'}
+      branchName={workspace.branchName}
+      hasPullRequest={hasPullRequest}
+      workspaceId={workspace.id}
+    />
+  )
 
   return (
     <CardShell
@@ -800,11 +811,7 @@ function WorkspaceCard({
               reads as the work's progress, so the control that produces the
               next step in that progress stands in the same place — narrowing
               to its chevron once the badge arrives beside it. */}
-          <GitActionsControl
-            branchName={workspace.branchName}
-            hasPullRequest={workspace.prNumber !== null}
-            workspaceId={workspace.id}
-          />
+          {hasPullRequest ? null : gitActions}
           {/* The pull request is a status, not a control: it leads the rail
               because it is the furthest along the work has got, and it sits
               opposite the controls that start more of it.
@@ -830,6 +837,7 @@ function WorkspaceCard({
             prTitle={workspace.prTitle}
             prUrl={workspace.prUrl}
             reviewDecision={workspace.prReviewDecision}
+            trailing={hasPullRequest ? gitActions : null}
             unresolvedThreads={workspace.prUnresolvedThreads}
           />
           {showsStatus ? (

@@ -71,6 +71,13 @@ interface GitHubPrStatusBadgeProps {
    */
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined
   /**
+   * A final segment hung off the pill's own border, for a control that acts
+   * on the pull request the pill is describing — today the git actions
+   * chevron. It renders inside the rounded frame, so it must style itself as
+   * a segment rather than as a button of its own.
+   */
+  readonly trailing?: ReactNode
+  /**
    * Review threads still awaiting resolution. Null is unread rather than
    * settled, so it says nothing at all; zero has been read and has nothing
    * left to say, which is the same silence.
@@ -461,6 +468,7 @@ function GitHubPrStatusBadge({
   prTitle,
   prUrl,
   reviewDecision = null,
+  trailing,
   unresolvedThreads = null,
 }: GitHubPrStatusBadgeProps) {
   if (prNumber == null && prState == null && prUrl == null) {
@@ -540,6 +548,7 @@ function GitHubPrStatusBadge({
           prUrl={prUrl}
         />
       )}
+      {trailing}
     </span>
   )
 }

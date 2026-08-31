@@ -18,7 +18,9 @@
  * once the branch has one, the PR badge is the surface that speaks for it, and
  * a second control offering to open another would be a lie. The chevron stays,
  * because a branch under review still gets committed to and pushed — it just
- * drops "Create PR" from its menu.
+ * drops "Create PR" from its menu and moves inside the badge, hung off its
+ * last segment so the pull request and the things you can still do to it read
+ * as one object.
  *
  * It also stays off a trunk branch. `main`, `master`, and `dev` are what work
  * merges into, so a pull request from one of them has no base to target, and
@@ -68,6 +70,16 @@ import { localApi } from '@/lib/local-api'
 import { toast } from '@/lib/toast'
 
 interface GitActionsControlProps {
+  /**
+   * How the control sits in its surroundings.
+   *
+   * `standalone` is the button group it is on its own — the whole-journey
+   * button plus its chevron. `segment` is the chevron alone, hung off the end
+   * of the pull request pill on the same border as the check and review
+   * segments, so the pill and its menu read as one object rather than a pill
+   * with a button parked next to it.
+   */
+  readonly appearance?: 'standalone' | 'segment' | undefined
   /** The branch the workspace is on, used to keep the control off trunk. */
   readonly branchName: string
   readonly className?: string | undefined
@@ -216,6 +228,7 @@ function CommitMessageDialog({
 }
 
 function GitActionsControl({
+  appearance = 'standalone',
   branchName,
   className,
   hasPullRequest,
@@ -310,6 +323,96 @@ function GitActionsControl({
     })
   }
 
+  const isSegment = appearance === 'segment'
+
+  const menu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          isSegment ? (
+            // Inside the pill: no border of its own but the seam it shares
+            // with the segment before it, and stretched to the pill's height
+            // so the two never read as separate objects.
+            <button
+              aria-label="Git action options"
+              className="flex items-center border-foreground/15 border-l px-1 transition-colors hover:bg-accent disabled:opacity-50"
+              data-testid="git-actions-menu-trigger"
+              disabled={!isServerReady || isRunning}
+              type="button"
+            >
+              <ChevronDown className="size-3 shrink-0" />
+            </button>
+          ) : (
+            <Button
+              aria-label="Git action options"
+              className="h-6 w-6"
+              data-testid="git-actions-menu-trigger"
+              disabled={!isServerReady || isRunning}
+              loading={isRunning && hasPullRequest}
+              size="icon-xs"
+              variant="outline"
+            >
+              <ChevronDown className="size-3.5" />
+            </Button>
+          )
+        }
+      />
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          disabled={!hasChanges}
+          onClick={() => setIsDialogOpen(true)}
+        >
+          <GitCommitHorizontal className="size-3.5" />
+          Commit…
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={!canPush}
+          onClick={() => start(['push'], 'Push')}
+        >
+          <ArrowUpToLine className="size-3.5" />
+          Push
+        </DropdownMenuItem>
+        {/* The branch already has its pull request; a second one is not an
+            option worth listing. */}
+        {hasPullRequest ? null : (
+          <DropdownMenuItem
+            // A pull request can only describe commits the remote has, so
+            // it waits behind anything still uncommitted or unpushed.
+            disabled={hasChanges || canPush}
+            onClick={() => start(['createPr'], 'Create PR')}
+          >
+            <GitPullRequestArrow className="size-3.5" />
+            Create PR
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+
+  const dialog = (
+    <CommitMessageDialog
+      isPending={isRunning}
+      message={commitMessage}
+      onMessageChange={setCommitMessage}
+      onOpenChange={setIsDialogOpen}
+      onSubmit={() => {
+        setIsDialogOpen(false)
+        start(['commit'], 'Commit', commitMessage)
+        setCommitMessage('')
+      }}
+      open={isDialogOpen}
+    />
+  )
+
+  if (isSegment) {
+    return (
+      <>
+        {menu}
+        {dialog}
+      </>
+    )
+  }
+
   return (
     <>
       <ButtonGroup className={cn('shrink-0', className)}>
@@ -337,65 +440,9 @@ function GitActionsControl({
             </TooltipContent>
           </Tooltip>
         )}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                aria-label="Git action options"
-                className="h-6 w-6"
-                data-testid="git-actions-menu-trigger"
-                disabled={!isServerReady || isRunning}
-                loading={isRunning && hasPullRequest}
-                size="icon-xs"
-                variant="outline"
-              >
-                <ChevronDown className="size-3.5" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              disabled={!hasChanges}
-              onClick={() => setIsDialogOpen(true)}
-            >
-              <GitCommitHorizontal className="size-3.5" />
-              Commit…
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!canPush}
-              onClick={() => start(['push'], 'Push')}
-            >
-              <ArrowUpToLine className="size-3.5" />
-              Push
-            </DropdownMenuItem>
-            {/* The branch already has its pull request; a second one is not an
-                option worth listing. */}
-            {hasPullRequest ? null : (
-              <DropdownMenuItem
-                // A pull request can only describe commits the remote has, so
-                // it waits behind anything still uncommitted or unpushed.
-                disabled={hasChanges || canPush}
-                onClick={() => start(['createPr'], 'Create PR')}
-              >
-                <GitPullRequestArrow className="size-3.5" />
-                Create PR
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {menu}
       </ButtonGroup>
-      <CommitMessageDialog
-        isPending={isRunning}
-        message={commitMessage}
-        onMessageChange={setCommitMessage}
-        onOpenChange={setIsDialogOpen}
-        onSubmit={() => {
-          setIsDialogOpen(false)
-          start(['commit'], 'Commit', commitMessage)
-          setCommitMessage('')
-        }}
-        open={isDialogOpen}
-      />
+      {dialog}
     </>
   )
 }

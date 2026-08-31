@@ -39,7 +39,6 @@ import {
   AppWindow,
   FileCode,
   MonitorDot,
-  Plus,
   RotateCw,
   Terminal as TerminalIcon,
   X,
@@ -89,9 +88,13 @@ interface TerminalListProps {
 }
 
 /** Quiet chrome: the controls recede until pointed at, so a column of cards
- *  reads as branch names and statuses rather than as a wall of buttons. */
+ *  reads as branch names and statuses rather than as a wall of buttons.
+ *
+ *  Icon-only, because "Agent" and "New" spelled out cost the badge rail the
+ *  width the pull request pill needs; the glyph plus its tooltip says the
+ *  same thing in a sixth of the space. */
 const SPAWN_BUTTON_CLASS =
-  'h-6 text-muted-foreground hover:text-foreground dark:bg-transparent dark:hover:bg-muted/50'
+  'size-6 text-muted-foreground hover:text-foreground dark:bg-transparent dark:hover:bg-muted/50'
 
 /**
  * Spawn buttons for creating new terminals and agents.
@@ -124,14 +127,13 @@ function TerminalSpawnButtons({
               data-testid="start-agent"
               disabled={!(isServerReady && isServiceAvailable)}
               onClick={onSpawnAgent}
-              size="xs"
+              size="icon-xs"
               title={isServerReady ? undefined : 'Connecting to server...'}
               variant="outline"
             />
           }
         >
           <AgentIcon className="size-3" />
-          Agent
         </TooltipTrigger>
         <TooltipContent>Start {agentProvider} in a new terminal</TooltipContent>
       </Tooltip>
@@ -143,14 +145,13 @@ function TerminalSpawnButtons({
               className={SPAWN_BUTTON_CLASS}
               disabled={!(isServerReady && isServiceAvailable)}
               onClick={onSpawnTerminal}
-              size="xs"
+              size="icon-xs"
               title={isServerReady ? undefined : 'Connecting to server...'}
               variant="outline"
             />
           }
         >
-          <Plus className="size-3" />
-          New
+          <TerminalIcon className="size-3" />
         </TooltipTrigger>
         <TooltipContent>Open a new terminal in this workspace</TooltipContent>
       </Tooltip>

@@ -48,6 +48,7 @@ import { useCallback } from 'react'
 import { AggregateAgentStatusBadge } from '@/components/agent-status-badge'
 import { CreateWorkspaceForm } from '@/components/create-workspace-form'
 import { EditTaskCardButton } from '@/components/edit-task-card-button'
+import { GitActionsControl } from '@/components/git-actions-control'
 import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
@@ -421,6 +422,37 @@ function ExpandedFrameActions({
   )
 }
 
+/**
+ * The branch's next git step, as the frame can offer it.
+ *
+ * Without a branch or a workspace there is nothing to commit or push, so the
+ * control is absent rather than disabled. With a pull request it narrows to
+ * the chevron and rides inside the PR pill; without one it is the whole
+ * journey as a button of its own.
+ */
+function FrameGitActions({
+  branchName,
+  hasPullRequest,
+  workspaceId,
+}: {
+  readonly branchName: string | undefined
+  readonly hasPullRequest: boolean
+  readonly workspaceId: string | undefined
+}) {
+  if (branchName === undefined || workspaceId === undefined) {
+    return null
+  }
+
+  return (
+    <GitActionsControl
+      appearance={hasPullRequest ? 'segment' : 'standalone'}
+      branchName={branchName}
+      hasPullRequest={hasPullRequest}
+      workspaceId={workspaceId}
+    />
+  )
+}
+
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
@@ -476,6 +508,18 @@ function WorkspaceFrameHeader({
   // to say the accent is its own; otherwise the active frame keeps its
   // primary edge. Two competing borders on one 8px bar read as noise.
   const hasAgentAccent = agentAccentClassName !== ''
+  // The frame carries the branch's next git step for the same reason the
+  // sidebar card does: it is the surface naming the branch. Without a pull
+  // request the whole journey is a button of its own here; with one, the
+  // menu hangs off the end of the PR pill so the two read as one control.
+  const hasPullRequest = prNumber !== null
+  const gitActions = (
+    <FrameGitActions
+      branchName={branchName}
+      hasPullRequest={hasPullRequest}
+      workspaceId={workspaceId}
+    />
+  )
 
   /** Shift focus to this workspace's pane before performing a panel action. */
   const withFocus = useCallback(
@@ -565,6 +609,7 @@ function WorkspaceFrameHeader({
         {/* The frame that owns the conversation pane is the one surface that
             can answer the badge's count in place, so here the count opens it
             rather than leaving for a browser tab. */}
+        {hasPullRequest ? null : gitActions}
         <GitHubPrStatusBadge
           approvals={prApprovals}
           checkStatus={prCheckStatus}
@@ -581,6 +626,7 @@ function WorkspaceFrameHeader({
           prTitle={prTitle}
           prUrl={prUrl}
           reviewDecision={prReviewDecision}
+          trailing={hasPullRequest ? gitActions : null}
           unresolvedThreads={prUnresolvedThreads}
         />
         {workspaceId ? <WorkspaceSyncStatus workspaceId={workspaceId} /> : null}

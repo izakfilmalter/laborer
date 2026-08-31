@@ -48,6 +48,16 @@ Before writing or reviewing Effect code:
 
 Prefer narrow named `Context.Service` contracts, explicit `Layer` composition, scoped acquisition and finalization, and established `effect/unstable/*` imports.
 
+## Logs and Runtime State
+
+Backend processes log to these locations on macOS (`$XDG_STATE_HOME` defaults to `~/.local/state`):
+
+- `~/Library/Application Support/Laborer/logs/laborer-mcp.log` — task MCP runtime (`packages/server/src/task-mcp-runtime.ts`).
+- `~/.local/state/laborer/slack-daemon.log` — Slack daemon stdout/stderr (`packages/server/src/services/slack-daemon-process-control.ts`).
+- `~/.local/state/laborer/` — runtime state, not logs: `daemon.json` (daemon registration and port), `pty-host/pty-host.json` and `pty-host.sock`, `laborer.sqlite`, `workspaces/`.
+
+The daemon (`daemon-main.mjs`) and the PTY host are spawned detached with `stdio: 'ignore'`, so in packaged builds their stdout/stderr are discarded; during development `bun dev` shows their output in the terminal. Older builds wrote `backend.log` and `utility-processes/*.log` under `~/Library/Application Support/Laborer/logs/`; current code no longer writes them, so treat those files as stale.
+
 ## Domain and Decisions
 
 Before changing behavior, read the relevant parts of root `CONTEXT.md` and applicable ADRs in `docs/adr/`. Use their canonical terms and surface conflicts with recorded decisions.

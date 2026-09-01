@@ -367,10 +367,43 @@ export const SharedTaskRow = Schema.Struct({
 })
 export type SharedTaskRow = typeof SharedTaskRow.Type
 
+/**
+ * Project accent token. Tailwind needs literal class strings, so the token ->
+ * class mapping lives in the renderer; this is the durable vocabulary.
+ *
+ * Declared above `SharedProjectRow` because the row carries it.
+ */
+export const ProjectColor = Schema.Literals([
+  'blue',
+  'cyan',
+  'teal',
+  'emerald',
+  'lime',
+  'amber',
+  'orange',
+  'rose',
+  'pink',
+  'fuchsia',
+  'violet',
+  'indigo',
+])
+export type ProjectColor = typeof ProjectColor.Type
+
 export const SharedProjectRow = Schema.Struct({
   branchName: Schema.NullOr(Schema.String),
   canonicalGitCommonDir: Schema.String,
+  /**
+   * Accent token. Null for projects registered before accents existed;
+   * the renderer derives one from the name so nothing is ever uncoloured.
+   */
+  color: Schema.NullOr(Schema.String),
   createdAt: Schema.Int,
+  /**
+   * The project's favicon as a `data:` URL, discovered in the repository.
+   * Inlined rather than referenced by path because the renderer has no route
+   * to arbitrary local files, and a favicon is small enough to carry.
+   */
+  iconDataUrl: Schema.NullOr(Schema.String),
   id: Schema.String,
   name: Schema.String,
   repoId: Schema.String,
@@ -1880,6 +1913,32 @@ export class LaborerRpcs extends RpcGroup.make(
     error: RpcError,
     payload: {
       path: Schema.optional(Schema.String),
+    },
+  }),
+
+  /** Re-accents a project. The accent identifies the project everywhere. */
+  Rpc.make('project.setColor', {
+    success: SharedProjectRow,
+    error: RpcError,
+    payload: {
+      color: ProjectColor,
+      expectedRevision: PositiveInt,
+      operationId: OperationId,
+      projectId: Schema.String,
+    },
+  }),
+
+  /**
+   * Re-scans the repository for a favicon and stores what it finds. The icon
+   * is discovered when the project is registered; this is the manual redo for
+   * a repository that gained or moved one afterwards.
+   */
+  Rpc.make('project.refreshIcon', {
+    success: SharedProjectRow,
+    error: RpcError,
+    payload: {
+      operationId: OperationId,
+      projectId: Schema.String,
     },
   }),
 

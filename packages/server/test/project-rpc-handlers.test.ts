@@ -7,6 +7,7 @@ import { ProjectRegistry } from '../src/services/project-registry.js'
 const projects = [
   {
     canonicalGitCommonDir: null,
+    color: null,
     id: 'project-1',
     name: 'laborer',
     repoId: null,
@@ -14,6 +15,7 @@ const projects = [
   },
   {
     canonicalGitCommonDir: null,
+    color: null,
     id: 'project-2',
     name: 'website',
     repoId: null,

@@ -19,6 +19,7 @@ import {
   type BoardTask,
   type LabelColor,
   LaborerRpcs,
+  type ProjectColor,
   type ReviewCommentSide,
   type ReviewCommentStatus,
   RpcError,
@@ -56,6 +57,7 @@ import { OpenCodeModels } from '../services/opencode-models.js'
 import { PrWatcher } from '../services/pr-watcher.js'
 import { PreviewManager } from '../services/preview-manager.js'
 import { PreviewPortDiscovery } from '../services/preview-port-discovery.js'
+import { discoverProjectIcon } from '../services/project-icon.js'
 import { ProjectRegistry } from '../services/project-registry.js'
 import {
   aliasesAfterRename,
@@ -446,6 +448,78 @@ export const handleProjectList = () =>
       repoPath: project.repoPath,
       name: project.name,
     }))
+  })
+
+const projectWriteError = (operation: string) => (cause: unknown) =>
+  new RpcError({
+    code:
+      cause instanceof LaborerDatabaseStaleRevisionError
+        ? 'CAS_CONFLICT'
+        : 'PROJECT_WRITE_FAILED',
+    message: cause instanceof Error ? cause.message : `Unable to ${operation}`,
+  })
+
+/**
+ * Re-accents a project. The accent is pure identity — nothing downstream
+ * branches on it — so the write is a plain revision-CAS patch.
+ */
+export const handleProjectSetColor = (payload: {
+  readonly color: ProjectColor
+  readonly expectedRevision: number
+  readonly operationId?: string
+  readonly projectId: string
+}) =>
+  Effect.gen(function* () {
+    const database = yield* LaborerDatabase
+    const result = yield* database
+      .run('set project color', (native) =>
+        native.updateProject(
+          payload.projectId,
+          payload.expectedRevision,
+          { color: payload.color },
+          payload.operationId ?? null
+        )
+      )
+      .pipe(Effect.mapError(projectWriteError('recolor project')))
+    return result.row
+  })
+
+/**
+ * Re-reads the repository's favicon and stores what it finds now.
+ *
+ * Discovery runs at registration, so this exists for the repository that
+ * gained, moved, or replaced its favicon since — including clearing the
+ * stored icon when the file is gone.
+ */
+export const handleProjectRefreshIcon = (payload: {
+  readonly operationId?: string
+  readonly projectId: string
+}) =>
+  Effect.gen(function* () {
+    const registry = yield* ProjectRegistry
+    const project = yield* registry.getProject(payload.projectId)
+    const database = yield* LaborerDatabase
+    const current = yield* database
+      .run('find project', (native) => native.findProject(payload.projectId))
+      .pipe(Effect.mapError(projectWriteError('read project')))
+    if (current === null) {
+      return yield* new RpcError({
+        code: 'NOT_FOUND',
+        message: `Project not found: ${payload.projectId}`,
+      })
+    }
+    const iconDataUrl = yield* discoverProjectIcon(project.repoPath)
+    const result = yield* database
+      .run('refresh project icon', (native) =>
+        native.updateProject(
+          payload.projectId,
+          current.revision,
+          { iconDataUrl },
+          payload.operationId ?? null
+        )
+      )
+      .pipe(Effect.mapError(projectWriteError('refresh project icon')))
+    return result.row
   })
 
 const taskMoveError = (cause: unknown) =>
@@ -1580,6 +1654,8 @@ export const LaborerRpcsLive = LaborerRpcs.toLayer(
         yield* registry.removeProject(projectId, operationId)
       }),
     'project.list': handleProjectList,
+    'project.setColor': handleProjectSetColor,
+    'project.refreshIcon': handleProjectRefreshIcon,
     'local.directory.list': ({ path }) => listLocalDirectories(path),
     'project.reorder': handleProjectReorder,
 

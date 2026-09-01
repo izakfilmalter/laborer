@@ -215,7 +215,14 @@ export type LaborerTaskPatch = Partial<
 export interface Project {
   readonly branchName: string | null
   readonly canonicalGitCommonDir: string
+  /**
+   * Accent token from the shared project palette. Null for rows written
+   * before accents existed; readers derive one from the name.
+   */
+  readonly color: string | null
   readonly createdAt: number
+  /** The repository's favicon inlined as a `data:` URL, when one was found. */
+  readonly iconDataUrl: string | null
   readonly id: string
   readonly name: string
   readonly repoId: string
@@ -229,7 +236,9 @@ export interface Project {
 export interface NewProject {
   readonly branchName?: string | null
   readonly canonicalGitCommonDir: string
+  readonly color?: string | null
   readonly createdAt?: number
+  readonly iconDataUrl?: string | null
   readonly id: string
   readonly name: string
   readonly repoId: string
@@ -241,6 +250,8 @@ export type ProjectPatch = Partial<
     Project,
     | 'branchName'
     | 'canonicalGitCommonDir'
+    | 'color'
+    | 'iconDataUrl'
     | 'name'
     | 'repoId'
     | 'rootPath'
@@ -455,7 +466,8 @@ const TASK_COLUMNS = `id, root_path, title, status, source, execution_id,
   pr_unresolved_threads, pr_review_decision, pr_approvals, task_number,
   label_ids`
 const PROJECT_COLUMNS = `id, name, root_path, repo_id, canonical_git_common_dir,
-  created_at, updated_at, revision, sort_order, branch_name`
+  created_at, updated_at, revision, sort_order, branch_name, color,
+  icon_data_url`
 const SETTING_COLUMNS = 'key, value, created_at, updated_at, revision'
 const LABEL_COLUMNS = `id, name, color, created_at, updated_at,
   revision`
@@ -507,6 +519,8 @@ const TASK_PATCH_FIELDS = [
 const PROJECT_PATCH_FIELDS = [
   'branchName',
   'canonicalGitCommonDir',
+  'color',
+  'iconDataUrl',
   'name',
   'repoId',
   'rootPath',
@@ -548,6 +562,8 @@ const TASK_PATCH_COLUMNS: Record<keyof LaborerTaskPatch, string> = {
 const PROJECT_PATCH_COLUMNS: Record<keyof ProjectPatch, string> = {
   branchName: 'branch_name',
   canonicalGitCommonDir: 'canonical_git_common_dir',
+  color: 'color',
+  iconDataUrl: 'icon_data_url',
   name: 'name',
   repoId: 'repo_id',
   rootPath: 'root_path',
@@ -816,7 +832,9 @@ const rowToProject = (value: unknown): Project => {
       row.canonical_git_common_dir,
       'projects.canonical_git_common_dir'
     ),
+    color: nullableString(row.color, 'projects.color'),
     createdAt: integer(row.created_at, 'projects.created_at'),
+    iconDataUrl: nullableString(row.icon_data_url, 'projects.icon_data_url'),
     id: string(row.id, 'projects.id'),
     name: string(row.name, 'projects.name'),
     repoId: string(row.repo_id, 'projects.repo_id'),
@@ -1281,8 +1299,8 @@ export class NativeLaborerDatabase {
       this.#database
         .prepare(`INSERT INTO projects (
           id, name, root_path, repo_id, canonical_git_common_dir,
-          created_at, updated_at, revision, branch_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`)
+          created_at, updated_at, revision, branch_name, color, icon_data_url
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
         .run(
           input.id,
           input.name,
@@ -1291,7 +1309,9 @@ export class NativeLaborerDatabase {
           input.canonicalGitCommonDir,
           createdAt,
           changedAt,
-          input.branchName ?? null
+          input.branchName ?? null,
+          input.color ?? null,
+          input.iconDataUrl ?? null
         )
       const cursor = this.#appendStateChange(
         'projects',

@@ -45,6 +45,7 @@ import {
 import { ConfigReactivityKeys, LaborerClient } from '@/atoms/laborer-client'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { ProjectAppearanceField } from '@/components/project-appearance-field'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { isMetaEnter } from '@/lib/dialog-keys'
 import { extractErrorMessage } from '@/lib/errors'
@@ -229,6 +230,11 @@ function ProjectSettingsForm({
     >
       <div className="grid gap-4 py-2">
         <FieldSet>
+          <ProjectAppearanceField
+            projectId={projectId}
+            projectName={projectName}
+          />
+
           <Field>
             <FieldLabel htmlFor={`short-name-${projectId}`}>
               Project short name

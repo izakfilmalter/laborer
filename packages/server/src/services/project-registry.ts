@@ -1,10 +1,12 @@
 import { basename } from 'node:path'
+import { nextProjectColor } from '@laborer/shared/project-colors'
 import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
 import { BranchStateTracker, getCurrentBranch } from './branch-state-tracker.js'
 import { ConfigService } from './config-service.js'
 import { LaborerDatabase } from './laborer-database.js'
 import type { Project } from './native-laborer-database.js'
+import { discoverProjectIcon } from './project-icon.js'
 import {
   aliasesAfterRename,
   resolveProjectTaskIdentifierNamespaces,
@@ -17,6 +19,8 @@ import { WorktreeReconciler } from './worktree-reconciler.js'
 
 export interface ProjectRecord {
   readonly canonicalGitCommonDir: string | null
+  /** Accent token, or null for a project registered before accents existed. */
+  readonly color: string | null
   readonly id: string
   readonly name: string
   readonly repoId: string | null
@@ -236,6 +240,20 @@ class ProjectRegistry extends Context.Service<
           const branchName = yield* getCurrentBranch(
             identity.canonicalRoot
           ).pipe(Effect.catch(() => Effect.succeed(null)))
+          // The repository's own favicon is re-read on every registration,
+          // including a re-point, because the path it describes has changed.
+          const iconDataUrl = yield* discoverProjectIcon(identity.canonicalRoot)
+          // Spread across the palette rather than hashing, so the first
+          // handful of projects are maximally distinguishable. A re-pointed
+          // project keeps whatever accent the operator already learned.
+          const color =
+            existing?.color ??
+            nextProjectColor(
+              name,
+              registeredProjects
+                .filter((project) => project.id !== existing?.id)
+                .map((project) => project.color)
+            )
           const stored = existing
             ? yield* database
                 .run(
@@ -247,6 +265,8 @@ class ProjectRegistry extends Context.Service<
                       {
                         canonicalGitCommonDir: identity.canonicalGitCommonDir,
                         branchName,
+                        color,
+                        iconDataUrl,
                         name,
                         rootPath: identity.canonicalRoot,
                       },
@@ -270,6 +290,8 @@ class ProjectRegistry extends Context.Service<
                         repoId: identity.repoId,
                         canonicalGitCommonDir: identity.canonicalGitCommonDir,
                         branchName,
+                        color,
+                        iconDataUrl,
                       },
                       operationId
                     ).row

@@ -389,6 +389,8 @@ interface WorkspaceCardProps {
   readonly activateLabel?: string | undefined
   /** Surface-specific chips, appended to the card's own chip row. */
   readonly badges?: ReactNode | undefined
+  /** Uses the sidebar's denser workspace identity treatment. */
+  readonly compactHeader?: boolean | undefined
   /**
    * Whether this workspace is the root workspace (main git checkout).
    * Root workspaces cannot be destroyed as they represent the original
@@ -689,6 +691,7 @@ function WorkspaceCard({
   actions,
   activateLabel,
   badges,
+  compactHeader = false,
   isRootWorkspace,
   onActivate,
   onPendingCreationChange,
@@ -873,7 +876,12 @@ function WorkspaceCard({
       data-workspace-id={workspace.id}
       data-worktree-path={workspace.worktreePath}
       icon={
-        <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <GitBranch
+          className={cn(
+            'mt-0.5 shrink-0 text-muted-foreground',
+            compactHeader ? 'size-3.5' : 'size-4'
+          )}
+        />
       }
       onActivate={onActivate}
       // Two channels, no contest: the agent accent owns the card's edge, the
@@ -886,7 +894,12 @@ function WorkspaceCard({
           description={taskDescription}
           heading={`What ${workspace.branchName} is for`}
         >
-          <span className="block min-w-0 font-mono">
+          <span
+            className={cn(
+              'block min-w-0 font-mono',
+              compactHeader && 'text-xs'
+            )}
+          >
             <CopyableValue
               copyLabel="Copy branch name"
               extraCopyValues={[

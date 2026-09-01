@@ -48,6 +48,7 @@ import { GitActionsControl } from '@/components/git-actions-control'
 import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
+import { ProjectIcon } from '@/components/project-icon'
 import { TaskIdentifier } from '@/components/task-identifier'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
 import type { AgentDisplayStatus } from '@/lib/agent-attention-projection'
@@ -55,6 +56,7 @@ import {
   getAgentStatusSurface,
   showsWorkspaceAgentStatus,
 } from '@/lib/agent-status-presentation'
+import { workspaceHeaderAccentClassName } from '@/lib/project-accent'
 import type { PanelActions } from '@/panels/panel-context'
 
 interface WorkspaceFrameHeaderProps {
@@ -110,6 +112,10 @@ interface WorkspaceFrameHeaderProps {
     | undefined
   /** PR number, if the workspace has an associated pull request. */
   readonly prNumber: number | null
+  /** The project's accent token, carried into this bar to identify it. */
+  readonly projectColor?: string | null | undefined
+  /** The project's favicon as a data URL, when the repository ships one. */
+  readonly projectIconDataUrl?: string | null | undefined
   /** The project ID used to associate the task identifier with its project. */
   readonly projectId: string | undefined
   /** The project name for the workspace (shown in the header). */
@@ -184,7 +190,7 @@ function WorkspaceFrameTitle({
       {pathSegments.map((segment) => (
         <span key={segment}>
           <span className="mx-1">/</span>
-          <span>{segment}</span>
+          <span className="font-mono">{segment}</span>
         </span>
       ))}
     </>
@@ -497,6 +503,75 @@ function FrameGitActions({
   )
 }
 
+/**
+ * The frame's identity and drag handle: the project's mark, then the
+ * project / author / branch address.
+ *
+ * The mark is the project's favicon or accent glyph, the same symbol as the
+ * sidebar row the frame was opened from, drawn larger here so it holds its
+ * own against the header's icon buttons within the fixed 32px header. A frame
+ * with no project behind it falls back to the generic
+ * terminal glyph the title already reads as "Terminal".
+ */
+function FrameIdentityButton({
+  authorLogin,
+  branchName,
+  isMinimized,
+  onHeaderClick,
+  projectColor,
+  projectIconDataUrl,
+  projectName,
+  workspacePath,
+}: {
+  readonly authorLogin: string | null
+  readonly branchName: string | undefined
+  readonly isMinimized: boolean | undefined
+  readonly onHeaderClick: (() => void) | undefined
+  readonly projectColor: string | null
+  readonly projectIconDataUrl: string | null
+  readonly projectName: string | undefined
+  readonly workspacePath: readonly string[]
+}) {
+  return (
+    <button
+      className={cn(
+        'flex min-w-0 items-center gap-2',
+        isMinimized
+          ? 'flex-1 cursor-pointer'
+          : 'cursor-grab active:cursor-grabbing'
+      )}
+      onClick={(e) => {
+        e.stopPropagation()
+        onHeaderClick?.()
+      }}
+      type="button"
+    >
+      <div className="flex items-center gap-1 text-muted-foreground">
+        {projectName === undefined ? (
+          <Terminal className="size-5" />
+        ) : (
+          <ProjectIcon
+            className="size-5"
+            project={{
+              color: projectColor,
+              iconDataUrl: projectIconDataUrl,
+              name: projectName,
+            }}
+          />
+        )}
+      </div>
+      <div className="min-w-0 truncate text-muted-foreground text-xs">
+        <WorkspaceFrameTitle
+          authorLogin={authorLogin}
+          branchName={branchName}
+          projectName={projectName}
+          workspacePath={workspacePath}
+        />
+      </div>
+    </button>
+  )
+}
+
 function WorkspaceFrameHeader({
   activePaneId,
   actions,
@@ -523,6 +598,8 @@ function WorkspaceFrameHeader({
   prTitle,
   prUnresolvedThreads = null,
   prUrl,
+  projectColor = null,
+  projectIconDataUrl = null,
   projectId,
   projectName,
   projectShortName,
@@ -553,6 +630,12 @@ function WorkspaceFrameHeader({
   // to say the accent is its own; otherwise the active frame keeps its
   // primary edge. Two competing borders on one 8px bar read as noise.
   const hasAgentAccent = agentAccentClassName !== ''
+  const projectAccentClassName = workspaceHeaderAccentClassName({
+    agentAccentClassName,
+    isActiveFrame,
+    projectColor,
+    projectName,
+  })
   // The frame carries the branch's next git step for the same reason the
   // sidebar card does: it is the surface naming the branch. Without a pull
   // request the whole journey is a button of its own here; with one, the
@@ -604,7 +687,11 @@ function WorkspaceFrameHeader({
     <div
       className={cn(
         'flex h-8 shrink-0 items-center justify-between border-b px-2',
-        isActiveFrame && !hasAgentAccent && 'border-b-2 border-b-primary',
+        isActiveFrame &&
+          projectAccentClassName === '' &&
+          !hasAgentAccent &&
+          'border-b-2 border-b-primary',
+        projectAccentClassName,
         agentAccentClassName,
         isMinimized && 'cursor-pointer'
       )}
@@ -619,31 +706,16 @@ function WorkspaceFrameHeader({
       ref={dragHandleRef}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <button
-          className={cn(
-            'flex min-w-0 items-center gap-2',
-            isMinimized
-              ? 'flex-1 cursor-pointer'
-              : 'cursor-grab active:cursor-grabbing'
-          )}
-          onClick={(e) => {
-            e.stopPropagation()
-            onHeaderClick?.()
-          }}
-          type="button"
-        >
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Terminal className="size-3.5" />
-          </div>
-          <div className="min-w-0 truncate text-muted-foreground text-xs">
-            <WorkspaceFrameTitle
-              authorLogin={authorLogin}
-              branchName={branchName}
-              projectName={projectName}
-              workspacePath={workspacePath}
-            />
-          </div>
-        </button>
+        <FrameIdentityButton
+          authorLogin={authorLogin}
+          branchName={branchName}
+          isMinimized={isMinimized}
+          onHeaderClick={onHeaderClick}
+          projectColor={projectColor}
+          projectIconDataUrl={projectIconDataUrl}
+          projectName={projectName}
+          workspacePath={workspacePath}
+        />
         {projectId && taskNumber ? (
           <TaskIdentifier
             projectId={projectId}

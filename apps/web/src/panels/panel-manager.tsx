@@ -77,7 +77,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
 import { PanelTypePicker } from '@/components/panel-type-picker'
-import { TerminalOverlayToolbar } from '@/components/terminal-overlay-toolbar'
 import {
   projectCollection,
   taskCollection,
@@ -765,8 +764,6 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   }, [actions, node.id])
 
   const isEmptyTerminalPane = node.paneType === 'terminal' && !node.terminalId
-  const isOccupiedTerminalPane =
-    node.paneType === 'terminal' && !!node.terminalId
 
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -852,7 +849,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
     // biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
     // biome-ignore lint/a11y/noNoninteractiveElementInteractions: Drag-and-drop handlers on pane container are essential for terminal assignment
     <div
-      className={`group/pane relative h-full w-full overflow-hidden ${borderClass}`}
+      className={`relative h-full w-full overflow-hidden ${borderClass}`}
       data-pane-id={node.id}
       data-pane-type={node.paneType}
       data-terminal-id={node.terminalId}
@@ -872,13 +869,6 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
         <PickerPlaceholderPane />
       ) : (
         <PaneContent node={node} onTerminalExit={handleTerminalExit} />
-      )}
-      {isOccupiedTerminalPane && (
-        <TerminalOverlayToolbar
-          actions={actions}
-          isFullscreen={isFullscreen}
-          paneId={node.id}
-        />
       )}
       {pendingClose.paneId === node.id && (
         <PaneCloseConfirmDialog

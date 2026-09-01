@@ -408,7 +408,7 @@ describe('WorkspaceFrameHeader', () => {
 
   // --- Removed buttons should not be present ---
 
-  it('does not render split or fullscreen buttons (moved to terminal overlay)', () => {
+  it('does not render pane action buttons', () => {
     const actions = mockActions()
     render(<WorkspaceFrameHeader {...BASE_PROPS} actions={actions} />)
 

@@ -5,14 +5,9 @@
  * pane toggles), and a close-workspace button that kills all terminals
  * for this workspace.
  *
- * Per-pane actions (split, fullscreen, close pane) are rendered as an
- * overlay toolbar on each terminal pane instead.
- *
  * The data-fetching wrapper lives in routes/index.tsx and queries
  * shared collections for project/task data and the local preference collection
  * for layout data.
- *
- * @see components/terminal-overlay-toolbar.tsx — per-pane floating toolbar
  */
 
 import { isRootWorkspaceId } from '@laborer/shared/root-workspace'

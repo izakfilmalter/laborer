@@ -85,10 +85,6 @@ vi.mock('@/panels/panel-group-registry', () => ({
   usePanelGroupRegistry: () => null,
 }))
 
-vi.mock('@/components/terminal-overlay-toolbar', () => ({
-  TerminalOverlayToolbar: () => null,
-}))
-
 vi.mock('@/routes/-components/close-dialogs', () => ({
   PaneCloseConfirmDialog: () => null,
 }))

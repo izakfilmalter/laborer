@@ -28,10 +28,6 @@ vi.mock('@/atoms/laborer-client', () => ({
   },
 }))
 
-vi.mock('@/components/terminal-overlay-toolbar', () => ({
-  TerminalOverlayToolbar: () => null,
-}))
-
 vi.mock('@laborer/ui/components/resizable', () => ({
   ResizableHandle: () => <div data-testid="resize-handle" />,
   ResizablePanel: ({ children }: { children: React.ReactNode }) => (

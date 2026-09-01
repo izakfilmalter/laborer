@@ -1,49 +1,65 @@
 /**
  * The screen a terminal pane draws on, and the identity of that screen.
  *
- * A pane's canvas and its attach stream have independent lifetimes. React
- * rebuilds the canvas when the pane adopts a different terminal, and again
+ * A pane's surface and its attach stream have independent lifetimes. React
+ * rebuilds the surface when the pane adopts a different terminal, and again
  * when StrictMode double-invokes the mount, while the daemon connection is
- * untouched; the daemon drops and restores the stream while the same canvas
+ * untouched; the daemon drops and restores the stream while the same surface
  * stays mounted. Anything derived from what has been *drawn* therefore belongs
- * to the canvas rather than to the pane that hosts it.
+ * to the surface rather than to the pane that hosts it.
  *
- * Each mounted canvas is given a generation so a resume cursor can name the
- * screen it describes. A rebuilt canvas is blank: resuming from the cursor the
+ * Each mounted surface is given a generation so a resume cursor can name the
+ * screen it describes. A rebuilt surface is blank: resuming from the cursor the
  * previous one reached would ask the daemon to continue a screen nobody can
  * see, leaving the operator with deltas and no history underneath them.
- * Generation `0` means no canvas is mounted at all.
+ * Generation `0` means no surface is mounted at all — Ghostty's surface is
+ * built asynchronously, so that is also the state a freshly rendered pane is in
+ * while the WASM module and its fonts load.
+ *
+ * Ghostty parses synchronously: `write` has finished by the time it returns.
+ * The screen therefore reports only whether a surface *took* a chunk, and has
+ * no deferred commit to carry — the caller learns everything it needs from the
+ * return value.
  *
  * @see apps/web/src/hooks/use-terminal-rpc.ts — attaches against a generation
- * @see apps/web/src/panes/terminal-pane.tsx — mounts the xterm canvas
+ * @see apps/web/src/panes/terminal-pane.tsx — mounts the Ghostty surface
  */
 
-/** The slice of xterm a screen draws through. */
+/** The slice of `GhosttyTerminalSurface` a screen draws through. */
 export interface TerminalScreenCanvas {
-  readonly reset: () => void
-  readonly write: (data: string, commit: () => void) => void
+  /**
+   * RIS the terminal, then replay `data` with the PTY writer detached. This is
+   * how a snapshot lands: the payload is the serialized screen, so it describes
+   * the state to be *in* rather than output to append.
+   */
+  readonly resetAndWrite: (data: string) => void
+  /** Parse live output. Synchronous — parsed once it returns. */
+  readonly write: (data: string) => void
 }
 
 export interface TerminalScreen {
-  /** Identifies the mounted canvas; `0` while none is mounted. */
+  /** Identifies the mounted surface; `0` while none is mounted. */
   readonly generation: () => number
-  /** Adopt a freshly built, blank canvas. */
+  /** Adopt a freshly built, blank surface. */
   readonly mount: (canvas: TerminalScreenCanvas) => void
-  /** Clear the visible screen without replacing the canvas. */
-  readonly reset: () => void
-  /** Observe canvas replacement. Listeners read `generation` for the new one. */
+  /**
+   * Replace the screen with `data`. Reports whether a surface took it, on the
+   * same terms as `write`.
+   */
+  readonly resetAndWrite: (data: string) => boolean
+  /** Observe surface replacement. Listeners read `generation` for the new one. */
   readonly subscribe: (listener: () => void) => () => void
-  /** Retire a canvas. A stale cleanup cannot retire the one that replaced it. */
+  /** Retire a surface. A stale cleanup cannot retire the one that replaced it. */
   readonly unmount: (canvas: TerminalScreenCanvas) => void
   /**
-   * Draw a chunk. `commit` runs once the canvas reports it parsed.
+   * Draw a chunk.
    *
-   * Reports whether a canvas took the chunk. A screen with nothing mounted
+   * Reports whether a surface took the chunk. A screen with nothing mounted
    * drops it, and a dropped chunk was never drawn: the caller must not count
-   * it as reached, or the next attach would resume past output no canvas ever
+   * it as reached, or the next attach would resume past output no surface ever
    * showed.
    */
-  readonly write: (data: string, commit: () => void) => boolean
+  readonly write: (data: string) => boolean
 }
 
 export const createTerminalScreen = (): TerminalScreen => {
@@ -67,8 +83,12 @@ export const createTerminalScreen = (): TerminalScreen => {
       announce()
     },
 
-    reset: () => {
-      canvas?.reset()
+    resetAndWrite: (data) => {
+      if (canvas === undefined) {
+        return false
+      }
+      canvas.resetAndWrite(data)
+      return true
     },
 
     subscribe: (listener) => {
@@ -85,29 +105,18 @@ export const createTerminalScreen = (): TerminalScreen => {
       canvas = undefined
     },
 
-    write: (data, commit) => {
-      const target = canvas
-      if (target === undefined) {
+    write: (data) => {
+      if (canvas === undefined) {
         // Output with nowhere to land is dropped rather than queued. The
-        // canvas that eventually mounts is blank and forces a fresh replay,
+        // surface that eventually mounts is blank and forces a fresh replay,
         // so flushing this chunk into it would double-draw history — and
-        // committing it now would acknowledge output no screen ever showed.
+        // acknowledging it now would release flow control for output no screen
+        // ever showed.
         return false
       }
-      const commitToTarget = (): void => {
-        // xterm can report a chunk parsed after its canvas has been replaced.
-        // That parse belongs to a screen the operator can no longer see, so it
-        // must not advance the cursor the next attach resumes from.
-        if (canvas !== target) {
-          return
-        }
-        commit()
+      if (data.length > 0) {
+        canvas.write(data)
       }
-      if (data.length === 0) {
-        commitToTarget()
-        return true
-      }
-      target.write(data, commitToTarget)
       return true
     },
   }

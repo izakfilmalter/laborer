@@ -1,11 +1,35 @@
-import { IS_MAC } from './keybinds'
+/**
+ * What a focused terminal claims before the app's global hotkeys see a key.
+ *
+ * Ghostty's key encoder handles nearly everything: Kitty progressive
+ * enhancement, legacy CSI, Ctrl chords, IME. Two macOS gestures fall outside
+ * it, because they are conventions of the *host* rather than of the terminal
+ * protocol:
+ *
+ * - Option+Arrow and Cmd+Arrow, which Terminal.app and VS Code translate to
+ *   readline word and line navigation. Ghostty's encoder emits modified CSI
+ *   sequences (`ESC[1;3D`) that many shells and TUIs do not bind, and no
+ *   sequence at all for Super, so the reading here is deliberate.
+ * - Ctrl+B, which is Laborer's panel prefix everywhere except inside a focused
+ *   terminal, where it is readline's backward-char. Ghostty encodes it
+ *   correctly; it only has to be kept out of the app-level bypass.
+ *
+ * The result feeds `GhosttyTerminalSurface`'s `beforeKey`: `true` lets Ghostty
+ * encode and send the key, `false` leaves it to bubble to the global hotkey
+ * layer — or drops it, when this module has already sent something in its
+ * place.
+ *
+ * @see apps/web/src/panes/terminal-pane.tsx — installs this as `beforeKey`
+ * @see apps/web/src/lib/keybinds.ts — the app-level bypass list
+ */
 
-const BACKWARD_CHARACTER = '\x02'
-const FORWARD_CHARACTER = '\x06'
+import { IS_MAC, isPrefixKey } from './keybinds'
+
 const BEGINNING_OF_LINE = '\x01'
 const END_OF_LINE = '\x05'
 const BACKWARD_WORD = '\x1bb'
 const FORWARD_WORD = '\x1bf'
+
 const COMMAND_ARROW_INPUT: Readonly<Record<string, string>> = {
   ArrowLeft: BEGINNING_OF_LINE,
   ArrowRight: END_OF_LINE,
@@ -15,20 +39,21 @@ const OPTION_ARROW_INPUT: Readonly<Record<string, string>> = {
   ArrowRight: FORWARD_WORD,
 }
 
-function getControlNavigationInput(event: KeyboardEvent): string | undefined {
-  if (!(event.ctrlKey && !event.altKey) || event.metaKey) {
+/**
+ * Readline input for a macOS arrow chord, or `undefined` when the key belongs
+ * to Ghostty's encoder.
+ *
+ * Cmd+Option+Arrow is Laborer's directional pane navigation, so each mapping
+ * requires its own modifier and rejects the other.
+ */
+function getTerminalInputOverride(
+  event: KeyboardEvent,
+  isMac = IS_MAC
+): string | undefined {
+  if (!isMac || event.shiftKey) {
     return undefined
   }
-  if (event.key.toLowerCase() === 'b') {
-    return BACKWARD_CHARACTER
-  }
-  if (event.key.toLowerCase() === 'f') {
-    return FORWARD_CHARACTER
-  }
-  return undefined
-}
 
-function getMacArrowNavigationInput(event: KeyboardEvent): string | undefined {
   if (event.metaKey && !(event.altKey || event.ctrlKey)) {
     return COMMAND_ARROW_INPUT[event.key]
   }
@@ -40,86 +65,42 @@ function getMacArrowNavigationInput(event: KeyboardEvent): string | undefined {
   return undefined
 }
 
-/**
- * Return shell-friendly input for keys that xterm or the app would otherwise
- * encode or consume differently from a native terminal.
- *
- * macOS Option+Arrow and Cmd+Arrow are intentionally translated to the same
- * word and line navigation used by Terminal.app and VS Code. Physical Ctrl+B
- * belongs to the terminal while it is focused, rather than Laborer's panel
- * prefix shortcut.
- */
-function getTerminalInputOverride(
-  event: KeyboardEvent,
-  isMac = IS_MAC
-): string | undefined {
-  if (event.type !== 'keydown' || event.shiftKey) {
-    return undefined
-  }
-
-  const controlInput = getControlNavigationInput(event)
-  if (controlInput !== undefined) {
-    // Ctrl+F remains the terminal-find shortcut outside macOS.
-    return isMac || controlInput === BACKWARD_CHARACTER
-      ? controlInput
-      : undefined
-  }
-
-  return isMac ? getMacArrowNavigationInput(event) : undefined
-}
-
-function handleTerminalInputOverride(
-  event: KeyboardEvent,
-  isRunning: boolean,
-  send: (data: string) => void,
-  isMac = IS_MAC
-): boolean {
-  const input = getTerminalInputOverride(event, isMac)
-  if (input === undefined) {
-    return false
-  }
-
-  event.preventDefault()
-  event.stopPropagation()
-  if (isRunning) {
-    send(input)
-  }
-  return true
-}
-
 interface TerminalKeyEventHandlers {
-  readonly handleTerminalLocalShortcut: (event: KeyboardEvent) => boolean
   readonly isRunning: boolean
   readonly send: (data: string) => void
   readonly shouldBypass: (event: KeyboardEvent) => boolean
 }
 
-/** Apply terminal-owned input before considering app-level shortcuts. */
+/**
+ * Decide who owns a keydown over a focused terminal.
+ *
+ * Returns `true` when Ghostty should encode and send it, `false` when the
+ * terminal must not — either because this module already sent a replacement,
+ * or because the key is an app-level shortcut that has to reach the document.
+ */
 function handleTerminalKeyEvent(
   event: KeyboardEvent,
   handlers: TerminalKeyEventHandlers,
   isMac = IS_MAC
 ): boolean {
-  if (event.type !== 'keydown') {
+  const input = getTerminalInputOverride(event, isMac)
+  if (input !== undefined) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (handlers.isRunning) {
+      handlers.send(input)
+    }
+    return false
+  }
+
+  // The panel prefix belongs to the terminal while the terminal has focus, so
+  // it is asked about before the bypass list it appears on.
+  if (isPrefixKey(event)) {
     return true
   }
 
-  if (
-    handleTerminalInputOverride(event, handlers.isRunning, handlers.send, isMac)
-  ) {
-    return false
-  }
-
-  if (handlers.shouldBypass(event)) {
-    return false
-  }
-
-  return !handlers.handleTerminalLocalShortcut(event)
+  return !handlers.shouldBypass(event)
 }
 
 export type { TerminalKeyEventHandlers }
-export {
-  getTerminalInputOverride,
-  handleTerminalInputOverride,
-  handleTerminalKeyEvent,
-}
+export { getTerminalInputOverride, handleTerminalKeyEvent }

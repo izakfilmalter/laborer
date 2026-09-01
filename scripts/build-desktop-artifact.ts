@@ -54,6 +54,7 @@ import serverPkg from '../packages/server/package.json' with { type: 'json' }
 import terminalPkg from '../packages/terminal/package.json' with {
   type: 'json',
 }
+import { resolveBundledTerminalAssets } from './lib/bundled-terminal-assets.js'
 import { resolveCatalogDependencies } from './lib/resolve-catalog.js'
 
 // ---------------------------------------------------------------------------
@@ -782,7 +783,10 @@ function smokeTestPackagedMcp(stageAppDir: string): void {
   }
 }
 
-function validatePackagedAsar(stageAppDir: string): void {
+function validatePackagedAsar(
+  stageAppDir: string,
+  terminalAssets: readonly string[]
+): void {
   const appName = resolveDesktopAppName({
     isDevelopment: false,
     version: BUILD_VERSION,
@@ -827,6 +831,10 @@ function validatePackagedAsar(stageAppDir: string): void {
   const requiredFiles = [
     ...resolveEffectRuntimeAsarMarkers(join(stageAppDir, 'node_modules')),
     ...REQUIRED_ASAR_FILES,
+    // The daemon serves these straight off disk from `apps/web/dist`, so the
+    // renderer's `fetch` for a Ghostty module resolves to a 404 if asar
+    // packing ever drops them.
+    ...terminalAssets.map((asset) => `apps/web/dist/${asset}`),
   ]
   const missing = requiredFiles.filter((file) => !files.has(file))
   if (missing.length > 0) {
@@ -849,7 +857,79 @@ function validatePackagedAsar(stageAppDir: string): void {
   )
 }
 
-function smokeTestPackagedApp(stageAppDir: string): void {
+/** The four magic bytes that open every WebAssembly binary: `\0asm`. */
+const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d])
+
+/** Read the loopback URL the packaged daemon registered during a smoke run. */
+function requireSmokeDaemonUrl(stateRoot: string): string {
+  const url = readSmokeRegistration(
+    join(stateRoot, 'laborer', 'daemon.json')
+  ).url
+  if (url === undefined) {
+    throw new Error(
+      'Packaged app loaded its renderer without registering a daemon URL'
+    )
+  }
+  return url
+}
+
+/**
+ * Fetch each terminal runtime asset from the live packaged daemon.
+ *
+ * Presence inside `app.asar` is not enough: the renderer reaches these through
+ * `fetch(assetUrl)` against the daemon's static route, so this proves asar
+ * reads, the route, and — for `.wasm` — that the bytes handed to
+ * `WebAssembly.instantiate` really are a module rather than an HTML fallback.
+ */
+function assertTerminalAssetsAreServed(
+  daemonUrl: string,
+  terminalAssets: readonly string[],
+  scratchDir: string
+): void {
+  for (const asset of terminalAssets) {
+    const url = new URL(`/${asset}`, daemonUrl).toString()
+    const downloadPath = join(scratchDir, asset.replaceAll('/', '_'))
+    const result = spawnSync(
+      'curl',
+      [
+        '--silent',
+        '--max-time',
+        '15',
+        '--output',
+        downloadPath,
+        '--write-out',
+        '%{http_code}',
+        url,
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+
+    if (result.status !== 0 || result.stdout.trim() !== '200') {
+      throw new Error(
+        `Packaged daemon did not serve terminal asset ${asset} (status ${result.stdout.trim() || 'none'})`
+      )
+    }
+
+    const body = readFileSync(downloadPath)
+    if (body.byteLength === 0) {
+      throw new Error(`Packaged daemon served an empty ${asset}`)
+    }
+    if (asset.endsWith('.wasm') && !body.subarray(0, 4).equals(WASM_MAGIC)) {
+      throw new Error(
+        `Packaged daemon served ${asset} without a WebAssembly header; WebAssembly.instantiate would reject it`
+      )
+    }
+  }
+
+  log(
+    `Packaged daemon served ${String(terminalAssets.length)} terminal runtime assets`
+  )
+}
+
+function smokeTestPackagedApp(
+  stageAppDir: string,
+  terminalAssets: readonly string[]
+): void {
   const appName = resolveDesktopAppName({
     isDevelopment: false,
     version: BUILD_VERSION,
@@ -934,6 +1014,11 @@ function smokeTestPackagedApp(stageAppDir: string): void {
           ],
           { env: smokeEnv }
         )
+        assertTerminalAssetsAreServed(
+          requireSmokeDaemonUrl(stateRoot),
+          terminalAssets,
+          smokeRoot
+        )
         log(
           'Packaged app loaded its renderer and installed a working MCP command'
         )
@@ -1012,6 +1097,10 @@ function stage(stageRoot: string): void {
 
   // Validate bundled client assets.
   validateBundledClientAssets(DIST_DIRS.webDist)
+  const terminalAssets = resolveBundledTerminalAssets(DIST_DIRS.webDist)
+  log(
+    `Validated ${String(terminalAssets.length)} terminal runtime assets in the bundled client`
+  )
 
   log('Staging release app...')
 
@@ -1143,10 +1232,10 @@ function stage(stageRoot: string): void {
     { cwd: stageAppDir, env: buildEnv }
   )
 
-  validatePackagedAsar(stageAppDir)
+  validatePackagedAsar(stageAppDir, terminalAssets)
   validatePackagedMcpResources(stageAppDir)
   smokeTestPackagedMcp(stageAppDir)
-  smokeTestPackagedApp(stageAppDir)
+  smokeTestPackagedApp(stageAppDir, terminalAssets)
 
   // Copy artifacts to output dir.
   const stageDistDir = join(stageAppDir, 'dist')

@@ -70,9 +70,24 @@
   --diff-selected-tint-mix: 50%;
   --diff-selected-gutter-mix: 91%;
   --diff-selected-gutter-tint-mix: 35%;
+
+  /*
+   * Overlay scrollbar tokens for the vendored Ghostty surface, which draws its
+   * own scrollbar element (the terminal canvas has no scrollable box for the
+   * platform to decorate). Values ported from t3code so the vendored markup
+   * can be re-synced without being rewritten; the thumb is deliberately a
+   * literal rather than a `--foreground` mix, because the terminal keeps its
+   * own zinc palette regardless of the app theme.
+   */
+  --app-scrollbar-width: 6px;
+  --app-scrollbar-thumb: rgb(217 217 217);
+  --app-scrollbar-thumb-hover: rgb(191 191 191);
 }
 
 .dark {
+  --app-scrollbar-thumb: rgb(255 255 255 / 8%);
+  --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+
   --diff-change-mix: 70%;
   --diff-change-number-mix: 60%;
   --diff-selected-mix: 80%;

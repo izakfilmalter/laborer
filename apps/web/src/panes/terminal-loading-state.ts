@@ -1,32 +1,30 @@
 type ReplayStatus = 'idle' | 'replaying' | 'complete'
 
 /**
- * Replay owns reconnect loading; parsed output remains received afterward.
+ * Replay owns the loading overlay outright.
  *
- * `replayStatus` reaches `complete` only once the backend has finished sending
- * replay frames *and* xterm has parsed them, so `hasReceivedData` — which stays
- * true across a reconnect from the previous session's output — can never lift
- * the overlay off a screen that still shows stale content.
+ * Ghostty parses synchronously, so the daemon's `ReplayComplete` is the whole
+ * truth: by the time it arrives every replayed frame is already on screen.
+ * `idle` is a replay that has opened over nothing the operator has seen — a
+ * fresh pane — so it shows startup rather than claiming to restore.
  *
  * A stopped terminal replays its final screen like any other, so restoring
  * covers it too. Only the startup message is exclusive to a running terminal:
  * a dead process will never produce the first output it promises.
  *
- * @see apps/web/src/hooks/use-terminal-rpc.ts — createReplayCoordinator
+ * @see apps/web/src/lib/terminal-attach-loop.ts — where the status comes from
  */
 export const terminalLoadingMessage = ({
-  hasReceivedData,
   isRunning,
   replayStatus,
 }: {
-  readonly hasReceivedData: boolean
   readonly isRunning: boolean
   readonly replayStatus: ReplayStatus
 }): 'Restoring terminal...' | 'Starting terminal...' | undefined => {
   if (replayStatus === 'replaying') {
     return 'Restoring terminal...'
   }
-  if (isRunning && !hasReceivedData) {
+  if (isRunning && replayStatus === 'idle') {
     return 'Starting terminal...'
   }
   return undefined
@@ -34,8 +32,8 @@ export const terminalLoadingMessage = ({
 
 /**
  * The revival marker labels history the operator can see. It waits for the
- * restored buffer to be parsed onto the screen, otherwise it narrates output
- * that has not been rendered yet.
+ * restored buffer to reach the screen, otherwise it narrates output that has
+ * not been rendered yet.
  */
 export const showTerminalRevivalMarker = ({
   replayStatus,

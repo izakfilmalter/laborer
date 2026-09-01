@@ -35,9 +35,9 @@ export default defineConfig({
     timeout: 15_000,
   },
 
-  /* Retry on failure to handle flakiness from xterm.js keyboard capture
+  /* Retry on failure to handle flakiness from terminal keyboard capture
    * and real service startup timing. Panel system tests with Ctrl+B
-   * shortcuts are particularly affected by xterm.js focus races. */
+   * shortcuts are particularly affected by terminal focus races. */
   retries: 2,
 
   /* Run tests sequentially since they share real backend services */

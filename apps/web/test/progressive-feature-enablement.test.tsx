@@ -23,7 +23,8 @@ import { useWhenPhase } from '../src/hooks/use-when-phase'
 
 // ---------------------------------------------------------------------------
 // Test components — simulate the phase-gating patterns applied to real
-// components without importing their heavy dependencies (xterm.js, etc.)
+// components without importing their heavy dependencies (the Ghostty WASM
+// runtime, etc.)
 // ---------------------------------------------------------------------------
 
 /**

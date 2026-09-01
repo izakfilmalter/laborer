@@ -10,7 +10,7 @@
  *
  * The PanelManager fills its parent container and renders pane content
  * based on the pane type:
- * - "terminal" → renders a TerminalPane with xterm.js
+ * - "terminal" → renders a TerminalPane on the Ghostty surface
  * - "diff" → renders a DiffPane with @pierre/diffs
  *
  * Empty terminal panes show a guided empty state with a CTA to spawn a
@@ -888,7 +888,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
 
   // When fullscreened, portal the pane content into a container that sits
   // above the entire panel hierarchy. The pane stays mounted in React's
-  // component tree (preserving xterm.js instance, WebGL context, WebSocket
+  // component tree (preserving the Ghostty surface, its canvas, the WebSocket
   // connection, and all hook state) but its DOM output renders into an
   // absolutely-positioned overlay at the PanelContent level.
   //

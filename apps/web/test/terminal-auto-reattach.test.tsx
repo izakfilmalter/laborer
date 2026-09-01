@@ -157,27 +157,21 @@ const createDaemon = () => {
   }
 }
 
+/** Stands in for the Ghostty surface: every write parses before it returns. */
 const createCanvas = () => {
   const drawn: string[] = []
-  const parsers: Array<() => void> = []
   const canvas: TerminalScreenCanvas = {
-    reset: () => {
+    resetAndWrite: (data) => {
       drawn.length = 0
-    },
-    write: (data, commit) => {
-      drawn.push(data)
-      parsers.push(commit)
-    },
-  }
-  return {
-    canvas,
-    drawn,
-    parseAll: () => {
-      for (const parse of parsers.splice(0)) {
-        parse()
+      if (data.length > 0) {
+        drawn.push(data)
       }
     },
+    write: (data) => {
+      drawn.push(data)
+    },
   }
+  return { canvas, drawn }
 }
 
 /**
@@ -235,7 +229,7 @@ describe('a pane whose attach stream drops', () => {
   }
 
   it('reopens the stream after a failure and reports connected again', async () => {
-    const { canvas, daemon, view } = await openPane()
+    const { daemon, view } = await openPane()
 
     daemon.current().feed.push({
       _tag: 'Snapshot',
@@ -243,10 +237,6 @@ describe('a pane whose attach stream drops', () => {
       data: 'restored screen',
     })
     daemon.current().feed.push(RUNNING)
-    await settle()
-    act(() => {
-      canvas.parseAll()
-    })
     await settle()
 
     expect(view.result.current.status).toBe('connected')

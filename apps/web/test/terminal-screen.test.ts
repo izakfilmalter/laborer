@@ -1,55 +1,45 @@
 /**
- * The canvas a pane draws on has its own lifetime, independent of the attach
- * stream feeding it. These tests pin the consequences: a rebuilt canvas is a
- * different screen, and everything queued for the one it replaced — output and
- * the parse callbacks that acknowledge it — belongs to a screen the operator
- * can no longer see.
+ * The surface a pane draws on has its own lifetime, independent of the attach
+ * stream feeding it. These tests pin the consequences: a rebuilt surface is a
+ * different screen, and output aimed at the one it replaced — or at a pane
+ * whose asynchronously built surface has not arrived yet — belongs to a screen
+ * the operator cannot see.
  *
  * @see apps/web/src/lib/terminal-screen.ts
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import {
   createTerminalScreen,
   type TerminalScreenCanvas,
 } from '../src/lib/terminal-screen'
 
-/** Stands in for xterm: chunks are parsed when the test says so. */
+/** Stands in for the Ghostty surface: every write parses before it returns. */
 const createCanvas = () => {
   const drawn: string[] = []
-  const parsers: Array<() => void> = []
   const canvas: TerminalScreenCanvas = {
-    reset: () => {
+    resetAndWrite: (data) => {
       drawn.length = 0
-    },
-    write: (data, commit) => {
-      drawn.push(data)
-      parsers.push(commit)
-    },
-  }
-  return {
-    canvas,
-    drawn,
-    parseNext: () => {
-      const parse = parsers.shift()
-      if (!parse) {
-        throw new Error('No queued write to parse')
+      if (data.length > 0) {
+        drawn.push(data)
       }
-      parse()
     },
-    pending: () => parsers.length,
+    write: (data) => {
+      drawn.push(data)
+    },
   }
+  return { canvas, drawn }
 }
 
 describe('terminal screen', () => {
-  it('has no generation until a canvas is mounted', () => {
+  it('has no generation until a surface is mounted', () => {
     const screen = createTerminalScreen()
 
     expect(screen.generation()).toBe(0)
   })
 
-  it('gives each mounted canvas its own generation', () => {
+  it('gives each mounted surface its own generation', () => {
     const screen = createTerminalScreen()
     const first = createCanvas()
     const second = createCanvas()
@@ -63,7 +53,7 @@ describe('terminal screen', () => {
     expect(screen.generation()).not.toBe(firstGeneration)
   })
 
-  it('reports no generation once the canvas is retired', () => {
+  it('reports no generation once the surface is retired', () => {
     const screen = createTerminalScreen()
     const canvas = createCanvas()
 
@@ -73,7 +63,7 @@ describe('terminal screen', () => {
     expect(screen.generation()).toBe(0)
   })
 
-  it('lets a stale cleanup run after the canvas that replaced it', () => {
+  it('lets a stale cleanup run after the surface that replaced it', () => {
     const screen = createTerminalScreen()
     const previous = createCanvas()
     const next = createCanvas()
@@ -81,96 +71,77 @@ describe('terminal screen', () => {
     screen.mount(previous.canvas)
     screen.mount(next.canvas)
     // React's remount ordering can deliver the old cleanup afterwards; it must
-    // not retire the canvas now on screen.
+    // not retire the surface now on screen.
     screen.unmount(previous.canvas)
 
-    const commit = vi.fn()
-    screen.write('live', commit)
+    screen.write('live')
 
     expect(next.drawn).toEqual(['live'])
     expect(screen.generation()).not.toBe(0)
   })
 
-  it('draws onto the mounted canvas and commits when it parses', () => {
+  it('draws onto the mounted surface and reports that it landed', () => {
     const screen = createTerminalScreen()
     const canvas = createCanvas()
-    const commit = vi.fn()
 
     screen.mount(canvas.canvas)
 
-    expect(screen.write('hello', commit)).toBe(true)
+    expect(screen.write('hello')).toBe(true)
     expect(canvas.drawn).toEqual(['hello'])
-    expect(commit).not.toHaveBeenCalled()
-
-    canvas.parseNext()
-    expect(commit).toHaveBeenCalledOnce()
   })
 
-  it('commits an empty chunk without troubling the canvas', () => {
+  it('accepts an empty chunk without troubling the surface', () => {
     const screen = createTerminalScreen()
     const canvas = createCanvas()
-    const commit = vi.fn()
 
     screen.mount(canvas.canvas)
-    screen.write('', commit)
+
+    expect(screen.write('')).toBe(true)
+    expect(canvas.drawn).toEqual([])
+  })
+
+  it('replaces the screen for a snapshot rather than appending it', () => {
+    const screen = createTerminalScreen()
+    const canvas = createCanvas()
+
+    screen.mount(canvas.canvas)
+    screen.write('history')
+
+    expect(screen.resetAndWrite('restored')).toBe(true)
+    expect(canvas.drawn).toEqual(['restored'])
+  })
+
+  it('clears the screen for an empty snapshot', () => {
+    const screen = createTerminalScreen()
+    const canvas = createCanvas()
+
+    screen.mount(canvas.canvas)
+    screen.write('history')
+    // A `Reset` has no payload to replay: the empty snapshot is the RIS.
+    screen.resetAndWrite('')
 
     expect(canvas.drawn).toEqual([])
-    expect(commit).toHaveBeenCalledOnce()
   })
 
-  it('drops output that has no canvas to land on', () => {
+  it('drops output that has no surface to land on', () => {
     const screen = createTerminalScreen()
     const canvas = createCanvas()
-    const commit = vi.fn()
 
     // Reporting the drop is what keeps the caller from counting the chunk as
-    // reached and resuming past output no screen ever showed.
-    expect(screen.write('orphan', commit)).toBe(false)
-    // The canvas that eventually mounts is blank and forces a fresh replay, so
-    // the orphaned chunk must not surface on it or be acknowledged.
+    // reached and resuming past output no screen ever showed. A pane renders
+    // before Ghostty's surface finishes loading, so this is the ordinary
+    // opening state of every pane, not just a teardown race.
+    expect(screen.write('orphan')).toBe(false)
+    expect(screen.resetAndWrite('snapshot')).toBe(false)
+
+    // The surface that eventually mounts is blank and forces a fresh replay,
+    // so the orphaned chunks must not surface on it.
     screen.mount(canvas.canvas)
 
     expect(canvas.drawn).toEqual([])
-    expect(canvas.pending()).toBe(0)
-    expect(commit).not.toHaveBeenCalled()
   })
 
-  it('never lets a retired canvas parse its way into an acknowledgement', () => {
-    const screen = createTerminalScreen()
-    const previous = createCanvas()
-    const next = createCanvas()
-    const commit = vi.fn()
-
-    screen.mount(previous.canvas)
-    screen.write('history', commit)
-    screen.unmount(previous.canvas)
-    screen.mount(next.canvas)
-
-    // xterm can report the chunk parsed after its terminal was replaced.
-    previous.parseNext()
-
-    expect(commit).not.toHaveBeenCalled()
-    expect(next.drawn).toEqual([])
-  })
-
-  it('clears only the canvas on screen', () => {
-    const screen = createTerminalScreen()
-    const canvas = createCanvas()
-
-    screen.mount(canvas.canvas)
-    screen.write('history', () => undefined)
-    screen.reset()
-
-    expect(canvas.drawn).toEqual([])
-
-    screen.unmount(canvas.canvas)
-    // A pane with no canvas has nothing to clear, and must not throw for it.
-    expect(() => {
-      screen.reset()
-    }).not.toThrow()
-  })
-
-  it('announces a rebuilt canvas to whoever is feeding the screen', () => {
+  it('announces a rebuilt surface to whoever is feeding the screen', () => {
     const screen = createTerminalScreen()
     const first = createCanvas()
     const second = createCanvas()
@@ -191,5 +162,17 @@ describe('terminal screen', () => {
     unsubscribe()
     screen.mount(createCanvas().canvas)
     expect(generations).toHaveLength(1)
+  })
+
+  it('announces the first surface, so a waiting attach can open', () => {
+    const screen = createTerminalScreen()
+    const generations: number[] = []
+
+    screen.subscribe(() => {
+      generations.push(screen.generation())
+    })
+    screen.mount(createCanvas().canvas)
+
+    expect(generations).toEqual([1])
   })
 })

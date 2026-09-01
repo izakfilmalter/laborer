@@ -1,5 +1,13 @@
-import type { IBufferRange, ILink, Terminal } from '@xterm/xterm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+/**
+ * The host's half of terminal links: opening one, and the menu that offers it.
+ *
+ * Detecting a URL under the pointer belongs to the renderer and is covered
+ * beside it.
+ *
+ * @see apps/web/src/terminal/ghostty-support/terminal-links.test.ts — matching
+ */
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { openExternalUrlMock } = vi.hoisted(() => ({
   openExternalUrlMock: vi.fn(async () => true),
@@ -10,154 +18,29 @@ vi.mock('../src/lib/local-api', () => ({
 }))
 
 import {
-  createTerminalLinkProvider,
   openTerminalLink,
   terminalContextMenuItems,
-  terminalOscLinkHandler,
 } from '../src/lib/terminal-links'
 
-interface FakeRow {
-  readonly isWrapped: boolean
-  readonly text: string
-}
-
-/**
- * Minimal xterm buffer over fixed-width rows — enough for the link provider,
- * which only reads line wrap flags and single-width cells.
- */
-const fakeTerminal = (rows: readonly FakeRow[], cols: number): Terminal => {
-  const cellAt = (row: FakeRow, column: number) => row.text[column] ?? ' '
-  const makeCell = () => {
-    let chars = ' '
-    return {
-      getChars: () => chars,
-      getWidth: () => 1,
-      setChars: (next: string) => {
-        chars = next
-      },
-    }
-  }
-
-  const getLine = (index: number) => {
-    const row = rows[index]
-    if (!row) {
-      return undefined
-    }
-    return {
-      isWrapped: row.isWrapped,
-      length: cols,
-      getCell: (column: number, cell: ReturnType<typeof makeCell>) => {
-        cell.setChars(cellAt(row, column))
-        return cell
-      },
-    }
-  }
-
-  return {
-    buffer: {
-      active: { length: rows.length, getLine, getNullCell: makeCell },
-    },
-  } as unknown as Terminal
-}
-
-const provideLinks = (
-  terminal: Terminal,
-  bufferLineNumber: number
-): ILink[] => {
-  let links: ILink[] = []
-  createTerminalLinkProvider(terminal).provideLinks(
-    bufferLineNumber,
-    (provided) => {
-      links = [...(provided ?? [])]
-    }
-  )
-  return links
-}
-
-const LINK_RANGE: IBufferRange = {
-  start: { x: 1, y: 1 },
-  end: { x: 10, y: 1 },
-}
-
-describe('terminal links', () => {
-  beforeEach(() => {
+describe('opening a terminal link', () => {
+  afterEach(() => {
     openExternalUrlMock.mockClear()
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
+  it('routes through the desktop bridge rather than the page', () => {
+    openTerminalLink('https://example.com/issue/123')
 
-  it('opens a detected URL through the desktop bridge', () => {
-    openTerminalLink('https://example.com/docs')
-
-    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/docs')
-  })
-
-  it('opens an OSC 8 hyperlink without a confirmation prompt', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm')
-
-    terminalOscLinkHandler.activate(
-      new MouseEvent('click'),
-      'https://example.com/issue/123',
-      LINK_RANGE
-    )
-
-    expect(confirmSpy).not.toHaveBeenCalled()
     expect(openExternalUrlMock).toHaveBeenCalledWith(
       'https://example.com/issue/123'
     )
   })
 
-  it('keeps non-HTTP OSC 8 protocols disabled', () => {
-    expect(terminalOscLinkHandler.allowNonHttpProtocols).toBe(false)
-  })
-})
+  it('does not surface a failed open to the caller', () => {
+    openExternalUrlMock.mockRejectedValueOnce(new Error('no shell'))
 
-describe('wrapped terminal links', () => {
-  const WRAPPED_URL = 'https://exampl.com/a/very/long/path'
-  const terminal = fakeTerminal(
-    [
-      { text: 'see https://exampl.c', isWrapped: false },
-      { text: 'om/a/very/long/path', isWrapped: true },
-    ],
-    20
-  )
-
-  it('detects the whole URL from the row where it starts', () => {
-    const [link] = provideLinks(terminal, 1)
-
-    expect(link?.text).toBe(WRAPPED_URL)
-    expect(link?.range).toEqual({
-      start: { x: 5, y: 1 },
-      end: { x: 19, y: 2 },
-    })
-  })
-
-  it('detects the whole URL from the wrapped continuation row', () => {
-    const [link] = provideLinks(terminal, 2)
-
-    expect(link?.text).toBe(WRAPPED_URL)
-  })
-
-  it('opens the full URL when a wrapped link is activated', () => {
-    const [link] = provideLinks(terminal, 2)
-
-    link?.activate(new MouseEvent('click'), link.text)
-
-    expect(openExternalUrlMock).toHaveBeenCalledWith(WRAPPED_URL)
-  })
-
-  it('does not join rows that are not soft wrapped', () => {
-    const hardWrapped = fakeTerminal(
-      [
-        { text: 'see https://exampl.c', isWrapped: false },
-        { text: 'om/a/very/long/path', isWrapped: false },
-      ],
-      20
-    )
-
-    expect(provideLinks(hardWrapped, 1)[0]?.text).toBe('https://exampl.c')
+    expect(() => {
+      openTerminalLink('https://example.com')
+    }).not.toThrow()
   })
 })
 
@@ -182,5 +65,14 @@ describe('terminal context menu items', () => {
         (item) => item.id
       )
     ).toEqual(['paste'])
+  })
+
+  it('always offers paste, which has nothing to read the screen for', () => {
+    expect(
+      terminalContextMenuItems({
+        link: 'https://example.com',
+        hasSelection: true,
+      }).map((item) => item.id)
+    ).toEqual(['copy-link', 'open-link', 'copy', 'paste'])
   })
 })

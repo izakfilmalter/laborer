@@ -90,8 +90,8 @@ vi.mock('@atlaskit/pragmatic-drag-and-drop/reorder', () => ({
   reorder: vi.fn(),
 }))
 
-// Mock PanelManager, DiffPane, resizable, and header to avoid
-// Mock xterm and other heavyweight transitive dependencies.
+// Mock PanelManager, DiffPane, resizable, and header to avoid the Ghostty
+// WASM runtime and other heavyweight transitive dependencies.
 vi.mock('@/panels/panel-manager', () => ({
   PanelManager: ({ layout }: { layout: unknown }) => (
     <div data-testid="panel-manager">{layout ? 'has-layout' : 'empty'}</div>

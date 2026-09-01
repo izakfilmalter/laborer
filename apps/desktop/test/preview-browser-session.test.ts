@@ -4,6 +4,7 @@ interface MockBrowserSession {
   clearCache: ReturnType<typeof vi.fn>
   clearStorageData: ReturnType<typeof vi.fn>
   getUserAgent: ReturnType<typeof vi.fn>
+  setCertificateVerifyProc: ReturnType<typeof vi.fn>
   setPermissionCheckHandler: ReturnType<typeof vi.fn>
   setPermissionRequestHandler: ReturnType<typeof vi.fn>
   setUserAgent: ReturnType<typeof vi.fn>
@@ -25,6 +26,7 @@ describe('BrowserSession', () => {
         clearCache: vi.fn(async () => undefined),
         clearStorageData: vi.fn(async () => undefined),
         getUserAgent: vi.fn(() => 'Mozilla/5.0 Electron/40.6.0 Laborer/0.0.0'),
+        setCertificateVerifyProc: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
         setUserAgent: vi.fn(),
@@ -79,6 +81,39 @@ describe('BrowserSession', () => {
       })
       expect(granted).toBe(false)
       expect(check(null, permission)).toBe(false)
+    }
+  })
+
+  it('accepts loopback certificates and defers to Chromium elsewhere', () => {
+    const host = new BrowserSession()
+    const partition = host.getPartition('scope-a')
+    host.getSession('scope-a')
+    const browserSession = sessions.get(partition)
+    expect(browserSession).toBeDefined()
+    if (!browserSession) {
+      throw new Error('Expected preview browser session')
+    }
+    const verify = browserSession.setCertificateVerifyProc.mock.calls[0]?.[0]
+    expect(verify).toBeDefined()
+
+    const verdict = (hostname: string): number => {
+      let result = Number.NaN
+      verify({ hostname }, (value: number) => {
+        result = value
+      })
+      return result
+    }
+
+    for (const hostname of ['localhost', 'LocalHost', '127.0.0.1', '::1']) {
+      expect(verdict(hostname)).toBe(0)
+    }
+    for (const hostname of [
+      'example.com',
+      'localhost.evil.com',
+      '127.0.0.1.evil.com',
+      '192.168.1.10',
+    ]) {
+      expect(verdict(hostname)).toBe(-3)
     }
   })
 

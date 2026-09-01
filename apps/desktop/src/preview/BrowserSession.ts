@@ -13,6 +13,22 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   'geolocation',
 ])
 
+const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set([
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '[::1]',
+])
+
+/** Accept the certificate despite Chromium's verdict. */
+const VERIFY_RESULT_ACCEPT = 0
+/** Defer to Chromium's own certificate verification result. */
+const VERIFY_RESULT_USE_CHROMIUM = -3
+
+export function isLoopbackHostname(hostname: string): boolean {
+  return LOOPBACK_HOSTNAMES.has(hostname.toLowerCase())
+}
+
 export class BrowserSession {
   readonly #sessions = new Map<string, Session>()
 
@@ -46,6 +62,18 @@ export class BrowserSession {
     browserSession.setPermissionCheckHandler((_webContents, permission) =>
       ALLOWED_PREVIEW_PERMISSIONS.has(permission)
     )
+    // Dev servers (for example `https://localhost:3000` with a self-signed
+    // certificate) would otherwise fail silently: Electron webviews render
+    // nothing instead of Chrome's interstitial. Trust is scoped to loopback
+    // hosts within preview partitions; everything else keeps Chromium's
+    // verdict.
+    browserSession.setCertificateVerifyProc((request, callback) => {
+      callback(
+        isLoopbackHostname(request.hostname)
+          ? VERIFY_RESULT_ACCEPT
+          : VERIFY_RESULT_USE_CHROMIUM
+      )
+    })
     this.#sessions.set(partition, browserSession)
     return browserSession
   }

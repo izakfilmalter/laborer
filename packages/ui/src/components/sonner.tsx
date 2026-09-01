@@ -24,8 +24,14 @@ const Toaster = ({ theme: themeProp, ...props }: ToasterProps) => {
           warning: <TriangleAlertIcon className="size-4" />,
           error: <OctagonXIcon className="size-4" />,
           loading: (
-            <span className="inline-flex size-4 animate-spin">
-              <Loader2Icon className="size-full" />
+            <span className="inline-flex size-4 shrink-0 animate-spin items-center justify-center">
+              <Loader2Icon
+                className="block size-full"
+                // Sonner offsets direct SVG icons one pixel to balance its
+                // icon slot. This SVG rotates inside a wrapper, so inheriting
+                // that offset makes its center orbit the wrapper's center.
+                style={{ margin: 0 }}
+              />
             </span>
           ),
         }}

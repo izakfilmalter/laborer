@@ -52,6 +52,102 @@ describe('discoverProjectIcon', () => {
     })
   )
 
+  it.effect("finds a monorepo web app's favicon below the root", () =>
+    Effect.gen(function* () {
+      const root = repository({
+        'apps/api/package.json': '{}',
+        'apps/web/public/favicon.ico': 'web-ico',
+      })
+
+      const icon = yield* discoverProjectIcon(root)
+
+      assert.strictEqual(
+        icon,
+        `data:image/x-icon;base64,${Buffer.from('web-ico').toString('base64')}`
+      )
+    })
+  )
+
+  it.effect('prefers a shallower icon over one buried deeper', () =>
+    Effect.gen(function* () {
+      const root = repository({
+        'apps/web/public/favicon.ico': 'web-ico',
+        'public/favicon.ico': 'root-ico',
+      })
+
+      assert.strictEqual(
+        yield* discoverProjectIcon(root),
+        `data:image/x-icon;base64,${Buffer.from('root-ico').toString('base64')}`
+      )
+    })
+  )
+
+  it.effect('finds an icon wherever the framework puts it', () =>
+    Effect.gen(function* () {
+      const root = repository({
+        'src/frontend/static/img/favicon.png': 'nested-png',
+      })
+
+      assert.include(yield* discoverProjectIcon(root) ?? '', 'image/png')
+    })
+  )
+
+  it.effect("ignores icons belonging to a repository's dependencies", () =>
+    Effect.gen(function* () {
+      const root = repository({
+        'dist/favicon.svg': '<svg />',
+        'node_modules/some-package/public/favicon.svg': '<svg />',
+      })
+
+      assert.strictEqual(yield* discoverProjectIcon(root), null)
+    })
+  )
+
+  it.effect('prefers the plain favicon over its sized variants', () =>
+    Effect.gen(function* () {
+      const root = repository({
+        'public/favicon-16x16.png': 'small',
+        'public/favicon-32x32.png': 'large',
+        'public/favicon.png': 'plain',
+      })
+
+      assert.strictEqual(
+        yield* discoverProjectIcon(root),
+        `data:image/png;base64,${Buffer.from('plain').toString('base64')}`
+      )
+    })
+  )
+
+  it.effect(
+    'prefers the largest sized variant when there is no plain one',
+    () =>
+      Effect.gen(function* () {
+        const root = repository({
+          'public/favicon-16x16.png': 'small',
+          'public/favicon-32x32.png': 'large',
+        })
+
+        assert.strictEqual(
+          yield* discoverProjectIcon(root),
+          `data:image/png;base64,${Buffer.from('large').toString('base64')}`
+        )
+      })
+  )
+
+  it.effect('prefers a favicon over an apple-touch-icon beside it', () =>
+    Effect.gen(function* () {
+      const root = repository({
+        'public/apple-touch-icon.png': 'touch',
+        'public/favicon.ico': 'fav',
+      })
+
+      assert.strictEqual(
+        yield* discoverProjectIcon(root),
+        `data:image/x-icon;base64,${Buffer.from('fav').toString('base64')}`
+      )
+    })
+  )
+
   it.effect('returns null when the repository ships no icon', () =>
     Effect.gen(function* () {
       const root = repository({ 'README.md': '# no icon here' })

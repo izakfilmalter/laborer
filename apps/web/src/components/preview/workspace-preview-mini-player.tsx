@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react'
 import { BrowserSurfaceSlot } from '@/browser/browser-surface-slot'
+import { useFullscreenPaneId } from '@/panels/panel-context'
 import { usePreviewMiniPlayerStore } from '@/preview-mini-player-store'
 import {
   emptyWorkspacePreviewState,
@@ -67,6 +68,10 @@ export function WorkspacePreviewMiniPlayer({
         miniPlayer.tabId
       )
     : null
+  // The mini player lives inside a workspace frame, which a fullscreened pane
+  // covers. Its browser surface is a native `<webview>` that paints above the
+  // DOM regardless of stacking, so hide it while any pane is fullscreened.
+  const isPaneFullscreen = useFullscreenPaneId() !== null
   const position = miniPlayer?.position ?? null
   const size = miniPlayer?.size ?? PREVIEW_MINI_PLAYER_DEFAULT_SIZE
   const tabId = miniPlayer?.tabId ?? null
@@ -275,7 +280,7 @@ export function WorkspacePreviewMiniPlayer({
               : `initial:${defaultLayoutVersion}`
           }
           tabId={runtimeTabId}
-          visible={Boolean(overlay?.hasWebContents)}
+          visible={Boolean(overlay?.hasWebContents) && !isPaneFullscreen}
         />
         <div className="pointer-events-none absolute inset-0 z-[31] rounded-xl ring-1 ring-border/80 ring-inset" />
         {overlay?.hasWebContents ? null : (

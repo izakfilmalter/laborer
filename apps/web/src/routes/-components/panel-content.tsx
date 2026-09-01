@@ -69,7 +69,10 @@ function FullscreenWorkspaceOverlay({
       <div className="h-full min-w-0 flex-1">
         <div className="h-full w-full" ref={portalRef} />
       </div>
-      <WorkspaceRightPanel workspaceId={fullscreenWorkspaceId} />
+      <WorkspaceRightPanel
+        isFullscreenOverlay
+        workspaceId={fullscreenWorkspaceId}
+      />
     </div>
   )
 }

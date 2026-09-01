@@ -218,6 +218,59 @@ const hasTerminalDimensions = ({
   rows: number
 }): boolean => cols > 0 && rows > 0
 
+/**
+ * Pin the grid to the bottom of the pane.
+ *
+ * A terminal renders whole rows, so flooring the row count strands up to one
+ * row of height. xterm parks that slack under the last row, which reads as the
+ * terminal failing to reach the bottom of its pane — and the bottom row is
+ * where the prompt lives. Shifting the grid down by the slack moves it above
+ * row 0, where it reads as padding, and keeps the prompt flush with the pane
+ * edge as it resizes across a row boundary.
+ *
+ * The offset is a margin, so it stays invisible to `FitAddon`, which measures
+ * the pane's content height and the terminal element's padding.
+ *
+ * @see t3code `terminalContentOriginY` — same slack handling for its Ghostty surface.
+ */
+export const terminalBottomSlack = ({
+  paneHeight,
+  gridHeight,
+  rows,
+}: {
+  paneHeight: number
+  gridHeight: number
+  rows: number
+}): number => {
+  const rowHeight = gridHeight / rows
+  const slack = paneHeight - gridHeight
+  // A slack of a whole row or more means the grid has not been measured yet
+  // (the renderer runs a frame behind `open()`); offsetting by it would push
+  // rows out of the pane. The next fit re-anchors once the grid is real.
+  if (!(Number.isFinite(rowHeight) && rowHeight > 0) || slack >= rowHeight) {
+    return 0
+  }
+
+  return Math.max(0, slack)
+}
+
+const anchorTerminalToBottom = (terminal: Terminal): void => {
+  const element = terminal.element
+  const screen = element?.querySelector<HTMLElement>('.xterm-screen')
+  const paneHeight = element?.parentElement?.clientHeight
+  if (!(element && screen && paneHeight !== undefined)) {
+    return
+  }
+
+  const slack = terminalBottomSlack({
+    paneHeight,
+    gridHeight: screen.clientHeight,
+    rows: terminal.rows,
+  })
+
+  element.style.marginTop = slack > 0 ? `${slack}px` : ''
+}
+
 const getProposedTerminalDimensions = (
   fitAddon: FitAddon
 ): { cols: number; rows: number } | undefined => {
@@ -300,6 +353,7 @@ const createResizeDebouncer = (
     }
 
     terminal.resize(dimensions.cols, dimensions.rows)
+    anchorTerminalToBottom(terminal)
     scheduleServerResize(dimensions)
   }
 
@@ -334,8 +388,10 @@ const createResizeDebouncer = (
       return
     }
 
-    // No change — skip
+    // No change to the grid — but a pane that grew or shrank within one row
+    // still changed how much slack sits under it, so re-anchor before leaving.
     if (dims.cols === terminal.cols && dims.rows === terminal.rows) {
+      anchorTerminalToBottom(terminal)
       return
     }
 
@@ -878,6 +934,7 @@ function TerminalPaneRenderer({
 
     try {
       fitAddon.fit()
+      anchorTerminalToBottom(terminal)
       if (terminal.cols > 0 && terminal.rows > 0) {
         resizeTerminalRef.current({
           payload: { id: terminalId, cols: terminal.cols, rows: terminal.rows },
@@ -1048,6 +1105,7 @@ function TerminalPaneRenderer({
     // with the correct size (or re-syncs on reconnection).
     try {
       fitAddon.fit()
+      anchorTerminalToBottom(terminal)
       const { cols, rows } = terminal
       if (cols > 0 && rows > 0) {
         resizeTerminalRef.current({

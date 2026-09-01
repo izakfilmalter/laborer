@@ -255,6 +255,7 @@ function WorkspaceTreeGroup({
 
   const card = (
     <WorkspaceCard
+      compactHeader
       isRootWorkspace={workspace.worktreePath === rootPath}
       onPendingCreationChange={onPendingCreationChange}
       projectName={projectName}
@@ -561,10 +562,12 @@ function PendingWorkspaceItem({
       aria-live="polite"
       className="border-warning/30 bg-warning/5"
       data-testid={`pending-workspace-${creation.id}`}
-      icon={<GitBranch className="size-4 shrink-0 text-muted-foreground" />}
+      icon={<GitBranch className="size-3.5 shrink-0 text-muted-foreground" />}
       role="status"
       subtitle={<p className="text-muted-foreground text-xs">{phaseLabel}</p>}
-      title={<span className="block truncate font-mono">{branchLabel}</span>}
+      title={
+        <span className="block truncate font-mono text-xs">{branchLabel}</span>
+      }
     />
   )
 }

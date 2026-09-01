@@ -190,7 +190,7 @@ function WorkspaceFrameTitle({
       {pathSegments.map((segment) => (
         <span key={segment}>
           <span className="mx-1">/</span>
-          <span>{segment}</span>
+          <span className="font-mono">{segment}</span>
         </span>
       ))}
     </>

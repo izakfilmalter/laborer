@@ -45,9 +45,12 @@
  * @see Issue #90: Toggle diff alongside terminal
  */
 
+import { useAtomSet } from '@effect/atom-react/Hooks'
 import type { LeafNode } from '@laborer/shared/types'
 import { useHotkeySequence } from '@tanstack/react-hotkeys'
 import { useCallback, useEffect, useRef } from 'react'
+import { BrowserDaemonClient } from '@/atoms/browser-daemon-client'
+import { closeActiveRightPanelSurface } from '@/components/right-panel/close-right-panel-surfaces'
 import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
 import { KEYBINDS, matchesKeybind } from '@/lib/keybinds'
 import { localApi } from '@/lib/local-api'
@@ -58,10 +61,17 @@ import {
   findPaneInActiveTab,
   navigateDirection as navigateDirectionInLayout,
 } from '@/panels/window-layout-utils'
+import {
+  useRightPanelFocusStore,
+  useTrackRightPanelFocus,
+} from '@/right-panel-focus-store'
 import { useRightPanelStore } from '@/right-panel-store'
 
 /** Timeout for the prefix key sequence (ms). */
 const SEQUENCE_TIMEOUT = 1500
+
+/** Ends the browser session behind a right-panel browser tab on close. */
+const closePreviewMutation = BrowserDaemonClient.mutation('preview.close')
 
 interface PanelHotkeysProps {
   /**
@@ -126,10 +136,14 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
   const actions = usePanelActions()
   const activePaneId = useActivePaneId()
   const { pullWorkspace, pushWorkspace } = useWorkspaceSyncActions()
+  const closePreview = useAtomSet(closePreviewMutation, { mode: 'promise' })
   const resizePrefixActiveRef = useRef(false)
   const resizePrefixTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   )
+
+  // Keeps Cmd+W aimed at the right panel while the user is working in it.
+  useTrackRightPanelFocus()
 
   // Cmd+W (Meta+W) should close panes, not the Electron window.
   // Capture at the window level so native close behavior is suppressed.
@@ -163,7 +177,11 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
    * Execute the progressive close chain: determines the correct close
    * action based on the current layout hierarchy and dispatches it.
    *
-   * The chain escalates from innermost to outermost:
+   * A focused right panel wins over the whole chain: its tabs are not panes,
+   * so without this the keystroke would fall through to the pane the user
+   * last touched and close a terminal beside the tab they aimed at.
+   *
+   * Otherwise the chain escalates from innermost to outermost:
    * 1. Multiple panes in active panel tab → close the active pane
    * 2. Single pane in active panel tab → close the panel tab
    * 3. Last panel tab in workspace → remove the workspace
@@ -171,6 +189,18 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
    * 5. Last window tab → show close-app dialog
    */
   const executeProgressiveClose = useCallback(() => {
+    const focusedRightPanelWorkspaceId =
+      useRightPanelFocusStore.getState().focusedWorkspaceId
+    if (
+      focusedRightPanelWorkspaceId &&
+      closeActiveRightPanelSurface({
+        closePreview,
+        workspaceId: focusedRightPanelWorkspaceId,
+      })
+    ) {
+      return
+    }
+
     if (!actions) {
       onMetaWWithoutPane?.()
       return
@@ -201,7 +231,13 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
       default:
         break
     }
-  }, [actions, activePaneId, activeWorkspaceId, onMetaWWithoutPane])
+  }, [
+    actions,
+    activePaneId,
+    activeWorkspaceId,
+    closePreview,
+    onMetaWWithoutPane,
+  ])
 
   // Listen for the Electron menu's 'close-pane' IPC action (Cmd+W on macOS).
   // The Electron menu dispatches this instead of using role:close, so

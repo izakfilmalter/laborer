@@ -67,6 +67,8 @@ export function getRightPanelMaxWidth(
 export function RightPanelShell(props: {
   /** localStorage key used to persist this panel's width. */
   widthStorageKey: string
+  /** Workspace this panel belongs to; read by right-panel focus tracking. */
+  workspaceId: string
   children: ReactNode
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -85,6 +87,7 @@ export function RightPanelShell(props: {
         'relative flex h-full min-h-0 min-w-0 max-w-full shrink-0 flex-col self-stretch border-border border-l bg-background'
       )}
       data-right-panel
+      data-workspace-id={props.workspaceId}
       ref={hostRef}
       style={{ width: `${width}px` }}
     >

@@ -44,6 +44,7 @@ import {
   selectWorkspaceRightPanelState,
   useRightPanelStore,
 } from '@/right-panel-store'
+import { closePreviewResources } from './close-right-panel-surfaces'
 import { rightPanelWidthStorageKey } from './right-panel-shell'
 import { type PullRequestTabStatus, RightPanelTabs } from './right-panel-tabs'
 
@@ -207,24 +208,7 @@ export function WorkspaceRightPanel({
   )
   const closeBrowserResources = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
-      for (const surface of surfaces) {
-        if (surface.kind !== 'preview' || !surface.resourceId) {
-          continue
-        }
-        const tabId = surface.resourceId
-        const snapshot =
-          usePreviewStateStore.getState().byWorkspaceId[workspaceId]?.sessions[
-            tabId
-          ]
-        usePreviewStateStore.getState().beginClose(workspaceId, tabId)
-        closePreview({
-          payload: { workspaceId, tabId },
-        }).catch(() => {
-          usePreviewStateStore
-            .getState()
-            .cancelClose(workspaceId, tabId, snapshot)
-        })
-      }
+      closePreviewResources({ closePreview, surfaces, workspaceId })
     },
     [closePreview, workspaceId]
   )

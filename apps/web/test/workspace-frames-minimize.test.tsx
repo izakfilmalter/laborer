@@ -77,6 +77,7 @@ vi.mock('@/panels/panel-context', () => {
     windowLayout: undefined,
   }
   return {
+    useFullscreenPaneId: () => null,
     usePanelActions: () => actions,
     usePendingClosePanelTab: () => ({
       onCancel: vi.fn(),

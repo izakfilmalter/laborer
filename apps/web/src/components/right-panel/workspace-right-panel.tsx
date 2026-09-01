@@ -36,6 +36,7 @@ import {
   workspaceViewsFromRows,
 } from '@/db/shared-state'
 import { toast } from '@/lib/toast'
+import { useFullscreenPaneId } from '@/panels/panel-context'
 import { DiffPane } from '@/panes/diff-pane'
 import { usePreviewStateStore } from '@/preview-state-store'
 import {
@@ -120,8 +121,16 @@ const projectConfigAtom = Atom.family((projectId: string) =>
 )
 
 export function WorkspaceRightPanel({
+  isFullscreenOverlay = false,
   workspaceId,
 }: {
+  /**
+   * True for the instance the fullscreen overlay renders. Every other
+   * instance sits behind that overlay while a pane is fullscreened, so its
+   * browser surface — an Electron `<webview>` that paints above the DOM
+   * regardless of z-index — must be hidden.
+   */
+  readonly isFullscreenOverlay?: boolean
   readonly workspaceId: string
 }) {
   const project = useWorkspaceProject(workspaceId)
@@ -140,6 +149,11 @@ export function WorkspaceRightPanel({
   const pullRequestStatus = useWorkspacePullRequestStatus(workspaceId)
   const projectName = project.name
   const closePreview = useAtomSet(closePreviewMutation, { mode: 'promise' })
+  // A fullscreened pane covers every inline panel. The browser surface is a
+  // native `<webview>` layer that ignores that stacking, so hide it unless
+  // this panel is the one the fullscreen overlay owns.
+  const fullscreenPaneId = useFullscreenPaneId()
+  const browserSurfaceVisible = fullscreenPaneId === null || isFullscreenOverlay
   const [pendingFileSurfaceIds, setPendingFileSurfaceIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
@@ -292,6 +306,7 @@ export function WorkspaceRightPanel({
     >
       {activeSurface ? (
         <ActiveSurfaceContent
+          browserSurfaceVisible={browserSurfaceVisible}
           configuredUrls={configuredUrls}
           onPendingChange={handlePendingChange}
           projectName={projectName}
@@ -305,12 +320,14 @@ export function WorkspaceRightPanel({
 
 /** The surface registry: maps the active descriptor to its content. */
 function ActiveSurfaceContent({
+  browserSurfaceVisible,
   configuredUrls,
   projectName,
   onPendingChange,
   surface,
   workspaceId,
 }: {
+  readonly browserSurfaceVisible: boolean
   readonly projectName: string
   readonly configuredUrls: readonly string[]
   readonly onPendingChange: (relativePath: string, pending: boolean) => void
@@ -333,7 +350,7 @@ function ActiveSurfaceContent({
         <PreviewPanel
           configuredUrls={configuredUrls}
           tabId={surface.resourceId}
-          visible
+          visible={browserSurfaceVisible}
           workspaceId={workspaceId}
         />
       )

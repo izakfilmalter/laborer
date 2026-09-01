@@ -199,10 +199,10 @@ const PreviewTimeoutSchema = Schema.Int.check(
   Schema.isLessThanOrEqualTo(60_000)
 )
 const PreviewAutomationTargetSchema = {
-  locator: Schema.optionalKey(
+  locator: Schema.optional(
     PreviewNonEmptyString.check(Schema.isMaxLength(4096))
   ),
-  selector: Schema.optionalKey(
+  selector: Schema.optional(
     PreviewNonEmptyString.check(Schema.isMaxLength(4096))
   ),
 }
@@ -211,9 +211,9 @@ export const PreviewTabRequestSchema = Schema.Struct({
   tabId: PreviewTabIdSchema,
 })
 export const PreviewCreateTabRequestSchema = Schema.Struct({
-  colorScheme: Schema.optionalKey(Schema.Literals(['system', 'light', 'dark'])),
+  colorScheme: Schema.optional(Schema.Literals(['system', 'light', 'dark'])),
   tabId: PreviewTabIdSchema,
-  zoomFactor: Schema.optionalKey(PreviewFinitePositive),
+  zoomFactor: Schema.optional(PreviewFinitePositive),
 })
 export const PreviewRegisterWebviewRequestSchema = Schema.Struct({
   tabId: PreviewTabIdSchema,
@@ -279,19 +279,19 @@ export const PreviewRecordingSaveRequestSchema = Schema.Struct({
 
 export const PreviewAutomationClickInputSchema = Schema.Struct({
   ...PreviewAutomationTargetSchema,
-  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
-  x: Schema.optionalKey(Schema.Finite),
-  y: Schema.optionalKey(Schema.Finite),
+  timeoutMs: Schema.optional(PreviewTimeoutSchema),
+  x: Schema.optional(Schema.Finite),
+  y: Schema.optional(Schema.Finite),
 })
 export const PreviewAutomationTypeInputSchema = Schema.Struct({
   ...PreviewAutomationTargetSchema,
-  clear: Schema.optionalKey(Schema.Boolean),
+  clear: Schema.optional(Schema.Boolean),
   text: Schema.String.check(Schema.isMaxLength(64_000)),
-  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
+  timeoutMs: Schema.optional(PreviewTimeoutSchema),
 })
 export const PreviewAutomationPressInputSchema = Schema.Struct({
   key: PreviewNonEmptyString.check(Schema.isMaxLength(256)),
-  modifiers: Schema.optionalKey(
+  modifiers: Schema.optional(
     Schema.Array(Schema.Literals(['Alt', 'Control', 'Meta', 'Shift'])).check(
       Schema.isMaxLength(4)
     )
@@ -299,21 +299,19 @@ export const PreviewAutomationPressInputSchema = Schema.Struct({
 })
 export const PreviewAutomationScrollInputSchema = Schema.Struct({
   ...PreviewAutomationTargetSchema,
-  deltaX: Schema.optionalKey(Schema.Finite),
-  deltaY: Schema.optionalKey(Schema.Finite),
+  deltaX: Schema.optional(Schema.Finite),
+  deltaY: Schema.optional(Schema.Finite),
 })
 export const PreviewAutomationEvaluateInputSchema = Schema.Struct({
-  awaitPromise: Schema.optionalKey(Schema.Boolean),
+  awaitPromise: Schema.optional(Schema.Boolean),
   expression: PreviewNonEmptyString.check(Schema.isMaxLength(64_000)),
-  returnByValue: Schema.optionalKey(Schema.Boolean),
+  returnByValue: Schema.optional(Schema.Boolean),
 })
 export const PreviewAutomationWaitForInputSchema = Schema.Struct({
   ...PreviewAutomationTargetSchema,
-  text: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64_000))),
-  timeoutMs: Schema.optionalKey(PreviewTimeoutSchema),
-  urlIncludes: Schema.optionalKey(
-    Schema.String.check(Schema.isMaxLength(2048))
-  ),
+  text: Schema.optional(Schema.String.check(Schema.isMaxLength(64_000))),
+  timeoutMs: Schema.optional(PreviewTimeoutSchema),
+  urlIncludes: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
 })
 
 export const PreviewAutomationClickRequestSchema = Schema.Struct({
@@ -381,8 +379,8 @@ export interface DesktopPreviewTabState {
 }
 
 export interface DesktopPreviewTabDefaults {
-  readonly colorScheme?: DesktopPreviewColorScheme
-  readonly zoomFactor?: number
+  readonly colorScheme?: DesktopPreviewColorScheme | undefined
+  readonly zoomFactor?: number | undefined
 }
 
 export interface DesktopPreviewWebviewConfig {
@@ -678,42 +676,44 @@ export interface PreviewAutomationStatus {
 }
 
 export interface PreviewAutomationTarget {
-  readonly locator?: string
-  readonly selector?: string
+  readonly locator?: string | undefined
+  readonly selector?: string | undefined
 }
 
 export interface PreviewAutomationClickInput extends PreviewAutomationTarget {
-  readonly timeoutMs?: number
-  readonly x?: number
-  readonly y?: number
+  readonly timeoutMs?: number | undefined
+  readonly x?: number | undefined
+  readonly y?: number | undefined
 }
 
 export interface PreviewAutomationTypeInput extends PreviewAutomationTarget {
-  readonly clear?: boolean
+  readonly clear?: boolean | undefined
   readonly text: string
-  readonly timeoutMs?: number
+  readonly timeoutMs?: number | undefined
 }
 
 export interface PreviewAutomationPressInput {
   readonly key: string
-  readonly modifiers?: readonly ('Alt' | 'Control' | 'Meta' | 'Shift')[]
+  readonly modifiers?:
+    | readonly ('Alt' | 'Control' | 'Meta' | 'Shift')[]
+    | undefined
 }
 
 export interface PreviewAutomationScrollInput extends PreviewAutomationTarget {
-  readonly deltaX?: number
-  readonly deltaY?: number
+  readonly deltaX?: number | undefined
+  readonly deltaY?: number | undefined
 }
 
 export interface PreviewAutomationEvaluateInput {
-  readonly awaitPromise?: boolean
+  readonly awaitPromise?: boolean | undefined
   readonly expression: string
-  readonly returnByValue?: boolean
+  readonly returnByValue?: boolean | undefined
 }
 
 export interface PreviewAutomationWaitForInput extends PreviewAutomationTarget {
-  readonly text?: string
-  readonly timeoutMs?: number
-  readonly urlIncludes?: string
+  readonly text?: string | undefined
+  readonly timeoutMs?: number | undefined
+  readonly urlIncludes?: string | undefined
 }
 
 export interface PreviewAutomationSnapshot {

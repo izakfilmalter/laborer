@@ -7,6 +7,7 @@ import type {
   PreviewAutomationPressInput,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
+  PreviewAutomationTarget,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from '@laborer/shared/desktop-bridge'
@@ -333,7 +334,7 @@ export class PreviewAutomation {
   }
 
   #elementExpression(
-    input: { locator?: string; selector?: string },
+    input: PreviewAutomationTarget,
     optional = false,
     fallback = 'null'
   ): string {

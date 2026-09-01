@@ -90,11 +90,14 @@ interface TerminalListProps {
 /** Quiet chrome: the controls recede until pointed at, so a column of cards
  *  reads as branch names and statuses rather than as a wall of buttons.
  *
- *  Icon-only, because "Agent" and "New" spelled out cost the badge rail the
- *  width the pull request pill needs; the glyph plus its tooltip says the
- *  same thing in a sixth of the space. */
+ *  The agent button keeps its word: it is the action the card exists for, and
+ *  an unlabelled provider glyph is a guess. The terminal beside it stays a
+ *  glyph plus tooltip, so the pair costs the badge rail one word instead of
+ *  two. */
 const SPAWN_BUTTON_CLASS =
-  'size-6 text-muted-foreground hover:text-foreground dark:bg-transparent dark:hover:bg-muted/50'
+  'text-muted-foreground hover:text-foreground dark:bg-transparent dark:hover:bg-muted/50'
+
+const SPAWN_ICON_BUTTON_CLASS = `size-6 ${SPAWN_BUTTON_CLASS}`
 
 /**
  * Spawn buttons for creating new terminals and agents.
@@ -127,13 +130,14 @@ function TerminalSpawnButtons({
               data-testid="start-agent"
               disabled={!(isServerReady && isServiceAvailable)}
               onClick={onSpawnAgent}
-              size="icon-xs"
+              size="xs"
               title={isServerReady ? undefined : 'Connecting to server...'}
               variant="outline"
             />
           }
         >
           <AgentIcon className="size-3" />
+          Agent
         </TooltipTrigger>
         <TooltipContent>Start {agentProvider} in a new terminal</TooltipContent>
       </Tooltip>
@@ -142,7 +146,7 @@ function TerminalSpawnButtons({
           render={
             <Button
               aria-label="New terminal"
-              className={SPAWN_BUTTON_CLASS}
+              className={SPAWN_ICON_BUTTON_CLASS}
               disabled={!(isServerReady && isServiceAvailable)}
               onClick={onSpawnTerminal}
               size="icon-xs"

@@ -43,6 +43,51 @@ import type {
 
 const { Terminal } = XtermHeadless
 
+/**
+ * DEC private modes that select how a mouse report is *encoded*.
+ *
+ * `@xterm/addon-serialize` restores which mouse events an application asked
+ * for (`?1000`, `?1002`, `?1003`) but never how it asked for them to be
+ * spelled, and the default spelling is the legacy X10 one. A renderer
+ * hydrated from that snapshot therefore reports motion as
+ * `ESC [ M Cb Cx Cy` to a TUI that requested SGR: the TUI drops the CSI it
+ * cannot parse and inserts the three coordinate bytes as literal text, so
+ * hovering an idle agent types garbage into its prompt.
+ */
+const MOUSE_ENCODING_RESTORE: Readonly<Record<string, string>> = {
+  SGR: '\u001b[?1006h',
+  SGR_PIXELS: '\u001b[?1016h',
+  URXVT: '\u001b[?1015h',
+  UTF8: '\u001b[?1005h',
+}
+
+/** The mode sequence that reinstates `encoding`, empty for the X10 default. */
+const mouseEncodingRestoreSequence = (encoding: string): string =>
+  MOUSE_ENCODING_RESTORE[encoding] ?? ''
+
+/**
+ * The encoding the mirrored application selected.
+ *
+ * xterm tracks this on its core mouse service and exposes no public reader
+ * for it — `Terminal.modes` carries the tracking mode alone — so the lookup
+ * is defensive and degrades to the X10 default rather than throwing when the
+ * internal shape changes.
+ */
+const activeMouseEncoding = (
+  terminal: InstanceType<typeof Terminal>
+): string => {
+  const core: unknown = Reflect.get(terminal, '_core')
+  const service: unknown =
+    typeof core === 'object' && core !== null
+      ? Reflect.get(core, 'coreMouseService')
+      : undefined
+  const encoding: unknown =
+    typeof service === 'object' && service !== null
+      ? Reflect.get(service, 'activeEncoding')
+      : undefined
+  return typeof encoding === 'string' ? encoding : ''
+}
+
 interface InFlightCommand {
   command: string
   commandLineConfidence: 'low' | 'medium' | 'high'
@@ -572,7 +617,10 @@ const createHeadlessTerminalManager = (
     if (state === undefined) {
       return ''
     }
-    return state.serializeAddon.serialize()
+    return (
+      state.serializeAddon.serialize() +
+      mouseEncodingRestoreSequence(activeMouseEncoding(state.terminal))
+    )
   }
 
   const getCommandDetectionState = (

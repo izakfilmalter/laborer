@@ -103,6 +103,41 @@ describe('HeadlessTerminalManager', () => {
   })
 
   // ---------------------------------------------------------------
+  // Mouse reporting state
+  // ---------------------------------------------------------------
+
+  it('restores the mouse encoding alongside the tracking mode', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    // What a TUI like opencode enables: any-event tracking, reported in SGR.
+    manager.write('test-1', '\u001b[?1003h\u001b[?1006hprompt')
+
+    await waitForXterm()
+
+    const screenState = manager.getScreenState('test-1')
+    // Without the encoding, a renderer hydrated from this snapshot reports
+    // motion in legacy X10 and the TUI types the coordinate bytes as text.
+    expect(screenState).toContain('\u001b[?1003h')
+    expect(screenState).toContain('\u001b[?1006h')
+  })
+
+  it('leaves the mouse encoding alone when the default is in use', async () => {
+    manager = createHeadlessTerminalManager()
+    manager.create('test-1', 80, 24)
+
+    manager.write('test-1', '\u001b[?1000hprompt')
+
+    await waitForXterm()
+
+    const screenState = manager.getScreenState('test-1')
+    expect(screenState).toContain('\u001b[?1000h')
+    for (const encoding of ['1005', '1006', '1015', '1016']) {
+      expect(screenState).not.toContain(`\u001b[?${encoding}h`)
+    }
+  })
+
+  // ---------------------------------------------------------------
   // Resize
   // ---------------------------------------------------------------
 

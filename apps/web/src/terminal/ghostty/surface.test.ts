@@ -8,6 +8,7 @@ import {
   advanceTerminalSelectionClickSequence,
   applyTerminalCopyEvent,
   clearPrimedTerminalCopyInput,
+  clipboardTypes,
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   ghosttyMouseButton,
@@ -15,6 +16,7 @@ import {
   isTerminalCompositionCommitInput,
   isTerminalCompositionKey,
   isTerminalCopyShortcut,
+  isTerminalHostModifierChord,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
@@ -27,6 +29,7 @@ import {
   terminalFontFamily,
   terminalFontSize,
   terminalGridCellAt,
+  terminalImagePasteData,
   terminalLinkAtColumn,
   terminalLinkAtPosition,
   terminalLinkAtPositionWithRange,
@@ -48,6 +51,39 @@ const cell = (text: string): GhosttyCell => ({
   overline: false,
   underline: false,
   selected: false,
+})
+
+describe('terminalImagePasteData', () => {
+  it('forwards the TUI paste binding for an image clipboard', () => {
+    expect(terminalImagePasteData(['Files', 'image/png'])).toBe('\x16')
+  })
+
+  it('sends nothing when the clipboard holds no image', () => {
+    expect(terminalImagePasteData([])).toBe('')
+    expect(terminalImagePasteData(['text/html'])).toBe('')
+  })
+})
+
+describe('clipboardTypes', () => {
+  it('reads image types off copied files, not just the types list', () => {
+    expect(
+      clipboardTypes({ types: ['Files'], files: [{ type: 'image/png' }] })
+    ).toEqual(['Files', 'image/png'])
+  })
+
+  it('tolerates a missing clipboard', () => {
+    expect(clipboardTypes(null)).toEqual([])
+  })
+})
+
+describe('isTerminalHostModifierChord', () => {
+  it('leaves Cmd chords to the host so menu accelerators still fire', () => {
+    expect(isTerminalHostModifierChord({ metaKey: true })).toBe(true)
+  })
+
+  it('keeps unmodified and Ctrl keys on the encoding path', () => {
+    expect(isTerminalHostModifierChord({ metaKey: false })).toBe(false)
+  })
 })
 
 describe('isTerminalAltGraphText', () => {

@@ -497,6 +497,51 @@ export function isTerminalPasteShortcut(
     : event.ctrlKey && event.shiftKey
 }
 
+/**
+ * What to send for a paste whose clipboard carries an image and no text.
+ *
+ * There is no terminal protocol for pasting an image, so TUIs that accept one
+ * (OpenCode, Claude Code) read the OS clipboard themselves when they see their
+ * own paste binding — Ctrl+V, which macOS never uses for paste. Ghostty proper
+ * leaves Cmd+V dead in this case, forcing the Ctrl+V muscle memory; forwarding
+ * the binding closes that gap so one shortcut pastes both kinds of content.
+ *
+ * Returns an empty string for a clipboard with no image, so an empty or
+ * unreadable clipboard sends nothing rather than a stray quoted-insert.
+ */
+export function terminalImagePasteData(types: readonly string[]): string {
+  const hasImage = types.some((type) => type.startsWith('image/'))
+  return hasImage ? TERMINAL_IMAGE_PASTE_KEY : ''
+}
+
+/** Ctrl+V: the paste binding TUIs read the OS clipboard for. */
+const TERMINAL_IMAGE_PASTE_KEY = '\x16'
+
+/**
+ * Every MIME type on a clipboard. Chromium reports an image drag-in under
+ * `types`, but a screenshot copied in Finder or Preview only shows up as
+ * `Files`, so the file list has to be read as well.
+ */
+export function clipboardTypes(
+  clipboardData:
+    | {
+        readonly types?: readonly string[] | null
+        readonly files?: ArrayLike<{ readonly type: string }> | null
+      }
+    | null
+    | undefined
+): readonly string[] {
+  const types = [...(clipboardData?.types ?? [])]
+  const files = clipboardData?.files
+  for (let index = 0; index < (files?.length ?? 0); index += 1) {
+    const file = files?.[index]
+    if (file) {
+      types.push(file.type)
+    }
+  }
+  return types
+}
+
 export function isTerminalCompositionCommitInput(
   event: Pick<InputEvent, 'inputType'>
 ): boolean {
@@ -524,6 +569,24 @@ export function isTerminalAltGraphText(
   event: Pick<KeyboardEvent, 'getModifierState' | 'key'>
 ): boolean {
   return event.getModifierState('AltGraph') && [...event.key].length === 1
+}
+
+/**
+ * Super chords (Cmd on macOS) belong to the host, never to the pty.
+ *
+ * Ghostty's encoder happily emits a Kitty sequence for Cmd+Q once a TUI turns
+ * on progressive enhancement, and encoding means `preventDefault`. In Electron
+ * a key the renderer consumes is never redispatched to the application menu, so
+ * an agent session running the Kitty protocol used to swallow Cmd+Q, Cmd+H and
+ * friends outright. Native Ghostty routes Super to keybindings and the menu for
+ * the same reason, so leave these keys to bubble untouched. Chords this surface
+ * genuinely owns (copy, paste, the readline arrow overrides) are handled before
+ * this check.
+ */
+export function isTerminalHostModifierChord(
+  event: Pick<KeyboardEvent, 'metaKey'>
+): boolean {
+  return event.metaKey
 }
 
 export function shouldReportTerminalMouse(
@@ -1343,6 +1406,12 @@ export class GhosttyTerminalSurface {
     if (isTerminalCompositionKey(event, this.composing)) {
       return
     }
+    if (isTerminalHostModifierChord(event)) {
+      // Swallow the matching keyup too: the press never reached the shell, so a
+      // Kitty report-event-types session must not see an orphaned release.
+      this.suppressedKeyCodes.add(event.code)
+      return
+    }
     this.clearPrimedCopy()
     const data = this.core.encodeKey(event)
     if (data.length === 0) {
@@ -1359,7 +1428,10 @@ export class GhosttyTerminalSurface {
     if (this.suppressedKeyCodes.delete(event.code)) {
       return
     }
-    if (isTerminalCompositionKey(event, this.composing)) {
+    if (
+      isTerminalCompositionKey(event, this.composing) ||
+      isTerminalHostModifierChord(event)
+    ) {
       return
     }
     // Ghostty's encoder only emits release codes when the terminal enabled the
@@ -1447,6 +1519,16 @@ export class GhosttyTerminalSurface {
     event.preventDefault()
     const data = event.clipboardData?.getData('text/plain') ?? ''
     if (data.length === 0) {
+      // An image-only clipboard: hand the running program its own paste
+      // binding so it can read the image itself. The pending clipboard read
+      // still resolves empty, so nothing doubles.
+      const imageData = terminalImagePasteData(
+        clipboardTypes(event.clipboardData)
+      )
+      if (imageData.length > 0) {
+        this.pasteShortcutToken += 1
+        this.options.onData(imageData)
+      }
       return
     }
     // The native paste won the race with actual text; a pending clipboard read

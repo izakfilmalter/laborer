@@ -183,6 +183,12 @@ describe('WorkspaceFrameHeader', () => {
     expect(screen.queryByTestId(WORKSPACE_FRAME_AUTHOR_TEST_ID_RE)).toBeNull()
   })
 
+  it('renders the workspace name in monospace', () => {
+    render(<WorkspaceFrameHeader {...BASE_PROPS} actions={mockActions()} />)
+
+    expect(screen.getByText('main').className).toContain('font-mono')
+  })
+
   it('does not show a task identifier for a root workspace', () => {
     render(
       <WorkspaceFrameHeader

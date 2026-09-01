@@ -323,6 +323,23 @@ describe('Workspace card layout — Row 1 (Git row)', () => {
     expect(screen.queryByRole('button', { name: REVIEW_PR_RE })).toBeNull()
     expect(screen.queryByRole('button', { name: FIX_FINDINGS_RE })).toBeNull()
   })
+
+  it('uses a compact workspace name and branch icon in the sidebar', () => {
+    mockStore([makeWorkspace()])
+
+    const { container } = render(
+      <WorkspaceList projectId="project-1" rootPath="/repo" />
+    )
+
+    expect(
+      container
+        .querySelector('[data-slot="card-title"] > span')
+        ?.getAttribute('class')
+    ).toContain('text-xs')
+    expect(
+      container.querySelector('.lucide-git-branch')?.getAttribute('class')
+    ).toContain('size-3.5')
+  })
 })
 
 const UNRESOLVED_RE = /unresolved conversation/i

@@ -184,9 +184,17 @@
   }
 }
 
-/* Slightly larger text and padding at very high resolutions */
+/*
+ * Thicker split handles at very high resolutions, so a hairline divider does
+ * not vanish on a 4K panel.
+ *
+ * Each rule is scoped to one orientation. An unscoped `width` here is
+ * unlayered CSS and therefore outranks Tailwind's `w-full` utility, which
+ * collapsed horizontal handles (the divider above a stacked workspace frame)
+ * to a two-pixel stub instead of a full-width line.
+ */
 @media (min-width: 3840px) {
-  [data-slot="resizable-handle"] {
+  [data-slot="resizable-handle"][aria-orientation="vertical"] {
     width: 2px;
   }
   [data-slot="resizable-handle"][aria-orientation="horizontal"] {

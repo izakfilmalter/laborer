@@ -703,7 +703,7 @@ function TabBarInner({
         data-testid="tab-bar-scroll-area"
       >
         <div
-          className="scrollbar-none flex h-full items-stretch overflow-x-auto"
+          className="flex h-full items-stretch overflow-x-auto overflow-y-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           ref={scrollRef}
         >
           {items.map((item, index) => (

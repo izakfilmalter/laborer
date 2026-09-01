@@ -739,6 +739,7 @@ function WorkspaceFrame({
       [workspaceId]
     )
   )
+  const showBrowser = activeRightPanelKind === 'preview'
   const showDiff = activeRightPanelKind === 'diff'
   const showComments = activeRightPanelKind === 'pull-request'
   const showFiles =
@@ -889,6 +890,7 @@ function WorkspaceFrame({
     >
       <WorkspaceFrameAttentionOutline workspaceId={workspaceId} />
       <WorkspaceFrameHeaderContainer
+        browserIsOpen={showBrowser}
         commentsIsOpen={showComments}
         diffIsOpen={showDiff}
         dragHandleRef={dragHandleRef}

@@ -34,6 +34,7 @@ function FullscreenWorkspaceHeader({
 
   return (
     <WorkspaceFrameHeaderContainer
+      browserIsOpen={activeRightPanelKind === 'preview'}
       commentsIsOpen={activeRightPanelKind === 'pull-request'}
       diffIsOpen={activeRightPanelKind === 'diff'}
       filesIsOpen={

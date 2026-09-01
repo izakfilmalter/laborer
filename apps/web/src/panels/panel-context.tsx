@@ -379,6 +379,20 @@ interface PanelActions {
    */
   readonly switchWindowTabRelative: ((delta: number) => void) | undefined
   /**
+   * Toggle the right panel's Browser surface for a workspace.
+   *
+   * When toggled ON: opens the workspace's right panel with its browser
+   * preview active, reusing the workspace's existing preview surface when
+   * one is already open. When toggled OFF: hides the right panel.
+   *
+   * Optional because the layout hook builds its actions before the
+   * full-height panel state exists; the route supplies the real one.
+   *
+   * @param paneId - The ID of the pane (used to inherit workspaceId)
+   * @returns Whether the Browser surface is now visible (true = toggled on)
+   */
+  readonly toggleBrowserPane?: (paneId: string) => boolean
+  /**
    * Toggle the pull request comments panel for a workspace.
    *
    * Shows a right-side panel with the conversation on the workspace's pull

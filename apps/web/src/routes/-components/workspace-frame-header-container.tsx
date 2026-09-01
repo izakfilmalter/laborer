@@ -43,6 +43,7 @@ function WorkspaceFrameHeaderWithProjectShortName({
  * component.
  */
 export function WorkspaceFrameHeaderContainer({
+  browserIsOpen,
   commentsIsOpen,
   diffIsOpen,
   isActiveFrame,
@@ -63,6 +64,7 @@ export function WorkspaceFrameHeaderContainer({
   readonly isMinimized: boolean
   readonly onHeaderClick: () => void
   readonly onMinimize: () => void
+  readonly browserIsOpen?: boolean
   readonly commentsIsOpen?: boolean
   readonly diffIsOpen?: boolean
   readonly filesIsOpen?: boolean
@@ -184,6 +186,7 @@ export function WorkspaceFrameHeaderContainer({
         ? null
         : workspaceData.authorLogin,
     branchName: workspaceData.branchName,
+    browserIsOpen: browserIsOpen ?? false,
     commentsIsOpen: commentsIsOpen ?? false,
     diffIsOpen: diffIsOpen ?? false,
     dragHandleRef,

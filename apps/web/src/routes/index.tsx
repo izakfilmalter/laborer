@@ -283,6 +283,31 @@ function HomeComponent() {
   )
 
   /**
+   * Toggle the right panel's Browser surface for the workspace of the given
+   * pane. Reuses the workspace's existing preview surface when one is open,
+   * so the toggle returns to the page the operator was already looking at.
+   *
+   * @param paneId - The pane ID to get the workspace from
+   * @returns Whether the Browser surface is now shown
+   */
+  const toggleBrowserPane = useCallback(
+    (paneId: string): boolean => {
+      const workspaceId = resolvePaneWorkspaceId(paneId)
+      if (workspaceId === undefined) {
+        return false
+      }
+      useRightPanelStore.getState().toggle(workspaceId, 'preview')
+      return (
+        selectActiveRightPanel(
+          useRightPanelStore.getState().byWorkspaceId,
+          workspaceId
+        ) === 'preview'
+      )
+    },
+    [resolvePaneWorkspaceId]
+  )
+
+  /**
    * Toggle the right panel's Pull request surface for the workspace of the
    * given pane. Like diff, it sits on the right; unlike diff, it reads
    * GitHub rather than the worktree.
@@ -770,6 +795,7 @@ function HomeComponent() {
       toggleDiffPane,
       toggleFilesPane,
       toggleCommentsPane,
+      toggleBrowserPane,
       openCommentsPaneForWorkspace,
       showPanelTypePicker,
     }),
@@ -784,6 +810,7 @@ function HomeComponent() {
       toggleDiffPane,
       toggleFilesPane,
       toggleCommentsPane,
+      toggleBrowserPane,
       openCommentsPaneForWorkspace,
       showPanelTypePicker,
     ]

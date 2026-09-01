@@ -33,6 +33,7 @@ import {
   FileCode2,
   FolderTree,
   GitBranchPlus,
+  Globe,
   MessagesSquare,
   Minus,
   Plus,
@@ -70,6 +71,8 @@ interface WorkspaceFrameHeaderProps {
   readonly authorLogin?: string | null | undefined
   /** The branch name for the workspace (shown in the header). */
   readonly branchName: string | undefined
+  /** Whether the right panel's Browser surface is active for the workspace. */
+  readonly browserIsOpen?: boolean | undefined
   /** Whether the PR comments panel is currently open for the active pane. */
   readonly commentsIsOpen?: boolean | undefined
   /** Whether the diff viewer is currently open for the active pane. */
@@ -232,6 +235,45 @@ function FilesToggleButton({
 }
 
 /**
+ * Icon-only toggle for the right panel's Browser surface.
+ *
+ * The browser is a right-panel surface like files, diff, and the pull
+ * request, so the header names it with an icon of its own rather than
+ * leaving it reachable only from the panel's own tab strip.
+ */
+function BrowserToggleButton({
+  browserIsOpen,
+  disabled,
+  onClick,
+}: {
+  readonly browserIsOpen: boolean
+  readonly disabled: boolean
+  readonly onClick: () => void
+}) {
+  const label = browserIsOpen ? 'Close browser' : 'Open browser'
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            aria-pressed={browserIsOpen}
+            className={browserIsOpen ? 'bg-accent text-foreground' : ''}
+            disabled={disabled}
+            onClick={onClick}
+            size="icon-sm"
+            variant="ghost"
+          />
+        }
+      >
+        <Globe className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/**
  * Icon-only pull request comments toggle.
  *
  * Disabled without a pull request, because the conversation it opens does
@@ -294,6 +336,7 @@ function CommentsToggleButton({
 function ExpandedFrameActions({
   actions,
   branchName,
+  browserIsOpen,
   commentsIsOpen,
   diffIsOpen,
   hasActivePane,
@@ -307,6 +350,7 @@ function ExpandedFrameActions({
 }: {
   readonly actions: PanelActions | null
   readonly branchName: string | undefined
+  readonly browserIsOpen: boolean
   readonly commentsIsOpen: boolean
   readonly diffIsOpen: boolean
   readonly hasActivePane: boolean
@@ -388,6 +432,11 @@ function ExpandedFrameActions({
           </KbdGroup>
         </TooltipContent>
       </Tooltip>
+      <BrowserToggleButton
+        browserIsOpen={browserIsOpen}
+        disabled={!(hasActivePane && actions?.toggleBrowserPane)}
+        onClick={withFocus((paneId) => actions?.toggleBrowserPane?.(paneId))}
+      />
       <CommentsToggleButton
         commentsIsOpen={commentsIsOpen}
         disabled={!hasActivePane}
@@ -454,6 +503,7 @@ function WorkspaceFrameHeader({
   agentStatus,
   authorLogin = null,
   branchName,
+  browserIsOpen = false,
   commentsIsOpen = false,
   diffIsOpen,
   dragHandleRef,
@@ -645,6 +695,7 @@ function WorkspaceFrameHeader({
           <ExpandedFrameActions
             actions={actions}
             branchName={branchName}
+            browserIsOpen={browserIsOpen}
             commentsIsOpen={commentsIsOpen}
             diffIsOpen={diffIsOpen}
             filesIsOpen={filesIsOpen}

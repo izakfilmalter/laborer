@@ -91,7 +91,7 @@ const TERMINAL_THEME: GhosttyTheme = {
   selectionBackground: 'rgb(39 39 42 / 50%)',
 }
 
-const TERMINAL_FONT = { family: 'JetBrains Mono', size: 13 } as const
+const TERMINAL_FONT = { family: 'JetBrains Mono', size: 12 } as const
 
 /**
  * What the right-click menu was opened over. Captured at open time because the

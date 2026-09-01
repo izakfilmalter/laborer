@@ -54,7 +54,9 @@ const task = (id: string, revision = 1): SharedTaskRow => ({
 const project = (id: string, revision = 1): SharedProjectRow => ({
   branchName: 'main',
   canonicalGitCommonDir: `/repo/${id}/.git`,
+  color: 'blue',
   createdAt: 1,
+  iconDataUrl: null,
   id,
   name: id,
   repoId: id,

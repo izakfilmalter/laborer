@@ -102,6 +102,8 @@ export function WorkspaceFrameHeaderContainer({
   const workspaceData = useMemo(() => {
     const emptyWorkspaceData = {
       authorLogin: null as string | null,
+      projectColor: null as string | null,
+      projectIconDataUrl: null as string | null,
       projectName: undefined,
       projectId: undefined,
       taskNumber: null,
@@ -146,6 +148,8 @@ export function WorkspaceFrameHeaderContainer({
     // branch it patches is whose work the frame is showing.
     return {
       authorLogin: lineage[0]?.prAuthorLogin ?? null,
+      projectColor: project?.color ?? null,
+      projectIconDataUrl: project?.iconDataUrl ?? null,
       projectName: project?.name,
       projectId: workspace.projectId,
       taskNumber: workspace.taskNumber,
@@ -202,6 +206,8 @@ export function WorkspaceFrameHeaderContainer({
     prNumber: workspaceData.prNumber,
     prApprovals: workspaceData.prApprovals,
     prReviewDecision: workspaceData.prReviewDecision,
+    projectColor: workspaceData.projectColor,
+    projectIconDataUrl: workspaceData.projectIconDataUrl,
     projectId: workspaceData.projectId,
     projectName: workspaceData.projectName,
     prState: workspaceData.prState,

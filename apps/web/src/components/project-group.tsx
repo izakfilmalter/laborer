@@ -38,7 +38,7 @@ import {
   TooltipTrigger,
 } from '@laborer/ui/components/tooltip'
 import { cn } from '@laborer/ui/lib/utils'
-import { ChevronRight, FolderGit2, Trash2 } from 'lucide-react'
+import { ChevronRight, Trash2 } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { LaborerClient } from '@/atoms/laborer-client'
@@ -48,6 +48,7 @@ import {
 } from '@/components/create-workspace-composer'
 import type { ComposerCloseReason } from '@/components/inline-composer'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { ProjectIcon } from '@/components/project-icon'
 import {
   ProjectDropIndicator,
   useProjectDragItem,
@@ -74,6 +75,8 @@ interface ProjectGroupProps {
   readonly index: number
   readonly onToggle: () => void
   readonly project: {
+    readonly color?: string | null | undefined
+    readonly iconDataUrl?: string | null | undefined
     readonly id: string
     readonly name: string
     readonly rootPath: string
@@ -214,7 +217,7 @@ function ProjectGroup({
                 expanded && 'rotate-90'
               )}
             />
-            <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
+            <ProjectIcon project={project} />
             <span className="min-w-0 flex-1 truncate" title={project.rootPath}>
               {project.name}
             </span>

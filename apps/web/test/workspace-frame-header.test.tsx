@@ -948,10 +948,49 @@ describe('WorkspaceFrameHeader', () => {
   // Active frame: accent bottom border on header
   // ---------------------------------------------------------------------------
 
-  it('applies accent bottom border when isActiveFrame is true', () => {
+  it('draws the active edge in the project accent', () => {
     const actions = mockActions()
     render(
-      <WorkspaceFrameHeader {...BASE_PROPS} actions={actions} isActiveFrame />
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isActiveFrame
+        projectColor="teal"
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    expect(header.className).toContain('border-b-2')
+    expect(header.className).toContain('border-b-teal-400')
+  })
+
+  it('tints the resting header with the project accent', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isActiveFrame={false}
+        projectColor="teal"
+      />
+    )
+
+    const header = screen.getByTestId('workspace-frame-header')
+    // A frame nobody is looking at still says which project it belongs to,
+    // but at a weight that never competes with the active edge.
+    expect(header.className).toContain('bg-teal-400/5')
+    expect(header.className).not.toContain('border-b-2')
+  })
+
+  it('falls back to the neutral active edge for a frame with no project', () => {
+    const actions = mockActions()
+    render(
+      <WorkspaceFrameHeader
+        {...BASE_PROPS}
+        actions={actions}
+        isActiveFrame
+        projectName={undefined}
+      />
     )
 
     const header = screen.getByTestId('workspace-frame-header')
@@ -991,15 +1030,17 @@ describe('WorkspaceFrameHeader', () => {
         actions={actions}
         agentStatus="needs_input"
         isActiveFrame
+        projectColor="teal"
       />
     )
 
     const header = screen.getByTestId('workspace-frame-header')
-    // Attention takes the edge over from the active-frame accent, and keeps
-    // its weight: a blocked frame must never read lighter than the frame the
-    // operator happens to be looking at.
+    // Attention takes the edge over from both the active-frame accent and the
+    // project's own, and keeps its weight: a blocked frame must never read
+    // lighter than the frame the operator happens to be looking at.
     expect(header.className).toContain('border-b-2')
     expect(header.className).not.toContain('border-b-primary')
+    expect(header.className).not.toContain('teal')
     expect(header.className).toContain('border-b-amber-400')
   })
 
@@ -1033,11 +1074,14 @@ describe('WorkspaceFrameHeader', () => {
         actions={actions}
         agentStatus="working"
         isActiveFrame
+        projectColor="teal"
       />
     )
 
     const header = screen.getByTestId('workspace-frame-header')
-    expect(header.className).toContain('border-b-primary')
+    // A working agent is the quietest report there is, so it yields to the
+    // frame the operator is already looking at — which now names its project.
+    expect(header.className).toContain('border-b-teal-400')
     expect(header.className).not.toContain('bg-blue-400')
   })
 })

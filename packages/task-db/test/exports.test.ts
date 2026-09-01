@@ -76,6 +76,10 @@ const migrationLedger = [
     '0017_pr_author_login',
     '6e03e3ef1ef730744d0177094b494b87d4cac8ab3cfaed48472154c1fc4a49e5',
   ],
+  [
+    '0018_project_appearance',
+    'f6fcf3f523f095a065fc0533b5daf34c882581542d1a82960c586cde0aa16013',
+  ],
 ]
 
 describe('@laborer/task-db exports', () => {

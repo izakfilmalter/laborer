@@ -16,6 +16,7 @@ describe('dev project bootstrap', () => {
       }> = []
       const project: ProjectRecord = {
         canonicalGitCommonDir: '/repo/.git',
+        color: null,
         id: 'project-1',
         name: 'laborer',
         repoId: 'repo-1',

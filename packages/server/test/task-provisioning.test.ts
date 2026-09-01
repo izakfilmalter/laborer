@@ -59,6 +59,7 @@ const storedTask = (path: string, id: string) => {
 
 const project = {
   canonicalGitCommonDir: '/repo/.git',
+  color: null,
   createdAt: '2026-08-10T00:00:00.000Z',
   defaultBranch: 'main',
   id: 'project-1',

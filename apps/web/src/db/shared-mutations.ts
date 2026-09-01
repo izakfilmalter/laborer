@@ -1,6 +1,7 @@
 import { labelColorForName } from '@laborer/shared/labels'
 import type {
   LabelColor,
+  ProjectColor,
   ReviewCommentSide,
   ReviewCommentStatus,
   ReviewCommentThread,
@@ -457,7 +458,13 @@ const createProjectOptimistically = createOptimisticAction<
     projectCollection.insert({
       branchName: null,
       canonicalGitCommonDir: input.repoPath,
+      // The server picks the accent from the palette the other projects have
+      // not taken, and reads the favicon off disk. Neither is knowable here,
+      // so the optimistic row leaves both to the stored row that follows;
+      // the renderer derives a name-based accent in the meantime.
+      color: null,
       createdAt: now,
+      iconDataUrl: null,
       id: input.id,
       name,
       repoId: input.id,
@@ -501,6 +508,53 @@ export const removeProject = <Result>(input: RemoveProjectInput<Result>) => {
         operationId: input.operationId,
         projectId: input.projectId,
       }),
+  })
+}
+
+export interface SetProjectColorInput<Result> {
+  readonly color: ProjectColor
+  readonly operationId: string
+  readonly projectId: string
+  readonly send: Send<
+    {
+      readonly color: ProjectColor
+      readonly expectedRevision: number
+      readonly operationId: string
+      readonly projectId: string
+    },
+    Result
+  >
+}
+
+/** Recolors a project, showing the new accent before the server confirms it. */
+export const setProjectColor = <Result>(
+  input: SetProjectColorInput<Result>
+) => {
+  const outcome = deferred<Result>()
+  return runPaced(`project:${input.projectId}`, {
+    affected: ['projects'],
+    operationId: input.operationId,
+    optimistic: () => {
+      projectCollection.update(input.projectId, (draft) => {
+        draft.color = input.color
+      })
+    },
+    outcome,
+    send: () => {
+      const row = authoritativeProject(input.projectId)
+      if (row === undefined) {
+        throw new RpcError({
+          code: 'NOT_FOUND',
+          message: 'Project no longer exists',
+        })
+      }
+      return input.send({
+        color: input.color,
+        expectedRevision: row.revision,
+        operationId: input.operationId,
+        projectId: input.projectId,
+      })
+    },
   })
 }
 

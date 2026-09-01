@@ -5,7 +5,7 @@
  * Renders a teal/cyan top border and a "Dev Server" label to make it
  * immediately obvious which terminal is the dev server process.
  *
- * The underlying TerminalPane handles all xterm.js, WebSocket, resize,
+ * The underlying TerminalPane handles all renderer, WebSocket, resize,
  * and reconnection logic identically.
  *
  * @see Issue #8: Dev server terminal pane type + toggle

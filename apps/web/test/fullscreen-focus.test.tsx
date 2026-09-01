@@ -43,9 +43,9 @@ vi.mock('@/panels/panel-group-registry', () => ({
 }))
 
 /**
- * Stands in for the real terminal pane. xterm.js renders a helper textarea
- * that owns keyboard input, so the mock exposes one too — that element is
- * what focus must land on.
+ * Stands in for the real terminal pane. The Ghostty surface renders a hidden
+ * textarea that owns keyboard input, so the mock exposes one too — that
+ * element is what focus must land on.
  */
 vi.mock('@/panes/terminal-pane', () => ({
   TerminalPane: ({ terminalId }: { terminalId: string }) => (

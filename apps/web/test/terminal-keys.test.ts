@@ -2,11 +2,12 @@
  * Unit tests for centralized keybind matching and terminal bypass logic.
  *
  * These test the pure functions that determine which keyboard events
- * bypass xterm.js and bubble to the global hotkey layer. Getting these
+ * bypass the terminal and bubble to the global hotkey layer. Getting these
  * wrong means either panel shortcuts don't work from within terminals,
  * or legitimate terminal input gets silently swallowed.
  *
  * @see apps/web/src/lib/keybinds.ts — centralized keybind definitions
+ * @see apps/web/src/lib/terminal-keyboard.ts — the surface's `beforeKey` gate
  * @see Issue #80: Keyboard shortcut scope isolation
  */
 
@@ -14,13 +15,14 @@ import { describe, expect, it } from 'vitest'
 import {
   IS_MAC,
   isPrefixKey,
-  isTerminalFindNextShortcut,
-  isTerminalFindPreviousShortcut,
-  isTerminalFindShortcut,
   KEYBINDS,
   matchesKeybind,
   shouldBypassTerminal,
 } from '../src/lib/keybinds'
+import {
+  getTerminalInputOverride,
+  handleTerminalKeyEvent,
+} from '../src/lib/terminal-keyboard'
 
 // ---------------------------------------------------------------------------
 // Helper — create a minimal KeyboardEvent-shaped object for testing.
@@ -120,7 +122,7 @@ describe('matchesKeybind with KEYBINDS.TOGGLE_FULLSCREEN (Cmd+Shift+Enter)', () 
 // Tests: shouldBypassTerminal
 //
 // This is the main public interface — it determines the complete set of
-// keyboard events that escape xterm.js to reach panel hotkeys.
+// keyboard events that escape the terminal surface to reach panel hotkeys.
 // ---------------------------------------------------------------------------
 
 describe('shouldBypassTerminal', () => {
@@ -302,8 +304,8 @@ describe('shouldBypassTerminal', () => {
     ).toBe(false)
   })
 
-  it('does not bypass Cmd+V (paste must reach xterm.js for TUI image paste)', () => {
-    // Cmd+V must NOT be bypassed — xterm.js handles paste natively.
+  it('does not bypass Cmd+V (paste must reach the terminal for TUI image paste)', () => {
+    // Cmd+V must NOT be bypassed — the Ghostty surface handles paste natively.
     // TUIs (opencode, claude code, etc.) detect the paste key in the PTY
     // and read the system clipboard directly via OS commands to get image data.
     expect(
@@ -311,62 +313,112 @@ describe('shouldBypassTerminal', () => {
     ).toBe(false)
   })
 
-  it('does not bypass Ctrl+V (paste must reach xterm.js for TUI image paste)', () => {
+  it('does not bypass Ctrl+V (paste must reach the terminal for TUI image paste)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'v', ctrlKey: true }))
     ).toBe(false)
   })
 
-  it('does not bypass Cmd+C (copy handled natively by xterm.js)', () => {
+  it('does not bypass Cmd+C (copy handled natively by the Ghostty surface)', () => {
     expect(
       shouldBypassTerminal(makeKeyEvent({ key: 'c', metaKey: true }))
     ).toBe(false)
   })
 
-  it('does not bypass terminal-local find shortcuts', () => {
+  it('leaves keys no app shortcut claims to the terminal', () => {
+    // Search was removed with the renderer swap, so these are ordinary input.
     expect(shouldBypassTerminal(makePlatformModKeyEvent('f'))).toBe(false)
     expect(shouldBypassTerminal(makePlatformModKeyEvent('g'))).toBe(false)
-    expect(
-      shouldBypassTerminal(makePlatformModKeyEvent('g', { shiftKey: true }))
-    ).toBe(false)
   })
 })
 
-describe('terminal-local find shortcuts', () => {
-  it('matches the platform find shortcut', () => {
-    expect(isTerminalFindShortcut(makePlatformModKeyEvent('f'))).toBe(true)
+/**
+ * The gate Ghostty's surface consults before encoding a key. `true` lets it
+ * encode and send; `false` leaves the event to bubble to the global hotkeys,
+ * or drops it when this layer already sent something in its place.
+ */
+describe('what a focused terminal claims', () => {
+  const makeGateEvent = (overrides: Partial<KeyboardEvent> = {}) =>
+    Object.assign(makeKeyEvent(overrides), {
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    })
+
+  const gate = (event: KeyboardEvent, isRunning = true) => {
+    const sent: string[] = []
+    const handled = handleTerminalKeyEvent(event, {
+      isRunning,
+      send: (data) => {
+        sent.push(data)
+      },
+      shouldBypass: shouldBypassTerminal,
+    })
+    return { handled, sent }
+  }
+
+  it('gives the panel prefix to the PTY while the terminal has focus', () => {
+    // Ctrl+B is an app keybind, but a focused terminal owns it for readline.
+    const event = makeGateEvent({ key: 'b', ctrlKey: true })
+    expect(shouldBypassTerminal(event)).toBe(true)
+    expect(gate(event).handled).toBe(true)
   })
 
-  it('matches the platform next-match shortcut', () => {
-    expect(isTerminalFindNextShortcut(makePlatformModKeyEvent('g'))).toBe(true)
-  })
-
-  it('matches the platform previous-match shortcut', () => {
+  it('lets app shortcuts through to the global hotkey layer', () => {
+    expect(gate(makeGateEvent({ key: 'k', metaKey: true })).handled).toBe(false)
     expect(
-      isTerminalFindPreviousShortcut(
-        makePlatformModKeyEvent('g', { shiftKey: true })
-      )
-    ).toBe(true)
+      gate(makeGateEvent({ key: 'ArrowLeft', metaKey: true, altKey: true }))
+        .handled
+    ).toBe(false)
   })
 
-  it('does not treat bare Ctrl+F on macOS as terminal find', () => {
+  it('leaves ordinary keys to Ghostty', () => {
+    expect(gate(makeGateEvent({ key: 'a' })).handled).toBe(true)
+    expect(gate(makeGateEvent({ key: 'c', ctrlKey: true })).handled).toBe(true)
+  })
+
+  it('sends readline navigation for macOS arrow chords', () => {
     if (!IS_MAC) {
       return
     }
 
-    expect(
-      isTerminalFindShortcut(makeKeyEvent({ key: 'f', ctrlKey: true }))
-    ).toBe(false)
+    const option = gate(makeGateEvent({ key: 'ArrowLeft', altKey: true }))
+    expect(option.handled).toBe(false)
+    expect(option.sent).toEqual(['\x1bb'])
+
+    const command = gate(makeGateEvent({ key: 'ArrowRight', metaKey: true }))
+    expect(command.handled).toBe(false)
+    expect(command.sent).toEqual(['\x05'])
   })
 
-  it('does not treat bare Meta+F on non-macOS as terminal find', () => {
-    if (IS_MAC) {
+  it('drops the readline override when the process has exited', () => {
+    if (!IS_MAC) {
       return
     }
 
+    const stopped = gate(
+      makeGateEvent({ key: 'ArrowLeft', altKey: true }),
+      false
+    )
+    expect(stopped.handled).toBe(false)
+    expect(stopped.sent).toEqual([])
+  })
+
+  it('reads the arrow override only on macOS', () => {
     expect(
-      isTerminalFindShortcut(makeKeyEvent({ key: 'f', metaKey: true }))
-    ).toBe(false)
+      getTerminalInputOverride(
+        makeGateEvent({ key: 'ArrowLeft', altKey: true }),
+        false
+      )
+    ).toBeUndefined()
+  })
+
+  it('leaves Shift-extended arrow selection to the terminal', () => {
+    expect(
+      getTerminalInputOverride(
+        makeGateEvent({ key: 'ArrowLeft', altKey: true, shiftKey: true }),
+        true
+      )
+    ).toBeUndefined()
   })
 })
 

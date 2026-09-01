@@ -81,14 +81,14 @@ function FullscreenWorkspaceOverlay({
 /**
  * Renders a single window tab's workspace frames inside a container that
  * is hidden via `display: none` when the tab is inactive. This keeps
- * xterm.js terminal instances, attach streams, and RPC
+ * Ghostty terminal surfaces, attach streams, and RPC
  * subscriptions alive across tab switches (VS Code pattern).
  *
  * We use `display: none` rather than `visibility: hidden` or zero-size
- * tricks because xterm.js would attempt to resize to 0 cols/rows for
- * hidden-but-laid-out elements, causing a storm of resize RPC calls.
- * `display: none` removes the element from layout entirely so the
- * FitAddon does not trigger resize calculations for inactive tabs.
+ * tricks because a hidden-but-laid-out element would report a 0x0 box and
+ * the surface would refit to 0 cols/rows, causing a storm of resize RPC
+ * calls. `display: none` removes the element from layout entirely, so the
+ * surface's `ResizeObserver` stays silent for inactive tabs.
  *
  * `isolate` (isolation: isolate) makes this container its own stacking
  * context so pane-level overlays — the hover toolbar (`z-20`) and the
@@ -210,7 +210,7 @@ export function PanelContent({
   }
 
   // Collect all window tabs that have workspace layouts. Render ALL of them
-  // to keep terminal xterm.js instances alive across tab switches (VS Code
+  // to keep terminal surfaces alive across tab switches (VS Code
   // pattern: hide with `display:none` instead of unmounting). The active
   // tab is visible; inactive tabs are hidden but remain mounted in the DOM.
   const tabsToRender = windowTabs?.filter((tab) => tab.workspaceLayout) ?? []

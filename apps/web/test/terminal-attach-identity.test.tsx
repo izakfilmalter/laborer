@@ -4,11 +4,11 @@
  * Three things can change underneath a terminal pane, and only one of them
  * leaves the screen intact:
  *
- * - the daemon connection drops and returns, with the same canvas still on
+ * - the daemon connection drops and returns, with the same surface still on
  *   screen — the pane resumes from the cursor it has drawn to, and the daemon
  *   sends only what it missed;
- * - React rebuilds the canvas (StrictMode's double invoke, a remount) — the
- *   new canvas is blank, so resuming would leave the operator with deltas and
+ * - React rebuilds the surface (StrictMode's double invoke, a remount) — the
+ *   new surface is blank, so resuming would leave the operator with deltas and
  *   no history underneath them;
  * - the pane is handed a different terminal — the cursor indexes another
  *   journal, the epoch would read as a revival, and the status, replay and
@@ -157,28 +157,24 @@ const createDaemon = () => {
   }
 }
 
-/** A canvas that records what was drawn and parses when the test says so. */
+/**
+ * A surface that records what was drawn. Ghostty parses synchronously, so a
+ * chunk is on screen by the time `write` returns — there is no queue to model.
+ */
 const createCanvas = () => {
   const drawn: string[] = []
-  const parsers: Array<() => void> = []
   const canvas: TerminalScreenCanvas = {
-    reset: () => {
+    resetAndWrite: (data) => {
       drawn.length = 0
-    },
-    write: (data, commit) => {
-      drawn.push(data)
-      parsers.push(commit)
-    },
-  }
-  return {
-    canvas,
-    drawn,
-    parseAll: () => {
-      for (const parse of parsers.splice(0)) {
-        parse()
+      if (data.length > 0) {
+        drawn.push(data)
       }
     },
+    write: (data) => {
+      drawn.push(data)
+    },
   }
+  return { canvas, drawn }
 }
 
 /** Let the attach fiber run and React settle around it. */
@@ -266,10 +262,6 @@ describe('terminal attach identity', () => {
       daemon.current().feed.push(event)
     }
     await settle()
-    act(() => {
-      canvas.parseAll()
-    })
-    await settle()
 
     return { canvas, daemon, screen, view }
   }
@@ -296,39 +288,32 @@ describe('terminal attach identity', () => {
     expect(view.result.current.replayStatus).toBe('replaying')
   })
 
-  it('resumes from output the canvas has taken, not from what xterm has parsed', async () => {
+  it('resumes from the output the surface has already parsed', async () => {
     const { canvas, daemon, view } = await openPane()
 
-    // Live output handed to xterm and still sitting in its write queue: the
-    // canvas has taken it, but no write callback has arrived for it yet.
-    daemon.current().feed.push({ _tag: 'Delta', cursor: 200, data: 'queued' })
+    // Live output. Ghostty parsed it before `write` returned, so there is one
+    // cursor and it is both what the screen shows and what may be released.
+    daemon.current().feed.push({ _tag: 'Delta', cursor: 200, data: 'live' })
     await settle()
 
-    expect(canvas.drawn).toEqual(['restored screen', 'queued'])
+    expect(canvas.drawn).toEqual(['restored screen', 'live'])
+    // Below the batch threshold, so flow control has not been released yet.
     expect(daemon.acks.some((ack) => ack.cursor === 200)).toBe(false)
 
-    // The transport drops and returns with the delta still unparsed.
     daemon.connect()
     view.rerender({ terminalId: 'term-1' })
     await settle()
 
     expect(daemon.attaches).toHaveLength(2)
-    // Asking from the parsed cursor would have the daemon send `queued` again.
     expect(daemon.attaches[1]?.payload.cursor).toBe(200)
 
     // A daemon that replays it anyway must not put it on screen twice.
-    daemon.current().feed.push({ _tag: 'Delta', cursor: 200, data: 'queued' })
+    daemon.current().feed.push({ _tag: 'Delta', cursor: 200, data: 'live' })
     daemon.current().feed.push({ _tag: 'Delta', cursor: 260, data: 'fresh' })
     await settle()
 
-    expect(canvas.drawn).toEqual(['restored screen', 'queued', 'fresh'])
+    expect(canvas.drawn).toEqual(['restored screen', 'live', 'fresh'])
 
-    // The queued chunk is still acknowledged exactly once, when xterm parses
-    // it: flow control follows the renderer, not the write queue.
-    act(() => {
-      canvas.parseAll()
-    })
-    await settle()
     daemon.current().feed.push({ _tag: 'ReplayComplete' })
     await settle()
 
@@ -404,18 +389,14 @@ describe('terminal attach identity', () => {
   })
 
   it('never lets the outgoing terminal acknowledge its way into the next attach', async () => {
-    const { canvas, daemon, view } = await openPane()
+    const { daemon, view } = await openPane()
 
-    // Live output for the old terminal is still in xterm's write queue when
-    // the pane is handed a new one.
+    // Output for the old terminal, below the acknowledgement batch threshold,
+    // arrives just before the pane is handed a new one.
     daemon.current().feed.push({ _tag: 'Delta', cursor: 260, data: 'late' })
     await settle()
 
     view.rerender({ terminalId: 'term-2' })
-    await settle()
-    act(() => {
-      canvas.parseAll()
-    })
     await settle()
 
     daemon.connect()
@@ -517,17 +498,13 @@ describe('the window between adopting a terminal and dropping the last one', () 
         daemon.current().feed.push(event)
       }
       await flushTasks()
-      canvas.parseAll()
-      await flushTasks()
 
       expect(state.current?.terminalStatus).toBe('running')
       expect(reported).toEqual(['running'])
 
-      // Output for term-1 large enough to be acknowledged on its own, still
-      // unparsed when the pane is handed a different terminal.
       const outgoing = daemon.current().feed
-      outgoing.push({ _tag: 'Delta', cursor: 200, data: 'x'.repeat(6000) })
-      await flushTasks()
+      // Big enough that term-1's attach would acknowledge it on its own.
+      const lateOutput = 'late output'.padEnd(6000, 'x')
 
       root.render(
         <Pane
@@ -538,10 +515,8 @@ describe('the window between adopting a terminal and dropping the last one', () 
               epoch: 'epoch-9',
               reason: 'epoch_changed',
             })
-            outgoing.push({ _tag: 'Delta', cursor: 260, data: 'late output' })
+            outgoing.push({ _tag: 'Delta', cursor: 260, data: lateOutput })
             outgoing.push({ _tag: 'Meta', epoch: 'epoch-9', status: 'stopped' })
-            // xterm reports term-1's queued output parsed in the same window.
-            canvas.parseAll()
           }}
           onStatus={onStatus}
           screen={screen}
@@ -555,8 +530,8 @@ describe('the window between adopting a terminal and dropping the last one', () 
       expect(state.current?.terminalStatus).toBe('running')
       expect(state.current?.wasRevived).toBe(false)
       expect(reported).toEqual(['running'])
-      expect(canvas.drawn).not.toContain('late output')
-      expect(daemon.acks.some((ack) => ack.cursor === 200)).toBe(false)
+      expect(canvas.drawn).not.toContain(lateOutput)
+      expect(daemon.acks.some((ack) => ack.cursor === 260)).toBe(false)
 
       // And the attach that replaces it starts from nothing the old terminal
       // established.

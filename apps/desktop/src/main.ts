@@ -363,7 +363,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
       webviewTag: true,
       additionalArguments: buildWindowBootstrapArgs({ windowId }),
       // Hidden windows throttle timers and requestAnimationFrame by
-      // default, which stalls xterm.js rendering during hidden E2E runs.
+      // default, which stalls terminal rendering during hidden E2E runs.
       ...(hideWindowsForTests ? { backgroundThrottling: false } : {}),
     },
   })
@@ -379,7 +379,7 @@ function createWindow(record?: WindowRecord): BrowserWindow {
   // Track window bounds for persistence — saves on move/resize/close.
   windowStateManager.track(window, windowId)
 
-  // Intercept window.open() calls from the renderer (e.g., xterm.js
+  // Intercept window.open() calls from the renderer (e.g., terminal
   // link clicks) and redirect them to the OS default browser via
   // shell.openExternal(). Without this, window.open() in a sandboxed
   // renderer would create a new BrowserWindow instead of opening the

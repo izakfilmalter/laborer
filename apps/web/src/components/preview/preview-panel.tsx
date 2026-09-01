@@ -10,6 +10,7 @@ import { Button } from '@laborer/ui/components/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -240,36 +241,39 @@ function MoreMenu(props: {
           Open separate preview window
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Viewport</DropdownMenuLabel>
-        <DropdownMenuItem
-          disabled={disabled}
-          onClick={() => props.onViewport(FILL_PREVIEW_VIEWPORT)}
-        >
-          <Laptop /> Fill panel
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={disabled}
-          onClick={() =>
-            props.onViewport({
-              _tag: 'preset',
-              presetId: 'iphone-12-pro',
-              width: 390,
-              height: 844,
-            })
-          }
-        >
-          <Smartphone /> iPhone 12 Pro
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={disabled}
-          onClick={() =>
-            props.onViewport({ _tag: 'freeform', width: 1280, height: 800 })
-          }
-        >
-          <Laptop /> Responsive viewport
-        </DropdownMenuItem>
+        {/* Base UI anchors a group label to its group, so each label lives
+            inside the group it names rather than above it. */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Viewport</DropdownMenuLabel>
+          <DropdownMenuItem
+            disabled={disabled}
+            onClick={() => props.onViewport(FILL_PREVIEW_VIEWPORT)}
+          >
+            <Laptop /> Fill panel
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={disabled}
+            onClick={() =>
+              props.onViewport({
+                _tag: 'preset',
+                presetId: 'iphone-12-pro',
+                width: 390,
+                height: 844,
+              })
+            }
+          >
+            <Smartphone /> iPhone 12 Pro
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={disabled}
+            onClick={() =>
+              props.onViewport({ _tag: 'freeform', width: 1280, height: 800 })
+            }
+          >
+            <Laptop /> Responsive viewport
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Appearance</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           onValueChange={(value) =>
             props.runtimeTabId &&
@@ -280,6 +284,7 @@ function MoreMenu(props: {
           }
           value={props.colorScheme}
         >
+          <DropdownMenuLabel>Appearance</DropdownMenuLabel>
           {(['system', 'light', 'dark'] as const).map((value) => (
             <DropdownMenuRadioItem key={value} value={value}>
               {value[0]?.toUpperCase()}

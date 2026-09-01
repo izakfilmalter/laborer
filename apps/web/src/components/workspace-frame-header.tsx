@@ -507,9 +507,10 @@ function FrameGitActions({
  * The frame's identity and drag handle: the project's mark, then the
  * project / author / branch address.
  *
- * The mark is the project's favicon or accent glyph, matching the sidebar
- * row the frame was opened from, so the same symbol answers "which project?"
- * in both places. A frame with no project behind it falls back to the generic
+ * The mark is the project's favicon or accent glyph, the same symbol as the
+ * sidebar row the frame was opened from, drawn larger here so it holds its
+ * own against the header's icon buttons within the fixed 32px header. A frame
+ * with no project behind it falls back to the generic
  * terminal glyph the title already reads as "Terminal".
  */
 function FrameIdentityButton({
@@ -547,9 +548,10 @@ function FrameIdentityButton({
     >
       <div className="flex items-center gap-1 text-muted-foreground">
         {projectName === undefined ? (
-          <Terminal className="size-3.5" />
+          <Terminal className="size-5" />
         ) : (
           <ProjectIcon
+            className="size-5"
             project={{
               color: projectColor,
               iconDataUrl: projectIconDataUrl,

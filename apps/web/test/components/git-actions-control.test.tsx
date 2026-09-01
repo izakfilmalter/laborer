@@ -80,6 +80,7 @@ const { GitActionsControl } = await import('@/components/git-actions-control')
 const COMMIT_PUSH_PR_RE = /commit, push & pr/i
 const PUSH_PR_RE = /push & pr/i
 const ANY_ACTION_RE = /commit|push|pr/i
+const COMMIT_AND_PUSH_RE = /^commit & push$/i
 const COMMIT_MENU_ITEM_RE = /commit/i
 const PUSH_MENU_ITEM_RE = /push/i
 const CREATE_PR_MENU_ITEM_RE = /create pr/i
@@ -155,11 +156,60 @@ describe('GitActionsControl', () => {
     'main',
     'master',
     'dev',
-  ])('stays off %s, which work merges into rather than from', (branchName) => {
+  ])('stops at the push on %s, which work merges into rather than from', async (branchName) => {
+    const user = userEvent.setup()
     syncStatusRef.current = { ...syncStatusRef.current, hasChanges: true }
     render(
       <GitActionsControl
         branchName={branchName}
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: COMMIT_AND_PUSH_RE }))
+
+    await waitFor(() => {
+      expect(commitMock).toHaveBeenCalledWith('ws-1', undefined)
+    })
+    expect(pushMock).toHaveBeenCalledWith('ws-1')
+    expect(createPrMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'main',
+    'master',
+    'dev',
+  ])('drops "Create PR" from the menu on %s', async (branchName) => {
+    const user = userEvent.setup()
+    syncStatusRef.current = { ...syncStatusRef.current, hasChanges: true }
+    render(
+      <GitActionsControl
+        branchName={branchName}
+        hasPullRequest={false}
+        workspaceId="ws-1"
+      />
+    )
+
+    await user.click(screen.getByTestId('git-actions-menu-trigger'))
+    expect(
+      await screen.findByRole('menuitem', { name: PUSH_MENU_ITEM_RE })
+    ).not.toBeNull()
+    expect(
+      screen.queryByRole('menuitem', { name: CREATE_PR_MENU_ITEM_RE })
+    ).toBeNull()
+  })
+
+  it('hides itself on trunk when there is nothing to commit or push', () => {
+    syncStatusRef.current = {
+      ...syncStatusRef.current,
+      aheadCount: 0,
+      hasChanges: false,
+      hasUpstream: true,
+    }
+    render(
+      <GitActionsControl
+        branchName="main"
         hasPullRequest={false}
         workspaceId="ws-1"
       />

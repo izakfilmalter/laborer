@@ -22,9 +22,11 @@
  * last segment so the pull request and the things you can still do to it read
  * as one object.
  *
- * It also stays off a trunk branch. `main`, `master`, and `dev` are what work
- * merges into, so a pull request from one of them has no base to target, and
- * offering the journey there would only produce a failure at the last step.
+ * A trunk branch gets a shorter journey rather than none. `main`, `master`,
+ * and `dev` are what work merges into, so a pull request from one of them has
+ * no base to target — but work still lands on them directly, and it still has
+ * to be committed and pushed. So the button stops at the push, and the menu
+ * drops "Create PR".
  *
  * @see apps/web/src/hooks/use-workspace-git-actions.ts — the three calls
  * @see apps/web/src/components/workspace-sync-status.tsx — push/pull alone
@@ -126,34 +128,38 @@ function describeStep(step: GitStep, hasWrittenMessage: boolean): string {
 }
 
 /**
- * The remaining journey to a pull request, named by its first step.
+ * The remaining journey, named by its first step.
  *
  * Uncommitted work makes a commit the entry point and the rest follows from
  * it; committed work that has never been pushed starts at the push. A clean
  * branch with nothing ahead of its upstream has nothing to offer, and the
- * control disappears rather than presenting a dead button.
+ * control disappears rather than presenting a dead button. On trunk the
+ * journey ends at the push, because there is no base to open a pull request
+ * against.
  */
 function resolveQuickAction({
   aheadCount,
   hasChanges,
   hasUpstream,
+  isTrunk,
 }: {
   readonly aheadCount: number | null
   readonly hasChanges: boolean
   readonly hasUpstream: boolean
+  readonly isTrunk: boolean
 }): QuickAction | null {
   if (hasChanges) {
-    return { label: 'Commit, push & PR', steps: ['commit', 'push', 'createPr'] }
+    return isTrunk
+      ? { label: 'Commit & push', steps: ['commit', 'push'] }
+      : { label: 'Commit, push & PR', steps: ['commit', 'push', 'createPr'] }
   }
 
   // A branch with no upstream has never been published, so whatever it holds
   // is unreviewed by definition — the ahead count cannot say how much.
-  if (!hasUpstream) {
-    return { label: 'Push & PR', steps: ['push', 'createPr'] }
-  }
-
-  if ((aheadCount ?? 0) > 0) {
-    return { label: 'Push & PR', steps: ['push', 'createPr'] }
+  if (!hasUpstream || (aheadCount ?? 0) > 0) {
+    return isTrunk
+      ? { label: 'Push', steps: ['push'] }
+      : { label: 'Push & PR', steps: ['push', 'createPr'] }
   }
 
   return null
@@ -243,13 +249,15 @@ function GitActionsControl({
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
 
+  const isTrunk = TRUNK_BRANCHES.has(branchName)
+
   // Until git has answered, the workspace owes nothing that can be proven, so
   // the control stays out of the card rather than guessing at a first step.
   const quickAction = isKnown
-    ? resolveQuickAction({ aheadCount, hasChanges, hasUpstream })
+    ? resolveQuickAction({ aheadCount, hasChanges, hasUpstream, isTrunk })
     : null
 
-  if (quickAction === null || TRUNK_BRANCHES.has(branchName)) {
+  if (quickAction === null) {
     return null
   }
 
@@ -372,9 +380,9 @@ function GitActionsControl({
           <ArrowUpToLine className="size-3.5" />
           Push
         </DropdownMenuItem>
-        {/* The branch already has its pull request; a second one is not an
-            option worth listing. */}
-        {hasPullRequest ? null : (
+        {/* The branch already has its pull request, or is the trunk one would
+            target; either way a pull request is not an option worth listing. */}
+        {hasPullRequest || isTrunk ? null : (
           <DropdownMenuItem
             // A pull request can only describe commits the remote has, so
             // it waits behind anything still uncommitted or unpushed.
@@ -432,7 +440,11 @@ function GitActionsControl({
                 />
               }
             >
-              <GitPullRequestArrow className="size-3.5" />
+              {isTrunk ? (
+                <ArrowUpToLine className="size-3.5" />
+              ) : (
+                <GitPullRequestArrow className="size-3.5" />
+              )}
               <span>{runningLabel ?? quickAction.label}</span>
             </TooltipTrigger>
             <TooltipContent>

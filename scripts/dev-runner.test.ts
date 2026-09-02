@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEV_INITIAL_PROJECT_PATH_ENV } from '../packages/server/src/dev-environment'
 import {
   BASE_DAEMON_PORT,
   BASE_WEB_PORT,
+  checkoutStateHome,
   devChildDefinitions,
   devInitialProjectEnvironment,
   findAvailableDevPorts,
   isCleanDesktopQuit,
-  linkedWorktreeStateHome,
   parseDevRunnerArguments,
   resolveDevDaemonRegistrationPath,
   resolveDevStateHome,
@@ -34,6 +34,11 @@ describe('dev runner', () => {
     expect(first).toBeGreaterThanOrEqual(1)
     expect(first).toBeLessThanOrEqual(3000)
     expect(first).not.toBe(worktreePortOffset('/tmp/two'))
+  })
+
+  it('allocates development ports outside the packaged daemon range', () => {
+    expect(BASE_DAEMON_PORT).toBe(2200)
+    expect(BASE_WEB_PORT).toBe(2201)
   })
 
   it('scans forward until both ports in a pair are available', async () => {
@@ -89,11 +94,19 @@ describe('dev runner', () => {
         join(worktree, '.git'),
         'gitdir: /repo/.git/worktrees/feature\n'
       )
-      expect(linkedWorktreeStateHome(worktree)).toBe(
-        join(worktree, '.laborer-state')
-      )
+      expect(checkoutStateHome(worktree)).toBe(join(worktree, '.laborer-state'))
     } finally {
       rmSync(worktree, { force: true, recursive: true })
+    }
+  })
+
+  it('isolates the main checkout from packaged application state', () => {
+    const checkout = mkdtempSync(join(tmpdir(), 'laborer-dev-runner-'))
+    try {
+      mkdirSync(join(checkout, '.git'))
+      expect(checkoutStateHome(checkout)).toBe(join(checkout, '.laborer-state'))
+    } finally {
+      rmSync(checkout, { force: true, recursive: true })
     }
   })
 

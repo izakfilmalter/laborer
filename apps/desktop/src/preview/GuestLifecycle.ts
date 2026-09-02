@@ -14,6 +14,30 @@ export interface ManagedPreviewTab {
   state: DesktopPreviewTabState
 }
 
+/**
+ * Closes a DevTools WebContents whose inspected `<webview>` guest is already
+ * gone.
+ *
+ * Electron frees an attached guest's `content::WebContents` when the embedder
+ * removes the `<webview>` element, but the guest's `api::WebContents` (and the
+ * `InspectableWebContents` that owns a detached DevTools window) lives until
+ * V8 garbage-collects the wrapper. In that window DevTools still routes input
+ * to the freed guest, and a single keystroke segfaults the main process
+ * (`InspectableWebContents::HandleKeyboardEvent`, electron/electron#43297).
+ * Closing the DevTools WebContents takes Electron's `CloseContents` path,
+ * which for guests only tears down the DevTools widget.
+ */
+export function closeOrphanedDevTools(devTools: WebContents | null): void {
+  if (!devTools || devTools.isDestroyed()) {
+    return
+  }
+  try {
+    devTools.close()
+  } catch {
+    // The DevTools WebContents was torn down between the check and the call.
+  }
+}
+
 export class PreviewGuestLifecycle {
   readonly #emit: (tab: ManagedPreviewTab) => void
   readonly #getGuest: (tab: ManagedPreviewTab) => WebContents | null
@@ -86,7 +110,24 @@ export class PreviewGuestLifecycle {
         this.#update(tab, { audible: event.audible })
       }
     }
+    // Captured while the guest is alive: after `destroyed` fires, every
+    // property access on `guest` throws "Object has been destroyed".
+    let devTools: WebContents | null = guest.isDevToolsOpened()
+      ? (guest.devToolsWebContents ?? null)
+      : null
+    const devToolsOpened = () => {
+      devTools = guest.devToolsWebContents ?? null
+    }
+    const devToolsClosed = () => {
+      devTools = null
+    }
     const destroyed = () => {
+      const orphanedDevTools = devTools
+      devTools = null
+      // Defer: `destroyed` is emitted from inside the guest's
+      // content::WebContents destructor, and destroying another WebContents
+      // re-entrantly from that observer callback is not a path Electron takes.
+      setImmediate(() => closeOrphanedDevTools(orphanedDevTools))
       if (tab.state.webContentsId === guest.id) {
         tab.cleanup?.()
         tab.cleanup = null
@@ -157,6 +198,8 @@ export class PreviewGuestLifecycle {
     guest.on('did-fail-load', failed)
     guest.on('page-favicon-updated', favicon)
     guest.on('audio-state-changed', audio)
+    guest.on('devtools-opened', devToolsOpened)
+    guest.on('devtools-closed', devToolsClosed)
     guest.once('destroyed', destroyed)
     guest.on('before-input-event', beforeInput)
     guest.on('will-navigate', willNavigate)
@@ -178,6 +221,8 @@ export class PreviewGuestLifecycle {
       guest.removeListener('did-fail-load', failed)
       guest.removeListener('page-favicon-updated', favicon)
       guest.removeListener('audio-state-changed', audio)
+      guest.removeListener('devtools-opened', devToolsOpened)
+      guest.removeListener('devtools-closed', devToolsClosed)
       guest.removeListener('destroyed', destroyed)
       guest.removeListener('before-input-event', beforeInput)
       guest.removeListener('will-navigate', willNavigate)

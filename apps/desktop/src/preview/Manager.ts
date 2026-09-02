@@ -216,6 +216,13 @@ export class PreviewManager {
     this.cancelPickElement(owner, tabId)
     await this.closePictureInPicture(owner, tabId)
     this.#capture.stopRecording(tabId)
+    // The renderer usually removes the <webview> before this IPC lands, but
+    // when it has not, close DevTools while the guest is still alive so no
+    // detached DevTools window outlives it (see closeOrphanedDevTools).
+    const guest = this.#guest(tab, false)
+    if (guest?.isDevToolsOpened()) {
+      guest.closeDevTools()
+    }
     tab.cleanup?.()
     this.#tabs.delete(tabId)
     this.#emitState(owner, tabId, {

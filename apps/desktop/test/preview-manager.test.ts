@@ -69,8 +69,11 @@ const guest = (tabOwner: WebContents) => {
     hostWebContents: tabOwner,
     id: 42,
     ipc: { on: vi.fn(), removeListener: vi.fn() },
+    closeDevTools: vi.fn(),
+    devToolsWebContents: null,
     isCurrentlyAudible: vi.fn(() => false),
     isDestroyed: vi.fn(() => false),
+    isDevToolsOpened: vi.fn(() => false),
     isLoading: vi.fn(() => false),
     navigationHistory: {
       canGoBack: vi.fn(() => false),

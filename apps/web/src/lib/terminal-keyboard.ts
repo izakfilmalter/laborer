@@ -14,6 +14,10 @@
  *   terminal, where it is readline's backward-char. Ghostty encodes it
  *   correctly; it only has to be kept out of the app-level bypass.
  *
+ * Find (Cmd/Ctrl+F, Cmd/Ctrl+G) is claimed here too. It belongs to the pane
+ * that has focus rather than to the window, so it never reaches the app-level
+ * hotkeys — and never reaches the PTY either.
+ *
  * The result feeds `GhosttyTerminalSurface`'s `beforeKey`: `true` lets Ghostty
  * encode and send the key, `false` leaves it to bubble to the global hotkey
  * layer — or drops it, when this module has already sent something in its
@@ -23,7 +27,13 @@
  * @see apps/web/src/lib/keybinds.ts — the app-level bypass list
  */
 
-import { IS_MAC, isPrefixKey } from './keybinds'
+import {
+  IS_MAC,
+  isPrefixKey,
+  isTerminalFindNextShortcut,
+  isTerminalFindPreviousShortcut,
+  isTerminalFindShortcut,
+} from './keybinds'
 
 const BEGINNING_OF_LINE = '\x01'
 const END_OF_LINE = '\x05'
@@ -65,10 +75,37 @@ function getTerminalInputOverride(
   return undefined
 }
 
+/** What a find shortcut asks the pane's find bar to do. */
+type TerminalFindRequest = 'open' | 'next' | 'previous'
+
 interface TerminalKeyEventHandlers {
   readonly isRunning: boolean
+  /**
+   * The pane's find bar. Find is terminal-local — it never reaches the global
+   * hotkey layer — so a pane without one leaves the keys to Ghostty.
+   */
+  readonly onFind?: ((request: TerminalFindRequest) => void) | undefined
   readonly send: (data: string) => void
   readonly shouldBypass: (event: KeyboardEvent) => boolean
+}
+
+/**
+ * The find request a keydown carries, if any. Previous is checked first: it is
+ * the next-match chord plus Shift.
+ */
+function getTerminalFindRequest(
+  event: KeyboardEvent
+): TerminalFindRequest | undefined {
+  if (isTerminalFindShortcut(event)) {
+    return 'open'
+  }
+  if (isTerminalFindPreviousShortcut(event)) {
+    return 'previous'
+  }
+  if (isTerminalFindNextShortcut(event)) {
+    return 'next'
+  }
+  return undefined
 }
 
 /**
@@ -93,6 +130,14 @@ function handleTerminalKeyEvent(
     return false
   }
 
+  const find = handlers.onFind ? getTerminalFindRequest(event) : undefined
+  if (find !== undefined) {
+    event.preventDefault()
+    event.stopPropagation()
+    handlers.onFind?.(find)
+    return false
+  }
+
   // The panel prefix belongs to the terminal while the terminal has focus, so
   // it is asked about before the bypass list it appears on.
   if (isPrefixKey(event)) {
@@ -102,5 +147,9 @@ function handleTerminalKeyEvent(
   return !handlers.shouldBypass(event)
 }
 
-export type { TerminalKeyEventHandlers }
-export { getTerminalInputOverride, handleTerminalKeyEvent }
+export type { TerminalFindRequest, TerminalKeyEventHandlers }
+export {
+  getTerminalFindRequest,
+  getTerminalInputOverride,
+  handleTerminalKeyEvent,
+}

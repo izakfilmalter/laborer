@@ -325,8 +325,8 @@ describe('shouldBypassTerminal', () => {
     ).toBe(false)
   })
 
-  it('leaves keys no app shortcut claims to the terminal', () => {
-    // Search was removed with the renderer swap, so these are ordinary input.
+  it('keeps the find shortcuts out of the app hotkey layer', () => {
+    // Find belongs to the pane that has focus, not to the window.
     expect(shouldBypassTerminal(makePlatformModKeyEvent('f'))).toBe(false)
     expect(shouldBypassTerminal(makePlatformModKeyEvent('g'))).toBe(false)
   })
@@ -401,6 +401,32 @@ describe('what a focused terminal claims', () => {
     )
     expect(stopped.handled).toBe(false)
     expect(stopped.sent).toEqual([])
+  })
+
+  it('routes the find chords to the pane instead of the PTY', () => {
+    const requests: string[] = []
+    const findGate = (event: KeyboardEvent) =>
+      handleTerminalKeyEvent(event, {
+        isRunning: true,
+        onFind: (request) => {
+          requests.push(request)
+        },
+        send: () => undefined,
+        shouldBypass: shouldBypassTerminal,
+      })
+
+    const modifier = IS_MAC ? { metaKey: true } : { ctrlKey: true }
+    expect(findGate(makeGateEvent({ key: 'f', ...modifier }))).toBe(false)
+    expect(findGate(makeGateEvent({ key: 'g', ...modifier }))).toBe(false)
+    expect(
+      findGate(makeGateEvent({ key: 'g', shiftKey: true, ...modifier }))
+    ).toBe(false)
+    expect(requests).toEqual(['open', 'next', 'previous'])
+  })
+
+  it('leaves the find chords to Ghostty in a pane without a find bar', () => {
+    const modifier = IS_MAC ? { metaKey: true } : { ctrlKey: true }
+    expect(gate(makeGateEvent({ key: 'f', ...modifier })).handled).toBe(true)
   })
 
   it('reads the arrow override only on macOS', () => {

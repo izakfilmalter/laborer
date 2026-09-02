@@ -11,8 +11,8 @@
  * - `Keybind` type describes a shortcut declaratively
  * - `matchesKeybind()` checks a KeyboardEvent against a Keybind
  * - `KEYBINDS` constant enumerates every app-level shortcut
- * - Terminal clipboard shortcuts are defined separately since they are handled
- *   within the terminal rather than bubbled to the app
+ * - Terminal clipboard and terminal-find shortcuts are defined separately since
+ *   they are handled within the terminal pane rather than bubbled to the app
  *
  * @see apps/web/src/lib/terminal-keyboard.ts — terminal key handler
  * @see apps/web/src/panels/panel-hotkeys.tsx — TanStack Hotkeys registration
@@ -382,6 +382,28 @@ const CLIPBOARD_KEYBINDS = {
 } as const satisfies Record<string, Keybind>
 
 // ---------------------------------------------------------------------------
+// Terminal find keybinds
+// ---------------------------------------------------------------------------
+
+/**
+ * Terminal-local find shortcuts handled inside the terminal pane.
+ *
+ * These intentionally do NOT bypass to the app-level hotkey layer because the
+ * pane owns the full interaction: open and focus the inline find bar, and step
+ * through matches in the surface's own screen.
+ */
+const TERMINAL_FIND_KEYBINDS = {
+  FIND: { key: 'f', ctrl: true, macCtrlBehavior: 'command' as const },
+  FIND_NEXT: { key: 'g', ctrl: true, macCtrlBehavior: 'command' as const },
+  FIND_PREVIOUS: {
+    key: 'g',
+    ctrl: true,
+    shift: true,
+    macCtrlBehavior: 'command' as const,
+  },
+} as const satisfies Record<string, Keybind>
+
+// ---------------------------------------------------------------------------
 // Terminal-facing helpers
 // ---------------------------------------------------------------------------
 
@@ -430,6 +452,21 @@ function detectCopyShortcut(event: KeyboardEvent): 'linux' | 'copy' | false {
     return 'copy'
   }
   return false
+}
+
+/** Check if the event opens the terminal-local find bar. */
+function isTerminalFindShortcut(event: KeyboardEvent): boolean {
+  return matchesKeybind(event, TERMINAL_FIND_KEYBINDS.FIND)
+}
+
+/** Check if the event navigates to the next terminal-local find match. */
+function isTerminalFindNextShortcut(event: KeyboardEvent): boolean {
+  return matchesKeybind(event, TERMINAL_FIND_KEYBINDS.FIND_NEXT)
+}
+
+/** Check if the event navigates to the previous terminal-local find match. */
+function isTerminalFindPreviousShortcut(event: KeyboardEvent): boolean {
+  return matchesKeybind(event, TERMINAL_FIND_KEYBINDS.FIND_PREVIOUS)
 }
 
 // ---------------------------------------------------------------------------
@@ -497,7 +534,11 @@ export {
   IS_WINDOWS,
   isPasteShortcut,
   isPrefixKey,
+  isTerminalFindNextShortcut,
+  isTerminalFindPreviousShortcut,
+  isTerminalFindShortcut,
   KEYBINDS,
   matchesKeybind,
   shouldBypassTerminal,
+  TERMINAL_FIND_KEYBINDS,
 }

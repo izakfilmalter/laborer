@@ -15,5 +15,10 @@ It is intentionally not an xterm compatibility layer.
   `native/libghostty-vt/` at the repository root; the wasm embeds the pinned revision
   in its build info and the ABI test verifies it against mobile's `VERSION`.
 
+Laborer additions to the vendored files are marked as such in place, so a re-sync can find
+them: `core.ts` `screenLines()`, the `searchRanges`/`activeSearchRange` highlights in
+`renderer.ts`, and the find state on the surface. The find bar itself, and the matching it
+runs, live outside this directory in `../ghostty-support/terminal-search.ts`.
+
 Keep browser behavior here and terminal transport in the existing client runtime. Do not add React
 state to the render loop. Both WASM artifacts are ordinary read-only assets, not executables.

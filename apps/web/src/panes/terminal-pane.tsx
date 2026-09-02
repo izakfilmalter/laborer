@@ -26,6 +26,12 @@
  *   Returning `false` leaves the event to bubble to TanStack Hotkeys on
  *   document; returning `true` lets Ghostty encode it for the PTY.
  *
+ * Find:
+ * - Cmd/Ctrl+F opens the pane-local find bar, Cmd/Ctrl+G and Enter step
+ *   matches. The surface owns the matches, the highlights, and scrolling the
+ *   active one into view; the pane owns the bar and what it reports.
+ *
+ * @see apps/web/src/terminal/ghostty-support/terminal-search.ts — matching
  * @see packages/terminal/src/services/terminal-manager.ts — headless mirror
  * @see apps/web/src/hooks/use-terminal-rpc.ts — attach lifecycle
  * @see apps/web/src/lib/terminal-screen.ts — surface identity and lifetime
@@ -39,8 +45,23 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@laborer/ui/components/context-menu'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  InputGroupText,
+} from '@laborer/ui/components/input-group'
 import { Spinner } from '@laborer/ui/components/spinner'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { TerminalServiceClient } from '@/atoms/terminal-service-client'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
 import {
@@ -51,7 +72,10 @@ import { useTerminalRpc } from '@/hooks/use-terminal-rpc'
 import { useWhenPhase } from '@/hooks/use-when-phase'
 import { shouldBypassTerminal } from '@/lib/keybinds'
 import { localApi } from '@/lib/local-api'
-import { handleTerminalKeyEvent } from '@/lib/terminal-keyboard'
+import {
+  handleTerminalKeyEvent,
+  type TerminalFindRequest,
+} from '@/lib/terminal-keyboard'
 import {
   openTerminalLink,
   type TerminalContextMenuAction,
@@ -64,7 +88,11 @@ import {
 } from '@/lib/terminal-screen'
 import { toast } from '@/lib/toast'
 import type { GhosttyTheme } from '@/terminal/ghostty/core'
-import { GhosttyTerminalSurface } from '@/terminal/ghostty/surface'
+import {
+  GhosttyTerminalSurface,
+  type TerminalSearchState,
+} from '@/terminal/ghostty/surface'
+import { formatTerminalSearchResults } from '@/terminal/ghostty-support/terminal-search'
 import {
   showTerminalRevivalMarker,
   terminalLoadingMessage,
@@ -132,6 +160,17 @@ const runTerminalContextAction = async (
     return
   }
   await surface?.pasteFromClipboard(() => navigator.clipboard.readText())
+}
+
+const NO_FIND_RESULTS: TerminalSearchState = { count: 0, index: -1 }
+
+/** A selection spanning rows is not a search term. */
+const MULTILINE_SELECTION = /[\n\r]/
+
+/** Puts the caret in the find bar with the previous query ready to replace. */
+function focusFindInput(input: HTMLInputElement | null): void {
+  input?.focus()
+  input?.select()
 }
 
 /** Connection result shape for the terminal attach RPC hook. */
@@ -253,6 +292,16 @@ function TerminalPaneRenderer({
   const [surfaceError, setSurfaceError] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>(null)
 
+  /**
+   * Find bar state. The surface owns the matches and the highlights; the pane
+   * owns whether the bar is open, what is typed in it, and what it reports.
+   */
+  const findInputRef = useRef<HTMLInputElement>(null)
+  const [isFindOpen, setIsFindOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  const [findResults, setFindResults] =
+    useState<TerminalSearchState>(NO_FIND_RESULTS)
+
   const isRunning = terminalStatus !== 'stopped'
   const loadingMessage = terminalLoadingMessage({ isRunning, replayStatus })
   /** Revival is only truthful once the restored history is fully on screen. */
@@ -277,6 +326,74 @@ function TerminalPaneRenderer({
 
   const terminalIdRef = useRef(terminalId)
   terminalIdRef.current = terminalId
+
+  /**
+   * Run the query against the surface whenever either changes, and drop the
+   * highlights the moment the bar closes. The surface is the external system
+   * here: its match set has to be kept in step with what the bar says.
+   */
+  useEffect(() => {
+    const surface = surfaceRef.current
+    if (!surface) {
+      return
+    }
+    if (!isFindOpen) {
+      surface.clearSearch()
+      setFindResults(NO_FIND_RESULTS)
+      return
+    }
+    setFindResults(surface.search(findQuery))
+  }, [findQuery, isFindOpen])
+
+  /** Focus and select the query as soon as the bar is on screen. */
+  useEffect(() => {
+    if (isFindOpen) {
+      focusFindInput(findInputRef.current)
+    }
+  }, [isFindOpen])
+
+  const stepFind = useCallback((direction: 'next' | 'previous') => {
+    const surface = surfaceRef.current
+    if (!surface) {
+      return
+    }
+    setFindResults(surface.stepSearch(direction))
+  }, [])
+
+  const closeFind = useCallback((refocusTerminal: boolean) => {
+    setIsFindOpen(false)
+    if (refocusTerminal) {
+      surfaceRef.current?.focus()
+    }
+  }, [])
+
+  /**
+   * A single-line selection seeds a newly opened find bar, the way every
+   * editor's find does. A multi-line one is not a search term.
+   */
+  const handleFindRequest = useCallback(
+    (request: TerminalFindRequest) => {
+      if (request !== 'open') {
+        if (isFindOpen) {
+          stepFind(request)
+        } else {
+          setIsFindOpen(true)
+        }
+        return
+      }
+      const selection = surfaceRef.current?.getSelection() ?? ''
+      if (selection.length > 0 && !MULTILINE_SELECTION.test(selection)) {
+        setFindQuery(selection)
+      }
+      setIsFindOpen(true)
+      // Reopening an already-open bar has no render to wait for.
+      focusFindInput(findInputRef.current)
+    },
+    [isFindOpen, stepFind]
+  )
+
+  const handleFindRequestRef = useRef(handleFindRequest)
+  handleFindRequestRef.current = handleFindRequest
 
   const executeTerminalContextAction = useCallback(
     (action: TerminalContextMenuAction, context: TerminalContextMenuTarget) => {
@@ -355,6 +472,9 @@ function TerminalPaneRenderer({
       beforeKey: (event) =>
         handleTerminalKeyEvent(event, {
           isRunning: isRunningRef.current,
+          onFind: (request) => {
+            handleFindRequestRef.current(request)
+          },
           send: connectionSendRef.current,
           shouldBypass: shouldBypassTerminal,
         }),
@@ -377,6 +497,15 @@ function TerminalPaneRenderer({
         resizeTerminalRef.current({
           payload: { id: terminalIdRef.current, cols, rows },
         })
+      },
+      onSearchChange: (state) => {
+        // Output that arrives under an open find bar moves the matches, so the
+        // counter is republished rather than left describing the old screen.
+        setFindResults((previous) =>
+          previous.count === state.count && previous.index === state.index
+            ? previous
+            : state
+        )
       },
       onSelectionChange: () => {
         // The pane has no selection-driven chrome; the surface owns the copy
@@ -501,6 +630,26 @@ function TerminalPaneRenderer({
         </ContextMenu>
       )}
 
+      {/* Find bar — terminal-local, so it stays inside the pane rather than
+          borrowing the app's command surfaces. */}
+      {isFindOpen && (
+        <TerminalFindOverlay
+          inputRef={findInputRef}
+          onClose={() => {
+            closeFind(true)
+          }}
+          onFindNext={() => {
+            stepFind('next')
+          }}
+          onFindPrevious={() => {
+            stepFind('previous')
+          }}
+          onQueryChange={setFindQuery}
+          query={findQuery}
+          results={findResults}
+        />
+      )}
+
       {/* The renderer itself failed to start — a missing WASM artifact, a
           browser without Canvas 2D. There is no terminal to show, so say so
           rather than leaving an empty black rectangle. */}
@@ -553,6 +702,123 @@ function TerminalPaneRenderer({
         </div>
       )}
     </div>
+  )
+}
+
+interface TerminalFindOverlayProps {
+  readonly inputRef: RefObject<HTMLInputElement | null>
+  readonly onClose: () => void
+  readonly onFindNext: () => void
+  readonly onFindPrevious: () => void
+  readonly onQueryChange: (query: string) => void
+  readonly query: string
+  readonly results: TerminalSearchState
+}
+
+/**
+ * The pane's find bar. Enter and Shift+Enter step matches, Escape closes and
+ * hands focus back to the terminal; the surface paints the highlights and
+ * scrolls the active match into view.
+ */
+function TerminalFindOverlay({
+  inputRef,
+  onClose,
+  onFindNext,
+  onFindPrevious,
+  onQueryChange,
+  query,
+  results,
+}: TerminalFindOverlayProps) {
+  const resultLabel = formatTerminalSearchResults(
+    query,
+    results.count,
+    results.index
+  )
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.shiftKey) {
+        onFindPrevious()
+      } else {
+        onFindNext()
+      }
+    }
+  }
+
+  return (
+    <form
+      className="absolute top-1 right-1 z-30 w-80 max-w-[calc(100%-0.5rem)]"
+      data-testid="terminal-find-overlay"
+      onSubmit={(event) => {
+        event.preventDefault()
+      }}
+    >
+      <InputGroup className="h-7 border-border/70 bg-background/90 shadow-sm backdrop-blur-sm dark:bg-background/90">
+        <InputGroupAddon align="inline-start" className="gap-1.5">
+          <Search className="size-3.5" />
+        </InputGroupAddon>
+        <InputGroupInput
+          aria-label="Find in terminal"
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          onChange={(event) => {
+            onQueryChange(event.target.value)
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="Find"
+          ref={inputRef}
+          spellCheck={false}
+          type="search"
+          value={query}
+        />
+        <InputGroupAddon align="inline-end" className="gap-0.5">
+          {resultLabel.length > 0 && (
+            <InputGroupText className="min-w-9 justify-end tabular-nums">
+              {resultLabel}
+            </InputGroupText>
+          )}
+          <InputGroupButton
+            aria-label="Previous match"
+            onClick={onFindPrevious}
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            size="icon-xs"
+          >
+            <ChevronUp className="size-3.5" />
+          </InputGroupButton>
+          <InputGroupButton
+            aria-label="Next match"
+            onClick={onFindNext}
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            size="icon-xs"
+          >
+            <ChevronDown className="size-3.5" />
+          </InputGroupButton>
+          <InputGroupButton
+            aria-label="Close find"
+            onClick={onClose}
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            size="icon-xs"
+          >
+            <X className="size-3.5" />
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+    </form>
   )
 }
 

@@ -14,6 +14,13 @@ import {
   type TerminalLinkKind,
 } from '../ghostty-support/terminal-links'
 import {
+  findTerminalSearchMatches,
+  stepTerminalSearchIndex,
+  type TerminalSearchDirection,
+  type TerminalSearchMatch,
+  terminalSearchIndexNear,
+} from '../ghostty-support/terminal-search'
+import {
   type GhosttyScrollbar,
   type GhosttySnapshot,
   GhosttyTerminalCore,
@@ -723,6 +730,16 @@ export function advanceTerminalSelectionClickSequence(
   }
 }
 
+/** Laborer addition: what the find bar shows — how many matches, and which. */
+export interface TerminalSearchState {
+  readonly count: number
+  /** Index of the active match, or -1 when there is none. */
+  readonly index: number
+}
+
+/** How long a burst of output may push the find bar's highlights out of date. */
+const SEARCH_REFRESH_INTERVAL_MS = 250
+
 export interface GhosttySelectionPosition {
   readonly end: { readonly x: number; readonly y: number }
   readonly start: { readonly x: number; readonly y: number }
@@ -740,6 +757,11 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onData: (data: string) => void
   readonly onLinkActivate: (text: string, event: MouseEvent) => void
   readonly onResize: (cols: number, rows: number) => void
+  /**
+   * Laborer addition: the match count and active index changed — either from a
+   * find request or because output moved the matches underneath it.
+   */
+  readonly onSearchChange?: (state: TerminalSearchState) => void
   readonly onSelectionChange: () => void
   readonly theme: GhosttyTheme
 }
@@ -821,6 +843,13 @@ export class GhosttyTerminalSurface {
   )
   private inputLeft = -1
   private inputTop = -1
+  // Laborer addition (not in the vendored t3code tree): the find bar's state.
+  private searchQuery = ''
+  private searchMatches: readonly TerminalSearchMatch[] = []
+  private searchIndex = -1
+  private searchStale = false
+  private searchRefreshedAt = 0
+  private searchRefreshTimer: number | null = null
 
   private constructor(
     mount: HTMLElement,
@@ -953,6 +982,7 @@ export class GhosttyTerminalSurface {
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true
     this.scrollbarDirty = true
+    this.refreshSearchAfterOutput()
     this.requestRender()
   }
 
@@ -968,6 +998,7 @@ export class GhosttyTerminalSurface {
     this.cursorOn = true
     this.forceFullRender = true
     this.scrollbarDirty = true
+    this.refreshSearchAfterOutput()
     this.requestRender()
   }
 
@@ -1262,6 +1293,160 @@ export class GhosttyTerminalSurface {
     this.requestRender()
   }
 
+  /**
+   * Laborer addition (not in the vendored t3code tree).
+   *
+   * Finds `query` across the whole screen — scrollback included — highlights
+   * every match, and makes the first one at or after the previous active match
+   * current. Returns what the find bar has to show.
+   */
+  search(query: string): TerminalSearchState {
+    if (this.disposed) {
+      return { count: 0, index: -1 }
+    }
+    const previousActive = this.searchMatches[this.searchIndex] ?? null
+    this.searchQuery = query
+    this.searchMatches =
+      query.length === 0
+        ? []
+        : findTerminalSearchMatches(this.core.screenLines(), query)
+    this.searchStale = false
+    this.searchRefreshedAt = performance.now()
+    const nearIndex = terminalSearchIndexNear(
+      this.searchMatches,
+      previousActive
+    )
+    this.searchIndex =
+      nearIndex >= 0 ? nearIndex : this.searchMatches.length > 0 ? 0 : -1
+    this.revealActiveMatch()
+    this.repaintSearch()
+    return this.publishSearchState()
+  }
+
+  /** Steps to the next or previous match, wrapping at either end. */
+  stepSearch(direction: TerminalSearchDirection): TerminalSearchState {
+    if (this.disposed || this.searchMatches.length === 0) {
+      return this.searchState()
+    }
+    this.searchIndex = stepTerminalSearchIndex(
+      this.searchMatches.length,
+      this.searchIndex,
+      direction
+    )
+    this.revealActiveMatch()
+    this.repaintSearch()
+    return this.publishSearchState()
+  }
+
+  /** Drops the highlights and stops tracking output for the find bar. */
+  clearSearch(): void {
+    if (this.searchQuery.length === 0 && this.searchMatches.length === 0) {
+      return
+    }
+    this.searchQuery = ''
+    this.searchMatches = []
+    this.searchIndex = -1
+    this.searchStale = false
+    this.cancelSearchRefresh()
+    this.repaintSearch()
+    this.publishSearchState()
+  }
+
+  searchState(): TerminalSearchState {
+    return { count: this.searchMatches.length, index: this.searchIndex }
+  }
+
+  private publishSearchState(): TerminalSearchState {
+    const state = this.searchState()
+    this.options.onSearchChange?.(state)
+    return state
+  }
+
+  private repaintSearch(): void {
+    // Highlights span rows Ghostty has no reason to mark dirty.
+    this.forceFullRender = true
+    this.requestRender()
+  }
+
+  /** Scrolls the active match into view, centered, if it is off screen. */
+  private revealActiveMatch(): void {
+    const match = this.searchMatches[this.searchIndex]
+    const state = this.readScrollbarState()
+    if (!match || state === null) {
+      return
+    }
+    const top = state.offset
+    if (match.row >= top && match.row < top + state.len) {
+      return
+    }
+    this.scrollViewport(match.row - Math.floor(state.len / 2) - top)
+  }
+
+  /**
+   * Output keeps arriving under an open find bar, and every new row shifts the
+   * screen rows the matches were found at. Rerunning the search costs a full
+   * screen read, so it is throttled: the highlights lag a burst of output by
+   * at most one interval instead of being recomputed per frame.
+   */
+  private refreshSearchAfterOutput(): void {
+    if (this.searchQuery.length === 0 || this.disposed) {
+      return
+    }
+    this.searchStale = true
+    const elapsed = performance.now() - this.searchRefreshedAt
+    if (elapsed >= SEARCH_REFRESH_INTERVAL_MS) {
+      this.search(this.searchQuery)
+      return
+    }
+    if (this.searchRefreshTimer !== null) {
+      return
+    }
+    this.searchRefreshTimer = window.setTimeout(() => {
+      this.searchRefreshTimer = null
+      if (!this.disposed && this.searchStale) {
+        this.search(this.searchQuery)
+      }
+    }, SEARCH_REFRESH_INTERVAL_MS - elapsed)
+  }
+
+  private cancelSearchRefresh(): void {
+    if (this.searchRefreshTimer !== null) {
+      window.clearTimeout(this.searchRefreshTimer)
+      this.searchRefreshTimer = null
+    }
+  }
+
+  /** The visible part of the match set, in viewport cell coordinates. */
+  private searchRangesInViewport(): {
+    readonly active: GhosttyCellRange | null
+    readonly ranges: readonly GhosttyCellRange[]
+  } {
+    if (this.searchMatches.length === 0) {
+      return { active: null, ranges: [] }
+    }
+    const state = this.scrollbarState
+    if (state === null) {
+      return { active: null, ranges: [] }
+    }
+    const ranges: GhosttyCellRange[] = []
+    let active: GhosttyCellRange | null = null
+    for (const [index, match] of this.searchMatches.entries()) {
+      const row = match.row - state.offset
+      if (row < 0 || row >= this.rows) {
+        continue
+      }
+      const range = {
+        start: { x: match.startColumn, y: row },
+        end: { x: match.endColumn - 1, y: row },
+      }
+      ranges.push(range)
+      if (index === this.searchIndex) {
+        active = range
+      }
+    }
+    return { active, ranges }
+  }
+
   scrollToBottom(): void {
     this.core.scrollToBottom()
     this.forceFullRender = true
@@ -1278,6 +1463,7 @@ export class GhosttyTerminalSurface {
       return
     }
     this.disposed = true
+    this.cancelSearchRefresh()
     this.resizeObserver.disconnect()
     document.fonts.removeEventListener('loadingdone', this.onFontsLoaded)
     this.dprMedia?.removeEventListener('change', this.onDevicePixelRatioChange)
@@ -2190,6 +2376,7 @@ export class GhosttyTerminalSurface {
       this.forceFullRender = true
     }
     this.refreshHoveredLink()
+    const search = this.searchRangesInViewport()
     renderGhosttySnapshot({
       context: this.context,
       snapshot: this.snapshot,
@@ -2203,6 +2390,8 @@ export class GhosttyTerminalSurface {
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
       hoveredLinkRange: this.hoveredLink?.range ?? null,
+      searchRanges: search.ranges,
+      activeSearchRange: search.active,
       ...(this.theme.selectionBackground !== undefined
         ? { selectionBackground: this.theme.selectionBackground }
         : {}),

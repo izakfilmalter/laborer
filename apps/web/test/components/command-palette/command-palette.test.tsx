@@ -1,5 +1,12 @@
 import type { SharedProjectRow } from '@laborer/shared/rpc'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CommandPalette } from '@/components/command-palette/command-palette'
@@ -159,5 +166,15 @@ describe('CommandPalette contextual workspace creation', () => {
     expect(options[0]?.textContent).toContain('Toggle task board')
     expect(screen.queryByText('New workspace in Beta')).toBeNull()
     expect(screen.getByText('New workspace in...')).toBeDefined()
+  })
+
+  it('closes on Escape', async () => {
+    openPalette()
+
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' })
+
+    await waitFor(() => {
+      expect(screen.queryByText('New workspace in...')).toBeNull()
+    })
   })
 })

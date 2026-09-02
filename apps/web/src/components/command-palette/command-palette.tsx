@@ -457,12 +457,20 @@ function OpenCommandPalette(
 
   const handleInputKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
+      // The Autocomplete input consumes Escape for its own (always-open)
+      // list, so the dialog never hears it. Close the palette ourselves.
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setOpen(false)
+        return
+      }
+
       if (event.key === 'Backspace' && query === '' && currentView !== null) {
         event.preventDefault()
         popView()
       }
     },
-    [currentView, popView, query]
+    [currentView, popView, query, setOpen]
   )
 
   // Pasting a Slack message link commits immediately, matching the sidebar

@@ -968,6 +968,32 @@ function HomeComponent() {
     toggleBoardOverlay()
   })
 
+  // Escape dismisses the board, the same way it dismisses a dialog. Anything
+  // layered above the board — the task editor, the command palette, the board
+  // search's own clear — answers Escape first and keeps the board open.
+  useEffect(() => {
+    if (!boardOverlayOpen) {
+      return
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) {
+        return
+      }
+      const focused = document.activeElement
+      if (focused?.closest('[role="dialog"], [role="alertdialog"]')) {
+        return
+      }
+      event.preventDefault()
+      closeBoardOverlay()
+    }
+
+    window.addEventListener('keydown', handleEscape)
+    return () => {
+      window.removeEventListener('keydown', handleEscape)
+    }
+  }, [boardOverlayOpen, closeBoardOverlay])
+
   const handleBoardResizeStart = useCallback(
     (event: PointerEvent<HTMLButtonElement>) => {
       const containerHeight =

@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process'
 import { Context, Effect, Layer, Schema } from 'effect'
+import { execFile } from '../lib/spawn.js'
 
 const PROCESS_LINE_PATTERN = /^\s*(\d+)\s+(.+)$/
 const WHITESPACE_PATTERN = /\s+/
@@ -141,7 +141,7 @@ function exec(
   return Effect.tryPromise({
     try: () =>
       new Promise<string>((resolve, reject) => {
-        execFile(file, args, (error, stdout) => {
+        execFile(file, args, {}, (error, stdout) => {
           if (error !== null) {
             reject(error)
             return

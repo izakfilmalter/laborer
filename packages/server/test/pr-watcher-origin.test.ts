@@ -58,7 +58,7 @@ const createSpawnMock = (
           stdout,
           stderr,
           kill: () => true,
-          pid: 1234,
+          spawned: Promise.resolve(1234),
         } satisfies SpawnResult
       }
     }
@@ -80,7 +80,7 @@ const createSpawnMock = (
       stdout: emptyStdout,
       stderr: errorStderr,
       kill: () => true,
-      pid: 1234,
+      spawned: Promise.resolve(1234),
     } satisfies SpawnResult
   }) as typeof spawn
 }
@@ -625,7 +625,7 @@ describe('PrWatcher unresolved review threads', () => {
           // A `gh` that never exits: only the timeout can end this read.
           exited: new Promise<number>(() => undefined),
           kill: () => true,
-          pid: 99,
+          spawned: Promise.resolve(99),
           stderr: emptyStream(),
           stdout: emptyStream(),
         } satisfies SpawnResult

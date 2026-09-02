@@ -47,7 +47,6 @@
  * Issue #43: destroyWorktree method
  */
 
-import { execFile } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { isRootWorkspaceId } from '@laborer/shared/root-workspace'
@@ -63,7 +62,7 @@ import {
   Ref,
   Semaphore,
 } from 'effect'
-import { spawn } from '../lib/spawn.js'
+import { execFile, spawn } from '../lib/spawn.js'
 import { spawnGit } from '../lib/spawn-git.js'
 import { ConfigService } from './config-service.js'
 import { LaborerDatabase } from './laborer-database.js'

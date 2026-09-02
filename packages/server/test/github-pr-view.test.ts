@@ -27,7 +27,7 @@ const streamOf = (text: string): ReadableStream<Uint8Array> =>
 const neverExits = (kill: () => boolean): SpawnResult => ({
   exited: new Promise<number>(() => undefined),
   kill,
-  pid: 2,
+  spawned: Promise.resolve(2),
   stderr: streamOf(''),
   stdout: streamOf(''),
 })
@@ -39,7 +39,7 @@ const neverExits = (kill: () => boolean): SpawnResult => ({
 const originRemote = (): SpawnResult => ({
   exited: Promise.resolve(0),
   kill: () => true,
-  pid: 1,
+  spawned: Promise.resolve(1),
   stderr: streamOf(''),
   stdout: streamOf('git@github.com:acme/widgets.git\n'),
 })
@@ -128,7 +128,7 @@ describe('scoped child processes', () => {
       spawnMock.mockImplementation((() => ({
         exited: Promise.resolve(1),
         kill: () => true,
-        pid: 1,
+        spawned: Promise.resolve(1),
         stderr: streamOf(''),
         stdout: streamOf(''),
       })) as typeof spawn)

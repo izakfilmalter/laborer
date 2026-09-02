@@ -1,16 +1,20 @@
 /**
- * Node.js spawn utility that provides Bun.spawn()-compatible ergonomics.
+ * Process spawn utilities for the daemon.
  *
- * Designed as a drop-in replacement for all ~40 `Bun.spawn()` call sites
- * in the server package. Returns Web ReadableStreams for stdout/stderr
- * so that the existing `new Response(proc.stdout).text()` pattern works
- * unchanged.
+ * `spawn` keeps Bun.spawn()-compatible ergonomics (the ~40 call sites that
+ * came from the Bun era use `new Response(proc.stdout).text()`), and
+ * `execFile` mirrors the callback shape of `node:child_process.execFile` for
+ * the git wrappers that were written against it.
+ *
+ * Both are backed by the spawn broker so the actual `spawn` syscall runs on a
+ * worker thread. Nothing in the daemon should call `node:child_process`
+ * directly for short-lived commands: the blocking spawn call would sit in
+ * front of terminal input and every RPC (see spawn-broker.ts).
  *
  * @see PRD-migrate-to-electron.md — "Process spawn utility" architectural decision
  */
 
-import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process'
-import { Readable } from 'node:stream'
+import { type BrokerChild, brokerSpawn } from '@laborer/shared/spawn-broker'
 
 interface SpawnOptions {
   /** Working directory for the child process. */
@@ -42,8 +46,11 @@ interface SpawnResult {
   readonly exited: Promise<number>
   /** Send a signal to the child process. Defaults to SIGTERM. */
   readonly kill: (signal?: NodeJS.Signals) => boolean
-  /** The child process PID. Undefined if the process failed to spawn. */
-  readonly pid: number | undefined
+  /**
+   * Resolves with the child's pid once the broker thread has started it;
+   * rejects if the process could not be spawned (e.g. ENOENT).
+   */
+  readonly spawned: Promise<number | undefined>
   /**
    * stderr as a Web ReadableStream.
    * Empty stream if stderr was set to 'ignore'.
@@ -56,68 +63,35 @@ interface SpawnResult {
   readonly stdout: ReadableStream<Uint8Array>
 }
 
-/** Convert a Node.js Readable stream to a Web ReadableStream, or return an empty stream. */
-const toWebStream = (
-  nodeStream: Readable | null
-): ReadableStream<Uint8Array> => {
-  if (nodeStream === null) {
-    return new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.close()
-      },
-    })
-  }
-  return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>
-}
-
 /**
- * Pipe a Web ReadableStream into a Node.js Writable (the child's stdin).
- * Closes the writable when the readable is exhausted.
+ * Pump a Web ReadableStream into the child's stdin, ending stdin when the
+ * source is exhausted or errors.
  */
-const pipeWebStreamToNodeWritable = (
+const pipeWebStreamToStdin = (
   webStream: ReadableStream<Uint8Array>,
-  child: ChildProcess
+  child: BrokerChild
 ): void => {
-  const writable = child.stdin
-  if (writable === null) {
-    return
-  }
-
   const reader = webStream.getReader()
-
   const pump = (): void => {
     reader
       .read()
       .then(({ done, value }) => {
         if (done) {
-          writable.end()
+          child.endStdin()
           return
         }
-        const canContinue = writable.write(value)
-        if (canContinue) {
-          pump()
-        } else {
-          writable.once('drain', pump)
-        }
+        child.writeStdin(value)
+        pump()
       })
       .catch(() => {
-        // Source stream errored — close stdin
-        writable.end()
+        child.endStdin()
       })
   }
-
-  // If the child process exits or stdin errors, cancel the reader
-  writable.on('error', () => {
+  child.exited.then(() =>
     reader.cancel().catch(() => {
       // Intentionally swallowed — reader may already be closed
     })
-  })
-  child.on('exit', () => {
-    reader.cancel().catch(() => {
-      // Intentionally swallowed — reader may already be closed
-    })
-  })
-
+  )
   pump()
 }
 
@@ -126,15 +100,9 @@ const pipeWebStreamToNodeWritable = (
  *
  * @example
  * ```ts
- * // Simple command execution
  * const proc = spawn(['git', 'status', '--porcelain'], { cwd: repoPath })
  * const exitCode = await proc.exited
  * const output = await new Response(proc.stdout).text()
- *
- * // Pipe between processes
- * const tarProc = spawn(['docker', 'exec', name, 'tar', 'cf', '-', '.'], { stdout: 'pipe' })
- * const extractProc = spawn(['tar', 'xf', '-', '-C', dest], { stdin: tarProc.stdout })
- * await Promise.all([tarProc.exited, extractProc.exited])
  * ```
  */
 const spawn = (cmd: string[], options?: SpawnOptions): SpawnResult => {
@@ -144,37 +112,135 @@ const spawn = (cmd: string[], options?: SpawnOptions): SpawnResult => {
     throw new Error('spawn: command array must not be empty')
   }
 
-  const stdoutMode = options?.stdout ?? 'pipe'
-  const stderrMode = options?.stderr ?? 'pipe'
   const stdinMode = options?.stdin instanceof ReadableStream ? 'pipe' : 'ignore'
 
-  const child = nodeSpawn(command, args, {
+  const child = brokerSpawn(command, args, {
     cwd: options?.cwd,
-    env: options?.env as NodeJS.ProcessEnv | undefined,
-    stdio: [stdinMode, stdoutMode, stderrMode],
+    env: options?.env,
+    stdin: stdinMode,
+    stdout: options?.stdout ?? 'pipe',
+    stderr: options?.stderr ?? 'pipe',
   })
 
-  // Pipe the Web ReadableStream into the child's stdin if provided
   if (options?.stdin instanceof ReadableStream) {
-    pipeWebStreamToNodeWritable(options.stdin, child)
+    pipeWebStreamToStdin(options.stdin, child)
   }
 
-  const exited = new Promise<number>((resolve, reject) => {
-    child.on('error', (error) => {
-      reject(error)
-    })
-    child.on('close', (code) => {
-      resolve(code ?? 1)
-    })
+  // Surface spawn failures (ENOENT etc.) the way node's ChildProcess does:
+  // as a rejection rather than a silent non-zero exit.
+  const exited = child.exited.then(async (code) => {
+    await child.spawned
+    return code
   })
 
   return {
     exited,
-    stdout: toWebStream(child.stdout),
-    stderr: toWebStream(child.stderr),
-    kill: (signal?: NodeJS.Signals) => child.kill(signal),
-    pid: child.pid,
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: child.kill,
+    spawned: child.spawned,
   }
 }
 
-export { spawn, type SpawnOptions, type SpawnResult }
+interface ExecFileOptions {
+  readonly cwd?: string | undefined
+  readonly env?: Record<string, string | undefined> | undefined
+  /** Kill the child and fail with `killed: true` after this many ms. */
+  readonly timeout?: number | undefined
+}
+
+interface ExecFileError extends Error {
+  readonly code: number | string | undefined
+  readonly killed: boolean
+  readonly signal: NodeJS.Signals | undefined
+}
+
+type ExecFileCallback = (
+  error: ExecFileError | null,
+  stdout: string,
+  stderr: string
+) => void
+
+const readText = async (stream: ReadableStream<Uint8Array>): Promise<string> =>
+  new Response(stream).text()
+
+/**
+ * `node:child_process.execFile` lookalike (utf8, buffered stdout/stderr,
+ * callback API) that runs on the broker thread.
+ *
+ * On a non-zero exit the error carries the numeric exit code in `code`, like
+ * node's; on a spawn failure `code` is the errno string (e.g. `ENOENT`).
+ */
+const execFile = (
+  file: string,
+  args: readonly string[],
+  options: ExecFileOptions,
+  callback: ExecFileCallback
+): void => {
+  const child = brokerSpawn(file, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  let killedByTimeout = false
+  const timer =
+    options.timeout === undefined
+      ? null
+      : setTimeout(() => {
+          killedByTimeout = true
+          child.kill('SIGTERM')
+        }, options.timeout)
+
+  const makeError = (
+    message: string,
+    code: number | string | undefined
+  ): ExecFileError =>
+    Object.assign(new Error(message), {
+      code,
+      killed: killedByTimeout,
+      signal: killedByTimeout ? ('SIGTERM' as const) : undefined,
+    })
+
+  Promise.all([readText(child.stdout), readText(child.stderr), child.exited])
+    .then(async ([stdout, stderr, exitCode]) => {
+      if (timer !== null) {
+        clearTimeout(timer)
+      }
+      try {
+        await child.spawned
+      } catch (error) {
+        const spawnError = error as Error & { code?: string }
+        callback(makeError(spawnError.message, spawnError.code), stdout, stderr)
+        return
+      }
+      if (exitCode !== 0 || killedByTimeout) {
+        callback(
+          makeError(
+            `Command failed: ${file} ${args.join(' ')}\n${stderr}`,
+            exitCode
+          ),
+          stdout,
+          stderr
+        )
+        return
+      }
+      callback(null, stdout, stderr)
+    })
+    .catch((error: unknown) => {
+      if (timer !== null) {
+        clearTimeout(timer)
+      }
+      callback(makeError(String(error), undefined), '', '')
+    })
+}
+
+export {
+  execFile,
+  spawn,
+  type ExecFileError,
+  type ExecFileOptions,
+  type SpawnOptions,
+  type SpawnResult,
+}

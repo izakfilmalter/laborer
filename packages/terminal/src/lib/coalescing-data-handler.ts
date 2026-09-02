@@ -3,15 +3,16 @@
  *
  * Agent TUIs emit continuous small writes; forwarding each one costs a
  * full IPC hop, RPC parse, and renderer draw (~170 renders/sec measured).
- * This module batches raw PTY output per terminal: chunks are appended to
- * a buffer and flushed as one concatenated chunk at most once per
- * ~16ms window (one frame), collapsing the render rate to ≤60/sec.
+ * This module rate-limits raw PTY output per terminal to at most one emit
+ * per ~16ms window (one frame), collapsing the render rate to ≤60/sec.
  * VS Code's pty host performs the same batching.
  *
- * The flush timer is armed by the first unflushed chunk and is NOT
- * extended by subsequent chunks, so added latency is bounded by the
- * window (imperceptible at 16ms). A max-buffer-size safety valve flushes
- * immediately during output floods to bound memory.
+ * The limiter is leading-edge: a chunk arriving while the terminal is
+ * idle is emitted immediately, so an interactive keystroke echo pays no
+ * added latency. Chunks arriving inside the window that follows are
+ * buffered and emitted together when it closes, which re-arms the window
+ * so a sustained flood stays at one emit per window. A max-buffer-size
+ * safety valve flushes immediately during output floods to bound memory.
  *
  * Ordering is preserved exactly: data is emitted in arrival order, valve
  * flushes are synchronous, and callers must invoke `flush()` before
@@ -100,13 +101,10 @@ const createCoalescingDataHandler = (
 
   let chunks: string[] = []
   let bufferedBytes = 0
+  /** Armed while a window is open; `undefined` means the terminal is idle. */
   let timer: ReturnType<typeof setTimeout> | undefined
 
-  const flush = (): void => {
-    if (timer !== undefined) {
-      clearTimeout(timer)
-      timer = undefined
-    }
+  const emit = (): void => {
     if (chunks.length === 0) {
       return
     }
@@ -114,6 +112,27 @@ const createCoalescingDataHandler = (
     chunks = []
     bufferedBytes = 0
     onFlush(joined)
+  }
+
+  const openWindow = (): void => {
+    timer = setTimeout(() => {
+      timer = undefined
+      // Output that arrived inside the window goes out now, and starts
+      // another window so a flood stays at one emit per window rather
+      // than doubling up on the next leading edge.
+      if (chunks.length > 0) {
+        emit()
+        openWindow()
+      }
+    }, currentWindowMs())
+  }
+
+  const flush = (): void => {
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+    emit()
   }
 
   const write = (data: string): void => {
@@ -129,10 +148,10 @@ const createCoalescingDataHandler = (
       return
     }
 
-    // Arm the timer on the first unflushed chunk only — later chunks
-    // ride the same deadline so latency stays bounded by the window.
+    // Idle: emit at once and open a window. Inside a window: wait for it.
     if (timer === undefined) {
-      timer = setTimeout(flush, currentWindowMs())
+      emit()
+      openWindow()
     }
   }
 

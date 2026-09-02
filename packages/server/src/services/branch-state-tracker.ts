@@ -14,10 +14,10 @@
  * @see PRD-opencode-inspired-repo-watching.md — Issue 4
  */
 
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
+import { execFile } from '../lib/spawn.js'
 import { LaborerDatabase } from './laborer-database.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 import { listWorkspaceRecords } from './workspace-records.js'

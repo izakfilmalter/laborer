@@ -126,18 +126,53 @@ const isBranchRelatedEvent = (fileName: string | null): boolean => {
 }
 
 /**
+ * Files inside `.git/worktrees/<name>/` that describe the worktree itself.
+ * Everything else in that directory is per-checkout working state — most
+ * notably `index` and `index.lock`, which every `git status` rewrites.
+ */
+const WORKTREE_METADATA_FILES: ReadonlySet<string> = new Set([
+  'HEAD',
+  'commondir',
+  'gitdir',
+  'locked',
+])
+
+/**
  * Determine whether a filesystem event from the git directory
  * is worktree-related based on the fileName.
+ *
+ * Only the `worktrees` directory, a worktree directory itself
+ * (`worktrees/<name>`), or its metadata files count. Reacting to the
+ * per-worktree `index`/`index.lock` created a feedback loop: reconciliation
+ * runs `git status`, which rewrites the index, which re-triggered
+ * reconciliation on the next cooldown forever — and every daemon watching the
+ * same repository amplified every other's git activity.
  */
-const isWorktreeRelatedEvent = (fileName: string | null): boolean => {
+export const isWorktreeRelatedEvent = (fileName: string | null): boolean => {
   if (fileName === null) {
     return false
   }
-  if (fileName === 'worktrees' || fileName.startsWith('worktrees')) {
+  if (fileName === 'worktrees') {
     return true
   }
-  return false
+  if (!fileName.startsWith('worktrees/')) {
+    return false
+  }
+  const segments = fileName.split('/')
+  if (segments.length === 2) {
+    return segments[1] !== ''
+  }
+  return segments.length === 3 && WORKTREE_METADATA_FILES.has(segments[2] ?? '')
 }
+
+/**
+ * Same classification for events from the dedicated `worktrees` directory
+ * watcher, whose fileNames are relative to that directory.
+ */
+export const isWorktreesDirMetadataEvent = (
+  fileName: string | null
+): boolean =>
+  fileName === null ? false : isWorktreeRelatedEvent(`worktrees/${fileName}`)
 
 class RepositoryWatchCoordinatorError extends Data.TaggedError(
   'RepositoryWatchCoordinatorError'
@@ -450,7 +485,7 @@ class RepositoryWatchCoordinator extends Context.Service<
         if (purpose === 'git-dir') {
           handleGitDirEvent(state, event)
         } else if (purpose === 'worktrees') {
-          handleWorktreesEvent(state)
+          handleWorktreesEvent(state, event)
         }
         // repo-root events are handled by the file-watcher service's
         // normalization and streamed to clients via
@@ -496,8 +531,14 @@ class RepositoryWatchCoordinator extends Context.Service<
         }
       }
 
-      const handleWorktreesEvent = (state: ProjectWatcherState): void => {
+      const handleWorktreesEvent = (
+        state: ProjectWatcherState,
+        event: WatchFileEvent
+      ): void => {
         if (!isActive(state)) {
+          return
+        }
+        if (!isWorktreesDirMetadataEvent(event.fileName)) {
           return
         }
         scheduleReconcile(state, 'worktree-metadata-change')

@@ -78,7 +78,7 @@ const mockGhApi = (stdout: string) => {
   spawnMock.mockImplementation((() => ({
     exited: Promise.resolve(0),
     kill: () => true,
-    pid: 2,
+    spawned: Promise.resolve(2),
     stderr: streamOf(''),
     stdout: streamOf(stdout),
   })) as typeof spawn)
@@ -140,7 +140,7 @@ describe('fetchPullRequestComments', () => {
           // `gh` that never finishes: only the kill can end this fiber.
           exited: new Promise<number>(() => undefined),
           kill,
-          pid: 2,
+          spawned: Promise.resolve(2),
           stderr: streamOf(''),
           stdout: streamOf(''),
         } satisfies SpawnResult
@@ -179,7 +179,7 @@ const mockGh = (stdout: string, exitCode = 0) => {
   spawnMock.mockImplementation((() => ({
     exited: Promise.resolve(exitCode),
     kill: () => true,
-    pid: 2,
+    spawned: Promise.resolve(2),
     stderr: streamOf(exitCode === 0 ? '' : stdout),
     stdout: streamOf(exitCode === 0 ? stdout : ''),
   })) as typeof spawn)

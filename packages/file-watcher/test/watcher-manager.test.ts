@@ -127,6 +127,39 @@ describe('shouldIgnore', () => {
     })
   )
 
+  it.effect('ignores nested node_modules, dist, and dev state', () =>
+    Effect.sync(() => {
+      assert.isTrue(
+        shouldIgnore(
+          'packages/server/node_modules/.vite/results.json',
+          DEFAULT_IGNORED_PREFIXES
+        )
+      )
+      assert.isTrue(
+        shouldIgnore('apps/web/dist/index.html', DEFAULT_IGNORED_PREFIXES)
+      )
+      assert.isTrue(
+        shouldIgnore(
+          '.laborer-state/laborer/laborer.sqlite',
+          DEFAULT_IGNORED_PREFIXES
+        )
+      )
+    })
+  )
+
+  it.effect('only ignores .git at the root of the watched path', () =>
+    Effect.sync(() => {
+      // A git-dir subscription's relative paths never begin with `.git`;
+      // a nested `.git` segment must not be silenced.
+      assert.isFalse(
+        shouldIgnore('worktrees/feature/HEAD', DEFAULT_IGNORED_PREFIXES)
+      )
+      assert.isFalse(
+        shouldIgnore('vendor/lib/.git/HEAD', DEFAULT_IGNORED_PREFIXES)
+      )
+    })
+  )
+
   it.effect('does not ignore source files', () =>
     Effect.sync(() => {
       assert.isFalse(shouldIgnore('src/index.ts', DEFAULT_IGNORED_PREFIXES))
@@ -644,11 +677,12 @@ describe('WatcherManager', () => {
       const opts = fwSubs[0]?.options
       assert.isDefined(opts)
       assert.isTrue(opts?.recursive ?? false)
-      assert.deepStrictEqual(opts?.ignore, ['node_modules/**', '.git/**'])
+      assert.include(opts?.ignore ?? [], 'node_modules/**')
+      assert.include(opts?.ignore ?? [], '.git/**')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })
 
-  it.effect('omits ignore from options when no globs provided', () => {
+  it.effect('passes default ignores to the native watcher', () => {
     const { mock, testLayer } = createTestLayer()
 
     return Effect.gen(function* () {
@@ -661,8 +695,14 @@ describe('WatcherManager', () => {
       const opts = fwSubs[0]?.options
       assert.isDefined(opts)
       assert.isTrue(opts?.recursive ?? false)
-      // When no ignore globs, ignore should not be in options
-      assert.isUndefined(opts?.ignore)
+      // Defaults are dropped natively so they never reach the main thread:
+      // root-level names plus nested globs, except `.git` which is only
+      // root-level because git-dir subscriptions watch `.git` itself.
+      const ignore = opts?.ignore ?? []
+      assert.include(ignore, 'node_modules')
+      assert.include(ignore, '**/node_modules/**')
+      assert.include(ignore, '.git')
+      assert.notInclude(ignore, '**/.git/**')
     }).pipe(Effect.scoped, Effect.provide(testLayer))
   })
 })

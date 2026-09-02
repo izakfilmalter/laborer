@@ -18,6 +18,7 @@
     "./root-workspace": "./src/root-workspace.ts",
     "./desktop-bridge": "./src/desktop-bridge.ts",
     "./process-time-scheduler": "./src/process-time-scheduler.ts",
+    "./spawn-broker": "./src/spawn-broker.ts",
     "./slack-url": "./src/slack-url.ts",
     "./branch-name": "./src/branch-name.ts",
     "./browser-agent-rpc": "./src/browser-agent-rpc.ts",

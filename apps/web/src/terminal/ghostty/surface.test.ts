@@ -12,6 +12,7 @@ import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   ghosttyMouseButton,
+  isPlainClickableTerminalLink,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
   isTerminalCompositionKey,
@@ -225,12 +226,19 @@ describe('terminalLinkAtColumn', () => {
     expect(terminalLinkAtPosition(rows, 2, 2)).toBe('~/project/file')
     expect(terminalLinkAtPosition(rows, 3, 4)).toBe('C:\\repo\\file.ts')
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)).toEqual({
+      kind: 'url',
       text: 'https://example.com/reference',
       range: {
         start: { x: 0, y: 0 },
         end: { x: 12, y: 1 },
       },
     })
+    expect(terminalLinkAtPositionWithRange(rows, 2, 2)?.kind).toBe('path')
+  })
+
+  it('opens URLs on a plain click but keeps paths behind the modifier', () => {
+    expect(isPlainClickableTerminalLink({ kind: 'url' })).toBe(true)
+    expect(isPlainClickableTerminalLink({ kind: 'path' })).toBe(false)
   })
 
   it('refuses links truncated at the viewport edges instead of mis-resolving', () => {

@@ -11,6 +11,7 @@ import { isMacPlatform } from '../ghostty-support/platform'
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
+  type TerminalLinkKind,
 } from '../ghostty-support/terminal-links'
 import {
   type GhosttyScrollbar,
@@ -310,8 +311,22 @@ export function terminalLinkAtPosition(
 }
 
 export interface TerminalLinkWithRange {
+  readonly kind: TerminalLinkKind
   readonly range: GhosttyCellRange
   readonly text: string
+}
+
+/**
+ * Whether a link activates on an unmodified click, as it did under xterm's
+ * link provider. URLs are unambiguous and safe to open, so they stay clickable
+ * without a modifier; file paths are matched loosely enough that a bare click
+ * on ordinary output would open something the user never aimed at, so those
+ * still require the Cmd/Ctrl gesture.
+ */
+export function isPlainClickableTerminalLink(
+  link: Pick<TerminalLinkWithRange, 'kind'>
+): boolean {
+  return link.kind === 'url'
 }
 
 function terminalColumnAtOffset(
@@ -393,6 +408,7 @@ export function terminalLinkAtPositionWithRange(
         return null
       }
       return {
+        kind: match.kind,
         text: match.text,
         range: {
           start: {
@@ -1789,13 +1805,19 @@ export class GhosttyTerminalSurface {
     this.canvas.style.cursor = cursor
   }
 
+  /**
+   * A URL underlines on plain hover and opens on a plain click, the way it did
+   * under xterm's link provider. Everything else the matcher finds — file paths
+   * — stays behind the Cmd/Ctrl gesture.
+   */
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer
-    const link =
-      pointer && this.linkModifierActive
-        ? this.linkAt(pointer.x, pointer.y)
+    const link = pointer ? this.linkAt(pointer.x, pointer.y) : null
+    this.setHoveredLink(
+      link && (this.linkModifierActive || isPlainClickableTerminalLink(link))
+        ? link
         : null
-    this.setHoveredLink(link)
+    )
   }
 
   private setHoveredLink(link: TerminalLinkWithRange | null): void {
@@ -1858,8 +1880,20 @@ export class GhosttyTerminalSurface {
     }
     if (!this.selectionMoved && this.selectionMode === 'cell') {
       this.clearSelection()
+      // A press that never moved is a click, not a selection, so it can open a
+      // link. Deciding here rather than on pointerdown keeps a drag that starts
+      // on a URL a selection.
+      if (event.type !== 'pointercancel') {
+        const link = this.linkAt(event.clientX, event.clientY)
+        if (link && isPlainClickableTerminalLink(link)) {
+          this.options.onLinkActivate(link.text, event)
+        }
+      }
     }
     this.options.onSelectionChange()
+    if (event.type !== 'pointercancel') {
+      this.updateHoverCursor(event)
+    }
   }
 
   private readonly onWheel = (event: WheelEvent) => {
@@ -2318,6 +2352,9 @@ export class GhosttyTerminalSurface {
         end.y = next.y
       }
       return {
+        // OSC 8 hyperlinks are declared by the application, so they are always
+        // openable and never need the modifier.
+        kind: 'url',
         text: explicitHyperlink,
         range: { start, end },
       }

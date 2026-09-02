@@ -22,6 +22,10 @@ export interface GhosttyCellRange {
 
 const DEFAULT_SELECTION_BACKGROUND = 'rgba(72, 122, 191, 0.35)'
 
+/** Laborer addition: amber-500, dimmed for other matches and lit for the current one. */
+const SEARCH_BACKGROUND = 'rgba(245, 158, 11, 0.3)'
+const ACTIVE_SEARCH_BACKGROUND = 'rgba(245, 158, 11, 0.7)'
+
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`
 }
@@ -119,6 +123,12 @@ export function renderGhosttySnapshot(options: {
   readonly focused?: boolean
   readonly selectionBackground?: string
   readonly hoveredLinkRange?: GhosttyCellRange | null
+  /**
+   * Laborer addition (not in the vendored t3code tree): find-bar highlights,
+   * in viewport cell coordinates, and which of them is the current match.
+   */
+  readonly searchRanges?: readonly GhosttyCellRange[]
+  readonly activeSearchRange?: GhosttyCellRange | null
   /** Vertical origin of row 0; defaults to the horizontal padding. */
   readonly originY?: number
 }): void {
@@ -137,6 +147,16 @@ export function renderGhosttySnapshot(options: {
   const selectionBackground =
     options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND
   const hoveredLinkRange = options.hoveredLinkRange ?? null
+  const activeSearchRange = options.activeSearchRange ?? null
+  const searchRangesByRow = new Map<number, GhosttyCellRange[]>()
+  for (const range of options.searchRanges ?? []) {
+    const row = searchRangesByRow.get(range.start.y)
+    if (row) {
+      row.push(range)
+    } else {
+      searchRangesByRow.set(range.start.y, [range])
+    }
+  }
   const originY = options.originY ?? padding
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
@@ -215,6 +235,24 @@ export function renderGhosttySnapshot(options: {
         }
       }
       backgroundStart = backgroundEnd
+    }
+
+    // Find highlights sit above the cell background and below the glyphs, like
+    // the selection, so matched text stays readable in its own colors.
+    for (const range of searchRangesByRow.get(rowIndex) ?? []) {
+      const isActive =
+        activeSearchRange !== null &&
+        activeSearchRange.start.y === range.start.y &&
+        activeSearchRange.start.x === range.start.x
+      context.fillStyle = isActive
+        ? ACTIVE_SEARCH_BACKGROUND
+        : SEARCH_BACKGROUND
+      context.fillRect(
+        padding + range.start.x * metrics.width,
+        top,
+        Math.max(1, range.end.x - range.start.x + 1) * metrics.width,
+        metrics.height
+      )
     }
 
     let runStart = 0

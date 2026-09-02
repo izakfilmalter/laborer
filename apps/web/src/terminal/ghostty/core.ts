@@ -998,6 +998,60 @@ export class GhosttyTerminalCore {
   }
 
   selectionText(): string {
+    return this.formatSelection({ selection: 0, unwrap: true, trim: true })
+  }
+
+  /**
+   * Laborer addition (not in the vendored t3code tree).
+   *
+   * Every row of the active screen — scrollback first, viewport last — as one
+   * line of text, for searching. Formatting neither unwraps nor trims, so a
+   * line index is a screen row index and a character index is a column, which
+   * is what lets a match found here be pointed back at a cell.
+   *
+   * `firstRow` is the screen row the first line came from; Ghostty's own
+   * "select all" decides where selectable content starts.
+   */
+  screenLines(): { readonly firstRow: number; readonly lines: string[] } {
+    this.ensureActive()
+    const layout = this.runtime.layout('GhosttySelection')
+    const selection = this.runtime.alloc(layout.size)
+    try {
+      this.runtime.setField(selection, 'GhosttySelection', 'size', layout.size)
+      if (
+        this.runtime.call(
+          'ghostty_terminal_select_all',
+          this.terminal,
+          selection
+        ) !== GHOSTTY_SUCCESS
+      ) {
+        return { firstRow: 0, lines: [] }
+      }
+      const startField = layout.fields.start!
+      const firstPoint = this.pointFromGridRef(selection + startField.offset, 2)
+      const text = this.formatSelection({
+        selection,
+        unwrap: false,
+        trim: false,
+      })
+      return {
+        firstRow: firstPoint?.y ?? 0,
+        lines: text.length === 0 ? [] : text.split('\n'),
+      }
+    } finally {
+      this.runtime.free(selection, layout.size)
+    }
+  }
+
+  /**
+   * Formats either the terminal's own selection (`selection: 0`) or a
+   * caller-owned snapshot selection into text.
+   */
+  private formatSelection(request: {
+    readonly selection: number
+    readonly trim: boolean
+    readonly unwrap: boolean
+  }): string {
     this.ensureActive()
     const options = this.runtime.alloc(SELECTION_FORMAT_OPTIONS_SIZE)
     const optionsView = this.runtime.view(
@@ -1006,9 +1060,9 @@ export class GhosttyTerminalCore {
     )
     optionsView.setUint32(0, SELECTION_FORMAT_OPTIONS_SIZE, true)
     optionsView.setUint32(4, 0, true)
-    optionsView.setUint8(8, 1)
-    optionsView.setUint8(9, 1)
-    optionsView.setUint32(12, 0, true)
+    optionsView.setUint8(8, request.unwrap ? 1 : 0)
+    optionsView.setUint8(9, request.trim ? 1 : 0)
+    optionsView.setUint32(12, request.selection, true)
     const written = this.runtime.call('ghostty_wasm_alloc_usize')
     const sizeResult = this.runtime.call(
       'ghostty_terminal_selection_format_buf',

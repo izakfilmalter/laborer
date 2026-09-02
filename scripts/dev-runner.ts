@@ -15,8 +15,8 @@ import { config as loadDotEnv } from 'dotenv'
 import { DEV_INITIAL_PROJECT_PATH_ENV } from '../packages/server/src/dev-environment'
 import { DEV_TERMINAL_XDG_STATE_HOME } from '../packages/server/src/services/terminal-spawn-environment'
 
-export const BASE_DAEMON_PORT = 2100
-export const BASE_WEB_PORT = 2101
+export const BASE_DAEMON_PORT = 2200
+export const BASE_WEB_PORT = 2201
 export const MAX_HASH_OFFSET = 3000
 export const MAX_PORT = 65_535
 export const WORKTREE_STATE_DIRECTORY = '.laborer-state'
@@ -93,16 +93,17 @@ export const findAvailableDevPorts = async (
   }
 }
 
-/**
- * A linked worktree has a .git file pointing into the common repository's
- * worktrees directory. Main checkouts deliberately return undefined so their
- * ambient XDG state remains available for explicit daily-driver development.
- */
-export const linkedWorktreeStateHome = (
-  worktreePath: string
-): string | undefined => {
+/** Return a checkout-local state home for main and linked worktrees. */
+export const checkoutStateHome = (worktreePath: string): string | undefined => {
   const gitPath = join(worktreePath, '.git')
-  if (!(existsSync(gitPath) && statSync(gitPath).isFile())) {
+  if (!existsSync(gitPath)) {
+    return undefined
+  }
+  const gitPathStats = statSync(gitPath)
+  if (gitPathStats.isDirectory()) {
+    return join(worktreePath, WORKTREE_STATE_DIRECTORY)
+  }
+  if (!gitPathStats.isFile()) {
     return undefined
   }
   const gitDirectory = readFileSync(gitPath, 'utf8')
@@ -407,7 +408,7 @@ export const runDev = async (arguments_: readonly string[]) => {
   const options = parseDevRunnerArguments(arguments_)
   const worktreeStateHome = options.useRealState
     ? undefined
-    : linkedWorktreeStateHome(root)
+    : checkoutStateHome(root)
   const stateHome = resolveDevStateHome({
     explicitStateHome: options.stateHome,
     worktreeStateHome,

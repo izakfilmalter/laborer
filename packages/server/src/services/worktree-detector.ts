@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
+import { execFile } from '../lib/spawn.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 
 export interface DetectedWorktree {

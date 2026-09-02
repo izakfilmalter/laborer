@@ -18,7 +18,6 @@
  * @see Issue #138: Move + simplify TerminalManager
  */
 
-import { exec } from 'node:child_process'
 import {
   type ProcessTimeTimeout,
   scheduleProcessTimeTimeout,
@@ -30,6 +29,7 @@ import {
   type TerminalHostStatus,
   TerminalRpcError,
 } from '@laborer/shared/rpc'
+import { brokerExec } from '@laborer/shared/spawn-broker'
 import { Context, Effect, Layer, PubSub, Ref, Schedule } from 'effect'
 import { createHeadlessTerminalManager } from '../lib/headless-terminal.js'
 import { PtyHostClient } from './pty-host-client.js'
@@ -359,16 +359,22 @@ const classifyProcess = (processName: string): ForegroundProcess | null => {
  * Run a shell command asynchronously and return stdout.
  * Returns null if the command fails (e.g., pgrep with no matches exits 1).
  */
-const execAsync = (command: string): Promise<string | null> =>
-  new Promise((resolve) => {
-    exec(command, { encoding: 'utf-8', timeout: 3000 }, (error, stdout) => {
-      if (error !== null) {
-        resolve(null)
-        return
-      }
-      resolve(stdout.trim())
-    })
-  })
+/**
+ * Read a command's stdout, or `null` if it failed. Runs on the spawn broker
+ * thread: this process owns the PTYs, and a synchronous `spawn` here would
+ * sit directly in front of keystroke echo.
+ */
+const readCommandOutput = async (
+  command: string,
+  args: readonly string[]
+): Promise<string | null> => {
+  try {
+    const result = await brokerExec(command, args, { timeoutMs: 3000 })
+    return result.exitCode === 0 ? result.stdout.trim() : null
+  } catch {
+    return null
+  }
+}
 
 /**
  * Result of process detection for a single terminal.
@@ -619,7 +625,7 @@ const detectProcessesForPids = async (
   // Single async ps call to get the full process table.
   // `ps -eo pid=,ppid=,comm=` is faster than multiple targeted calls
   // because it's a single fork+exec. We then filter in memory.
-  const psOutput = await execAsync('ps -eo pid=,ppid=,comm=')
+  const psOutput = await readCommandOutput('ps', ['-eo', 'pid=,ppid=,comm='])
 
   if (psOutput === null) {
     return { available: false, results }

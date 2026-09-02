@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process'
 import { resolve, sep } from 'node:path'
 import type { DiscoveredLocalServer } from '@laborer/shared/rpc'
 import {
@@ -20,6 +19,7 @@ import {
   type Scope,
   Semaphore,
 } from 'effect'
+import { execFile } from '../lib/spawn.js'
 
 const LOCAL_HOSTS = new Set([
   'localhost',
@@ -170,21 +170,16 @@ const runFile = (
   args: readonly string[]
 ): Effect.Effect<{ readonly stdout: string }, PreviewDiscoveryProbeError> =>
   Effect.callback((resume) => {
-    execFile(
-      command,
-      [...args],
-      { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: 5000 },
-      (error, stdout) => {
-        if (error !== null) {
-          resume(Effect.fail(new PreviewDiscoveryProbeError({ cause: error })))
-          return
-        }
-        Schema.decodeUnknownEffect(ProcessOutput)({ stdout }).pipe(
-          Effect.mapError((cause) => new PreviewDiscoveryProbeError({ cause })),
-          resume
-        )
+    execFile(command, [...args], { timeout: 5000 }, (error, stdout) => {
+      if (error !== null) {
+        resume(Effect.fail(new PreviewDiscoveryProbeError({ cause: error })))
+        return
       }
-    )
+      Schema.decodeUnknownEffect(ProcessOutput)({ stdout }).pipe(
+        Effect.mapError((cause) => new PreviewDiscoveryProbeError({ cause })),
+        resume
+      )
+    })
   })
 
 const processCwd = (pid: number): Effect.Effect<string | null> =>

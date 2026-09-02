@@ -86,10 +86,7 @@ describe('spawn', () => {
 
   it('can kill a long-running process', async () => {
     const proc = spawn(['sleep', '60'])
-    expect(proc.pid).toBeDefined()
-
-    // Give the process a moment to start
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(await proc.spawned).toBeTypeOf('number')
 
     const killed = proc.kill()
     expect(killed).toBe(true)
@@ -99,11 +96,34 @@ describe('spawn', () => {
     expect(typeof exitCode).toBe('number')
   })
 
-  it('exposes the process pid', async () => {
+  it('exposes the process pid once spawned', async () => {
     const proc = spawn(['echo', 'pid-test'])
-    expect(proc.pid).toBeTypeOf('number')
-    expect(proc.pid).toBeGreaterThan(0)
+    const pid = await proc.spawned
+    expect(pid).toBeTypeOf('number')
+    expect(pid).toBeGreaterThan(0)
     await proc.exited
+  })
+
+  it('rejects exited when the command cannot be spawned', async () => {
+    const proc = spawn(['definitely-not-a-real-command-xyz'])
+    await expect(proc.exited).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not block the calling thread while spawning', async () => {
+    // A 1ms timer scheduled before a burst of spawns must fire promptly:
+    // the spawn syscall runs on the broker thread, not this one.
+    const start = performance.now()
+    let timerLatency = Number.POSITIVE_INFINITY
+    const timer = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        timerLatency = performance.now() - start
+        resolve()
+      }, 1)
+    })
+    const procs = Array.from({ length: 200 }, () => spawn(['true']))
+    await timer
+    await Promise.all(procs.map((proc) => proc.exited))
+    expect(timerLatency).toBeLessThan(50)
   })
 
   it('pipes stdout of one process into stdin of another', async () => {

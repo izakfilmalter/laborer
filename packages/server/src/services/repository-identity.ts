@@ -19,11 +19,11 @@
  * @see PRD-opencode-inspired-repo-watching.md — Issue 1
  */
 
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { realpathSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Context, Data, Effect, Layer } from 'effect'
+import { execFile } from '../lib/spawn.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 
 /**

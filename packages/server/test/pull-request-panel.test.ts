@@ -66,7 +66,7 @@ const mockGh = (respond: (cmd: readonly string[]) => string) => {
   spawnMock.mockImplementation(((cmd: string[]) => ({
     exited: Promise.resolve(0),
     kill: () => true,
-    pid: 2,
+    spawned: Promise.resolve(2),
     stderr: streamOf(''),
     stdout: streamOf(respond(cmd)),
   })) as typeof spawn)

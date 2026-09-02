@@ -57,11 +57,22 @@ const DEFAULT_IGNORED_PREFIXES: readonly string[] = [
   // Coverage / test artifacts
   'coverage',
   '.nyc_output',
+  // Laborer's own per-worktree dev state (sqlite, pty-host socket, logs)
+  '.laborer-state',
 ]
 
 /**
- * Determine whether a relative path should be ignored based on
- * prefix matching against the ignore list.
+ * Prefixes that must only be ignored at the root of the watched path.
+ *
+ * `.git` is watched directly by the git-dir subscriptions (their watch path
+ * is `<repo>/.git` itself), so a nested glob for `.git` would silence them.
+ */
+const ROOT_ONLY_IGNORED_PREFIXES: ReadonlySet<string> = new Set(['.git'])
+
+/**
+ * Determine whether a relative path should be ignored: any path segment
+ * matching an ignored name silences the event, so nested monorepo
+ * `packages/x/node_modules` and `apps/y/dist` are ignored like root ones.
  */
 const shouldIgnore = (
   relativePath: string,
@@ -70,10 +81,36 @@ const shouldIgnore = (
   if (relativePath === '') {
     return true
   }
-  const firstSegment = relativePath.split('/')[0] ?? relativePath
-  return ignoredPrefixes.some(
-    (prefix) => firstSegment === prefix || relativePath === prefix
-  )
+  const segments = relativePath.split('/')
+  return ignoredPrefixes.some((prefix) => {
+    if (segments[0] === prefix || relativePath === prefix) {
+      return true
+    }
+    if (ROOT_ONLY_IGNORED_PREFIXES.has(prefix)) {
+      return false
+    }
+    return segments.includes(prefix)
+  })
+}
+
+/**
+ * Ignore entries handed to `@parcel/watcher` so noisy trees are dropped in
+ * the native watcher instead of being delivered, decoded, and published on
+ * the daemon's main thread. Plain names are resolved against the watch path
+ * (root-level); nested-occurrence globs cover monorepo subpackages.
+ */
+const toNativeIgnoreEntries = (
+  prefixes: readonly string[],
+  callerGlobs: readonly string[]
+): string[] => {
+  const entries = new Set<string>(callerGlobs)
+  for (const prefix of prefixes) {
+    entries.add(prefix)
+    if (!ROOT_ONLY_IGNORED_PREFIXES.has(prefix)) {
+      entries.add(`**/${prefix}/**`)
+    }
+  }
+  return [...entries]
 }
 
 /**
@@ -259,12 +296,13 @@ class WatcherManager extends Context.Service<
                 )
               )
             },
-            managed.ignoreGlobs.length > 0
-              ? {
-                  recursive: managed.recursive,
-                  ignore: [...managed.ignoreGlobs],
-                }
-              : { recursive: managed.recursive }
+            {
+              recursive: managed.recursive,
+              ignore: toNativeIgnoreEntries(
+                managed.ignorePrefixes,
+                managed.ignoreGlobs
+              ),
+            }
           )
           .pipe(
             Effect.catch((error) =>
@@ -398,6 +436,7 @@ export {
   fromWatcherIgnoreGlobs,
   mergeIgnorePrefixes,
   shouldIgnore,
+  toNativeIgnoreEntries,
   toWatcherIgnoreGlobs,
   WatcherManager,
 }

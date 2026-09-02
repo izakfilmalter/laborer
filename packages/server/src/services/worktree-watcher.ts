@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { Context, Data, Effect, Layer, Ref } from 'effect'
+import { execFile } from '../lib/spawn.js'
 import { LaborerDatabase } from './laborer-database.js'
 import { WORKTREE_WATCHER_DEBOUNCE_MS } from './polling-intervals.js'
 import { WorktreeReconciler } from './worktree-reconciler.js'

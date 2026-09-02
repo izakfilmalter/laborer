@@ -1,10 +1,11 @@
 /**
  * Frame-aligned PTY output coalescing unit tests.
  *
- * Tests the createCoalescingDataHandler function that batches raw PTY
- * output into ~16ms windows so downstream consumers (journal, headless
+ * Tests the createCoalescingDataHandler function that rate-limits raw PTY
+ * output to ~16ms windows so downstream consumers (journal, headless
  * terminal, attach subscribers, renderer IPC) see at most ~60 emits/sec
- * instead of one per raw PTY chunk.
+ * instead of one per raw PTY chunk — while the first chunk after idle
+ * still goes out immediately, so a keystroke echo is never delayed.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -23,7 +24,17 @@ describe('createCoalescingDataHandler', () => {
     vi.useRealTimers()
   })
 
-  it('concatenates chunks arriving within the window into one emit', () => {
+  it('emits the first chunk after idle immediately (keystroke echo pays no window)', () => {
+    const onFlush = vi.fn()
+    const handler = createCoalescingDataHandler(onFlush, { windowMs: 16 })
+
+    handler.write('j')
+
+    expect(onFlush).toHaveBeenCalledOnce()
+    expect(onFlush).toHaveBeenCalledWith('j')
+  })
+
+  it('concatenates chunks arriving within the window into one trailing emit', () => {
     const onFlush = vi.fn()
     const handler = createCoalescingDataHandler(onFlush, { windowMs: 16 })
 
@@ -31,30 +42,19 @@ describe('createCoalescingDataHandler', () => {
     handler.write('b')
     handler.write('c')
 
-    expect(onFlush).not.toHaveBeenCalled()
-
-    vi.advanceTimersByTime(16)
-
     expect(onFlush).toHaveBeenCalledOnce()
-    expect(onFlush).toHaveBeenCalledWith('abc')
-  })
+    expect(onFlush).toHaveBeenCalledWith('a')
 
-  it('does not emit before the window elapses', () => {
-    const onFlush = vi.fn()
-    const handler = createCoalescingDataHandler(onFlush, { windowMs: 16 })
-
-    handler.write('a')
     vi.advanceTimersByTime(15)
-
-    expect(onFlush).not.toHaveBeenCalled()
+    expect(onFlush).toHaveBeenCalledOnce()
 
     vi.advanceTimersByTime(1)
 
-    expect(onFlush).toHaveBeenCalledOnce()
-    expect(onFlush).toHaveBeenCalledWith('a')
+    expect(onFlush).toHaveBeenCalledTimes(2)
+    expect(onFlush).toHaveBeenNthCalledWith(2, 'bc')
   })
 
-  it('anchors the window to the first unflushed chunk (later chunks do not extend the deadline)', () => {
+  it('anchors the window to the leading emit (later chunks do not extend the deadline)', () => {
     const onFlush = vi.fn()
     const handler = createCoalescingDataHandler(onFlush, { windowMs: 16 })
 
@@ -65,18 +65,36 @@ describe('createCoalescingDataHandler', () => {
     // chunk arrived only 6ms ago.
     vi.advanceTimersByTime(6)
 
-    expect(onFlush).toHaveBeenCalledOnce()
-    expect(onFlush).toHaveBeenCalledWith('firstsecond')
+    expect(onFlush).toHaveBeenCalledTimes(2)
+    expect(onFlush).toHaveBeenNthCalledWith(1, 'first')
+    expect(onFlush).toHaveBeenNthCalledWith(2, 'second')
   })
 
-  it('starts a fresh window after each flush', () => {
+  it('caps a sustained flood at one emit per window', () => {
+    const onFlush = vi.fn()
+    const handler = createCoalescingDataHandler(onFlush, { windowMs: 16 })
+
+    // A TUI redrawing every 4ms for 160ms: 40 chunks.
+    for (let index = 0; index < 40; index += 1) {
+      handler.write(`${index},`)
+      vi.advanceTimersByTime(4)
+    }
+
+    // Leading emit at t=0, then one trailing emit per 16ms window: 1 + 10.
+    expect(onFlush).toHaveBeenCalledTimes(11)
+    expect(onFlush.mock.calls.map(([data]) => data).join('')).toBe(
+      Array.from({ length: 40 }, (_, index) => `${index},`).join('')
+    )
+  })
+
+  it('returns to idle after a window closes with nothing buffered', () => {
     const onFlush = vi.fn()
     const handler = createCoalescingDataHandler(onFlush, { windowMs: 16 })
 
     handler.write('one')
     vi.advanceTimersByTime(16)
+    // Idle again: the next chunk is a fresh leading edge.
     handler.write('two')
-    vi.advanceTimersByTime(16)
 
     expect(onFlush).toHaveBeenCalledTimes(2)
     expect(onFlush).toHaveBeenNthCalledWith(1, 'one')
@@ -90,18 +108,21 @@ describe('createCoalescingDataHandler', () => {
       windowMs: 16,
     })
 
+    handler.write('lead')
+    expect(onFlush).toHaveBeenCalledOnce()
+
     handler.write('1234')
-    expect(onFlush).not.toHaveBeenCalled()
+    expect(onFlush).toHaveBeenCalledOnce()
 
     handler.write('5678')
 
     // 8 bytes buffered — the valve trips synchronously, no timer wait.
-    expect(onFlush).toHaveBeenCalledOnce()
-    expect(onFlush).toHaveBeenCalledWith('12345678')
+    expect(onFlush).toHaveBeenCalledTimes(2)
+    expect(onFlush).toHaveBeenNthCalledWith(2, '12345678')
 
     // The timer was cancelled by the valve flush: nothing more emits.
     vi.advanceTimersByTime(16)
-    expect(onFlush).toHaveBeenCalledOnce()
+    expect(onFlush).toHaveBeenCalledTimes(2)
   })
 
   it('measures the valve in UTF-8 bytes, not UTF-16 code units', () => {
@@ -111,28 +132,32 @@ describe('createCoalescingDataHandler', () => {
       windowMs: 16,
     })
 
+    handler.write('x')
+    expect(onFlush).toHaveBeenCalledOnce()
+
     // Two 3-byte characters = 6 bytes (but only 2 code units).
     handler.write('\u{20AC}')
-    expect(onFlush).not.toHaveBeenCalled()
+    expect(onFlush).toHaveBeenCalledOnce()
     handler.write('\u{20AC}')
 
-    expect(onFlush).toHaveBeenCalledOnce()
-    expect(onFlush).toHaveBeenCalledWith('\u{20AC}\u{20AC}')
+    expect(onFlush).toHaveBeenCalledTimes(2)
+    expect(onFlush).toHaveBeenNthCalledWith(2, '\u{20AC}\u{20AC}')
   })
 
   it('flushes pending data synchronously on explicit flush (close/exit path)', () => {
     const onFlush = vi.fn()
     const handler = createCoalescingDataHandler(onFlush, { windowMs: 16 })
 
+    handler.write('lead')
     handler.write('trailing output')
     handler.flush()
 
-    expect(onFlush).toHaveBeenCalledOnce()
-    expect(onFlush).toHaveBeenCalledWith('trailing output')
+    expect(onFlush).toHaveBeenCalledTimes(2)
+    expect(onFlush).toHaveBeenNthCalledWith(2, 'trailing output')
 
     // The pending timer was cancelled — no duplicate emit later.
     vi.advanceTimersByTime(16)
-    expect(onFlush).toHaveBeenCalledOnce()
+    expect(onFlush).toHaveBeenCalledTimes(2)
   })
 
   it('is a no-op to flush with an empty buffer', () => {
@@ -193,28 +218,32 @@ describe('createCoalescingDataHandler', () => {
     coalescer.flush()
 
     expect(emitted.join('')).toBe('hello \x1b[31mworld\x1b[0m done')
-    // First window emitted only the complete prefix; the held-back
-    // fragment arrived intact in the second window.
+    // The first emit carried only the complete prefix; the held-back
+    // fragment arrived intact in the second.
     expect(emitted[0]).toBe('hello ')
     expect(emitted[1]).toBe('\x1b[31mworld\x1b[0m done')
   })
 
-  it('re-reads a windowMs getter each time a flush timer is armed', () => {
+  it('re-reads a windowMs getter each time a window is opened', () => {
     const onFlush = vi.fn()
     let windowMs = 16
     const handler = createCoalescingDataHandler(onFlush, {
       windowMs: () => windowMs,
     })
 
+    handler.write('lead')
     handler.write('slow')
     vi.advanceTimersByTime(16)
-    expect(onFlush).toHaveBeenNthCalledWith(1, 'slow')
+    expect(onFlush).toHaveBeenNthCalledWith(2, 'slow')
+    // The trailing emit re-opened a window; let it close empty, going idle.
+    vi.advanceTimersByTime(16)
 
-    // Switch to the performance profile — the next armed timer uses 8ms.
+    // Switch to the performance profile — the next opened window is 8ms.
     windowMs = 8
+    handler.write('lead')
     handler.write('fast')
     vi.advanceTimersByTime(8)
-    expect(onFlush).toHaveBeenNthCalledWith(2, 'fast')
+    expect(onFlush).toHaveBeenNthCalledWith(4, 'fast')
   })
 
   it('completes a pending flush under the old window when the window changes mid-buffer, without loss or reorder', () => {
@@ -224,7 +253,8 @@ describe('createCoalescingDataHandler', () => {
       windowMs: () => windowMs,
     })
 
-    // Timer armed under the 16ms window.
+    // Window opened under 16ms by the leading emit.
+    handler.write('lead ')
     handler.write('before ')
     vi.advanceTimersByTime(4)
 
@@ -234,15 +264,17 @@ describe('createCoalescingDataHandler', () => {
     handler.write('after')
 
     vi.advanceTimersByTime(7)
-    expect(emitted).toEqual([])
+    expect(emitted).toEqual(['lead '])
 
     vi.advanceTimersByTime(5)
-    expect(emitted).toEqual(['before after'])
+    expect(emitted).toEqual(['lead ', 'before after'])
 
-    // The next write schedules under the new 8ms window.
+    // That trailing emit re-opened a window under the new 8ms.
     handler.write('next')
-    vi.advanceTimersByTime(8)
-    expect(emitted).toEqual(['before after', 'next'])
+    vi.advanceTimersByTime(7)
+    expect(emitted).toEqual(['lead ', 'before after'])
+    vi.advanceTimersByTime(1)
+    expect(emitted).toEqual(['lead ', 'before after', 'next'])
   })
 
   it('keeps a held-back escape fragment out of a valve flush', () => {
@@ -253,17 +285,20 @@ describe('createCoalescingDataHandler', () => {
     )
     const handler = createBufferedDataHandler(coalescer.write)
 
+    handler('x')
+    expect(emitted).toEqual(['x'])
+
     // 4 complete bytes trip the valve; the bare ESC stays held back
     // upstream and is never emitted in partial form.
     handler('abcd\x1b')
 
-    expect(emitted).toEqual(['abcd'])
+    expect(emitted).toEqual(['x', 'abcd'])
 
     // Completing the sequence later delivers it whole and in order.
     handler('[2K')
     vi.advanceTimersByTime(16)
 
-    expect(emitted.join('')).toBe('abcd\x1b[2K')
+    expect(emitted.join('')).toBe('xabcd\x1b[2K')
   })
 })
 

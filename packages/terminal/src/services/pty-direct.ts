@@ -13,7 +13,8 @@
  * Key differences from `pty-host-client.ts`:
  * - No child process spawning (no `ELECTRON_RUN_AS_NODE=1`)
  * - node-pty is imported directly via `createRequire`
- * - Data coalescing batches output into ~16ms (one frame) windows
+ * - Data coalescing rate-limits output to ~16ms (one frame) windows,
+ *   leading-edge so the first chunk after idle is forwarded at once
  * - Flow control uses high/low watermarks
  * - Spawn-helper permission fix runs on layer construction
  *

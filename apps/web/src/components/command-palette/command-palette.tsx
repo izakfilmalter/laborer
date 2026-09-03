@@ -47,6 +47,7 @@ import { useWorkspaceSyncActions } from '@/hooks/use-workspace-sync-actions'
 import { extractErrorMessage } from '@/lib/errors'
 import { KEYBINDS } from '@/lib/keybinds'
 import { toast } from '@/lib/toast'
+import { findWorkspaceCommandPaletteContainer } from '@/lib/workspace-elements'
 import { useActiveWorkspaceId, usePanelActions } from '@/panels/panel-context'
 import { CommandDialog, CommandDialogPopup } from './command'
 import {
@@ -73,12 +74,32 @@ interface CommandPaletteProps {
   readonly workspaces: readonly WorkspaceView[]
 }
 
+interface CommandPaletteScope {
+  readonly container: HTMLElement | null
+  readonly workspaceId: string | null
+}
+
 export function CommandPalette(props: CommandPaletteProps) {
   const [open, setOpen] = useState(false)
+  const [scope, setScope] = useState<CommandPaletteScope | null>(null)
+  const activeWorkspaceId = useActiveWorkspaceId()
+  const workspaceContainer = scope?.container ?? null
 
   useHotkeySequence(['Meta+K'], (event) => {
     event.preventDefault()
-    setOpen((wasOpen) => !wasOpen)
+    if (open) {
+      setOpen(false)
+      return
+    }
+
+    const container = activeWorkspaceId
+      ? findWorkspaceCommandPaletteContainer(activeWorkspaceId)
+      : null
+    setScope({
+      container,
+      workspaceId: container?.dataset.workspaceId ?? activeWorkspaceId,
+    })
+    setOpen(true)
   })
 
   return (
@@ -87,8 +108,15 @@ export function CommandPalette(props: CommandPaletteProps) {
         aria-label="Command palette"
         data-testid="command-palette"
         onBackdropPointerDown={() => setOpen(false)}
+        portalContainer={workspaceContainer}
       >
-        {open && <OpenCommandPalette setOpen={setOpen} {...props} />}
+        {open && (
+          <OpenCommandPalette
+            activeWorkspaceId={scope?.workspaceId ?? activeWorkspaceId}
+            setOpen={setOpen}
+            {...props}
+          />
+        )}
       </CommandDialogPopup>
     </CommandDialog>
   )
@@ -96,10 +124,11 @@ export function CommandPalette(props: CommandPaletteProps) {
 
 function OpenCommandPalette(
   props: CommandPaletteProps & {
+    readonly activeWorkspaceId: string | null
     readonly setOpen: (open: boolean) => void
   }
 ) {
-  const { setOpen } = props
+  const { activeWorkspaceId, setOpen } = props
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [highlightedItemValue, setHighlightedItemValue] = useState<
@@ -109,7 +138,6 @@ function OpenCommandPalette(
   const currentView = viewStack.at(-1) ?? null
 
   const panelActions = usePanelActions()
-  const activeWorkspaceId = useActiveWorkspaceId()
   const appSettings = useAppSettings()
   const { setTheme } = useTheme()
   const createWorkspace = useCreateWorkspace()

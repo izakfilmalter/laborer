@@ -120,7 +120,9 @@ function WindowTabContent({
   return (
     <div
       className={
-        isActive ? 'relative isolate h-full w-full' : 'relative isolate'
+        isActive
+          ? 'workspace-window-tab relative isolate h-full w-full'
+          : 'workspace-window-tab relative isolate'
       }
       data-testid="window-tab-content"
       data-window-tab-id={tab.id}
@@ -218,7 +220,16 @@ export function PanelContent({
   if (tabsToRender.length > 0) {
     return (
       <FullscreenPortalContext.Provider value={portalElement}>
-        <div className="relative flex h-full w-full flex-col">
+        <div
+          className="relative flex h-full w-full flex-col"
+          data-testid={
+            fullscreenWorkspaceId ? 'fullscreen-workspace' : undefined
+          }
+          data-workspace-id={fullscreenWorkspaceId}
+          data-workspace-overlay-container={
+            fullscreenWorkspaceId ? 'fullscreen' : undefined
+          }
+        >
           {/* When a pane is fullscreened, render the workspace header for
               its workspace above the fullscreen overlay so the user can
               still see the project name, branch, PR status, and actions. */}

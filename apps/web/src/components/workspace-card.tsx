@@ -79,6 +79,7 @@ import {
 import { isExactEnter, isMetaEnter } from '@/lib/dialog-keys'
 import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
+import { findVisibleWorkspaceFrameElement } from '@/lib/workspace-elements'
 import { getWorktreeSetupLabel } from '@/lib/worktree-setup-labels'
 import { useActiveWorkspaceId, usePanelActions } from '@/panels/panel-context'
 
@@ -255,32 +256,6 @@ function DestroyDialogBody({
       worktree will be removed. This action cannot be undone.
     </p>
   )
-}
-
-function findVisibleWorkspaceFrameElement(
-  workspaceId: string
-): HTMLElement | null {
-  if (typeof document === 'undefined') {
-    return null
-  }
-
-  const frames = document.querySelectorAll<HTMLElement>(
-    '[data-testid="workspace-frame"]'
-  )
-
-  for (const frame of frames) {
-    if (frame.dataset.workspaceId !== workspaceId) {
-      continue
-    }
-
-    if (frame.getClientRects().length === 0) {
-      continue
-    }
-
-    return frame
-  }
-
-  return null
 }
 
 function InlineDestroyWorkspaceDialog({

@@ -106,11 +106,34 @@ const props: ComponentProps<typeof CommandPalette> = {
   ],
 }
 
+const workspaceContainers: HTMLElement[] = []
+
 function openPalette() {
-  render(<CommandPalette {...props} />)
+  const result = render(<CommandPalette {...props} />)
   act(() => {
     mocks.hotkeyHandler?.({ preventDefault: vi.fn() })
   })
+  return result
+}
+
+function addVisibleWorkspaceContainer({
+  testId = 'workspace-frame',
+  workspaceId,
+}: {
+  readonly testId?: 'fullscreen-workspace' | 'workspace-frame'
+  readonly workspaceId: string
+}) {
+  const container = document.createElement('div')
+  container.dataset.testid = testId
+  container.dataset.workspaceOverlayContainer =
+    testId === 'fullscreen-workspace' ? 'fullscreen' : 'frame'
+  container.dataset.workspaceId = workspaceId
+  vi.spyOn(container, 'getClientRects').mockReturnValue([
+    {} as DOMRect,
+  ] as unknown as DOMRectList)
+  document.body.append(container)
+  workspaceContainers.push(container)
+  return container
 }
 
 afterEach(() => {
@@ -118,6 +141,10 @@ afterEach(() => {
   mocks.activeWorkspaceId = 'workspace-b'
   mocks.createWorkspace.mockClear()
   mocks.hotkeyHandler = null
+  for (const container of workspaceContainers) {
+    container.remove()
+  }
+  workspaceContainers.length = 0
 })
 
 describe('CommandPalette contextual workspace creation', () => {
@@ -176,5 +203,119 @@ describe('CommandPalette contextual workspace creation', () => {
     await waitFor(() => {
       expect(screen.queryByText('New workspace in...')).toBeNull()
     })
+  })
+})
+
+describe('CommandPalette workspace containment', () => {
+  it('renders the palette and backdrop inside the focused workspace', () => {
+    const unfocusedWorkspace = addVisibleWorkspaceContainer({
+      workspaceId: 'workspace-a',
+    })
+    const focusedWorkspace = addVisibleWorkspaceContainer({
+      workspaceId: 'workspace-b',
+    })
+
+    openPalette()
+
+    const palette = screen.getByTestId('command-palette')
+    const backdrop = document.querySelector(
+      '[data-slot="command-dialog-backdrop"]'
+    )
+    const viewport = document.querySelector(
+      '[data-slot="command-dialog-viewport"]'
+    )
+
+    expect(focusedWorkspace.contains(palette)).toBe(true)
+    expect(focusedWorkspace.contains(backdrop)).toBe(true)
+    expect(focusedWorkspace.contains(viewport)).toBe(true)
+    expect(unfocusedWorkspace.contains(palette)).toBe(false)
+    expect(backdrop?.classList.contains('absolute')).toBe(true)
+    expect(backdrop?.classList.contains('fixed')).toBe(false)
+    expect(viewport?.classList.contains('absolute')).toBe(true)
+    expect(viewport?.classList.contains('fixed')).toBe(false)
+  })
+
+  it('uses the fullscreen workspace container when its focused pane is fullscreen', () => {
+    const inlineWorkspace = addVisibleWorkspaceContainer({
+      workspaceId: 'workspace-b',
+    })
+    const fullscreenWorkspace = addVisibleWorkspaceContainer({
+      testId: 'fullscreen-workspace',
+      workspaceId: 'workspace-a',
+    })
+
+    openPalette()
+
+    const palette = screen.getByTestId('command-palette')
+    expect(fullscreenWorkspace.contains(palette)).toBe(true)
+    expect(inlineWorkspace.contains(palette)).toBe(false)
+    expect(screen.getByText('New workspace in Alpha')).toBeDefined()
+  })
+
+  it('ignores a hidden copy of the focused workspace in an inactive window tab', () => {
+    const hiddenWorkspace = document.createElement('div')
+    hiddenWorkspace.dataset.testid = 'workspace-frame'
+    hiddenWorkspace.dataset.workspaceOverlayContainer = 'frame'
+    hiddenWorkspace.dataset.workspaceId = 'workspace-b'
+    document.body.append(hiddenWorkspace)
+    workspaceContainers.push(hiddenWorkspace)
+    const visibleWorkspace = addVisibleWorkspaceContainer({
+      workspaceId: 'workspace-b',
+    })
+
+    openPalette()
+
+    const palette = screen.getByTestId('command-palette')
+    expect(visibleWorkspace.contains(palette)).toBe(true)
+    expect(hiddenWorkspace.contains(palette)).toBe(false)
+  })
+
+  it('uses the full-screen fallback for a minimized focused workspace', () => {
+    const minimizedWorkspace = addVisibleWorkspaceContainer({
+      workspaceId: 'workspace-b',
+    })
+    minimizedWorkspace.dataset.workspaceMinimized = 'true'
+
+    openPalette()
+
+    const palette = screen.getByTestId('command-palette')
+    const viewport = document.querySelector(
+      '[data-slot="command-dialog-viewport"]'
+    )
+    expect(minimizedWorkspace.contains(palette)).toBe(false)
+    expect(viewport?.classList.contains('fixed')).toBe(true)
+  })
+
+  it('stays in the workspace where the palette was opened', () => {
+    const focusedWorkspace = addVisibleWorkspaceContainer({
+      workspaceId: 'workspace-b',
+    })
+    const nextWorkspace = addVisibleWorkspaceContainer({
+      workspaceId: 'workspace-a',
+    })
+    const result = openPalette()
+
+    mocks.activeWorkspaceId = 'workspace-a'
+    result.rerender(<CommandPalette {...props} />)
+
+    const palette = screen.getByTestId('command-palette')
+    expect(focusedWorkspace.contains(palette)).toBe(true)
+    expect(nextWorkspace.contains(palette)).toBe(false)
+    expect(screen.getByText('New workspace in Beta')).toBeDefined()
+  })
+
+  it('keeps the full-screen fallback when no workspace is focused', () => {
+    mocks.activeWorkspaceId = null
+
+    openPalette()
+
+    const backdrop = document.querySelector(
+      '[data-slot="command-dialog-backdrop"]'
+    )
+    const viewport = document.querySelector(
+      '[data-slot="command-dialog-viewport"]'
+    )
+    expect(backdrop?.classList.contains('fixed')).toBe(true)
+    expect(viewport?.classList.contains('fixed')).toBe(true)
   })
 })

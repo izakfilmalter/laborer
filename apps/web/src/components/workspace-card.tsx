@@ -739,6 +739,12 @@ function WorkspaceCard({
       actions={
         <>
           <WorkspaceSyncStatus workspaceId={workspace.id} />
+          {isRootWorkspace ? (
+            <TerminalSpawnControls
+              projectId={workspace.projectId}
+              workspaceId={workspace.id}
+            />
+          ) : null}
           {!isRootWorkspace && showCreateSubWorkspaceAction && (
             <CreateWorkspaceForm
               baseWorkspace={{
@@ -790,10 +796,12 @@ function WorkspaceCard({
       }
       activateLabel={activateLabel}
       badgeActions={
-        <TerminalSpawnControls
-          projectId={workspace.projectId}
-          workspaceId={workspace.id}
-        />
+        isRootWorkspace ? undefined : (
+          <TerminalSpawnControls
+            projectId={workspace.projectId}
+            workspaceId={workspace.id}
+          />
+        )
       }
       // The card's two live states read side by side: what the workspace is
       // doing, then what its agents are doing. They answer the same question

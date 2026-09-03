@@ -4,10 +4,10 @@
  * Two pieces, because they answer two different questions. `TerminalList`
  * shows what is running in a workspace — one row per terminal, its command
  * and its status — and selecting a row switches the active pane to it.
- * `TerminalSpawnControls` starts something new there, and lives up in the
- * card's status rail rather than above the rows, so a workspace with nothing
- * running still shows the two ways to begin without a heading or an empty
- * state to explain itself.
+ * `TerminalSpawnControls` starts something new there, and lives in the card's
+ * action chrome rather than above the rows. Ordinary workspaces use the status
+ * rail; the root uses the title row where its unavailable edit, destroy, and
+ * sub-workspace actions would otherwise leave empty space.
  *
  * Terminal items are draggable — users can drag a terminal from the sidebar
  * and drop it onto an empty panel pane to assign it to that specific pane.
@@ -256,10 +256,10 @@ function useSpawnInWorkspace(
  * The "start work here" controls for a workspace — the configured agent, and
  * a plain terminal.
  *
- * They live beside the workspace's status chips rather than above its
- * terminal rows, because they are what you do to a workspace and not a label
- * for the list below them. A workspace with no terminals then costs nothing:
- * its card is a name, a status, and the two ways to begin.
+ * They live in the workspace's action chrome rather than above its terminal
+ * rows, because they are what you do to a workspace and not a label for the
+ * list below them. A workspace with no terminals then costs nothing: its card
+ * is a name, a status, and the two ways to begin.
  */
 function TerminalSpawnControls({
   projectId,

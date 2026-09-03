@@ -519,6 +519,22 @@ describe('Workspace card layout — status row', () => {
     ).toBe(true)
   })
 
+  it('moves the root workspace start-work controls onto its title row', () => {
+    mockStore([makeWorkspace({ worktreePath: '/repo' })])
+
+    const { container } = render(
+      <WorkspaceList projectId="project-1" rootPath="/repo" />
+    )
+
+    const header = container.querySelector('[data-slot="card-header"]')
+    const titleRow = header?.firstElementChild
+    const statusRow = container.querySelector('[data-slot="card-status-row"]')
+    const spawnControls = screen.getByTestId('terminal-spawn-controls')
+
+    expect(titleRow?.contains(spawnControls)).toBe(true)
+    expect(statusRow?.contains(spawnControls)).toBe(false)
+  })
+
   it('marks a merge conflict without spending words on it', () => {
     mockStore([
       makeWorkspace({

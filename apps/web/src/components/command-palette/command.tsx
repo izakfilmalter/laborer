@@ -15,7 +15,7 @@ import { SearchIcon } from 'lucide-react'
 import type * as React from 'react'
 
 const DIALOG_BACKDROP_CLASS =
-  'dialog-backdrop fixed inset-0 z-50 transition-all duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0'
+  'dialog-backdrop inset-0 z-50 transition-all duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0'
 
 const DIALOG_POPUP_CLASS =
   'dialog-glass relative flex min-h-0 w-full min-w-0 flex-col rounded-2xl border outline-none transition-[scale,opacity,translate] duration-200 ease-in-out will-change-transform data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0'
@@ -26,19 +26,29 @@ function CommandDialogPopup({
   className,
   children,
   onBackdropPointerDown,
+  portalContainer,
   ...props
 }: DialogPrimitive.Popup.Props & {
   onBackdropPointerDown?: React.PointerEventHandler<HTMLDivElement>
+  portalContainer?: DialogPrimitive.Portal.Props['container']
 }) {
+  const isWorkspaceScoped = portalContainer != null
+  const positionClass = isWorkspaceScoped ? 'absolute' : 'fixed'
+
   return (
-    <DialogPrimitive.Portal>
+    <DialogPrimitive.Portal
+      {...(isWorkspaceScoped ? { container: portalContainer } : {})}
+    >
       <DialogPrimitive.Backdrop
-        className={DIALOG_BACKDROP_CLASS}
+        className={cn(DIALOG_BACKDROP_CLASS, positionClass)}
         data-slot="command-dialog-backdrop"
         onPointerDown={onBackdropPointerDown}
       />
       <DialogPrimitive.Viewport
-        className="pointer-events-none fixed inset-0 z-50 flex flex-col items-center px-4 py-[max(--spacing(4),4vh)] sm:py-[10vh]"
+        className={cn(
+          'pointer-events-none inset-0 z-50 flex flex-col items-center px-4 py-[max(--spacing(4),4vh)] sm:py-[10vh]',
+          positionClass
+        )}
         data-slot="command-dialog-viewport"
       >
         <DialogPrimitive.Popup

@@ -886,6 +886,8 @@ function WorkspaceFrame({
       )}
       data-testid="workspace-frame"
       data-workspace-id={workspaceId}
+      data-workspace-minimized={isMinimized ? 'true' : undefined}
+      data-workspace-overlay-container="frame"
       ref={frameRef}
     >
       <WorkspaceFrameAttentionOutline workspaceId={workspaceId} />

@@ -1282,7 +1282,7 @@ function HomeComponent() {
                   <section
                     aria-label="Task board"
                     className={cn(
-                      'absolute inset-x-0 bottom-0 z-20 flex flex-col border-t bg-background/70 shadow-2xl',
+                      'absolute inset-x-0 bottom-0 z-40 flex flex-col border-t bg-background/70 shadow-2xl',
                       !boardOverlayOpen && 'hidden'
                     )}
                     style={{

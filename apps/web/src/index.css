@@ -42,6 +42,17 @@
 }
 
 /*
+ * Window tabs normally isolate pane-level z-indexes from app overlays. Let a
+ * workspace-scoped command palette temporarily escape that stacking context
+ * so it still sits above the task board, which is a sibling of PanelContent.
+ * The board uses z-40 while this palette uses z-50, keeping pane overlays
+ * (z-30 and below) behind the board while the isolation is relaxed.
+ */
+.workspace-window-tab:has([data-slot="command-dialog-viewport"]) {
+  isolation: auto;
+}
+
+/*
  * Code-surface tokens for the diff viewer.
  *
  * `@pierre/diffs` renders into a shadow root, so its internals are

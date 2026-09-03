@@ -146,6 +146,14 @@ export function WorkspaceRightPanel({
       [workspaceId]
     )
   )
+  // Interim: the panel is global, but rendering is still per tile, so only
+  // the tile whose workspace the panel has selected draws it.
+  const isShowing = useRightPanelStore(
+    useCallback(
+      (store) => store.isOpen && store.selectedWorkspaceId === workspaceId,
+      [workspaceId]
+    )
+  )
   const pullRequestNumber = useWorkspacePullRequestNumber(workspaceId)
   const pullRequestStatus = useWorkspacePullRequestStatus(workspaceId)
   const projectName = project.name
@@ -255,7 +263,7 @@ export function WorkspaceRightPanel({
     store().open(workspaceId, 'files')
   }, [workspaceId])
 
-  if (!state.isOpen) {
+  if (!isShowing) {
     return null
   }
 

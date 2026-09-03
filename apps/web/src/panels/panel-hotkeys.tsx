@@ -509,7 +509,7 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Cmd+Option+B → toggle the focused workspace's right panel.
+  // Cmd+Option+B → toggle the window's right panel.
   // Raw keydown handler matched on the physical key because Option+B
   // produces "∫" on macOS layouts, which TanStack Hotkeys cannot name.
   useEffect(() => {
@@ -518,15 +518,13 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
         return
       }
       event.preventDefault()
-      if (activeWorkspaceId) {
-        useRightPanelStore.getState().toggleVisibility(activeWorkspaceId)
-      }
+      useRightPanelStore.getState().toggleVisibility()
     }
     window.addEventListener('keydown', handleToggleRightPanel)
     return () => {
       window.removeEventListener('keydown', handleToggleRightPanel)
     }
-  }, [activeWorkspaceId])
+  }, [])
 
   // Ctrl+b then t → toggle the right panel's Files surface for the focused
   // workspace (was: toggle the left file-tree panel, now retired)

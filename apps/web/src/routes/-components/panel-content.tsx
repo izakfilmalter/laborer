@@ -27,7 +27,7 @@ function FullscreenWorkspaceHeader({
 }) {
   const activeRightPanelKind = useRightPanelStore(
     useCallback(
-      (store) => selectActiveRightPanel(store.byWorkspaceId, workspaceId),
+      (store) => selectActiveRightPanel(store, workspaceId),
       [workspaceId]
     )
   )

@@ -24,7 +24,11 @@ const wsState = () => selectWorkspaceRightPanelState(store().byWorkspaceId, WS)
 
 beforeEach(() => {
   window.localStorage.clear()
-  useRightPanelStore.setState({ byWorkspaceId: {} })
+  useRightPanelStore.setState({
+    byWorkspaceId: {},
+    isOpen: false,
+    selectedWorkspaceId: null,
+  })
   useRightPanelFocusStore.setState({ focusedWorkspaceId: null })
   document.body.innerHTML = ''
 })
@@ -55,7 +59,20 @@ describe('closeActiveRightPanelSurface', () => {
 
   it('leaves the chain to the panes while the panel is hidden', () => {
     store().open(WS, 'diff')
-    store().close(WS)
+    store().close()
+
+    expect(
+      closeActiveRightPanelSurface({
+        closePreview: vi.fn(() => Promise.resolve()),
+        workspaceId: WS,
+      })
+    ).toBe(false)
+    expect(wsState().surfaces).toHaveLength(1)
+  })
+
+  it('leaves the chain to the panes while the panel shows another workspace', () => {
+    store().open(WS, 'diff')
+    store().open('workspace-2', 'files')
 
     expect(
       closeActiveRightPanelSurface({

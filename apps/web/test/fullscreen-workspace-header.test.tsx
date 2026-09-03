@@ -237,7 +237,11 @@ const TWO_WORKSPACE_WINDOW_LAYOUT: WindowLayout = {
 describe('Workspace header visibility during fullscreen', () => {
   afterEach(() => {
     cleanup()
-    useRightPanelStore.setState({ byWorkspaceId: {} })
+    useRightPanelStore.setState({
+      byWorkspaceId: {},
+      isOpen: false,
+      selectedWorkspaceId: null,
+    })
   })
 
   it('shows the workspace frame header when no pane is fullscreened', () => {

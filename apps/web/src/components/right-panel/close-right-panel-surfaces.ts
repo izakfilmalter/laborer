@@ -11,7 +11,7 @@
 import { usePreviewStateStore } from '@/preview-state-store'
 import {
   type RightPanelSurface,
-  selectWorkspaceRightPanelState,
+  selectActiveRightPanelSurface,
   useRightPanelStore,
 } from '@/right-panel-store'
 
@@ -50,7 +50,8 @@ export function closePreviewResources({
 }
 
 /**
- * Close the workspace's active right-panel surface, if it has one.
+ * Close the active right-panel surface, if the window's panel is showing
+ * this workspace and has one.
  *
  * Returns whether a surface was closed, so callers with a fallback (Cmd+W's
  * progressive close) know whether the keystroke was consumed here.
@@ -63,11 +64,8 @@ export function closeActiveRightPanelSurface({
   readonly workspaceId: string
 }): boolean {
   const store = useRightPanelStore.getState()
-  const state = selectWorkspaceRightPanelState(store.byWorkspaceId, workspaceId)
-  const activeSurface = state.surfaces.find(
-    (surface) => surface.id === state.activeSurfaceId
-  )
-  if (!(state.isOpen && activeSurface)) {
+  const activeSurface = selectActiveRightPanelSurface(store, workspaceId)
+  if (!activeSurface) {
     return false
   }
   closePreviewResources({

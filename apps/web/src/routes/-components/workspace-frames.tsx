@@ -70,7 +70,11 @@ import {
   emptyWorkspacePreviewState,
   usePreviewStateStore,
 } from '@/preview-state-store'
-import { selectActiveRightPanel, useRightPanelStore } from '@/right-panel-store'
+import {
+  selectActiveRightPanel,
+  selectActiveRightPanelSurface,
+  useRightPanelStore,
+} from '@/right-panel-store'
 import {
   PanelTabCloseConfirmDialog,
   WorkspaceCloseConfirmDialog,
@@ -725,17 +729,13 @@ function WorkspaceFrame({
   // is open with that surface active.
   const activeRightPanelKind = useRightPanelStore(
     useCallback(
-      (store) => selectActiveRightPanel(store.byWorkspaceId, workspaceId),
+      (store) => selectActiveRightPanel(store, workspaceId),
       [workspaceId]
     )
   )
   const activeRightPanelSurfaceId = useRightPanelStore(
     useCallback(
-      (store) =>
-        (workspaceId &&
-          store.byWorkspaceId[workspaceId]?.isOpen &&
-          store.byWorkspaceId[workspaceId]?.activeSurfaceId) ||
-        null,
+      (store) => selectActiveRightPanelSurface(store, workspaceId)?.id ?? null,
       [workspaceId]
     )
   )

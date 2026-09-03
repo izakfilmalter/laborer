@@ -194,7 +194,11 @@ function previewVisibility(workspaceId: string) {
 describe('Browser surface visibility during fullscreen', () => {
   afterEach(() => {
     cleanup()
-    useRightPanelStore.setState({ byWorkspaceId: {} })
+    useRightPanelStore.setState({
+      byWorkspaceId: {},
+      isOpen: false,
+      selectedWorkspaceId: null,
+    })
   })
 
   it('shows the browser surface when no pane is fullscreened', () => {

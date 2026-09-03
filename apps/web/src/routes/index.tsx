@@ -248,10 +248,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'diff')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'diff'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'diff'
       )
     },
     [resolvePaneWorkspaceId]
@@ -273,10 +271,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'files')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'files'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'files'
       )
     },
     [resolvePaneWorkspaceId]
@@ -298,10 +294,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'preview')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'preview'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'preview'
       )
     },
     [resolvePaneWorkspaceId]
@@ -323,10 +317,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'pull-request')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'pull-request'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'pull-request'
       )
     },
     [resolvePaneWorkspaceId]

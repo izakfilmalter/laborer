@@ -20,6 +20,7 @@ import {
   RIGHT_PANEL_WIDTH_STORAGE_KEY,
   RightPanelShell,
 } from './right-panel-shell'
+import { RightPanelWorkspaceTabsContainer } from './right-panel-workspace-tabs-container'
 import { WorkspaceRightPanel } from './workspace-right-panel'
 
 export function GlobalRightPanel({
@@ -72,7 +73,10 @@ export function GlobalRightPanel({
       widthStorageKey={RIGHT_PANEL_WIDTH_STORAGE_KEY}
       workspaceId={workspaceId}
     >
-      {/* workspace tab strip: T3 */}
+      <RightPanelWorkspaceTabsContainer
+        openWorkspaceIds={openWorkspaceIds}
+        selectedWorkspaceId={workspaceId}
+      />
       <WorkspaceRightPanel workspaceId={workspaceId} />
     </RightPanelShell>
   )

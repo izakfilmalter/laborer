@@ -3,13 +3,14 @@ import { RpcError } from '@laborer/shared/rpc'
 import { Context, Effect, Layer } from 'effect'
 import { execFile } from '../lib/spawn.js'
 import { LaborerDatabase } from './laborer-database.js'
+import type { NativeLaborerDatabase } from './native-laborer-database.js'
 import { withFsmonitorDisabled } from './repo-watching-git.js'
 import { RepositoryIdentity } from './repository-identity.js'
 import {
   listWorkspaceRecords,
   type WorkspaceRecord,
 } from './workspace-records.js'
-import { WorktreeDetector } from './worktree-detector.js'
+import { type DetectedWorktree, WorktreeDetector } from './worktree-detector.js'
 import {
   type TranslatableWorktree,
   translateWorktreesToTasks,
@@ -137,6 +138,153 @@ const toWorkspaceBranchName = (
   return `detached/${headSha.slice(0, 8)}`
 }
 
+interface ExternalWorktreeLineage {
+  readonly baseBranch: string
+  readonly baseSha: string
+}
+
+interface BranchCreation {
+  readonly baseSha: string
+  readonly createdAt: number
+  readonly source: string
+}
+
+const REFLOG_UNIX_TIMESTAMP_PATTERN = /@\{(\d+)\}$/
+
+const branchNameFromCreationSource = (source: string): string => {
+  const prefix = 'refs/heads/'
+  return source.startsWith(prefix) ? source.slice(prefix.length) : source
+}
+
+const parseBranchCreation = (
+  entry: string
+): { readonly branch: string; readonly creation: BranchCreation } | null => {
+  const [baseSha, selector, ...messageParts] = entry.split('\t')
+  const timestampMatch = selector?.match(REFLOG_UNIX_TIMESTAMP_PATTERN)
+  if (baseSha === undefined || timestampMatch == null) {
+    return null
+  }
+  const branch = selector?.slice(0, timestampMatch.index)
+  const refsPrefix = 'refs/heads/'
+  if (branch === undefined || !branch.startsWith(refsPrefix)) {
+    return null
+  }
+  const message = messageParts.join('\t')
+  const prefix = 'branch: Created from '
+  if (!(message.startsWith(prefix) && baseSha.length > 0)) {
+    return null
+  }
+  return {
+    branch: branch.slice(refsPrefix.length),
+    creation: {
+      baseSha,
+      createdAt: Number(timestampMatch[1]),
+      source: branchNameFromCreationSource(message.slice(prefix.length)),
+    },
+  }
+}
+
+const parseBranchCreations = (
+  stdout: string,
+  liveWorkspaceBranches: ReadonlySet<string>
+): ReadonlyMap<string, BranchCreation> => {
+  const creations = new Map<string, BranchCreation>()
+  for (const entry of stdout.split('\n')) {
+    const parsed = parseBranchCreation(entry)
+    // Reflog output is newest-first. Keep the newest creation entry if a ref
+    // has ever been deleted and recreated without its old log being pruned.
+    if (
+      parsed !== null &&
+      liveWorkspaceBranches.has(parsed.branch) &&
+      !creations.has(parsed.branch)
+    ) {
+      creations.set(parsed.branch, parsed.creation)
+    }
+  }
+  return creations
+}
+
+const creationParentStillMatches = (
+  repoPath: string,
+  creation: BranchCreation,
+  sourceCreation: BranchCreation | undefined
+): Effect.Effect<boolean, RpcError> => {
+  if (
+    sourceCreation === undefined ||
+    sourceCreation.createdAt > creation.createdAt
+  ) {
+    return Effect.succeed(false)
+  }
+  return runGit(
+    [
+      'merge-base',
+      '--is-ancestor',
+      creation.baseSha,
+      `refs/heads/${creation.source}`,
+    ],
+    repoPath
+  ).pipe(Effect.map((result) => result.exitCode === 0))
+}
+
+/**
+ * Recover the start point Git recorded when a local branch was created. This
+ * is adoption evidence only: once persisted, `parent_task_id` remains the
+ * authoritative lineage fact.
+ */
+const deriveExternalWorktreeLineages = (
+  repoPath: string,
+  detectedWorktrees: readonly DetectedWorktree[]
+): Effect.Effect<ReadonlyMap<string, ExternalWorktreeLineage>, RpcError> =>
+  Effect.gen(function* () {
+    const liveWorkspaceBranches = new Set(
+      detectedWorktrees.flatMap((worktree) =>
+        worktree.isMain || worktree.branch === null ? [] : [worktree.branch]
+      )
+    )
+    if (liveWorkspaceBranches.size === 0) {
+      return new Map()
+    }
+    const reflog = yield* runGit(
+      [
+        'reflog',
+        'show',
+        '--date=unix',
+        '--format=%H%x09%gD%x09%gs',
+        ...[...liveWorkspaceBranches].map((branch) => `refs/heads/${branch}`),
+      ],
+      repoPath
+    )
+    if (reflog.exitCode !== 0) {
+      return new Map()
+    }
+    const lineages = new Map<string, ExternalWorktreeLineage>()
+    const creationsByBranch = parseBranchCreations(
+      reflog.stdout,
+      liveWorkspaceBranches
+    )
+
+    for (const [branch, creation] of creationsByBranch) {
+      // "Created from HEAD" does not identify which worktree was the cwd;
+      // commit-graph guesses can permanently mis-parent sibling branches.
+      if (
+        creation.source !== branch &&
+        liveWorkspaceBranches.has(creation.source) &&
+        (yield* creationParentStillMatches(
+          repoPath,
+          creation,
+          creationsByBranch.get(creation.source)
+        ))
+      ) {
+        lineages.set(branch, {
+          baseBranch: creation.source,
+          baseSha: creation.baseSha,
+        })
+      }
+    }
+
+    return lineages
+  })
+
 /**
  * Choose the worktrees the shared task db should witness as cards. Skips the
  * main checkout, worktrees mid-provisioning for an existing task (the
@@ -151,7 +299,8 @@ const selectTranslatableWorktrees = (
     readonly path: string
   }[],
   workspacesByCanonicalPath: ReadonlyMap<string, WorkspaceRecord>,
-  baseShasByCanonicalPath: ReadonlyMap<string, string | null>
+  baseShasByCanonicalPath: ReadonlyMap<string, string | null>,
+  lineagesByBranch: ReadonlyMap<string, ExternalWorktreeLineage>
 ): readonly TranslatableWorktree[] => {
   const translatable: TranslatableWorktree[] = []
   for (const detected of detectedWorktrees) {
@@ -163,7 +312,12 @@ const selectTranslatableWorktrees = (
     if (workspace !== undefined) {
       continue
     }
+    const lineage =
+      detected.branch === null
+        ? undefined
+        : lineagesByBranch.get(detected.branch)
     translatable.push({
+      baseBranch: lineage?.baseBranch ?? null,
       baseSha: baseShasByCanonicalPath.get(canonicalPath) ?? null,
       branch: detected.branch,
       canonicalPath,
@@ -172,6 +326,118 @@ const selectTranslatableWorktrees = (
   }
   return translatable
 }
+
+const repairDetectedWorktreeLineage = (
+  database: NativeLaborerDatabase,
+  detected: DetectedWorktree,
+  lineagesByBranch: ReadonlyMap<string, ExternalWorktreeLineage>,
+  workspacesByBranch: ReadonlyMap<string, WorkspaceRecord>,
+  workspacesByPath: ReadonlyMap<string, WorkspaceRecord>
+): void => {
+  if (detected.branch === null) {
+    return
+  }
+  const lineage = lineagesByBranch.get(detected.branch)
+  if (lineage === undefined) {
+    return
+  }
+  const childWorkspace = workspacesByPath.get(canonicalize(detected.path))
+  const parentWorkspace = workspacesByBranch.get(lineage.baseBranch)
+  if (
+    childWorkspace === undefined ||
+    parentWorkspace === undefined ||
+    childWorkspace.id === parentWorkspace.id
+  ) {
+    return
+  }
+  const childTask = database.findTask(childWorkspace.id)
+  if (
+    childTask?.source !== 'worktree' ||
+    childTask.parentTaskId !== null ||
+    childTask.baseBranch !== null
+  ) {
+    return
+  }
+  database.updateTask(childTask.id, childTask.revision, {
+    baseBranch: lineage.baseBranch,
+    baseSha: lineage.baseSha,
+    parentTaskId: parentWorkspace.id,
+  })
+}
+
+const repairExternalWorktreeLineages = (
+  database: NativeLaborerDatabase,
+  projectId: string,
+  detectedWorktrees: readonly DetectedWorktree[],
+  lineagesByBranch: ReadonlyMap<string, ExternalWorktreeLineage>
+): void => {
+  const currentWorkspaces = listWorkspaceRecords(database).filter(
+    (workspace) => workspace.projectId === projectId
+  )
+  const workspacesByBranch = new Map(
+    currentWorkspaces.map((workspace) => [workspace.branchName, workspace])
+  )
+  const workspacesByPath = new Map(
+    currentWorkspaces.map((workspace) => [
+      canonicalize(workspace.worktreePath),
+      workspace,
+    ])
+  )
+  for (const detected of detectedWorktrees) {
+    repairDetectedWorktreeLineage(
+      database,
+      detected,
+      lineagesByBranch,
+      workspacesByBranch,
+      workspacesByPath
+    )
+  }
+}
+
+const scanDetectedWorktreeAdditions = (
+  repoPath: string,
+  projectId: string,
+  defaultBranchRef: string,
+  detectedWorktrees: readonly DetectedWorktree[],
+  workspacesByCanonicalPath: ReadonlyMap<string, WorkspaceRecord>,
+  lineagesByBranch: ReadonlyMap<string, ExternalWorktreeLineage>
+): Effect.Effect<
+  {
+    readonly added: number
+    readonly baseShasByCanonicalPath: ReadonlyMap<string, string | null>
+    readonly unchanged: number
+  },
+  RpcError
+> =>
+  Effect.gen(function* () {
+    let added = 0
+    let unchanged = 0
+    const baseShasByCanonicalPath = new Map<string, string | null>()
+    for (const detected of detectedWorktrees) {
+      const canonicalDetectedPath = canonicalize(detected.path)
+      if (workspacesByCanonicalPath.has(canonicalDetectedPath)) {
+        unchanged += 1
+        continue
+      }
+      if (detected.isMain) {
+        continue
+      }
+      const lineage =
+        detected.branch === null
+          ? undefined
+          : lineagesByBranch.get(detected.branch)
+      const baseSha =
+        lineage?.baseSha ??
+        (yield* deriveBaseSha(repoPath, defaultBranchRef, detected.head))
+      baseShasByCanonicalPath.set(canonicalDetectedPath, baseSha)
+      const branchName = toWorkspaceBranchName(detected.branch, detected.head)
+      yield* Effect.log(
+        `[WorktreeReconciler] ADDING external workspace: project=${projectId} branch=${branchName} isMain=${detected.isMain} path=${canonicalDetectedPath} baseSha=${baseSha?.slice(0, 8) ?? 'null'}`
+      )
+      added += 1
+    }
+    return { added, baseShasByCanonicalPath, unchanged }
+  })
 
 class WorktreeReconciler extends Context.Service<
   WorktreeReconciler,
@@ -209,6 +475,10 @@ class WorktreeReconciler extends Context.Service<
 
         const detectedWorktrees = yield* detector.detect(canonicalRepoPath)
         const defaultBranchRef = yield* getDefaultBranchRef(canonicalRepoPath)
+        const lineagesByBranch = yield* deriveExternalWorktreeLineages(
+          canonicalRepoPath,
+          detectedWorktrees
+        )
 
         yield* Effect.logDebug(
           `[WorktreeReconciler] project=${projectId} detected ${detectedWorktrees.length} worktrees, defaultBranchRef=${defaultBranchRef}. Worktrees: ${detectedWorktrees.map((w) => `${w.branch ?? 'detached'}(isMain=${w.isMain}, head=${w.head.slice(0, 8)})`).join(', ')}`
@@ -254,44 +524,16 @@ class WorktreeReconciler extends Context.Service<
           detectedWorktrees.map((worktree) => canonicalize(worktree.path))
         )
 
-        let added = 0
-        let removed = 0
-        let unchanged = 0
-        const baseShasByCanonicalPath = new Map<string, string | null>()
-
-        for (const detected of detectedWorktrees) {
-          const canonicalDetectedPath = canonicalize(detected.path)
-          // Skip if ANY workspace (including destroyed laborer ones) already
-          // has this path. This prevents re-detecting a worktree as
-          // "external" while its laborer-managed destroy is still in progress.
-          if (allByCanonicalPath.has(canonicalDetectedPath)) {
-            unchanged += 1
-            continue
-          }
-
-          // Root workspaces are synthesized from projects rather than added as
-          // external task-backed workspaces.
-          if (detected.isMain) {
-            continue
-          }
-
-          const baseSha = yield* deriveBaseSha(
+        const { added, baseShasByCanonicalPath, unchanged } =
+          yield* scanDetectedWorktreeAdditions(
             canonicalRepoPath,
+            projectId,
             defaultBranchRef,
-            detected.head
+            detectedWorktrees,
+            allByCanonicalPath,
+            lineagesByBranch
           )
-          baseShasByCanonicalPath.set(canonicalDetectedPath, baseSha)
-
-          const branchName = toWorkspaceBranchName(
-            detected.branch,
-            detected.head
-          )
-
-          yield* Effect.log(
-            `[WorktreeReconciler] ADDING external workspace: project=${projectId} branch=${branchName} isMain=${detected.isMain} path=${canonicalDetectedPath} baseSha=${baseSha?.slice(0, 8) ?? 'null'}`
-          )
-          added += 1
-        }
+        let removed = 0
 
         for (const workspace of existingWorkspaces) {
           const canonicalWorkspacePath = canonicalize(workspace.worktreePath)
@@ -325,15 +567,45 @@ class WorktreeReconciler extends Context.Service<
 
         yield* translateWorktreesToTasks(
           {
+            parentTaskIdsByBranch: new Map(
+              allWorkspaces.map((workspace) => [
+                workspace.branchName,
+                workspace.id,
+              ])
+            ),
             rootPath: canonicalRepoPath,
             worktrees: selectTranslatableWorktrees(
               detectedWorktrees,
               allByCanonicalPath,
-              baseShasByCanonicalPath
+              baseShasByCanonicalPath,
+              lineagesByBranch
             ),
           },
           laborerDatabase.database
         )
+
+        // Older external worktrees were adopted before lineage recovery was
+        // available. Repair only external tasks with neither lineage nor a
+        // snapshotted base branch; explicit or deliberately promoted lineage
+        // remains untouched.
+        yield* laborerDatabase
+          .run('repair external worktree lineage', (database) =>
+            repairExternalWorktreeLineages(
+              database,
+              projectId,
+              detectedWorktrees,
+              lineagesByBranch
+            )
+          )
+          .pipe(
+            Effect.mapError(
+              () =>
+                new RpcError({
+                  code: 'WORKTREE_RECONCILE_FAILED',
+                  message: `Failed to repair external worktree lineage for ${projectId}`,
+                })
+            )
+          )
 
         if (added > 0 || removed > 0) {
           yield* Effect.log(

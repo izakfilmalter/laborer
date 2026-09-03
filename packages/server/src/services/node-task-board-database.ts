@@ -312,9 +312,11 @@ export class NodeTaskBoardDatabase {
    */
   adoptWorktreeTask(
     input: {
+      readonly baseBranch?: string | null
       readonly baseSha?: string | null
       readonly branchName: string | null
       readonly id: string
+      readonly parentTaskId?: string | null
       readonly rootPath: string
       readonly title: string
       readonly worktreePath: string
@@ -360,10 +362,10 @@ export class NodeTaskBoardDatabase {
         .prepare(`INSERT INTO tasks (
           id, root_path, title, status, source, execution_id, action_name,
           execution_status, slack_permalink, worktree_path, branch_name,
-          description, created_at, updated_at, revision, base_sha,
-          worktree_status
+          description, created_at, updated_at, revision, parent_task_id,
+          base_sha, base_branch, worktree_status
         ) VALUES (?, ?, ?, 'in_progress', 'worktree', NULL, NULL, NULL, NULL,
-          ?, ?, NULL, ?, ?, 1, ?, 'ready')`)
+          ?, ?, NULL, ?, ?, 1, ?, ?, ?, 'ready')`)
         .run(
           input.id,
           input.rootPath,
@@ -372,7 +374,9 @@ export class NodeTaskBoardDatabase {
           input.branchName,
           changedAt,
           changedAt,
-          input.baseSha ?? null
+          input.parentTaskId ?? null,
+          input.baseSha ?? null,
+          input.baseBranch ?? null
         )
       this.#appendChange(input.id, changedAt)
       const task = this.#findLocal(input.id)

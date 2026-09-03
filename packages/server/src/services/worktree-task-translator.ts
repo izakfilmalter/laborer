@@ -6,14 +6,16 @@ import { NodeTaskBoardDatabase } from './node-task-board-database.js'
 
 interface WorktreeAdoptionDatabase {
   readonly adoptWorktreeTask: (input: {
+    readonly baseBranch?: string | null
     readonly baseSha?: string | null
     readonly branchName: string | null
     readonly id: string
+    readonly parentTaskId?: string | null
     readonly rootPath: string
     readonly title: string
     readonly worktreePath: string
     readonly worktreePathAliases: readonly string[]
-  }) => unknown | null
+  }) => { readonly id: string } | null
 }
 
 /**
@@ -22,12 +24,76 @@ interface WorktreeAdoptionDatabase {
  * provisioning task or a laborer-managed destroy in progress.
  */
 export interface TranslatableWorktree {
+  readonly baseBranch?: string | null
   readonly baseSha?: string | null
   readonly branch: string | null
   /** Canonical (realpath) worktree location. */
   readonly canonicalPath: string
   /** Raw path as reported by `git worktree list`. */
   readonly path: string
+}
+
+interface WorktreeTranslationInput {
+  /** Existing live workspace task IDs, keyed by their checked-out branch. */
+  readonly parentTaskIdsByBranch?: ReadonlyMap<string, string>
+  /** Canonical repo root owning these worktrees; becomes `root_path`. */
+  readonly rootPath: string
+  readonly worktrees: readonly TranslatableWorktree[]
+}
+
+const readyWorktreeIndex = (
+  pending: readonly TranslatableWorktree[],
+  taskIdsByBranch: ReadonlyMap<string, string>
+): number => {
+  const ready = pending.findIndex(
+    (worktree) =>
+      worktree.baseBranch == null ||
+      taskIdsByBranch.has(worktree.baseBranch) ||
+      !pending.some((candidate) => candidate.branch === worktree.baseBranch)
+  )
+  return ready === -1 ? 0 : ready
+}
+
+const adoptWorktrees = (
+  input: WorktreeTranslationInput,
+  database: WorktreeAdoptionDatabase
+): number => {
+  let adopted = 0
+  const taskIdsByBranch = new Map(input.parentTaskIdsByBranch)
+  const pending = [...input.worktrees]
+  while (pending.length > 0) {
+    // Parents must be adopted before their descendants so the stored foreign
+    // key is valid when several worktrees are first witnessed in one pass.
+    const [worktree] = pending.splice(
+      readyWorktreeIndex(pending, taskIdsByBranch),
+      1
+    )
+    if (worktree === undefined) {
+      continue
+    }
+    const parentTaskId =
+      worktree.baseBranch == null
+        ? null
+        : (taskIdsByBranch.get(worktree.baseBranch) ?? null)
+    const task = database.adoptWorktreeTask({
+      baseBranch: parentTaskId === null ? null : (worktree.baseBranch ?? null),
+      baseSha: worktree.baseSha ?? null,
+      branchName: worktree.branch,
+      id: createTaskUlid(),
+      parentTaskId,
+      rootPath: input.rootPath,
+      title: worktree.branch ?? basename(worktree.canonicalPath),
+      worktreePath: worktree.canonicalPath,
+      worktreePathAliases: [worktree.path],
+    })
+    if (task !== null) {
+      adopted += 1
+      if (worktree.branch !== null) {
+        taskIdsByBranch.set(worktree.branch, task.id)
+      }
+    }
+  }
+  return adopted
 }
 
 /**
@@ -40,11 +106,7 @@ export interface TranslatableWorktree {
  * is logged and reported as zero adoptions.
  */
 export const translateWorktreesToTasks = (
-  input: {
-    /** Canonical repo root owning these worktrees; becomes `root_path`. */
-    readonly rootPath: string
-    readonly worktrees: readonly TranslatableWorktree[]
-  },
+  input: WorktreeTranslationInput,
   target: string | WorktreeAdoptionDatabase = taskDatabasePath()
 ): Effect.Effect<number> =>
   Effect.try(() => {
@@ -60,22 +122,7 @@ export const translateWorktreesToTasks = (
       database = target
     }
     try {
-      let adopted = 0
-      for (const worktree of input.worktrees) {
-        const task = database.adoptWorktreeTask({
-          baseSha: worktree.baseSha ?? null,
-          branchName: worktree.branch,
-          id: createTaskUlid(),
-          rootPath: input.rootPath,
-          title: worktree.branch ?? basename(worktree.canonicalPath),
-          worktreePath: worktree.canonicalPath,
-          worktreePathAliases: [worktree.path],
-        })
-        if (task !== null) {
-          adopted += 1
-        }
-      }
-      return adopted
+      return adoptWorktrees(input, database)
     } finally {
       ownedDatabase?.close()
     }

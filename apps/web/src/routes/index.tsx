@@ -17,7 +17,7 @@ import { CommandPalette } from '@/components/command-palette/command-palette'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
 import { useProjectReorderMonitor } from '@/components/project-reorder'
-import { rightPanelWidthStorageKey } from '@/components/right-panel/right-panel-shell'
+import { GlobalRightPanel } from '@/components/right-panel/global-right-panel'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import { destroyWorkspace as destroyWorkspaceOptimistically } from '@/db/shared-mutations'
@@ -127,6 +127,23 @@ function HomeComponent() {
   }, [panelActions.windowLayout])
 
   const workspaceTileLayout = activeWindowTab?.workspaceLayout
+
+  const rightPanelOpen = useRightPanelStore((store) => store.isOpen)
+  const toggleRightPanel = useCallback(() => {
+    useRightPanelStore.getState().toggleVisibility()
+  }, [])
+
+  // Workspaces tiled in the active window tab, in layout order: the set the
+  // window's one right panel can point at.
+  const openWorkspaceIds = useMemo(
+    () =>
+      workspaceTileLayout
+        ? getWorkspaceTileLeaves(workspaceTileLayout).map(
+            (leaf) => leaf.workspaceId
+          )
+        : [],
+    [workspaceTileLayout]
+  )
 
   // Detect when the active window tab exists but has no workspaces,
   // or when the window layout exists but all tabs have been closed.
@@ -341,8 +358,9 @@ function HomeComponent() {
     [panelActions]
   )
 
-  // Prune right-panel state (and persisted widths) for workspaces that
-  // have been destroyed, so removed workspaces do not leave entries behind.
+  // Prune right-panel state for workspaces that have been destroyed, so
+  // removed workspaces do not leave tab strips behind. The panel's width is
+  // a window-level preference under a single key, so nothing to clean there.
   const destroyedWorkspaceKey = useMemo(
     () =>
       workspaceList
@@ -365,9 +383,6 @@ function HomeComponent() {
       usePreviewMiniPlayerStore.getState().removeWorkspace(workspaceId)
     }
     useRightPanelStore.getState().removeWorkspaces(destroyedIds)
-    for (const workspaceId of destroyedIds) {
-      window.localStorage.removeItem(rightPanelWidthStorageKey(workspaceId))
-    }
   }, [closeWorkspacePreviews, destroyedWorkspaceKey])
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -1240,11 +1255,13 @@ function HomeComponent() {
                   onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
                   onSelectWindowTab={panelActions.switchWindowTab}
                   onToggleBoard={toggleBoardOverlay}
+                  onToggleRightPanel={toggleRightPanel}
                   onToggleSidebar={
                     responsiveSizes.canCollapseSidebar
                       ? toggleSidebar
                       : undefined
                   }
+                  rightPanelOpen={rightPanelOpen}
                   sidebarCollapsed={sidebarCollapsed}
                   windowLayout={panelActions.windowLayout}
                 />
@@ -1256,51 +1273,64 @@ function HomeComponent() {
                     onMetaWWithoutPane={handleMetaWWithoutPane}
                   />
                 )}
-                <div className="relative min-h-0 flex-1" ref={mainContentRef}>
-                  <PanelContent
-                    activePaneId={activePaneId}
-                    activeTabId={windowLayout?.activeTabId}
-                    fullscreenPaneId={fullscreenPaneId}
-                    isEmptyWindowTab={isEmptyWindowTab}
-                    isReconciling={isReconciling}
-                    windowLayout={windowLayout}
-                    windowTabs={windowLayout?.tabs}
-                  />
-                  {/* Kanban board overlay — semi-transparent so the panel
-                      sessions remain visible underneath; cards stay solid
-                      (bg-card). Appears/disappears instantly, no animation.
-                      Stays mounted while dismissed (hidden via CSS) so board
-                      state such as search text survives closing. */}
-                  <section
-                    aria-label="Task board"
-                    className={cn(
-                      'absolute inset-x-0 bottom-0 z-40 flex flex-col border-t bg-background/70 shadow-2xl',
-                      !boardOverlayOpen && 'hidden'
-                    )}
-                    style={{
-                      height: `${boardOverlayHeight.fraction * 100}%`,
-                    }}
-                  >
-                    <button
-                      aria-label="Resize board"
-                      className="group relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-                      onPointerCancel={handleBoardResizeEnd}
-                      onPointerDown={handleBoardResizeStart}
-                      onPointerMove={handleBoardResizeMove}
-                      onPointerUp={handleBoardResizeEnd}
-                      tabIndex={-1}
-                      type="button"
+                <div
+                  className="relative flex min-h-0 flex-1"
+                  ref={mainContentRef}
+                >
+                  {/* Workspace frames, the fullscreen overlay, and the board
+                      overlay share this column; the window's one right panel
+                      is its flex sibling, so it spans the full height under
+                      the header bar and stays beside a fullscreened pane. */}
+                  <div className="relative min-h-0 min-w-0 flex-1">
+                    <PanelContent
+                      activePaneId={activePaneId}
+                      activeTabId={windowLayout?.activeTabId}
+                      fullscreenPaneId={fullscreenPaneId}
+                      isEmptyWindowTab={isEmptyWindowTab}
+                      isReconciling={isReconciling}
+                      windowLayout={windowLayout}
+                      windowTabs={windowLayout?.tabs}
+                    />
+                    {/* Kanban board overlay — semi-transparent so the panel
+                        sessions remain visible underneath; cards stay solid
+                        (bg-card). Appears/disappears instantly, no animation.
+                        Stays mounted while dismissed (hidden via CSS) so
+                        board state such as search text survives closing. */}
+                    <section
+                      aria-label="Task board"
+                      className={cn(
+                        'absolute inset-x-0 bottom-0 z-40 flex flex-col border-t bg-background/70 shadow-2xl',
+                        !boardOverlayOpen && 'hidden'
+                      )}
+                      style={{
+                        height: `${boardOverlayHeight.fraction * 100}%`,
+                      }}
                     >
-                      <ResizeGrip className="rotate-90" />
-                    </button>
-                    <div className="min-h-0 flex-1">
-                      <TaskBoard
-                        collapseState={collapseState}
-                        onDismiss={closeBoardOverlay}
-                        open={boardOverlayOpen}
-                      />
-                    </div>
-                  </section>
+                      <button
+                        aria-label="Resize board"
+                        className="group relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                        onPointerCancel={handleBoardResizeEnd}
+                        onPointerDown={handleBoardResizeStart}
+                        onPointerMove={handleBoardResizeMove}
+                        onPointerUp={handleBoardResizeEnd}
+                        tabIndex={-1}
+                        type="button"
+                      >
+                        <ResizeGrip className="rotate-90" />
+                      </button>
+                      <div className="min-h-0 flex-1">
+                        <TaskBoard
+                          collapseState={collapseState}
+                          onDismiss={closeBoardOverlay}
+                          open={boardOverlayOpen}
+                        />
+                      </div>
+                    </section>
+                  </div>
+                  <GlobalRightPanel
+                    activeWorkspaceId={activeWorkspaceId}
+                    openWorkspaceIds={openWorkspaceIds}
+                  />
                 </div>
               </div>
             )}

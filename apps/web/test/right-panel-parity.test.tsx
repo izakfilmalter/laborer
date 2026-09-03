@@ -90,7 +90,6 @@ describe('file tab interactions', () => {
         pendingSurfaceIds={new Set([file.id])}
         pullRequestAvailable={false}
         surfaces={[file]}
-        widthStorageKey="test:right-panel-width"
         workspaceId="ws-1"
       >
         <div>content</div>

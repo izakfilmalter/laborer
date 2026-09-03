@@ -4,6 +4,10 @@
  * Tab strip, add-surface menu, and empty-state launcher for the workspace
  * right panel. Ported from t3code's `RightPanelTabs`.
  *
+ * This renders the strip and the active surface's content only; the
+ * resizable shell around them belongs to the window-level panel
+ * (`GlobalRightPanel`), which mounts one instance for the whole window.
+ *
  * Laborer adaptations:
  * - The native desktop context menu is replaced with `@laborer/ui`'s
  *   Base UI context menu (Close / Close others / Close to the right /
@@ -71,7 +75,6 @@ import {
 } from '@/preview-state-store'
 import type { RightPanelSurface } from '@/right-panel-store'
 import { PanelTabCloseButton } from './panel-tab-close-button'
-import { RightPanelShell } from './right-panel-shell'
 
 /** What the pull request tab icon needs to wear the PR's state tone. */
 export interface PullRequestTabStatus {
@@ -102,8 +105,6 @@ interface RightPanelTabsProps {
   /** The PR's state, so the tab icon wears t3's state tones. */
   readonly pullRequestStatus?: PullRequestTabStatus | null | undefined
   readonly surfaces: readonly RightPanelSurface[]
-  /** localStorage key this panel persists its width under. */
-  readonly widthStorageKey: string
   readonly workspaceId: string
 }
 
@@ -815,10 +816,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   }, [activeSurfaceId])
 
   return (
-    <RightPanelShell
-      widthStorageKey={props.widthStorageKey}
-      workspaceId={props.workspaceId}
-    >
+    <>
       <div
         className="flex h-8 min-h-8 shrink-0 items-center gap-1 border-b bg-muted/30 pr-3 pl-2"
         data-right-panel-tabbar
@@ -961,6 +959,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           props.children
         )}
       </div>
-    </RightPanelShell>
+    </>
   )
 }

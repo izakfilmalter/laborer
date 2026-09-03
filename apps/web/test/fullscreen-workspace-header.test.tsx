@@ -297,7 +297,7 @@ describe('Workspace header visibility during fullscreen', () => {
     expect(header.getAttribute('data-workspace-id')).toBe('workspace-2')
   })
 
-  it('keeps the fullscreen right panel mounted and reports its open state in the fullscreen header', () => {
+  it('reports the right panel state in the fullscreen header without mounting a panel of its own', () => {
     useRightPanelStore.getState().open('workspace-1', 'diff')
 
     render(
@@ -311,9 +311,10 @@ describe('Workspace header visibility during fullscreen', () => {
       />
     )
 
-    // Exactly one diff instance: the fullscreen overlay owns the workspace's
-    // right panel while the inline frame's copy is suppressed.
-    expect(screen.getAllByTestId('diff-pane')).toHaveLength(1)
+    // The window mounts one `GlobalRightPanel` beside this whole column, so
+    // neither the frames nor the fullscreen overlay render surfaces here.
+    expect(screen.queryAllByTestId('diff-pane')).toHaveLength(0)
+    expect(document.querySelectorAll('[data-right-panel]')).toHaveLength(0)
 
     const header = screen.getByTestId('fullscreen-workspace-header')
     expect(header.getAttribute('data-workspace-id')).toBe('workspace-1')

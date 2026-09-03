@@ -1,14 +1,14 @@
 /**
- * Shell for a workspace's right panel — ported from t3code's
+ * Shell for the window's right panel — ported from t3code's
  * `PreviewPanelShell`, inline mode only.
  *
- * The panel is a flex sibling of the workspace's main column and is
- * user-resizable via a drag handle on the left edge; width persists per
- * workspace. t3 also collapses the panel to a sheet under 980px viewport
- * width; Laborer nests the panel inside each workspace frame (several tile
- * side by side), so a viewport media query does not map. The sheet is
+ * The window hosts one panel: it is a flex sibling of the whole content
+ * column (every workspace frame plus the fullscreen overlay) and is
+ * user-resizable via a drag handle on the left edge. Width is a window-level
+ * preference, so it persists under one key rather than per workspace. t3
+ * also collapses the panel to a sheet under 980px viewport width; that is
  * deliberately skipped for now — the container clamp below keeps the panel
- * usable in narrow frames instead.
+ * usable in narrow windows instead.
  */
 
 import { cn } from '@laborer/ui/lib/utils'
@@ -23,7 +23,8 @@ import {
 import { useResizableWidth } from '@/hooks/use-resizable-width'
 import { RightPanelResizeHandle } from './right-panel-resize-handle'
 
-const RIGHT_PANEL_WIDTH_STORAGE_PREFIX = 'laborer:right-panel-width'
+/** localStorage key for the window's persisted right-panel width. */
+export const RIGHT_PANEL_WIDTH_STORAGE_KEY = 'laborer:right-panel-width'
 const RIGHT_PANEL_MIN_WIDTH = 360
 /**
  * Upper bound as a fraction of the viewport; only binds on wide screens.
@@ -33,17 +34,12 @@ const RIGHT_PANEL_MIN_WIDTH = 360
 const RIGHT_PANEL_MAX_WIDTH_FRACTION = 0.7
 const RIGHT_PANEL_DEFAULT_WIDTH = 540
 /**
- * Width reserved for the sibling column (the workspace's panes) sharing the
- * panel's flex row. The viewport fraction alone is not enough: workspace
- * frames tile beside each other, so in a narrow frame the remaining 30% of
- * the viewport would leave the sibling below its usable width.
+ * Width reserved for the sibling column (the workspace frames) sharing the
+ * panel's flex row. The viewport fraction alone is not enough: the sidebar
+ * takes its own slice of the viewport, so the remaining 30% would leave the
+ * sibling below its usable width.
  */
 const SIBLING_COLUMN_MIN_WIDTH = 360
-
-/** localStorage key for one workspace's persisted right-panel width. */
-export function rightPanelWidthStorageKey(workspaceId: string): string {
-  return `${RIGHT_PANEL_WIDTH_STORAGE_PREFIX}:${workspaceId}`
-}
 
 export function getRightPanelMaxWidth(
   viewportWidth: number,

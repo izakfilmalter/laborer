@@ -318,6 +318,159 @@ describe('WorktreeReconciler', () => {
       assert.strictEqual(rows[0]?.baseSha, expectedBaseSha)
     }).pipe(Effect.provide(TestLayer))
   )
+
+  it.effect(
+    'records external worktrees created from another workspace as sub-workspaces',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-external-lineage', tempRoots)
+        const parentPath = join(repoPath, '.worktrees', 'feature-parent')
+        const childPath = join(repoPath, '.worktrees', 'feature-child')
+        git(`worktree add -b feature/parent ${parentPath}`, repoPath)
+        writeFileSync(join(parentPath, 'parent.txt'), 'parent branch content\n')
+        git('add parent.txt', parentPath)
+        git('commit -m "parent commit"', parentPath)
+        const expectedBaseSha = git('rev-parse HEAD', parentPath)
+        git(
+          `worktree add -b feature/child ${childPath} feature/parent`,
+          repoPath
+        )
+        writeFileSync(join(childPath, 'child.txt'), 'child branch content\n')
+        git('add child.txt', childPath)
+        git('commit -m "child commit"', childPath)
+
+        const { database } = yield* LaborerDatabase
+        const reconciler = yield* WorktreeReconciler
+        const result = yield* reconciler.reconcile(
+          'project-external-lineage',
+          repoPath
+        )
+
+        assert.strictEqual(result.added, 2)
+        const tasks = listSharedTasksForRoot(database, repoPath)
+        const parent = tasks.find(
+          (task) => task.branchName === 'feature/parent'
+        )
+        const child = tasks.find((task) => task.branchName === 'feature/child')
+
+        assert.isDefined(parent)
+        assert.isDefined(child)
+        assert.isNull(parent?.parentTaskId)
+        assert.strictEqual(child?.parentTaskId, parent?.id)
+        assert.strictEqual(child?.baseBranch, 'feature/parent')
+        assert.strictEqual(child?.baseSha, expectedBaseSha)
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.effect(
+    'repairs parentless external tasks adopted before lineage was available',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo(
+          'reconciler-external-lineage-repair',
+          tempRoots
+        )
+        const parentPath = join(repoPath, '.worktrees', 'repair-parent')
+        const childPath = join(repoPath, '.worktrees', 'repair-child')
+        git(`worktree add -b repair/parent ${parentPath}`, repoPath)
+        writeFileSync(join(parentPath, 'parent.txt'), 'parent branch content\n')
+        git('add parent.txt', parentPath)
+        git('commit -m "parent commit"', parentPath)
+        const expectedBaseSha = git('rev-parse HEAD', parentPath)
+        git(`worktree add -b repair/child ${childPath} repair/parent`, repoPath)
+
+        const { database } = yield* LaborerDatabase
+        insertProject(database, 'project-external-lineage-repair', repoPath)
+        insertWorkspaceTask(database, {
+          baseSha: null,
+          branchName: 'repair/parent',
+          id: 'repair-parent-task',
+          rootPath: realpathSync(repoPath),
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'repair/parent',
+          worktreePath: realpathSync(parentPath),
+          worktreeStatus: 'ready',
+        })
+        insertWorkspaceTask(database, {
+          baseSha: null,
+          branchName: 'repair/child',
+          id: 'repair-child-task',
+          rootPath: realpathSync(repoPath),
+          source: 'worktree',
+          status: 'in_progress',
+          title: 'repair/child',
+          worktreePath: realpathSync(childPath),
+          worktreeStatus: 'ready',
+        })
+
+        const reconciler = yield* WorktreeReconciler
+        const result = yield* reconciler.reconcile(
+          'project-external-lineage-repair',
+          repoPath
+        )
+
+        assert.strictEqual(result.added, 0)
+        assert.deepInclude(database.findTask('repair-child-task'), {
+          baseBranch: 'repair/parent',
+          baseSha: expectedBaseSha,
+          parentTaskId: 'repair-parent-task',
+        })
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.effect(
+    'does not invent lineage for independent worktrees created from HEAD',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-independent-head', tempRoots)
+        const firstPath = join(repoPath, '.worktrees', 'independent-first')
+        const secondPath = join(repoPath, '.worktrees', 'independent-second')
+        git(`worktree add -b independent/first ${firstPath}`, repoPath)
+        git(`worktree add -b independent/second ${secondPath}`, repoPath)
+
+        const { database } = yield* LaborerDatabase
+        const reconciler = yield* WorktreeReconciler
+        yield* reconciler.reconcile('project-independent-head', repoPath)
+
+        const tasks = listSharedTasksForRoot(database, repoPath)
+        assert.lengthOf(tasks, 2)
+        assert.isTrue(tasks.every((task) => task.parentTaskId === null))
+        assert.isTrue(tasks.every((task) => task.baseBranch === null))
+      }).pipe(Effect.provide(TestLayer))
+  )
+
+  it.effect(
+    'does not attach a child to an unrelated branch recreated with the parent name',
+    () =>
+      Effect.gen(function* () {
+        const repoPath = initRepo('reconciler-recreated-parent', tempRoots)
+        const parentPath = join(repoPath, '.worktrees', 'recreated-parent')
+        const childPath = join(repoPath, '.worktrees', 'recreated-child')
+        git(`worktree add -b recreated/parent ${parentPath}`, repoPath)
+        writeFileSync(join(parentPath, 'parent.txt'), 'original parent\n')
+        git('add parent.txt', parentPath)
+        git('commit -m "original parent commit"', parentPath)
+        git(
+          `worktree add -b recreated/child ${childPath} recreated/parent`,
+          repoPath
+        )
+        git(`worktree remove ${parentPath}`, repoPath)
+        git('branch -D recreated/parent', repoPath)
+        git(`worktree add -b recreated/parent ${parentPath} main`, repoPath)
+
+        const { database } = yield* LaborerDatabase
+        const reconciler = yield* WorktreeReconciler
+        yield* reconciler.reconcile('project-recreated-parent', repoPath)
+
+        const child = listSharedTasksForRoot(database, repoPath).find(
+          (task) => task.branchName === 'recreated/child'
+        )
+        assert.isDefined(child)
+        assert.isNull(child?.parentTaskId)
+        assert.isNull(child?.baseBranch)
+      }).pipe(Effect.provide(TestLayer))
+  )
 })
 
 // ---------------------------------------------------------------------------

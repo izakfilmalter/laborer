@@ -93,6 +93,50 @@ describe('translateWorktreesToTasks', () => {
     database.close()
   })
 
+  it('adopts parents before descendants and persists their lineage', async () => {
+    const path = databasePath()
+    const adopted = await Effect.runPromise(
+      translateWorktreesToTasks(
+        {
+          rootPath: '/repo',
+          worktrees: [
+            {
+              baseBranch: 'feature/parent',
+              baseSha: 'parent-head-at-creation',
+              branch: 'feature/child',
+              canonicalPath: '/repo.worktrees/child',
+              path: '/repo.worktrees/child',
+            },
+            {
+              baseBranch: null,
+              baseSha: 'main-head-at-creation',
+              branch: 'feature/parent',
+              canonicalPath: '/repo.worktrees/parent',
+              path: '/repo.worktrees/parent',
+            },
+          ],
+        },
+        path
+      )
+    )
+
+    expect(adopted).toBe(2)
+    const database = NativeLaborerDatabase.open(path)
+    const parent = database
+      .listTasks()
+      .find((task) => task.branchName === 'feature/parent')
+    const child = database
+      .listTasks()
+      .find((task) => task.branchName === 'feature/child')
+    expect(parent).toBeDefined()
+    expect(child).toMatchObject({
+      baseBranch: 'feature/parent',
+      baseSha: 'parent-head-at-creation',
+      parentTaskId: parent?.id,
+    })
+    database.close()
+  })
+
   it('skips worktrees already claimed by existing task rows', async () => {
     const path = databasePath()
     const database = NodeTaskBoardDatabase.open(path)

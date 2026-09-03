@@ -128,14 +128,14 @@ A project-provided script that prepares a newly created workspace.
 The workspace whose worktree is the main git checkout of the project (`worktreePath === repoPath`). Cannot be destroyed.
 
 **Sub-workspace**:
-A workspace created from another workspace's branch rather than the repo's default branch. Its PR targets its base branch. Identified solely by having a base branch; there is no stored parent link.
+A workspace created from another workspace's branch rather than the repo's default branch. Its task stores the parent task ID; its PR targets the snapshotted base branch. For externally created Git worktrees, Laborer recovers and stores this lineage when Git's local creation evidence identifies a live parent workspace unambiguously.
 _Avoid_: Nested workspace, child workspace (as a schema term)
 
 **Parent workspace**:
-The live workspace whose branch name matches a sub-workspace's base branch. A display-time derivation, not a stored relationship; when no live workspace owns that branch, the sub-workspace has no parent.
+The live workspace backed by a sub-workspace task's stored parent task. The parent task is durable even while it has no worktree; the sidebar nests the sub-workspace only while that task has a live workspace.
 
 **Base branch**:
-The branch a workspace's PR targets. For ordinary workspaces this is the repo's default branch (stored as nothing); for sub-workspaces it is the parent workspace's branch captured at creation time. Durable — survives parent workspace destruction.
+The branch a workspace's PR targets. For ordinary workspaces this is the repo's default branch (stored as nothing); for sub-workspaces it is the parent workspace's branch captured at creation time. It is a Git/PR snapshot, not the source of task lineage.
 _Avoid_: Target branch
 
 **Base SHA**:

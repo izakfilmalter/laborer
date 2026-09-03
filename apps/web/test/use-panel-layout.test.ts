@@ -502,6 +502,86 @@ describe('usePanelLayout', () => {
     expect(panelTab?.panelLayout.paneType).toBe('terminal')
   })
 
+  it('appends a sidebar terminal to an open unfocused workspace without creating a panel tab', async () => {
+    writeStoredWindowLayout('window-a', makeSplitWindowLayout())
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    act(() => {
+      result.current.panelActions.addPaneToWorkspace(
+        'workspace-left',
+        'terminal',
+        'horizontal'
+      )
+    })
+
+    await waitFor(() => {
+      expect(spawnTerminalMock).toHaveBeenCalledWith({
+        payload: {
+          command: undefined,
+          workspaceId: 'workspace-left',
+        },
+      })
+    })
+    await waitFor(() => {
+      const stored = readStoredWindowLayout('window-a') as WindowLayout
+      const tab = stored.tabs[0]
+      if (tab?.workspaceLayout?._tag !== 'WorkspaceTileSplit') {
+        throw new Error('Expected split workspace layout')
+      }
+      const workspace = tab.workspaceLayout.children.find(
+        (child) =>
+          child._tag === 'WorkspaceTileLeaf' &&
+          child.workspaceId === 'workspace-left'
+      )
+      if (workspace?._tag !== 'WorkspaceTileLeaf') {
+        throw new Error('Expected target workspace leaf')
+      }
+
+      expect(workspace.panelTabs).toHaveLength(1)
+      const panelLayout = workspace.panelTabs[0]?.panelLayout
+      expect(panelLayout?._tag).toBe('SplitNode')
+      if (panelLayout?._tag !== 'SplitNode') {
+        throw new Error('Expected appended pane')
+      }
+      expect(panelLayout.direction).toBe('horizontal')
+      expect(panelLayout.children[0]?.id).toBe('pane-left')
+      expect(panelLayout.children[1]).toMatchObject({
+        _tag: 'LeafNode',
+        terminalId: 'spawned-terminal',
+        workspaceId: 'workspace-left',
+      })
+      expect(tab.focusedWorkspaceTileId).toBe('workspace-tile-pane-left')
+    })
+  })
+
+  it('routes a sidebar pane append to the window that owns the workspace', async () => {
+    const originalLayout = makeWindowLayout('pane-local', 'workspace-local')
+    writeStoredWindowLayout('window-a', originalLayout)
+    focusExistingWindowForWorkspaceMock.mockResolvedValue(true)
+
+    const { result } = renderHook(() => usePanelLayout())
+
+    await act(async () => {
+      await result.current.panelActions.addPaneToWorkspace(
+        'workspace-remote',
+        'terminal',
+        'horizontal'
+      )
+    })
+
+    expect(focusExistingWindowForWorkspaceMock).toHaveBeenCalledWith(
+      'workspace-remote',
+      {
+        action: 'add-pane',
+        direction: 'horizontal',
+        panelType: 'terminal',
+      }
+    )
+    expect(readStoredWindowLayout('window-a')).toEqual(originalLayout)
+    expect(spawnTerminalMock).not.toHaveBeenCalled()
+  })
+
   it('opens a prompted agent as a new pane in the workspace panel tab', async () => {
     writeStoredWindowLayout(
       'window-a',

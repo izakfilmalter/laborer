@@ -105,6 +105,20 @@ function countLeaves(node: PanelNode): number {
 // Split pane
 // ---------------------------------------------------------------------------
 
+function createSiblingPane(
+  sibling: LeafNode,
+  newPaneContent?: Partial<LeafNode>
+): LeafNode {
+  return {
+    _tag: 'LeafNode',
+    id: generateId('pane'),
+    command: newPaneContent?.command,
+    paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
+    terminalId: newPaneContent?.terminalId,
+    workspaceId: newPaneContent?.workspaceId ?? sibling.workspaceId,
+  }
+}
+
 /**
  * Split a pane in a PanelNode tree by inserting a new sibling leaf.
  *
@@ -136,14 +150,7 @@ function splitPaneRecursive(
 ): PanelNode {
   // Found the target leaf — wrap it in a split with a new sibling
   if (node._tag === 'LeafNode' && node.id === paneId) {
-    const newPane: LeafNode = {
-      _tag: 'LeafNode',
-      id: generateId('pane'),
-      command: newPaneContent?.command,
-      paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
-      terminalId: newPaneContent?.terminalId,
-      workspaceId: newPaneContent?.workspaceId ?? node.workspaceId,
-    }
+    const newPane = createSiblingPane(node, newPaneContent)
     return {
       _tag: 'SplitNode',
       id: generateId('split'),
@@ -163,14 +170,7 @@ function splitPaneRecursive(
       )
       if (targetIndex !== -1) {
         const targetChild = node.children[targetIndex] as LeafNode
-        const newPane: LeafNode = {
-          _tag: 'LeafNode',
-          id: generateId('pane'),
-          command: newPaneContent?.command,
-          paneType: (newPaneContent?.paneType ?? 'terminal') as PaneType,
-          terminalId: newPaneContent?.terminalId,
-          workspaceId: newPaneContent?.workspaceId ?? targetChild.workspaceId,
-        }
+        const newPane = createSiblingPane(targetChild, newPaneContent)
         const newChildren = [
           ...node.children.slice(0, targetIndex + 1),
           newPane,
@@ -197,6 +197,41 @@ function splitPaneRecursive(
   }
 
   return node
+}
+
+/**
+ * Append a pane after the entire panel tree.
+ *
+ * Unlike `splitPane`, this operation is not relative to whichever pane happens
+ * to be focused. A horizontal append always creates the rightmost top-level
+ * region; a vertical append creates the bottommost one. Matching root splits
+ * stay flat, while a differently oriented root is wrapped as a whole.
+ */
+function appendPane(
+  root: PanelNode,
+  direction: SplitDirection,
+  newPaneContent?: Partial<LeafNode>
+): PanelNode {
+  const sibling = getEdgeLeaf(root, 'last')
+  const newPane = createSiblingPane(sibling, newPaneContent)
+
+  if (root._tag === 'SplitNode' && root.direction === direction) {
+    const children = [...root.children, newPane]
+    const equalSize = 100 / children.length
+    return {
+      ...root,
+      children,
+      sizes: children.map(() => equalSize),
+    }
+  }
+
+  return {
+    _tag: 'SplitNode',
+    id: generateId('split'),
+    direction,
+    children: [root, newPane],
+    sizes: [50, 50],
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +713,7 @@ function computeResize(
 // ---------------------------------------------------------------------------
 
 export {
+  appendPane,
   assignTerminal,
   buildPath,
   closePane,

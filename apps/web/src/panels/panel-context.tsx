@@ -55,8 +55,6 @@ type PickerMode =
   | { readonly kind: 'new-tab'; readonly workspaceId: string }
 
 interface PanelActions {
-  // -- Panel tab actions ---------------------------------------------------
-
   /**
    * Add a new panel tab of the given type to the focused workspace.
    * Triggered by Ctrl+T (with type picker).
@@ -72,6 +70,18 @@ interface PanelActions {
         options?: { terminalId?: string }
       ) => void)
     | undefined
+  // -- Panel tab actions ---------------------------------------------------
+
+  /**
+   * Add a terminal or agent pane after the target workspace's entire active
+   * panel tree. If the workspace is already open, this keeps its existing
+   * panel tab and appends to the requested edge instead of creating a tab.
+   */
+  readonly addPaneToWorkspace: (
+    workspaceId: string,
+    panelType: 'agent' | 'terminal',
+    direction: SplitDirection
+  ) => Promise<void>
 
   // -- Window tab actions ---------------------------------------------------
 

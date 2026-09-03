@@ -304,6 +304,54 @@ describe('workspace-to-window targeting', () => {
     )
   })
 
+  it('forwards a pane-append activation intent to the window that owns the workspace', async () => {
+    const {
+      ACTIVATE_WORKSPACE_CHANNEL,
+      FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL,
+      registerIpcHandlers,
+      REPORT_VISIBLE_WORKSPACES_CHANNEL,
+    } = await import('../src/ipc.js')
+
+    const windowA = createMockWindow(112)
+    const windowB = createMockWindow(113)
+    registerIpcHandlers(
+      () =>
+        null as unknown as Parameters<
+          typeof registerIpcHandlers
+        >[0] extends () => infer R
+          ? R
+          : never
+    )
+
+    fromWebContentsMock.mockReturnValue(windowB)
+    ipcHandlers.get(REPORT_VISIBLE_WORKSPACES_CHANNEL)?.(
+      { sender: windowB.webContents },
+      ['workspace-terminal']
+    )
+
+    fromWebContentsMock.mockReturnValue(windowA)
+    const result = ipcHandlers.get(FOCUS_WINDOW_FOR_WORKSPACE_CHANNEL)?.(
+      { sender: windowA.webContents },
+      'workspace-terminal',
+      {
+        action: 'add-pane',
+        direction: 'horizontal',
+        panelType: 'terminal',
+      }
+    )
+
+    expect(result).toBe(true)
+    expect(windowB.webContents.send).toHaveBeenCalledWith(
+      ACTIVATE_WORKSPACE_CHANNEL,
+      {
+        action: 'add-pane',
+        direction: 'horizontal',
+        panelType: 'terminal',
+        workspaceId: 'workspace-terminal',
+      }
+    )
+  })
+
   it('returns false when the workspace is only in the requesting window itself', async () => {
     const {
       registerIpcHandlers,

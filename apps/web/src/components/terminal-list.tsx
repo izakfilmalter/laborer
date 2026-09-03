@@ -20,7 +20,6 @@
  */
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
-import type { LeafNode } from '@laborer/shared/types'
 import {
   Alert,
   AlertDescription,
@@ -69,11 +68,7 @@ import {
 import { extractErrorMessage } from '@/lib/errors'
 import { toast } from '@/lib/toast'
 import { deriveWorkspaceAgentStatus } from '@/lib/workspace-agent-status'
-import {
-  useActivePaneId,
-  useActiveWorkspaceId,
-  usePanelActions,
-} from '@/panels/panel-context'
+import { usePanelActions } from '@/panels/panel-context'
 
 const restartTerminalMutation =
   TerminalServiceClient.mutation('terminal.restart')
@@ -204,13 +199,8 @@ function ConfigAwareTerminalSpawnButtons({
 }
 
 /**
- * Opens a terminal in a workspace: beside the active pane when the operator
- * is already in this workspace, otherwise in a new panel tab. Cmd splits
- * down instead of across.
- *
- * The workspace ownership check prevents a bug where clicking "New" on
- * workspace B (while workspace A is focused) would split workspace A's pane
- * instead of creating a new panel in workspace B.
+ * Opens a terminal after the target workspace's entire active panel tree.
+ * Cmd appends below instead of to the right.
  */
 function useSpawnInWorkspace(
   workspaceId: string,
@@ -218,8 +208,6 @@ function useSpawnInWorkspace(
   paneType: 'agent' | 'terminal'
 ) {
   const panelActions = usePanelActions()
-  const activePaneId = useActivePaneId()
-  const activeWorkspaceId = useActiveWorkspaceId()
 
   return useCallback(
     (event: React.MouseEvent) => {
@@ -231,24 +219,9 @@ function useSpawnInWorkspace(
         return
       }
       const direction = event.metaKey ? 'vertical' : 'horizontal'
-      const paneIsInThisWorkspace = activeWorkspaceId === workspaceId
-      if (activePaneId && paneIsInThisWorkspace) {
-        panelActions.splitPane(activePaneId, direction, {
-          paneType,
-          workspaceId,
-        } as Partial<LeafNode>)
-      } else {
-        panelActions.addPanelTab?.(workspaceId, paneType)
-      }
+      panelActions.addPaneToWorkspace(workspaceId, paneType, direction)
     },
-    [
-      isServiceAvailable,
-      workspaceId,
-      paneType,
-      panelActions,
-      activePaneId,
-      activeWorkspaceId,
-    ]
+    [isServiceAvailable, workspaceId, paneType, panelActions]
   )
 }
 

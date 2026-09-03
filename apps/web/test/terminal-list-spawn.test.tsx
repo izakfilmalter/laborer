@@ -2,10 +2,11 @@
  * Tests for the TerminalSpawnControls spawn button behavior.
  *
  * Verifies that the "Agent" and "New" (terminal) buttons in the sidebar
- * workspace card split the active pane instead of creating new tabs:
- * - Default click → split right (horizontal)
- * - Cmd+click → split down (vertical)
- * - No active pane → falls back to addPanelTab
+ * workspace card append a pane to the target workspace instead of creating
+ * a panel tab:
+ * - Default click → append right (horizontal)
+ * - Cmd+click → append below (vertical)
+ * - The target workspace does not need to own the globally active pane
  *
  * @see apps/web/src/components/terminal-list.tsx
  */
@@ -20,11 +21,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const {
   activePaneIdRef,
   activeWorkspaceIdRef,
+  addPaneToWorkspaceMock,
   addPanelTabMock,
   splitPaneMock,
 } = vi.hoisted(() => ({
   activePaneIdRef: { current: null as string | null },
   activeWorkspaceIdRef: { current: null as string | null },
+  addPaneToWorkspaceMock: vi.fn(),
   addPanelTabMock: vi.fn(),
   splitPaneMock: vi.fn(),
 }))
@@ -39,6 +42,7 @@ vi.mock('@/panels/panel-context', () => ({
   useActiveWorkspaceId: () => activeWorkspaceIdRef.current,
   usePanelActions: () => ({
     assignTerminalToPane: vi.fn(),
+    addPaneToWorkspace: addPaneToWorkspaceMock,
     closePane: vi.fn(),
     closeTerminalPane: vi.fn(),
     closeWorkspace: vi.fn(),
@@ -181,7 +185,7 @@ describe('TerminalSpawnControls', () => {
       activeWorkspaceIdRef.current = 'ws-1'
     })
 
-    it('clicking Agent button splits right from the active pane', () => {
+    it('clicking Agent button appends right in the workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
@@ -189,18 +193,16 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(agentButton)
 
-      expect(splitPaneMock).toHaveBeenCalledWith(
-        'pane-1',
-        'horizontal',
-        expect.objectContaining({
-          paneType: 'agent',
-          workspaceId: 'ws-1',
-        })
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'agent',
+        'horizontal'
       )
+      expect(splitPaneMock).not.toHaveBeenCalled()
       expect(addPanelTabMock).not.toHaveBeenCalled()
     })
 
-    it('Cmd+clicking Agent button splits down from the active pane', () => {
+    it('Cmd+clicking Agent button appends below in the workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
@@ -208,18 +210,16 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(agentButton, { metaKey: true })
 
-      expect(splitPaneMock).toHaveBeenCalledWith(
-        'pane-1',
-        'vertical',
-        expect.objectContaining({
-          paneType: 'agent',
-          workspaceId: 'ws-1',
-        })
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'agent',
+        'vertical'
       )
+      expect(splitPaneMock).not.toHaveBeenCalled()
       expect(addPanelTabMock).not.toHaveBeenCalled()
     })
 
-    it('clicking New terminal button splits right from the active pane', () => {
+    it('clicking New terminal button appends right in the workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
@@ -227,18 +227,16 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(terminalButton)
 
-      expect(splitPaneMock).toHaveBeenCalledWith(
-        'pane-1',
-        'horizontal',
-        expect.objectContaining({
-          paneType: 'terminal',
-          workspaceId: 'ws-1',
-        })
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'terminal',
+        'horizontal'
       )
+      expect(splitPaneMock).not.toHaveBeenCalled()
       expect(addPanelTabMock).not.toHaveBeenCalled()
     })
 
-    it('Cmd+clicking New terminal button splits down from the active pane', () => {
+    it('Cmd+clicking New terminal button appends below in the workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
@@ -246,14 +244,12 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(terminalButton, { metaKey: true })
 
-      expect(splitPaneMock).toHaveBeenCalledWith(
-        'pane-1',
-        'vertical',
-        expect.objectContaining({
-          paneType: 'terminal',
-          workspaceId: 'ws-1',
-        })
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'terminal',
+        'vertical'
       )
+      expect(splitPaneMock).not.toHaveBeenCalled()
       expect(addPanelTabMock).not.toHaveBeenCalled()
     })
   })
@@ -266,7 +262,7 @@ describe('TerminalSpawnControls', () => {
       activeWorkspaceIdRef.current = 'ws-other'
     })
 
-    it('clicking New terminal button calls addPanelTab for the target workspace', () => {
+    it('clicking New terminal appends to the target workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
@@ -274,13 +270,16 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(terminalButton)
 
-      // Should NOT split the other workspace's pane
       expect(splitPaneMock).not.toHaveBeenCalled()
-      // Should create a new panel tab in the correct workspace
-      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'terminal')
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'terminal',
+        'horizontal'
+      )
+      expect(addPanelTabMock).not.toHaveBeenCalled()
     })
 
-    it('clicking Agent button calls addPanelTab for the target workspace', () => {
+    it('clicking Agent appends to the target workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
@@ -288,13 +287,16 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(agentButton)
 
-      // Should NOT split the other workspace's pane
       expect(splitPaneMock).not.toHaveBeenCalled()
-      // Should create a new panel tab in the correct workspace
-      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'agent')
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'agent',
+        'horizontal'
+      )
+      expect(addPanelTabMock).not.toHaveBeenCalled()
     })
 
-    it('Cmd+clicking New terminal button calls addPanelTab (not split) for different workspace', () => {
+    it('Cmd+clicking New terminal appends below in the target workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
@@ -302,9 +304,13 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(terminalButton, { metaKey: true })
 
-      // Even with Cmd+click, should NOT split the other workspace's pane
       expect(splitPaneMock).not.toHaveBeenCalled()
-      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'terminal')
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'terminal',
+        'vertical'
+      )
+      expect(addPanelTabMock).not.toHaveBeenCalled()
     })
   })
 
@@ -313,7 +319,7 @@ describe('TerminalSpawnControls', () => {
       activePaneIdRef.current = null
     })
 
-    it('clicking Agent button falls back to addPanelTab', () => {
+    it('clicking Agent appends to the workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const agentButton = screen.getByRole('button', {
@@ -321,11 +327,16 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(agentButton)
 
-      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'agent')
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'agent',
+        'horizontal'
+      )
+      expect(addPanelTabMock).not.toHaveBeenCalled()
       expect(splitPaneMock).not.toHaveBeenCalled()
     })
 
-    it('clicking New terminal button falls back to addPanelTab', () => {
+    it('clicking New terminal appends to the workspace', () => {
       render(<TerminalSpawnControls projectId="proj-1" workspaceId="ws-1" />)
 
       const terminalButton = screen.getByRole('button', {
@@ -333,7 +344,12 @@ describe('TerminalSpawnControls', () => {
       })
       fireEvent.click(terminalButton)
 
-      expect(addPanelTabMock).toHaveBeenCalledWith('ws-1', 'terminal')
+      expect(addPaneToWorkspaceMock).toHaveBeenCalledWith(
+        'ws-1',
+        'terminal',
+        'horizontal'
+      )
+      expect(addPanelTabMock).not.toHaveBeenCalled()
       expect(splitPaneMock).not.toHaveBeenCalled()
     })
   })

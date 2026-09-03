@@ -46,6 +46,7 @@ import {
 } from '@/panels/panel-tab-utils'
 import type { NavigationDirection } from '@/panels/panel-tree-utils'
 import {
+  appendPane as appendPaneToTree,
   assignTerminal as assignTerminalInPanelTree,
   closePane as closePaneInTree,
   collectTerminalIds as collectTerminalIdsFromPanelTree,
@@ -2335,6 +2336,96 @@ export function usePanelLayout() {
     ]
   )
 
+  /**
+   * Add a terminal-backed pane at the far edge of an existing workspace's
+   * active panel tab. Sidebar spawn controls use this workspace-scoped action
+   * so focus in another workspace cannot turn the new pane into a panel tab.
+   */
+  const handleAddPaneToWorkspace = useCallback(
+    async (
+      workspaceId: string,
+      panelType: 'agent' | 'terminal',
+      direction: 'horizontal' | 'vertical'
+    ) => {
+      const focusedElsewhere = await focusExistingWindowForWorkspace(
+        workspaceId,
+        { action: 'add-pane', direction, panelType }
+      )
+      if (focusedElsewhere) {
+        return
+      }
+
+      const current = getCurrentWindowLayout() ?? persistedWindowLayout
+      if (!current) {
+        handleAddPanelTab(workspaceId, panelType)
+        return
+      }
+
+      const location = findWorkspaceLocation(current, workspaceId)
+      if (!location) {
+        handleAddPanelTab(workspaceId, panelType)
+        return
+      }
+
+      const base =
+        current.activeTabId === location.tabId
+          ? current
+          : switchWindowTab(current, location.tabId)
+      let newPaneId: string | undefined
+      const effectivePanelType = panelType === 'agent' ? 'terminal' : panelType
+      let updated = updateWorkspaceTileLeaf(base, workspaceId, (leaf) => {
+        const activePanelTab = leaf.panelTabs.find(
+          (tab) => tab.id === leaf.activePanelTabId
+        )
+        if (!activePanelTab) {
+          const withPanelTab = addPanelTab(leaf, effectivePanelType)
+          const newPanelTab = withPanelTab.panelTabs.at(-1)
+          if (newPanelTab?.panelLayout._tag === 'LeafNode') {
+            newPaneId = newPanelTab.panelLayout.id
+          }
+          return withPanelTab
+        }
+
+        const panelLayout = appendPaneToTree(
+          activePanelTab.panelLayout,
+          direction,
+          { paneType: effectivePanelType, workspaceId }
+        )
+        const newPane = findNewLeafAfterSplit(
+          activePanelTab.panelLayout,
+          panelLayout
+        )
+        newPaneId = newPane?.id
+        return {
+          ...leaf,
+          panelTabs: leaf.panelTabs.map((tab) =>
+            tab.id === activePanelTab.id
+              ? {
+                  ...tab,
+                  focusedPaneId: newPane?.id ?? tab.focusedPaneId,
+                  panelLayout,
+                }
+              : tab
+          ),
+        }
+      })
+
+      if (!newPaneId) {
+        return
+      }
+      updated = saveFocusedPaneId(updated, newPaneId)
+      commitPanelTabLayout('workspace-pane-added', updated)
+      spawnTerminalIntoPane(workspaceId, newPaneId, panelType)
+    },
+    [
+      commitPanelTabLayout,
+      getCurrentWindowLayout,
+      handleAddPanelTab,
+      persistedWindowLayout,
+      spawnTerminalIntoPane,
+    ]
+  )
+
   const handleAutoOpenAgentWhenWorkspaceReady = useCallback(
     (workspaceId: string, options?: AutoOpenAgentOptions) => {
       const initialPrompt = options?.initialPrompt
@@ -2797,6 +2888,7 @@ export function usePanelLayout() {
 
   const panelActions = useMemo(
     () => ({
+      addPaneToWorkspace: handleAddPaneToWorkspace,
       addPanelTab: handleAddPanelTab,
       autoOpenAgentWhenWorkspaceReady: handleAutoOpenAgentWhenWorkspaceReady,
       assignTerminalToPane: handleAssignTerminalToPane,
@@ -2834,6 +2926,7 @@ export function usePanelLayout() {
     }),
     [
       handleAddPanelTab,
+      handleAddPaneToWorkspace,
       handleAutoOpenAgentWhenWorkspaceReady,
       handleAssignTerminalToPane,
       handleOpenAgentPaneForWorkspace,

@@ -127,6 +127,12 @@ export interface BeforeQuitPayload {
 /** Main-to-renderer intent used for workspace and terminal click routing. */
 export const WorkspaceActivationIntentSchema = Schema.Union([
   Schema.Struct({
+    action: Schema.Literals(['add-pane']),
+    direction: Schema.Literals(['horizontal', 'vertical']),
+    panelType: Schema.Literals(['agent', 'terminal']),
+    workspaceId: Schema.String,
+  }),
+  Schema.Struct({
     action: Schema.Literals(['open-agent-pane']),
     initialPrompt: Schema.optional(Schema.String),
     workspaceId: Schema.String,
@@ -140,10 +146,16 @@ export const WorkspaceActivationIntentSchema = Schema.Union([
 export type WorkspaceActivationIntent =
   typeof WorkspaceActivationIntentSchema.Type
 
-export interface WorkspaceActivationRequest {
-  readonly action: 'open-agent-pane'
-  readonly initialPrompt?: string | undefined
-}
+export type WorkspaceActivationRequest =
+  | {
+      readonly action: 'add-pane'
+      readonly direction: 'horizontal' | 'vertical'
+      readonly panelType: 'agent' | 'terminal'
+    }
+  | {
+      readonly action: 'open-agent-pane'
+      readonly initialPrompt?: string | undefined
+    }
 
 const decodeWorkspaceActivation = Schema.decodeUnknownOption(
   WorkspaceActivationIntentSchema

@@ -824,6 +824,14 @@ function HomeComponent() {
 
   const handleWorkspaceActivation = useCallback(
     (intent: WorkspaceActivationIntent) => {
+      if ('action' in intent && intent.action === 'add-pane') {
+        panelActions.addPaneToWorkspace(
+          intent.workspaceId,
+          intent.panelType,
+          intent.direction
+        )
+        return
+      }
       if ('action' in intent && intent.action === 'open-agent-pane') {
         panelActions.openAgentPaneForWorkspace?.(intent.workspaceId, {
           initialPrompt: intent.initialPrompt,

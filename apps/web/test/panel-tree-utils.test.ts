@@ -11,6 +11,7 @@
 import type { LeafNode, PanelNode, SplitNode } from '@laborer/shared/types'
 import { describe, expect, it } from 'vitest'
 import {
+  appendPane,
   assignTerminal,
   closePane,
   collectTerminalIds,
@@ -257,6 +258,48 @@ describe('splitPane', () => {
         expect(nested.direction).toBe('vertical')
         expect(nested.children).toHaveLength(2)
       }
+    }
+  })
+})
+
+describe('appendPane', () => {
+  it('places a new pane to the right of the whole differently-oriented tree', () => {
+    const root = makeSplit('vertical-root', 'vertical', [
+      makeLeaf('top', undefined, 'ws-1'),
+      makeLeaf('bottom', undefined, 'ws-1'),
+    ])
+
+    const result = appendPane(root, 'horizontal', {
+      paneType: 'terminal',
+      workspaceId: 'ws-1',
+    })
+
+    expect(result._tag).toBe('SplitNode')
+    if (result._tag === 'SplitNode') {
+      expect(result.direction).toBe('horizontal')
+      expect(result.children[0]).toBe(root)
+      expect(result.children[1]).toMatchObject({
+        _tag: 'LeafNode',
+        paneType: 'terminal',
+        workspaceId: 'ws-1',
+      })
+    }
+  })
+
+  it('appends directly to a matching root split', () => {
+    const root = makeSplit('horizontal-root', 'horizontal', [
+      makeLeaf('left'),
+      makeLeaf('right'),
+    ])
+
+    const result = appendPane(root, 'horizontal')
+
+    expect(result._tag).toBe('SplitNode')
+    if (result._tag === 'SplitNode') {
+      expect(result.id).toBe('horizontal-root')
+      expect(result.children).toHaveLength(3)
+      expect(result.children.slice(0, 2)).toEqual(root.children)
+      expect(result.sizes).toEqual([100 / 3, 100 / 3, 100 / 3])
     }
   })
 })

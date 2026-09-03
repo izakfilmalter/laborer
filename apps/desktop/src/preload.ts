@@ -71,6 +71,15 @@ function narrowActivationIntent(
       ? (candidate as unknown as WorkspaceActivationIntent)
       : undefined
   }
+  if (candidate.action === 'add-pane') {
+    const hasValidDirection =
+      candidate.direction === 'horizontal' || candidate.direction === 'vertical'
+    const hasValidPanelType =
+      candidate.panelType === 'agent' || candidate.panelType === 'terminal'
+    return hasValidDirection && hasValidPanelType
+      ? (candidate as unknown as WorkspaceActivationIntent)
+      : undefined
+  }
   if (candidate.action !== undefined) {
     return undefined
   }

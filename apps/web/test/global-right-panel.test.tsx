@@ -1,7 +1,7 @@
 /**
  * The window hosts one right panel. It renders a single instance for the
- * workspace the store resolves to: the focused workspace by default, or an
- * explicitly selected one until focus moves again.
+ * workspace the store resolves to: an explicitly selected one while it stays
+ * open, otherwise the focused workspace. Focus changes never repoint it.
  */
 
 import { cleanup, render, screen } from '@testing-library/react'
@@ -94,9 +94,34 @@ describe('GlobalRightPanel', () => {
     ).toEqual(['workspace-2'])
   })
 
-  it('follows focus when the active workspace changes', () => {
-    useRightPanelStore.getState().open('workspace-1', 'diff')
+  it('stays on the selected workspace when focus moves to another one', () => {
     useRightPanelStore.getState().open('workspace-2', 'diff')
+    useRightPanelStore.getState().open('workspace-1', 'diff')
+
+    const view = render(
+      <GlobalRightPanel
+        activeWorkspaceId="workspace-1"
+        openWorkspaceIds={OPEN_WORKSPACE_IDS}
+      />
+    )
+    expect(panelWorkspaceIds()).toEqual(['workspace-1'])
+
+    view.rerender(
+      <GlobalRightPanel
+        activeWorkspaceId="workspace-2"
+        openWorkspaceIds={OPEN_WORKSPACE_IDS}
+      />
+    )
+
+    expect(panelWorkspaceIds()).toEqual(['workspace-1'])
+    expect(useRightPanelStore.getState().selectedWorkspaceId).toBe(
+      'workspace-1'
+    )
+  })
+
+  it('follows focus only while nothing is explicitly selected', () => {
+    useRightPanelStore.getState().open('workspace-1', 'diff')
+    useRightPanelStore.getState().selectWorkspace(null)
 
     const view = render(
       <GlobalRightPanel
@@ -114,14 +139,12 @@ describe('GlobalRightPanel', () => {
     )
 
     expect(panelWorkspaceIds()).toEqual(['workspace-2'])
-    expect(useRightPanelStore.getState().selectedWorkspaceId).toBe(
-      'workspace-2'
-    )
+    expect(useRightPanelStore.getState().selectedWorkspaceId).toBeNull()
   })
 
-  it('keeps an explicit selection until focus moves again', () => {
-    useRightPanelStore.getState().open('workspace-1', 'diff')
+  it('keeps an explicit selection when focus changes', () => {
     useRightPanelStore.getState().open('workspace-2', 'diff')
+    useRightPanelStore.getState().open('workspace-1', 'diff')
 
     const view = render(
       <GlobalRightPanel

@@ -8,10 +8,10 @@
  *
  * The store says whether the panel is open and which workspace it is pinned
  * to; `resolveRightPanelWorkspaceId` turns that plus the focused workspace
- * into the workspace whose surfaces are shown.
+ * into the workspace whose surfaces are shown. Focus changes never repoint
+ * the panel; only an explicit selection or the pinned workspace closing does.
  */
 
-import { useEffect } from 'react'
 import {
   resolveRightPanelWorkspaceId,
   useRightPanelStore,
@@ -37,23 +37,9 @@ export function GlobalRightPanel({
     (store) => store.selectedWorkspaceId
   )
 
-  const focusedWorkspaceId =
-    activeWorkspaceId !== null && openWorkspaceIds.includes(activeWorkspaceId)
-      ? activeWorkspaceId
-      : null
-
-  // Selection follows focus: moving focus to another open workspace repoints
-  // the panel at it. The focused workspace lives in the window layout, not in
-  // this store, so keeping the two in step is synchronization with an
-  // external system. Depending on the resolved id (not the array) means the
-  // effect fires only when focus actually moves, so an explicit workspace-tab
-  // click stays selected until it does.
-  useEffect(() => {
-    if (focusedWorkspaceId === null) {
-      return
-    }
-    useRightPanelStore.getState().selectWorkspace(focusedWorkspaceId)
-  }, [focusedWorkspaceId])
+  // The panel does not follow focus. An explicit selection (workspace tab
+  // strip, or opening a surface for a workspace) sticks until that workspace
+  // closes; only then does the resolver fall back to the focused workspace.
 
   if (!isOpen || openWorkspaceIds.length === 0) {
     return null

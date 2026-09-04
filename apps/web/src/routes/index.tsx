@@ -1273,68 +1273,65 @@ function HomeComponent() {
                     onMetaWWithoutPane={handleMetaWWithoutPane}
                   />
                 )}
-                <div
-                  className="relative flex min-h-0 flex-1"
-                  ref={mainContentRef}
-                >
-                  {/* Workspace frames, the fullscreen overlay, and the board
-                      overlay share this column; the window's one right panel
-                      is its flex sibling, so it spans the full height under
-                      the header bar and stays beside a fullscreened pane. */}
-                  <div className="relative min-h-0 min-w-0 flex-1">
-                    <PanelContent
-                      activePaneId={activePaneId}
-                      activeTabId={windowLayout?.activeTabId}
-                      fullscreenPaneId={fullscreenPaneId}
-                      isEmptyWindowTab={isEmptyWindowTab}
-                      isReconciling={isReconciling}
-                      windowLayout={windowLayout}
-                      windowTabs={windowLayout?.tabs}
-                    />
-                    {/* Kanban board overlay — semi-transparent so the panel
+                <div className="relative min-h-0 flex-1" ref={mainContentRef}>
+                  <PanelContent
+                    activePaneId={activePaneId}
+                    activeTabId={windowLayout?.activeTabId}
+                    fullscreenPaneId={fullscreenPaneId}
+                    isEmptyWindowTab={isEmptyWindowTab}
+                    isReconciling={isReconciling}
+                    windowLayout={windowLayout}
+                    windowTabs={windowLayout?.tabs}
+                  />
+                  {/* Kanban board overlay — semi-transparent so the panel
                         sessions remain visible underneath; cards stay solid
                         (bg-card). Appears/disappears instantly, no animation.
                         Stays mounted while dismissed (hidden via CSS) so
                         board state such as search text survives closing. */}
-                    <section
-                      aria-label="Task board"
-                      className={cn(
-                        'absolute inset-x-0 bottom-0 z-40 flex flex-col border-t bg-background/70 shadow-2xl',
-                        !boardOverlayOpen && 'hidden'
-                      )}
-                      style={{
-                        height: `${boardOverlayHeight.fraction * 100}%`,
-                      }}
+                  <section
+                    aria-label="Task board"
+                    className={cn(
+                      'absolute inset-x-0 bottom-0 z-40 flex flex-col border-t bg-background/70 shadow-2xl',
+                      !boardOverlayOpen && 'hidden'
+                    )}
+                    style={{
+                      height: `${boardOverlayHeight.fraction * 100}%`,
+                    }}
+                  >
+                    <button
+                      aria-label="Resize board"
+                      className="group relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                      onPointerCancel={handleBoardResizeEnd}
+                      onPointerDown={handleBoardResizeStart}
+                      onPointerMove={handleBoardResizeMove}
+                      onPointerUp={handleBoardResizeEnd}
+                      tabIndex={-1}
+                      type="button"
                     >
-                      <button
-                        aria-label="Resize board"
-                        className="group relative z-10 flex h-px w-full shrink-0 cursor-row-resize items-center justify-center bg-border ring-offset-background after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-                        onPointerCancel={handleBoardResizeEnd}
-                        onPointerDown={handleBoardResizeStart}
-                        onPointerMove={handleBoardResizeMove}
-                        onPointerUp={handleBoardResizeEnd}
-                        tabIndex={-1}
-                        type="button"
-                      >
-                        <ResizeGrip className="rotate-90" />
-                      </button>
-                      <div className="min-h-0 flex-1">
-                        <TaskBoard
-                          collapseState={collapseState}
-                          onDismiss={closeBoardOverlay}
-                          open={boardOverlayOpen}
-                        />
-                      </div>
-                    </section>
-                  </div>
-                  <GlobalRightPanel
-                    activeWorkspaceId={activeWorkspaceId}
-                    openWorkspaceIds={openWorkspaceIds}
-                  />
+                      <ResizeGrip className="rotate-90" />
+                    </button>
+                    <div className="min-h-0 flex-1">
+                      <TaskBoard
+                        collapseState={collapseState}
+                        onDismiss={closeBoardOverlay}
+                        open={boardOverlayOpen}
+                      />
+                    </div>
+                  </section>
                 </div>
               </div>
             )}
           </main>
+
+          {/* The window's one right panel sits beside <main>, level with the
+              project sidebar, so it spans the full window height rather than
+              tucking under the header bar. */}
+          {hasProjects && (
+            <GlobalRightPanel
+              activeWorkspaceId={activeWorkspaceId}
+              openWorkspaceIds={openWorkspaceIds}
+            />
+          )}
         </div>
       </PanelActionsProvider>
     </DiffScrollProvider>

@@ -1,8 +1,8 @@
 /**
  * The window's one right panel.
  *
- * Mounted once beside the whole content column (workspace frames plus the
- * fullscreen overlay) rather than inside each workspace frame, so the panel
+ * Mounted once beside `<main>` — level with the project sidebar, spanning the
+ * full window height — rather than inside each workspace frame, so the panel
  * keeps its width and scroll position as focus moves between workspaces and
  * stays reachable while a pane is fullscreened.
  *

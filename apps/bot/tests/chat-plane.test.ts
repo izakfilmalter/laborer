@@ -53,6 +53,7 @@ const message = (
   id: string,
   text: string,
   options: {
+    readonly edited?: boolean
     readonly isBot?: boolean
     readonly isMe?: boolean
     readonly isMention?: boolean
@@ -66,7 +67,7 @@ const message = (
     isSystem: options.isSystem ?? false,
     userId: options.isMe ? 'U-LABORER' : `U-${id}`,
   },
-  edited: false,
+  edited: options.edited ?? false,
   id,
   isMention: options.isMention ?? false,
   sentAt: new Date(Number(id.split('.')[0] ?? '0') * 1000),
@@ -745,6 +746,65 @@ describe('Chat plane walking skeleton', () => {
             { classification: 'context', text: 'root' },
             { classification: 'context', text: 'earlier reply' },
             { classification: 'input', text: '@laborer join' },
+          ]
+        )
+      })
+    )
+  )
+
+  it.effect('keeps edited history as context for reply activation', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let mentionHandler: ChatSdkMentionHandler | undefined
+        const root = message('40.000', 'edited root', { edited: true })
+        const earlier = message('41.000', 'edited reply', { edited: true })
+        const activation = message('42.000', '@laborer do the thing', {
+          isMention: true,
+        })
+        const turns: ChatPlaneTurn[] = []
+        const thread: ChatSdkThreadLike = {
+          allMessages: asMessages([root, earlier, activation]),
+          channelId: 'C1',
+          channelMessages: asMessages([]),
+          id: 'slack:C1:40.000',
+          isDM: false,
+          post: () => Promise.resolve(),
+          rootMessageId: root.id,
+          subscribe: () => Promise.resolve(),
+          workspaceId: 'TFIRST',
+        }
+        const sdk: ChatSdkLike = {
+          initialize: () => Promise.resolve(),
+          onNewMention: (handler) => {
+            mentionHandler = handler
+          },
+          onSubscribedMessage: () => undefined,
+          shutdown: () => Promise.resolve(),
+        }
+
+        yield* Effect.provide(
+          Effect.promise(async () => {
+            assert.ok(mentionHandler)
+            await mentionHandler(thread, activation)
+          }),
+          makeChatPlaneLayer({
+            handler: makeConversationHandler((turn) => {
+              turns.push(turn)
+              return Effect.succeed({})
+            }),
+            makeSdk: () => sdk,
+          })
+        )
+
+        assert.deepStrictEqual(
+          turns[0]?.messages.map(({ classification, text }) => ({
+            classification,
+            text,
+          })),
+          [
+            { classification: 'context', text: 'edited root' },
+            { classification: 'context', text: 'edited reply' },
+            { classification: 'input', text: '@laborer do the thing' },
           ]
         )
       })

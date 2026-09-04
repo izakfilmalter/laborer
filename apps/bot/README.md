@@ -56,6 +56,9 @@ SLACK_BOT_TOKEN_FIRST=
 ```
 
 Every installation is authenticated and must match its configured team ID.
+Adding a scope to `slack-app-manifest.yaml` requires reauthorizing each
+workspace with `bun run --cwd apps/bot slack:install <workspace>`; see
+[`docs/slack-app-reinstall.md`](docs/slack-app-reinstall.md).
 All daemon runtime state has one root. Workspace state is isolated under
 `$XDG_STATE_HOME/laborer/workspaces/<team-id>/` (defaulting to
 `~/.local/state/laborer/workspaces/<team-id>/`). The custom SQLite Chat SDK

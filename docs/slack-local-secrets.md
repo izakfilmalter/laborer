@@ -59,27 +59,17 @@ SLACK_APP_TOKEN="$(security find-generic-password -a "$USER" -s "laborer-slack-a
 SLACK_BOT_TOKEN_STEEPLE="$(security find-generic-password -a "$USER" -s "laborer-slack-bot-token-steeple" -w)" \
 SLACK_BOT_TOKEN_FRECKLE="$(security find-generic-password -a "$USER" -s "laborer-slack-bot-token-freckle" -w)" \
 LABORER_SLACK_WORKSPACES='[{"teamId":"T0169RZR7MY","botTokenEnvironment":"SLACK_BOT_TOKEN_STEEPLE","root":"/Users/izakfilmalter/Projects/izakfilmalter/laborer"},{"teamId":"T04UDJP9283","botTokenEnvironment":"SLACK_BOT_TOKEN_FRECKLE","root":"/Users/izakfilmalter/Projects/Freckle/next"}]' \
-bun run --cwd next start:slack
+bun run start:bot
 ```
 
 The workspace registry and identifiers are configuration, not credentials. The
 token values exist only in the daemon environment and Keychain.
 
-## Temporary OAuth Funnel
+## Installing or reauthorizing the app
 
-Use the tracked Funnel commands only while installing the app into another
-workspace:
-
-```sh
-bun run --cwd next slack:funnel:on
-bun run --cwd next slack:funnel:status
-bun run --cwd next slack:funnel:off
-```
-
-The callback URL is currently:
-
-```text
-https://izaks-macbook-pro-1.tail08c37.ts.net/slack/oauth/callback
-```
-
-Disable Funnel after OAuth completes.
+The app's registered redirect URL is
+`https://izaks-macbook-pro-1.tail08c37.ts.net/slack/oauth/callback`. Nothing
+listens there except while `bun run --cwd apps/bot slack:install <workspace>`
+is running; it brings up a temporary Tailscale Funnel, completes the exchange,
+stores the token in Keychain, and tears the Funnel down. See
+[`apps/bot/docs/slack-app-reinstall.md`](../apps/bot/docs/slack-app-reinstall.md).

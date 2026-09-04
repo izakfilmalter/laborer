@@ -20,6 +20,7 @@
     "start:chat-canary": "cd ../.. && node --env-file-if-exists=.env.local apps/bot/src/chat-plane/live.ts",
     "start:slack": "cd ../.. && node --env-file-if-exists=.env.local apps/bot/src/acp-runtime/production-live.ts",
     "check:secrets": "vitest run tests/secret-safety.test.ts",
+    "slack:install": "node scripts/slack-install.mjs",
     "test": "vitest run",
     "test:process-backed": "LABORER_PROCESS_BACKED=1 vitest run --maxWorkers=1",
     "test:acp-compatibility": "LABORER_PROCESS_BACKED=1 vitest run tests/opencode-acp-compatibility.test.ts tests/opencode-permission-policy.test.ts --maxWorkers=1",

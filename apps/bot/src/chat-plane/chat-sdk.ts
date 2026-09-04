@@ -252,10 +252,13 @@ const startupFailure = (operation: string): ChatPlaneStartupError =>
 const MAX_HISTORY_MESSAGES_SCANNED = 1000
 const ROOT_HISTORY_MESSAGE_LIMIT = 10
 
+// History reads return each message's final text, so an edited flag only
+// means the author revised it before the activation. Edit events are filtered
+// at the live bridge; dropping edited history would hide the thread's context
+// from the agent.
 const isEligibleAuthoredText = (message: ChatSdkMessageLike): boolean =>
   !message.author.isMe &&
   message.author.isSystem !== true &&
-  !message.edited &&
   message.text.trim().length > 0
 
 const SLACK_MESSAGE_ID = /^(\d{1,20})\.(\d{1,20})$/

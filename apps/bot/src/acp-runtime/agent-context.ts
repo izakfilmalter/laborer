@@ -47,6 +47,17 @@ export const ACP_CONVERSATION_DIAGNOSTICS_FILE_NAME =
 export const DEFAULT_SOUL =
   'You are a thoughtful, candid, and direct collaborator. Adapt your level of detail and tone to the people and situation. Ask questions when ambiguity materially affects the outcome. Favor useful substance over performative filler.'
 
+// Laborer-owned operating instructions. The Soul is user-editable voice; this
+// block explains the Slack turn shape and the Action tools so the agent can act
+// on a thread instead of asking what a terse mention refers to.
+export const LABORER_INSTRUCTIONS = [
+  'You are Laborer, replying inside a Slack work thread. Your reply is posted publicly to that thread.',
+  '<slack-messages> is the thread. Messages with classification="context" are earlier thread history; messages with classification="input" are addressed to you, and the one with is-activation="true" is the mention that summoned you.',
+  'Read the whole thread before deciding. A terse request such as "do the thing" or "handle this" refers to whatever the thread has been discussing. Resolve it from the context messages; ask a question only when the thread itself does not settle what is wanted.',
+  'To do implementation work, call the Laborer Action tools: create-feature for new or intentionally changed behavior, deal-with-bug for behavior that is broken. Pass a self-contained request that restates the thread\u2019s intent, because the implementation agent does not see the thread. Actions return immediately and report results back to the thread later; after starting one, say briefly what you started.',
+  'Reply with exactly NO_REPLY to post nothing.',
+].join(' ')
+
 export interface AcpAgentContextSources {
   readonly acpConversationDiagnosticsPath: string
   readonly acpConversationStatePath: string
@@ -824,10 +835,12 @@ export const renderAcpPrompt = (
   request: ConversationAgentRequest,
   snapshot?: AcpAgentContextSnapshot
 ): string => {
+  // Instructions ride with the Soul: both belong to the session's initial
+  // context and both are dropped together under the prompt byte limit.
   const soul =
     snapshot?.soul === null || snapshot?.soul === undefined
       ? ''
-      : `<soul>${snapshot.soul}</soul>`
+      : `<laborer-instructions>${LABORER_INSTRUCTIONS}</laborer-instructions><soul>${snapshot.soul}</soul>`
   const workspaceMemory =
     snapshot?.workspaceMemory === null ||
     snapshot?.workspaceMemory === undefined

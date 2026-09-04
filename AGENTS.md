@@ -54,7 +54,8 @@ Backend processes log to these locations on macOS (`$XDG_STATE_HOME` defaults to
 
 - `~/Library/Application Support/Laborer/logs/laborer-mcp.log` — task MCP runtime (`packages/server/src/task-mcp-runtime.ts`).
 - `~/.local/state/laborer/slack-daemon.log` — Slack daemon stdout/stderr (`packages/server/src/services/slack-daemon-process-control.ts`).
-- `~/.local/state/laborer/` — runtime state, not logs: `daemon.json` (daemon registration and port), `pty-host/pty-host.json` and `pty-host.sock`, `laborer.sqlite`, `workspaces/`.
+- `~/.local/state/laborer/` — runtime state, not logs: `daemon.json` (daemon registration and port), `pty-host/pty-host.json` and `pty-host.sock`, `laborer.sqlite`, `chat.sqlite` (Chat SDK subscriptions and locks only, no transcripts), `workspaces/`.
+- `~/.local/state/laborer/workspaces/<TeamId>/` — per-Slack-workspace bot state (`apps/bot/src/slack/runtime-paths.ts`). To see what a Slack turn actually sent to the agent, read `application-state.json`: each `conversations[].prompts[].fingerprint` holds the normalized messages (history with `classification: "context"` plus the activation) and `agentSessionBinding.sessionId` is the OpenCode session. `runtime.sqlite` holds Executions and conversation events. The fully rendered prompt is not persisted by Laborer; it lives only in OpenCode's store under `~/.local/share/opencode/`.
 
 The daemon (`daemon-main.mjs`) and the PTY host are spawned detached with `stdio: 'ignore'`, so in packaged builds their stdout/stderr are discarded; during development `bun dev` shows their output in the terminal. Older builds wrote `backend.log` and `utility-processes/*.log` under `~/Library/Application Support/Laborer/logs/`; current code no longer writes them, so treat those files as stale.
 

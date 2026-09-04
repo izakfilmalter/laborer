@@ -7,6 +7,7 @@ const repositoryRoot = resolve(nextRoot, '../..')
 const CHAT_DEPENDENCY_REFERENCE =
   /["'](?:chat|@chat-adapter\/slack)(?:\/[^"']*)?["']/
 const PROTOTYPE_PATH_REFERENCE = /[/"']prototype[/"']/
+const INSTALL_TOOLING_REFERENCE = /oauth\.v2\.access|tailscale/i
 const RETIRED_TERMS = [
   /Handler invocation/i,
   /public-reply protocol/i,
@@ -55,11 +56,19 @@ describe('primary runtime identity audit', () => {
     )
 
     expect(packageJson.name).toBe('@laborer/bot')
-    expect(
-      Object.keys(packageJson.scripts ?? {}).filter(
-        (name) => name.includes('oauth') || name.includes('funnel')
+    // The daemon runs no OAuth server. Installation is a standalone operator
+    // tool under scripts/, never part of the runtime composition in src/.
+    expect(packageJson.scripts?.['slack:install']).toBe(
+      'node scripts/slack-install.mjs'
+    )
+    for (const path of (await filesBelow(resolve(nextRoot, 'src'))).filter(
+      (file) => file.endsWith('.ts') || file.endsWith('.tsx')
+    )) {
+      const source = await readFile(path, 'utf8')
+      expect(source, relative(nextRoot, path)).not.toMatch(
+        INSTALL_TOOLING_REFERENCE
       )
-    ).toEqual([])
+    }
     for (const required of [
       'chat` + `@chat-adapter/slack',
       'installationProvider',

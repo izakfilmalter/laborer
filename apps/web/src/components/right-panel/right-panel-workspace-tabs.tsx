@@ -113,7 +113,7 @@ export function RightPanelWorkspaceTabs({
 
   return (
     <div
-      className="flex h-8 min-h-8 shrink-0 items-center gap-1 border-b bg-muted/30 pr-3 pl-2"
+      className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b bg-muted/30 pr-3 pl-2"
       data-right-panel-workspace-tabbar
     >
       <ScrollArea

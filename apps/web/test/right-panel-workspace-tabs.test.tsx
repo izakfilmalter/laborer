@@ -70,10 +70,10 @@ describe('RightPanelWorkspaceTabs', () => {
       (button) => button.textContent
     )
 
-    expect(labels).toEqual(['Alpha2', 'main2', 'feature', 'Beta3', 'trunk3'])
+    expect(labels).toEqual(['Alpha', 'main2', 'feature', 'Beta', 'trunk3'])
   })
 
-  it('badges only workspaces holding surfaces, and sums them per project', () => {
+  it('badges only workspaces holding surfaces, never the project tab', () => {
     renderTabs({ surfaceCounts: { main: 2, feature: 0, trunk: 3 } })
 
     const [alpha, main, feature] = Array.from(
@@ -81,9 +81,7 @@ describe('RightPanelWorkspaceTabs', () => {
         .getByRole('tablist', { name: 'Open workspaces' })
         .querySelectorAll('button')
     )
-    expect(
-      alpha?.querySelector('[data-surface-count-badge]')?.textContent
-    ).toBe('2')
+    expect(alpha?.querySelector('[data-surface-count-badge]')).toBeNull()
     expect(main?.querySelector('[data-surface-count-badge]')?.textContent).toBe(
       '2'
     )

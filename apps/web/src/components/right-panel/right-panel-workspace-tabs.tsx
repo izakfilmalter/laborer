@@ -22,7 +22,7 @@ import {
 import { ProjectIcon } from '@/components/project-icon'
 import type { RightPanelProjectGroup } from './right-panel-workspace-groups'
 
-/** The tab-strip badge: how many surfaces that tab's workspaces hold. */
+/** The workspace-tab badge: how many surfaces that workspace holds. */
 function SurfaceCountBadge({ count }: { readonly count: number }) {
   if (count <= 0) {
     return null
@@ -129,10 +129,6 @@ export function RightPanelWorkspaceTabs({
           role="tablist"
         >
           {groups.map((group, groupIndex) => {
-            const projectCount = group.workspaces.reduce(
-              (total, workspace) => total + (surfaceCounts[workspace.id] ?? 0),
-              0
-            )
             const firstWorkspaceId = group.workspaces[0]?.id
             return (
               <Fragment key={group.project.id}>
@@ -157,7 +153,6 @@ export function RightPanelWorkspaceTabs({
                   <span className="max-w-32 truncate">
                     {group.project.name}
                   </span>
-                  <SurfaceCountBadge count={projectCount} />
                 </button>
                 {group.workspaces.map((workspace) => {
                   const active = workspace.id === selectedWorkspaceId

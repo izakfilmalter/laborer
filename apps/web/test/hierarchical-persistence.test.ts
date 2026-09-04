@@ -236,8 +236,8 @@ describe('getStaleTerminalLeavesHierarchical', () => {
   })
 
   it('skips non-terminal pane types without terminalId', () => {
-    const diffLeaf = makeLeaf('pane-diff', undefined, 'ws-1', 'diff')
-    const tab = makePanelTab('tab-1', diffLeaf)
+    const agentLeaf = makeLeaf('pane-agent', undefined, 'ws-1', 'agent')
+    const tab = makePanelTab('tab-1', agentLeaf)
     const tile = makeWorkspaceTile('tile-1', 'ws-1', [tab])
     const layout = makeLayout([makeWindowTab('wt-1', tile)])
 
@@ -669,19 +669,85 @@ describe('decodeWindowLayout', () => {
     expect(tile.panelTabs).toHaveLength(0)
   })
 
-  it('drops persisted review panes without crashing', () => {
-    const diffLeaf = makeLeaf('pane-diff', undefined, 'ws-1', 'diff')
-    const reviewLeaf = makeLeaf('pane-review', undefined, 'ws-1', 'review')
-    const tab1 = makePanelTab('tab-1', diffLeaf)
-    const tab2 = makePanelTab('tab-2', reviewLeaf)
-    const tile = makeWorkspaceTile('tile-1', 'ws-1', [tab1, tab2])
+  it('drops panel tabs whose only pane is a retired pane type', () => {
+    const terminalTab = makePanelTab(
+      'tab-terminal',
+      makeLeaf('pane-terminal', 't-1', 'ws-1')
+    )
+    const diffTab = makePanelTab(
+      'tab-diff',
+      makeLeaf('pane-diff', undefined, 'ws-1', 'diff')
+    )
+    const devServerTab = makePanelTab(
+      'tab-dev-server',
+      makeLeaf('pane-dev-server', 't-2', 'ws-1', 'devServerTerminal')
+    )
+    const reviewTab = makePanelTab(
+      'tab-review',
+      makeLeaf('pane-review', undefined, 'ws-1', 'review')
+    )
+    const tile = makeWorkspaceTile(
+      'tile-1',
+      'ws-1',
+      [terminalTab, diffTab, devServerTab, reviewTab],
+      'tab-diff'
+    )
     const layout = makeLayout([makeWindowTab('wt-1', tile)])
 
     const result = decodeWindowLayout(layout)
     expect(result.wasRepaired).toBe(true)
     const repairedTile = result.windowLayout?.tabs[0]
       ?.workspaceLayout as WorkspaceTileLeaf
-    expect(repairedTile.panelTabs).toEqual([tab1])
+    expect(repairedTile.panelTabs).toEqual([terminalTab])
+    // The dropped tab was the active one — activation falls back to a
+    // surviving tab rather than dangling.
+    expect(repairedTile.activePanelTabId).toBe('tab-terminal')
+  })
+
+  it('collapses a split whose retired-pane children are dropped', () => {
+    const terminalLeaf = makeLeaf('pane-terminal', 't-1', 'ws-1')
+    const diffLeaf = makeLeaf('pane-diff', undefined, 'ws-1', 'diff')
+    const devServerLeaf = makeLeaf(
+      'pane-dev-server',
+      't-2',
+      'ws-1',
+      'devServerTerminal'
+    )
+    const tab = makePanelTab(
+      'tab-1',
+      makeSplit('split-1', [terminalLeaf, diffLeaf, devServerLeaf]),
+      'pane-diff'
+    )
+    const tile = makeWorkspaceTile('tile-1', 'ws-1', [tab])
+    const layout = makeLayout([makeWindowTab('wt-1', tile)])
+
+    const result = decodeWindowLayout(layout)
+    expect(result.wasRepaired).toBe(true)
+    const repairedTile = result.windowLayout?.tabs[0]
+      ?.workspaceLayout as WorkspaceTileLeaf
+    expect(repairedTile.panelTabs).toHaveLength(1)
+    // Only the terminal leaf survives, so the split collapses into it.
+    expect(repairedTile.panelTabs[0]?.panelLayout).toEqual(terminalLeaf)
+  })
+
+  it('leaves a workspace tile with no surviving panel tabs empty, not removed', () => {
+    const diffTab = makePanelTab(
+      'tab-diff',
+      makeLeaf('pane-diff', undefined, 'ws-1', 'diff')
+    )
+    const tile = makeWorkspaceTile('tile-1', 'ws-1', [diffTab])
+    const layout = makeLayout([makeWindowTab('wt-1', tile)])
+
+    const result = decodeWindowLayout(layout)
+    expect(result.wasRepaired).toBe(true)
+    const repairedTile = result.windowLayout?.tabs[0]
+      ?.workspaceLayout as WorkspaceTileLeaf
+    // The workspace itself outlives its panes — the frame renders its
+    // empty state and the user can add a panel tab back.
+    expect(repairedTile._tag).toBe('WorkspaceTileLeaf')
+    expect(repairedTile.workspaceId).toBe('ws-1')
+    expect(repairedTile.panelTabs).toEqual([])
+    expect(repairedTile.activePanelTabId).toBeUndefined()
   })
 
   it('strips invalid optional fields from panel leaf nodes', () => {

@@ -12,6 +12,8 @@ import {
   Columns3,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   SquareKanban,
 } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
@@ -135,8 +137,9 @@ function WindowTabBar({
 /**
  * Bar rendered at the top of the main content area (right of the sidebar).
  *
- * Shows the sidebar toggle, the board overlay toggle, and the
- * window-level tab bar (auto-hidden when 1 tab).
+ * Shows the sidebar toggle, the board overlay toggle, the window-level tab
+ * bar (auto-hidden when 1 tab), and the layout actions — including the
+ * toggle for the window's one right panel.
  *
  * @see Issue #8: Window tab bar integration
  */
@@ -144,7 +147,9 @@ export function PanelHeaderBar({
   boardOpen,
   onCleanUpLayout,
   onToggleBoard,
+  onToggleRightPanel,
   onToggleSidebar,
+  rightPanelOpen,
   sidebarCollapsed,
   windowLayout,
   onSelectWindowTab,
@@ -156,7 +161,11 @@ export function PanelHeaderBar({
   readonly boardOpen: boolean
   readonly onCleanUpLayout?: (() => void) | undefined
   readonly onToggleBoard: () => void
+  /** Show or hide the window's right panel. */
+  readonly onToggleRightPanel: () => void
   readonly onToggleSidebar?: (() => void) | undefined
+  /** Whether the window's right panel is showing. */
+  readonly rightPanelOpen: boolean
   readonly sidebarCollapsed?: boolean
   readonly windowLayout?: WindowLayout | undefined
   readonly onSelectWindowTab?: ((tabId: string) => void) | undefined
@@ -232,8 +241,8 @@ export function PanelHeaderBar({
       />
 
       {/* Right: layout actions */}
-      {onCleanUpLayout && (
-        <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+        {onCleanUpLayout && (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -251,8 +260,35 @@ export function PanelHeaderBar({
               Clean up layout — give every workspace room
             </TooltipContent>
           </Tooltip>
-        </div>
-      )}
+        )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={
+                  rightPanelOpen ? 'Hide right panel' : 'Show right panel'
+                }
+                aria-pressed={rightPanelOpen}
+                onClick={onToggleRightPanel}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
+          >
+            {rightPanelOpen ? (
+              <PanelRightClose className="size-3.5" />
+            ) : (
+              <PanelRightOpen className="size-3.5" />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            {rightPanelOpen ? 'Hide right panel' : 'Show right panel'}{' '}
+            <Kbd>Cmd</Kbd>
+            <Kbd>Option</Kbd>
+            <Kbd>B</Kbd>
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   )
 }

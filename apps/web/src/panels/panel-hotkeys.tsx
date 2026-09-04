@@ -509,7 +509,7 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
     { timeout: SEQUENCE_TIMEOUT }
   )
 
-  // Cmd+Option+B → toggle the focused workspace's right panel.
+  // Cmd+Option+B → toggle the window's right panel.
   // Raw keydown handler matched on the physical key because Option+B
   // produces "∫" on macOS layouts, which TanStack Hotkeys cannot name.
   useEffect(() => {
@@ -518,15 +518,13 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
         return
       }
       event.preventDefault()
-      if (activeWorkspaceId) {
-        useRightPanelStore.getState().toggleVisibility(activeWorkspaceId)
-      }
+      useRightPanelStore.getState().toggleVisibility()
     }
     window.addEventListener('keydown', handleToggleRightPanel)
     return () => {
       window.removeEventListener('keydown', handleToggleRightPanel)
     }
-  }, [activeWorkspaceId])
+  }, [])
 
   // Ctrl+b then t → toggle the right panel's Files surface for the focused
   // workspace (was: toggle the left file-tree panel, now retired)
@@ -539,28 +537,6 @@ function PanelHotkeys({ leafPaneIds, onMetaWWithoutPane }: PanelHotkeysProps) {
       }
       if (activePaneId) {
         actions.toggleFilesPane(activePaneId)
-      }
-    },
-    { timeout: SEQUENCE_TIMEOUT }
-  )
-
-  // Ctrl+b then s → create a new dev server terminal panel in a right-side split
-  useHotkeySequence(
-    ['Control+B', 'S'],
-    (event) => {
-      event.preventDefault()
-      if (!actions) {
-        return
-      }
-      if (activePaneId && activeWorkspaceId) {
-        // Split right with a dev server terminal pane inheriting the workspace context
-        actions.splitPane(activePaneId, 'horizontal', {
-          paneType: 'devServerTerminal',
-          workspaceId: activeWorkspaceId,
-        } as Partial<LeafNode>)
-      } else if (activeWorkspaceId) {
-        // No active pane — add as a new panel tab
-        actions.addPanelTab?.(activeWorkspaceId, 'devServerTerminal')
       }
     },
     { timeout: SEQUENCE_TIMEOUT }

@@ -1,11 +1,17 @@
 /**
- * Workspace-scoped right-panel surface state.
+ * Right-panel surface state: one panel per window, workspace-scoped tabs.
  *
  * Ported from t3code's `rightPanelStore.ts`. This is intentionally a shallow
  * workspace model: it owns an ordered set of surface descriptors and the
  * active surface, while each feature continues to own its durable resource
  * state. Browser surfaces point at preview tab ids, file surfaces point at
  * workspace paths, and diff/files/pull-request remain singleton surfaces.
+ *
+ * Visibility is global rather than per workspace: the window hosts a single
+ * right panel, so `isOpen` says whether it is showing and
+ * `selectedWorkspaceId` says whose surfaces it shows. The per-workspace map
+ * still owns each workspace's tab strip, so switching the selection restores
+ * the tabs that workspace last had.
  *
  * Laborer adaptations: t3 scopes the panel per thread
  * (`environmentId:threadId`); Laborer scopes it per workspace, so the map is
@@ -43,11 +49,10 @@ export type RightPanelSurface =
   | { id: 'pull-request'; kind: 'pull-request' }
 
 const RIGHT_PANEL_STORAGE_KEY = 'laborer:right-panel-state:v1'
-const RIGHT_PANEL_STORAGE_VERSION = 1
+const RIGHT_PANEL_STORAGE_VERSION = 2
 
 export interface WorkspaceRightPanelState {
   activeSurfaceId: string | null
-  isOpen: boolean
   surfaces: RightPanelSurface[]
 }
 
@@ -57,11 +62,14 @@ type SingletonKind = Exclude<RightPanelKind, 'file' | 'preview'>
 interface RightPanelStoreState {
   activateSurface: (workspaceId: string, surfaceId: string) => void
   byWorkspaceId: Record<string, WorkspaceRightPanelState>
-  close: (workspaceId: string) => void
+  /** Hide the window's right panel; the tab strips survive. */
+  close: () => void
   closeAllSurfaces: (workspaceId: string) => void
   closeOtherSurfaces: (workspaceId: string, surfaceId: string) => void
   closeSurface: (workspaceId: string, surfaceId: string) => void
   closeSurfacesToRight: (workspaceId: string, surfaceId: string) => void
+  /** One panel per window: globally visible or hidden. */
+  isOpen: boolean
   open: (workspaceId: string, kind: SingletonKind | 'preview') => void
   openBrowser: (workspaceId: string, tabId: string | null) => void
   openFile: (workspaceId: string, relativePath: string, line?: number) => void
@@ -71,13 +79,16 @@ interface RightPanelStoreState {
   ) => void
   /** Drop panel state for workspaces that no longer exist. */
   removeWorkspaces: (workspaceIds: readonly string[]) => void
+  /** Which open workspace's surfaces the panel shows. `null` follows the focused workspace. */
+  selectedWorkspaceId: string | null
+  /** Point the panel at a workspace without changing its visibility. */
+  selectWorkspace: (workspaceId: string) => void
   show: (workspaceId: string) => void
   toggle: (workspaceId: string, kind: SingletonKind | 'preview') => void
-  toggleVisibility: (workspaceId: string) => void
+  toggleVisibility: () => void
 }
 
 const EMPTY_WORKSPACE_STATE: WorkspaceRightPanelState = {
-  isOpen: false,
   activeSurfaceId: null,
   surfaces: [],
 }
@@ -117,7 +128,6 @@ const upsertSurface = (
   surface: RightPanelSurface,
   activate = true
 ): WorkspaceRightPanelState => ({
-  isOpen: true,
   surfaces: current.surfaces.some((entry) => entry.id === surface.id)
     ? current.surfaces
     : [...current.surfaces, surface],
@@ -131,11 +141,7 @@ const updateWorkspace = (
 ): Record<string, WorkspaceRightPanelState> => {
   const current = byWorkspaceId[workspaceId] ?? EMPTY_WORKSPACE_STATE
   const next = updater(current)
-  if (
-    !next.isOpen &&
-    next.activeSurfaceId === null &&
-    next.surfaces.length === 0
-  ) {
+  if (next.activeSurfaceId === null && next.surfaces.length === 0) {
     if (!(workspaceId in byWorkspaceId)) {
       return byWorkspaceId
     }
@@ -196,13 +202,19 @@ function sanitizePersistedSurface(surface: unknown): RightPanelSurface[] {
   return [candidate]
 }
 
-/** One workspace's persisted panel state in the current shape. */
-function sanitizePersistedWorkspaceState(
-  workspaceState: unknown
-): WorkspaceRightPanelState {
+/**
+ * One workspace's persisted panel state in the current shape, plus whether
+ * that workspace claimed the panel was open. Version 1 stored visibility per
+ * workspace; version 2 keeps a single window-wide flag, so the per-workspace
+ * value survives only long enough to derive it.
+ */
+function sanitizePersistedWorkspaceState(workspaceState: unknown): {
+  state: WorkspaceRightPanelState
+  wasOpen: boolean
+} {
   const validState =
     workspaceState && typeof workspaceState === 'object'
-      ? (workspaceState as WorkspaceRightPanelState)
+      ? (workspaceState as WorkspaceRightPanelState & { isOpen?: unknown })
       : null
   const surfaces = Array.isArray(validState?.surfaces)
     ? validState.surfaces.flatMap(sanitizePersistedSurface)
@@ -214,7 +226,7 @@ function sanitizePersistedWorkspaceState(
     ? (rawActiveSurfaceId ?? null)
     : null
   // A migration that dropped every surface must not reopen an empty panel.
-  const isOpen =
+  const wasOpen =
     surfaces.length > 0 &&
     (typeof validState?.isOpen === 'boolean'
       ? validState.isOpen
@@ -223,44 +235,62 @@ function sanitizePersistedWorkspaceState(
   // persisted one, fall back to the first survivor instead of rendering an
   // open empty panel.
   const activeSurfaceId =
-    persistedActiveSurfaceId ?? (isOpen ? (surfaces[0]?.id ?? null) : null)
-  return { isOpen, surfaces, activeSurfaceId }
+    persistedActiveSurfaceId ?? (wasOpen ? (surfaces[0]?.id ?? null) : null)
+  return { state: { surfaces, activeSurfaceId }, wasOpen }
 }
 
 /**
  * Sanitize a persisted store payload into the current shape, dropping
- * anything malformed. Version 1 has no historical migrations; this is the
- * scaffolding future versions extend (t3's migrate pattern without its
- * accumulated history).
+ * anything malformed.
+ *
+ * Version 1 → 2 collapses per-workspace visibility into one window-wide
+ * flag: the panel reopens if any workspace persisted an open panel with
+ * surfaces left after sanitization. The selection starts as `null` so the
+ * panel follows the focused workspace on the first render after upgrade.
  */
 export function migratePersistedRightPanelState(persistedState: unknown): {
   byWorkspaceId: Record<string, WorkspaceRightPanelState>
+  isOpen: boolean
+  selectedWorkspaceId: string | null
 } {
+  const empty = { byWorkspaceId: {}, isOpen: false, selectedWorkspaceId: null }
   if (!persistedState || typeof persistedState !== 'object') {
-    return { byWorkspaceId: {} }
+    return empty
   }
-  const byWorkspaceId =
-    'byWorkspaceId' in persistedState &&
-    persistedState.byWorkspaceId &&
-    typeof persistedState.byWorkspaceId === 'object'
-      ? Object.fromEntries(
-          Object.entries(
-            persistedState.byWorkspaceId as Record<string, unknown>
-          ).map(([workspaceId, workspaceState]) => [
-            workspaceId,
-            sanitizePersistedWorkspaceState(workspaceState),
-          ])
-        )
-      : {}
-  return { byWorkspaceId }
+  if (
+    !(
+      'byWorkspaceId' in persistedState &&
+      persistedState.byWorkspaceId &&
+      typeof persistedState.byWorkspaceId === 'object'
+    )
+  ) {
+    return empty
+  }
+  const entries = Object.entries(
+    persistedState.byWorkspaceId as Record<string, unknown>
+  ).map(
+    ([workspaceId, workspaceState]) =>
+      [workspaceId, sanitizePersistedWorkspaceState(workspaceState)] as const
+  )
+  return {
+    byWorkspaceId: Object.fromEntries(
+      entries.map(([workspaceId, entry]) => [workspaceId, entry.state])
+    ),
+    isOpen: entries.some(([, entry]) => entry.wasOpen),
+    selectedWorkspaceId: null,
+  }
 }
 
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set) => ({
       byWorkspaceId: {},
+      isOpen: false,
+      selectedWorkspaceId: null,
       open: (workspaceId, kind) =>
         set((state) => ({
+          isOpen: true,
+          selectedWorkspaceId: workspaceId,
           byWorkspaceId: updateWorkspace(
             state.byWorkspaceId,
             workspaceId,
@@ -277,6 +307,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         })),
       openBrowser: (workspaceId, tabId) =>
         set((state) => ({
+          isOpen: true,
+          selectedWorkspaceId: workspaceId,
           byWorkspaceId: updateWorkspace(
             state.byWorkspaceId,
             workspaceId,
@@ -294,6 +326,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         })),
       openFile: (workspaceId, relativePath, line) =>
         set((state) => ({
+          isOpen: true,
+          selectedWorkspaceId: workspaceId,
           byWorkspaceId: updateWorkspace(
             state.byWorkspaceId,
             workspaceId,
@@ -314,7 +348,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 (existing?.revealRequestId ?? 0) + 1
               )
               return {
-                isOpen: true,
                 activeSurfaceId: surface.id,
                 surfaces: existing
                   ? withoutStandaloneExplorer.map((entry) =>
@@ -369,16 +402,24 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           ),
         })),
       activateSurface: (workspaceId, surfaceId) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) =>
-              current.surfaces.some((surface) => surface.id === surfaceId)
-                ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
-                : current
-          ),
-        })),
+        set((state) => {
+          const known =
+            state.byWorkspaceId[workspaceId]?.surfaces.some(
+              (surface) => surface.id === surfaceId
+            ) ?? false
+          if (!known) {
+            return state
+          }
+          return {
+            isOpen: true,
+            selectedWorkspaceId: workspaceId,
+            byWorkspaceId: updateWorkspace(
+              state.byWorkspaceId,
+              workspaceId,
+              (current) => ({ ...current, activeSurfaceId: surfaceId })
+            ),
+          }
+        }),
       closeSurface: (workspaceId, surfaceId) =>
         set((state) => ({
           byWorkspaceId: updateWorkspace(
@@ -395,17 +436,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 (surface) => surface.id !== surfaceId
               )
               if (current.activeSurfaceId !== surfaceId) {
-                return {
-                  ...current,
-                  isOpen: surfaces.length > 0 && current.isOpen,
-                  surfaces,
-                }
+                return { ...current, surfaces }
               }
               const fallback =
                 surfaces[Math.min(index, surfaces.length - 1)] ?? null
               return {
                 ...current,
-                isOpen: surfaces.length > 0 && current.isOpen,
                 surfaces,
                 activeSurfaceId: fallback?.id ?? null,
               }
@@ -426,7 +462,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               }
               return {
                 ...current,
-                isOpen: true,
                 surfaces: [surface],
                 activeSurfaceId: surface.id,
               }
@@ -467,83 +502,77 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             (current) =>
               current.surfaces.length === 0
                 ? current
-                : {
-                    ...current,
-                    isOpen: false,
-                    surfaces: [],
-                    activeSurfaceId: null,
-                  }
+                : { ...current, surfaces: [], activeSurfaceId: null }
           ),
         })),
       show: (workspaceId) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) =>
-              current.isOpen ? current : { ...current, isOpen: true }
-          ),
-        })),
-      close: (workspaceId) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) =>
-              current.isOpen ? { ...current, isOpen: false } : current
-          ),
-        })),
-      toggleVisibility: (workspaceId) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) => ({
-              ...current,
-              isOpen: !current.isOpen,
-            })
-          ),
-        })),
+        set(() => ({ isOpen: true, selectedWorkspaceId: workspaceId })),
+      close: () => set(() => ({ isOpen: false })),
+      selectWorkspace: (workspaceId) =>
+        set(() => ({ selectedWorkspaceId: workspaceId })),
+      toggleVisibility: () => set((state) => ({ isOpen: !state.isOpen })),
       toggle: (workspaceId, kind) =>
-        set((state) => ({
-          byWorkspaceId: updateWorkspace(
-            state.byWorkspaceId,
-            workspaceId,
-            (current) => {
-              const active = current.surfaces.find(
-                (surface) => surface.id === current.activeSurfaceId
-              )
-              if (current.isOpen && active?.kind === kind) {
-                return { ...current, isOpen: false }
+        set((state) => {
+          const current = state.byWorkspaceId[workspaceId]
+          const active = current?.surfaces.find(
+            (surface) => surface.id === current.activeSurfaceId
+          )
+          if (
+            state.isOpen &&
+            state.selectedWorkspaceId === workspaceId &&
+            active?.kind === kind
+          ) {
+            return { isOpen: false }
+          }
+          return {
+            isOpen: true,
+            selectedWorkspaceId: workspaceId,
+            byWorkspaceId: updateWorkspace(
+              state.byWorkspaceId,
+              workspaceId,
+              (entry) => {
+                if (kind === 'preview') {
+                  const existing = entry.surfaces.find(
+                    (surface) => surface.kind === 'preview'
+                  )
+                  return upsertSurface(entry, existing ?? browserSurface(null))
+                }
+                return upsertSurface(entry, singletonSurface(kind))
               }
-              if (kind === 'preview') {
-                const existing = current.surfaces.find(
-                  (surface) => surface.kind === 'preview'
-                )
-                return upsertSurface(current, existing ?? browserSurface(null))
-              }
-              return upsertSurface(current, singletonSurface(kind))
-            }
-          ),
-        })),
+            ),
+          }
+        }),
       removeWorkspaces: (workspaceIds) =>
         set((state) => {
           const removable = workspaceIds.filter(
             (workspaceId) => workspaceId in state.byWorkspaceId
           )
-          if (removable.length === 0) {
+          const selectionRemoved =
+            state.selectedWorkspaceId !== null &&
+            workspaceIds.includes(state.selectedWorkspaceId)
+          if (removable.length === 0 && !selectionRemoved) {
             return state
           }
           const rest = { ...state.byWorkspaceId }
           for (const workspaceId of removable) {
             delete rest[workspaceId]
           }
-          return { byWorkspaceId: rest }
+          return {
+            byWorkspaceId: rest,
+            selectedWorkspaceId: selectionRemoved
+              ? null
+              : state.selectedWorkspaceId,
+          }
         }),
     }),
     {
       name: RIGHT_PANEL_STORAGE_KEY,
       version: RIGHT_PANEL_STORAGE_VERSION,
+      partialize: (state) => ({
+        byWorkspaceId: state.byWorkspaceId,
+        isOpen: state.isOpen,
+        selectedWorkspaceId: state.selectedWorkspaceId,
+      }),
       storage: createJSONStorage(() =>
         typeof window !== 'undefined'
           ? window.localStorage
@@ -568,29 +597,78 @@ export function selectWorkspaceRightPanelState(
   return byWorkspaceId[workspaceId] ?? EMPTY_WORKSPACE_STATE
 }
 
+/** Whether the window's one panel is currently showing this workspace. */
+function isShowingWorkspace(
+  store: RightPanelVisibilityState,
+  workspaceId: string | null | undefined
+): boolean {
+  return Boolean(
+    workspaceId && store.isOpen && store.selectedWorkspaceId === workspaceId
+  )
+}
+
+/** The slice of the store the visibility-aware selectors read. */
+interface RightPanelVisibilityState {
+  readonly byWorkspaceId: Record<string, WorkspaceRightPanelState>
+  readonly isOpen: boolean
+  readonly selectedWorkspaceId: string | null
+}
+
 export function selectActiveRightPanel(
-  byWorkspaceId: Record<string, WorkspaceRightPanelState>,
+  store: RightPanelVisibilityState,
   workspaceId: string | null | undefined
 ): RightPanelKind | null {
-  const state = selectWorkspaceRightPanelState(byWorkspaceId, workspaceId)
-  if (!state.isOpen) {
+  if (!isShowingWorkspace(store, workspaceId)) {
     return null
   }
   return (
-    state.surfaces.find((surface) => surface.id === state.activeSurfaceId)
-      ?.kind ?? null
+    selectSelectedRightPanelSurface(store.byWorkspaceId, workspaceId)?.kind ??
+    null
   )
 }
 
 export function selectActiveRightPanelSurface(
-  byWorkspaceId: Record<string, WorkspaceRightPanelState>,
+  store: RightPanelVisibilityState,
   workspaceId: string | null | undefined
 ): RightPanelSurface | null {
-  const state = selectWorkspaceRightPanelState(byWorkspaceId, workspaceId)
-  if (!state.isOpen) {
+  if (!isShowingWorkspace(store, workspaceId)) {
     return null
   }
-  return selectSelectedRightPanelSurface(byWorkspaceId, workspaceId)
+  return selectSelectedRightPanelSurface(store.byWorkspaceId, workspaceId)
+}
+
+/** How many tabs a workspace's strip holds, open or hidden. */
+export function selectRightPanelSurfaceCount(
+  byWorkspaceId: Record<string, WorkspaceRightPanelState>,
+  workspaceId: string | null | undefined
+): number {
+  return selectWorkspaceRightPanelState(byWorkspaceId, workspaceId).surfaces
+    .length
+}
+
+/**
+ * Which workspace the single panel should show.
+ *
+ * An explicit selection wins while that workspace is still open; otherwise
+ * the panel follows the focused workspace, and falls back to the first open
+ * one so closing the selected workspace never leaves the panel blank.
+ */
+export function resolveRightPanelWorkspaceId(
+  store: Pick<RightPanelVisibilityState, 'selectedWorkspaceId'>,
+  activeWorkspaceId: string | null,
+  openWorkspaceIds: readonly string[]
+): string | null {
+  const selected = store.selectedWorkspaceId
+  if (selected !== null && openWorkspaceIds.includes(selected)) {
+    return selected
+  }
+  if (
+    activeWorkspaceId !== null &&
+    openWorkspaceIds.includes(activeWorkspaceId)
+  ) {
+    return activeWorkspaceId
+  }
+  return openWorkspaceIds[0] ?? null
 }
 
 /** The selected surface even while the panel is hidden, so a layout control can restore it. */

@@ -5,7 +5,7 @@
  *
  * Interaction:
  * - Arrow keys (up/down) to navigate with wrapping
- * - Number keys (1-4) to select directly
+ * - Number keys (1-2) to select directly
  * - Enter to confirm selection
  * - Escape to cancel
  * - Mouse click to select
@@ -19,7 +19,7 @@
 import type { PaneType } from '@laborer/shared/types'
 import { Kbd } from '@laborer/ui/components/kbd'
 import { cn } from '@laborer/ui/lib/utils'
-import { Bot, FileCode2, Server, Terminal } from 'lucide-react'
+import { Bot, Terminal } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 // ---------------------------------------------------------------------------
@@ -56,12 +56,6 @@ const PANEL_TYPE_OPTIONS: readonly PanelTypeOption[] = [
     type: 'terminal',
     label: 'Terminal',
     icon: <Terminal className="size-4" />,
-  },
-  { type: 'diff', label: 'Diff', icon: <FileCode2 className="size-4" /> },
-  {
-    type: 'devServerTerminal',
-    label: 'Dev Server',
-    icon: <Server className="size-4" />,
   },
 ] as const
 
@@ -113,9 +107,7 @@ function PanelTypePicker({
           break
         }
         case '1':
-        case '2':
-        case '3':
-        case '4': {
+        case '2': {
           e.preventDefault()
           const index = Number.parseInt(e.key, 10) - 1
           const option = PANEL_TYPE_OPTIONS[index]

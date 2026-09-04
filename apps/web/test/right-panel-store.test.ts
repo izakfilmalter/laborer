@@ -1,13 +1,15 @@
 /**
- * Regression coverage for the workspace right-panel store, ported from
- * t3code's `rightPanelStore`: surface upsert/activate/close behavior,
- * fallback selection, visibility toggling, workspace pruning, and the
- * persisted-state migration scaffolding.
+ * Regression coverage for the right-panel store, ported from t3code's
+ * `rightPanelStore`: surface upsert/activate/close behavior, fallback
+ * selection, the window-wide visibility and selection, workspace pruning,
+ * and the persisted-state migration.
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   migratePersistedRightPanelState,
+  resolveRightPanelWorkspaceId,
   selectActiveRightPanel,
+  selectRightPanelSurfaceCount,
   selectSelectedRightPanelSurface,
   selectWorkspaceRightPanelState,
   useRightPanelStore,
@@ -22,15 +24,20 @@ const wsState = (workspaceId = WS) =>
 
 beforeEach(() => {
   window.localStorage.clear()
-  useRightPanelStore.setState({ byWorkspaceId: {} })
+  useRightPanelStore.setState({
+    byWorkspaceId: {},
+    isOpen: false,
+    selectedWorkspaceId: null,
+  })
 })
 
 describe('open', () => {
-  it('opens the panel with a singleton surface active', () => {
+  it('shows the panel on that workspace with a singleton surface active', () => {
     store().open(WS, 'diff')
 
+    expect(store().isOpen).toBe(true)
+    expect(store().selectedWorkspaceId).toBe(WS)
     expect(wsState()).toEqual({
-      isOpen: true,
       activeSurfaceId: 'diff',
       surfaces: [{ id: 'diff', kind: 'diff' }],
     })
@@ -45,12 +52,15 @@ describe('open', () => {
     expect(wsState().activeSurfaceId).toBe('diff')
   })
 
-  it('keeps workspaces independent', () => {
+  it('keeps each workspace its own tab strip while the panel follows the opener', () => {
     store().open(WS, 'diff')
     store().open(OTHER_WS, 'pull-request')
 
     expect(wsState(WS).activeSurfaceId).toBe('diff')
     expect(wsState(OTHER_WS).activeSurfaceId).toBe('pull-request')
+    expect(store().selectedWorkspaceId).toBe(OTHER_WS)
+    expect(selectActiveRightPanel(store(), WS)).toBeNull()
+    expect(selectActiveRightPanel(store(), OTHER_WS)).toBe('pull-request')
   })
 })
 
@@ -87,22 +97,25 @@ describe('browser surface reconciliation', () => {
 })
 
 describe('activateSurface', () => {
-  it('activates an existing surface and reopens the panel', () => {
+  it('activates an existing surface and reopens the panel on that workspace', () => {
     store().open(WS, 'diff')
     store().open(WS, 'pull-request')
-    store().close(WS)
+    store().close()
 
     store().activateSurface(WS, 'diff')
 
-    expect(wsState().isOpen).toBe(true)
+    expect(store().isOpen).toBe(true)
+    expect(store().selectedWorkspaceId).toBe(WS)
     expect(wsState().activeSurfaceId).toBe('diff')
   })
 
   it('ignores unknown surface ids', () => {
     store().open(WS, 'diff')
+    store().close()
     store().activateSurface(WS, 'files')
 
     expect(wsState().activeSurfaceId).toBe('diff')
+    expect(store().isOpen).toBe(false)
   })
 })
 
@@ -137,11 +150,15 @@ describe('closeSurface', () => {
     store().closeSurface(WS, 'diff')
 
     expect(WS in store().byWorkspaceId).toBe(false)
-    expect(wsState()).toEqual({
-      isOpen: false,
-      activeSurfaceId: null,
-      surfaces: [],
-    })
+    expect(wsState()).toEqual({ activeSurfaceId: null, surfaces: [] })
+  })
+
+  it('leaves the panel showing the empty-state launcher', () => {
+    store().open(WS, 'diff')
+    store().closeSurface(WS, 'diff')
+
+    expect(store().isOpen).toBe(true)
+    expect(store().selectedWorkspaceId).toBe(WS)
   })
 })
 
@@ -189,48 +206,76 @@ describe('closeSurfacesToRight', () => {
 })
 
 describe('closeAllSurfaces', () => {
-  it('clears surfaces and hides the panel (entry pruned)', () => {
+  it('clears the workspace entry but leaves the panel showing', () => {
     store().open(WS, 'diff')
     store().open(WS, 'files')
 
     store().closeAllSurfaces(WS)
 
     expect(WS in store().byWorkspaceId).toBe(false)
+    expect(store().isOpen).toBe(true)
   })
 })
 
 describe('visibility', () => {
-  it('toggleVisibility hides the panel but keeps its tabs', () => {
+  it('toggleVisibility hides the panel but keeps its tabs and selection', () => {
     store().open(WS, 'diff')
-    store().toggleVisibility(WS)
+    store().toggleVisibility()
 
-    expect(wsState().isOpen).toBe(false)
+    expect(store().isOpen).toBe(false)
+    expect(store().selectedWorkspaceId).toBe(WS)
     expect(wsState().surfaces).toHaveLength(1)
-    expect(selectActiveRightPanel(store().byWorkspaceId, WS)).toBeNull()
+    expect(selectActiveRightPanel(store(), WS)).toBeNull()
     expect(selectSelectedRightPanelSurface(store().byWorkspaceId, WS)?.id).toBe(
       'diff'
     )
   })
 
-  it('toggleVisibility opens an empty panel (the launcher state)', () => {
-    store().toggleVisibility(WS)
+  it('toggleVisibility shows an empty panel (the launcher state)', () => {
+    store().toggleVisibility()
 
-    expect(wsState()).toEqual({
-      isOpen: true,
-      activeSurfaceId: null,
-      surfaces: [],
-    })
+    expect(store().isOpen).toBe(true)
+    expect(store().selectedWorkspaceId).toBeNull()
+    expect(store().byWorkspaceId).toEqual({})
+  })
+
+  it('show points the panel at a workspace and close hides it', () => {
+    store().show(WS)
+    expect(store().isOpen).toBe(true)
+    expect(store().selectedWorkspaceId).toBe(WS)
+
+    store().close()
+    expect(store().isOpen).toBe(false)
+    expect(store().selectedWorkspaceId).toBe(WS)
+  })
+
+  it('selectWorkspace retargets the panel without showing it', () => {
+    store().selectWorkspace(WS)
+
+    expect(store().selectedWorkspaceId).toBe(WS)
+    expect(store().isOpen).toBe(false)
   })
 
   it('toggle(kind) hides the panel when that kind is already active', () => {
     store().open(WS, 'diff')
     store().toggle(WS, 'diff')
 
-    expect(wsState().isOpen).toBe(false)
+    expect(store().isOpen).toBe(false)
 
     store().toggle(WS, 'diff')
-    expect(wsState().isOpen).toBe(true)
+    expect(store().isOpen).toBe(true)
     expect(wsState().activeSurfaceId).toBe('diff')
+  })
+
+  it('toggle(kind) retargets rather than hides when another workspace is shown', () => {
+    store().open(WS, 'diff')
+    store().open(OTHER_WS, 'files')
+
+    store().toggle(WS, 'diff')
+
+    expect(store().isOpen).toBe(true)
+    expect(store().selectedWorkspaceId).toBe(WS)
+    expect(selectActiveRightPanel(store(), WS)).toBe('diff')
   })
 })
 
@@ -245,6 +290,14 @@ describe('removeWorkspaces', () => {
     expect(OTHER_WS in store().byWorkspaceId).toBe(true)
   })
 
+  it('drops a selection that named a removed workspace', () => {
+    store().open(WS, 'diff')
+
+    store().removeWorkspaces([WS])
+
+    expect(store().selectedWorkspaceId).toBeNull()
+  })
+
   it('is a no-op when nothing matches', () => {
     store().open(WS, 'diff')
     const before = store().byWorkspaceId
@@ -252,6 +305,58 @@ describe('removeWorkspaces', () => {
     store().removeWorkspaces(['never-existed'])
 
     expect(store().byWorkspaceId).toBe(before)
+    expect(store().selectedWorkspaceId).toBe(WS)
+  })
+})
+
+describe('selectRightPanelSurfaceCount', () => {
+  it('counts a workspace tab strip whether or not the panel shows it', () => {
+    store().open(WS, 'diff')
+    store().open(WS, 'files')
+    store().open(OTHER_WS, 'pull-request')
+
+    expect(selectRightPanelSurfaceCount(store().byWorkspaceId, WS)).toBe(2)
+    expect(selectRightPanelSurfaceCount(store().byWorkspaceId, OTHER_WS)).toBe(
+      1
+    )
+    expect(selectRightPanelSurfaceCount(store().byWorkspaceId, 'gone')).toBe(0)
+    expect(selectRightPanelSurfaceCount(store().byWorkspaceId, null)).toBe(0)
+  })
+})
+
+describe('resolveRightPanelWorkspaceId', () => {
+  it('honors an explicit selection that is still open', () => {
+    expect(
+      resolveRightPanelWorkspaceId({ selectedWorkspaceId: OTHER_WS }, WS, [
+        WS,
+        OTHER_WS,
+      ])
+    ).toBe(OTHER_WS)
+  })
+
+  it('follows the focused workspace when nothing is selected', () => {
+    expect(
+      resolveRightPanelWorkspaceId({ selectedWorkspaceId: null }, WS, [
+        WS,
+        OTHER_WS,
+      ])
+    ).toBe(WS)
+  })
+
+  it('falls back to the first open workspace when the selection closed', () => {
+    expect(
+      resolveRightPanelWorkspaceId(
+        { selectedWorkspaceId: 'gone' },
+        'also-gone',
+        [OTHER_WS, WS]
+      )
+    ).toBe(OTHER_WS)
+  })
+
+  it('is null when no workspace is open', () => {
+    expect(
+      resolveRightPanelWorkspaceId({ selectedWorkspaceId: WS }, WS, [])
+    ).toBeNull()
   })
 })
 
@@ -262,23 +367,72 @@ describe('persistence', () => {
     const raw = window.localStorage.getItem('laborer:right-panel-state:v1')
     expect(raw).not.toBeNull()
     const parsed = JSON.parse(raw ?? '{}') as {
-      state: { byWorkspaceId: Record<string, unknown> }
+      state: {
+        byWorkspaceId: Record<string, unknown>
+        isOpen: boolean
+        selectedWorkspaceId: string | null
+      }
       version: number
     }
-    expect(parsed.version).toBe(1)
+    expect(parsed.version).toBe(2)
     expect(WS in parsed.state.byWorkspaceId).toBe(true)
+    expect(parsed.state.isOpen).toBe(true)
+    expect(parsed.state.selectedWorkspaceId).toBe(WS)
   })
 })
 
 describe('migratePersistedRightPanelState', () => {
+  const EMPTY = { byWorkspaceId: {}, isOpen: false, selectedWorkspaceId: null }
+
   it('returns an empty map for garbage input', () => {
-    expect(migratePersistedRightPanelState(null)).toEqual({ byWorkspaceId: {} })
-    expect(migratePersistedRightPanelState('nope')).toEqual({
-      byWorkspaceId: {},
+    expect(migratePersistedRightPanelState(null)).toEqual(EMPTY)
+    expect(migratePersistedRightPanelState('nope')).toEqual(EMPTY)
+    expect(migratePersistedRightPanelState({ byWorkspaceId: 42 })).toEqual(
+      EMPTY
+    )
+  })
+
+  it('collapses per-workspace visibility into one window-wide flag', () => {
+    const migrated = migratePersistedRightPanelState({
+      byWorkspaceId: {
+        [WS]: {
+          isOpen: false,
+          activeSurfaceId: 'diff',
+          surfaces: [{ id: 'diff', kind: 'diff' }],
+        },
+        [OTHER_WS]: {
+          isOpen: true,
+          activeSurfaceId: 'files',
+          surfaces: [{ id: 'files', kind: 'files' }],
+        },
+      },
     })
-    expect(migratePersistedRightPanelState({ byWorkspaceId: 42 })).toEqual({
-      byWorkspaceId: {},
+
+    expect(migrated.isOpen).toBe(true)
+    expect(migrated.selectedWorkspaceId).toBeNull()
+    expect(migrated.byWorkspaceId[WS]).toEqual({
+      activeSurfaceId: 'diff',
+      surfaces: [{ id: 'diff', kind: 'diff' }],
     })
+    expect(migrated.byWorkspaceId[OTHER_WS]).toEqual({
+      activeSurfaceId: 'files',
+      surfaces: [{ id: 'files', kind: 'files' }],
+    })
+  })
+
+  it('leaves the panel hidden when no workspace persisted an open one', () => {
+    const migrated = migratePersistedRightPanelState({
+      byWorkspaceId: {
+        [WS]: {
+          isOpen: false,
+          activeSurfaceId: 'diff',
+          surfaces: [{ id: 'diff', kind: 'diff' }],
+        },
+      },
+    })
+
+    expect(migrated.isOpen).toBe(false)
+    expect(migrated.byWorkspaceId[WS]?.surfaces).toHaveLength(1)
   })
 
   it('drops surfaces with unknown kinds and falls back the active id', () => {
@@ -295,8 +449,8 @@ describe('migratePersistedRightPanelState', () => {
       },
     })
 
+    expect(migrated.isOpen).toBe(true)
     expect(migrated.byWorkspaceId[WS]).toEqual({
-      isOpen: true,
       activeSurfaceId: 'diff',
       surfaces: [{ id: 'diff', kind: 'diff' }],
     })
@@ -313,8 +467,8 @@ describe('migratePersistedRightPanelState', () => {
       },
     })
 
+    expect(migrated.isOpen).toBe(false)
     expect(migrated.byWorkspaceId[WS]).toEqual({
-      isOpen: false,
       activeSurfaceId: null,
       surfaces: [],
     })
@@ -374,8 +528,8 @@ describe('migratePersistedRightPanelState', () => {
       },
     })
 
+    expect(migrated.isOpen).toBe(true)
     expect(migrated.byWorkspaceId[WS]).toEqual({
-      isOpen: true,
       activeSurfaceId: 'diff',
       surfaces: [{ id: 'diff', kind: 'diff' }],
     })
@@ -398,8 +552,8 @@ describe('migratePersistedRightPanelState', () => {
       },
     })
 
+    expect(migrated.isOpen).toBe(true)
     expect(migrated.byWorkspaceId[WS]).toEqual({
-      isOpen: true,
       activeSurfaceId: 'diff',
       surfaces: [{ id: 'diff', kind: 'diff' }],
     })
@@ -416,8 +570,8 @@ describe('migratePersistedRightPanelState', () => {
       },
     })
 
+    expect(migrated.isOpen).toBe(false)
     expect(migrated.byWorkspaceId[WS]).toEqual({
-      isOpen: false,
       activeSurfaceId: null,
       surfaces: [],
     })
@@ -442,8 +596,8 @@ describe('migratePersistedRightPanelState', () => {
       },
     })
 
+    expect(migrated.isOpen).toBe(false)
     expect(migrated.byWorkspaceId[WS]).toEqual({
-      isOpen: false,
       activeSurfaceId: null,
       surfaces: [],
     })

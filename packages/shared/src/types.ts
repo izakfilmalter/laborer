@@ -32,12 +32,7 @@ export type WorkspaceOrigin = typeof WorkspaceOrigin.Type
 export const TerminalStatus = Schema.Literals(['running', 'stopped'])
 export type TerminalStatus = typeof TerminalStatus.Type
 
-export const PaneType = Schema.Literals([
-  'agent',
-  'terminal',
-  'diff',
-  'devServerTerminal',
-])
+export const PaneType = Schema.Literals(['agent', 'terminal'])
 export type PaneType = typeof PaneType.Type
 
 export const SplitDirection = Schema.Literals(['horizontal', 'vertical'])
@@ -258,13 +253,15 @@ export const WindowLayoutSchema: Schema.Schema<WindowLayout> = Schema.Struct({
 // ---------------------------------------------------------------------------
 
 /**
- * Historical layout events and client-document entries may contain the
- * removed review pane type. Keep a decode-only-compatible schema for those
- * immutable records while the active WindowLayout schema rejects new review
- * panes. The web layout repair path removes review panes before use.
+ * Historical layout events and client-document entries may contain pane
+ * types that the main panel layout no longer offers: the removed review
+ * pane, and the retired diff and devServerTerminal panes (the diff viewer
+ * now lives in the right panel). Keep a decode-only-compatible schema for
+ * those immutable records while the active WindowLayout schema rejects new
+ * panes of those types. The web layout repair path removes them before use.
  */
 type PersistedLeafNode = Omit<LeafNode, 'paneType'> & {
-  readonly paneType: PaneType | 'review'
+  readonly paneType: PaneType | 'review' | 'diff' | 'devServerTerminal'
 }
 
 interface PersistedSplitNode {

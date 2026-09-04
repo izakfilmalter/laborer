@@ -64,6 +64,8 @@ describe('PanelHeaderBar', () => {
         onCloseWindowTab={onCloseWindowTab}
         onSelectWindowTab={onSelectWindowTab}
         onToggleBoard={vi.fn()}
+        onToggleRightPanel={vi.fn()}
+        rightPanelOpen={false}
         windowLayout={windowLayout}
       />
     )
@@ -72,5 +74,37 @@ describe('PanelHeaderBar', () => {
 
     expect(onCloseWindowTab).toHaveBeenCalledWith('window-tab-inactive')
     expect(onSelectWindowTab).not.toHaveBeenCalled()
+  })
+
+  it('toggles the right panel and labels the button by its current state', () => {
+    const onToggleRightPanel = vi.fn()
+
+    const view = render(
+      <PanelHeaderBar
+        boardOpen={false}
+        onToggleBoard={vi.fn()}
+        onToggleRightPanel={onToggleRightPanel}
+        rightPanelOpen={false}
+        windowLayout={windowLayout}
+      />
+    )
+
+    const show = screen.getByRole('button', { name: 'Show right panel' })
+    expect(show.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(show)
+    expect(onToggleRightPanel).toHaveBeenCalledTimes(1)
+
+    view.rerender(
+      <PanelHeaderBar
+        boardOpen={false}
+        onToggleBoard={vi.fn()}
+        onToggleRightPanel={onToggleRightPanel}
+        rightPanelOpen
+        windowLayout={windowLayout}
+      />
+    )
+
+    const hide = screen.getByRole('button', { name: 'Hide right panel' })
+    expect(hide.getAttribute('aria-pressed')).toBe('true')
   })
 })

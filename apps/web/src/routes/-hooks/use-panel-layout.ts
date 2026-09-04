@@ -34,6 +34,7 @@ import {
 import type {
   AutoOpenAgentOptions,
   OpenAgentPaneOptions,
+  SplitPaneOptions,
 } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
 import {
@@ -222,24 +223,6 @@ function closePaneInLayout(
     paneFound: false,
     terminalIdsToRemove: [],
   }
-}
-
-/**
- * Find the workspace tile leaf that contains a given pane.
- */
-function findWorkspaceForPane(
-  windowLayout: WindowLayout,
-  paneId: string
-): import('@laborer/shared/types').WorkspaceTileLeaf | undefined {
-  const allLeaves = getAllWorkspaceTileLeaves(windowLayout)
-  for (const wsLeaf of allLeaves) {
-    for (const panelTab of wsLeaf.panelTabs) {
-      if (findLeaf(panelTab.panelLayout, paneId)) {
-        return wsLeaf
-      }
-    }
-  }
-  return undefined
 }
 
 /**
@@ -1106,7 +1089,8 @@ export function usePanelLayout() {
     (
       paneId: string,
       direction: 'horizontal' | 'vertical',
-      newPaneContent?: Partial<LeafNode>
+      newPaneContent?: Partial<LeafNode>,
+      options?: SplitPaneOptions
     ): string | undefined => {
       if (!persistedWindowLayout) {
         return undefined
@@ -1171,13 +1155,14 @@ export function usePanelLayout() {
         return newLeaf?.id
       }
 
-      // Only auto-spawn a terminal for terminal-type and agent-type
-      // panes. Diff and dev server panes handle their own
-      // content.
-      const newPaneType = newPaneContent?.paneType ?? 'terminal'
-      if (newPaneType !== 'terminal' && newPaneType !== 'agent') {
+      // Callers can opt out of the spawn — the panel type picker creates
+      // its placeholder pane this way so no terminal starts until the user
+      // has actually chosen a pane type.
+      if (options?.autoSpawn === false) {
         return newLeaf.id
       }
+
+      const newPaneType = newPaneContent?.paneType ?? 'terminal'
 
       // Auto-spawn a terminal in the new pane. For agent panes, resolve
       // the configured agent provider first.
@@ -1620,87 +1605,6 @@ export function usePanelLayout() {
     // to provide full-height diff panel behavior
     return false
   }, [])
-
-  /**
-   * Toggle the dev server terminal as a panel tab.
-   *
-   * When toggling ON: creates a new 'devServerTerminal' panel tab in the
-   * workspace that contains the given pane, then spawns its local terminal
-   * as a local shell.
-   *
-   * When toggling OFF: removes the dev server panel tab from the workspace.
-   * The terminal session is killed.
-   *
-   * @see Issue #8: Dev server terminal pane type + toggle
-   */
-  const handleToggleDevServerPane = useCallback(
-    async (paneId: string): Promise<boolean> => {
-      if (!persistedWindowLayout) {
-        return false
-      }
-
-      // Find which workspace the pane belongs to
-      const targetWsLeaf = findWorkspaceForPane(persistedWindowLayout, paneId)
-      if (!targetWsLeaf) {
-        return false
-      }
-
-      const wsId = targetWsLeaf.workspaceId
-
-      // Check if a dev server panel tab already exists
-      const existingDevTab = targetWsLeaf.panelTabs.find((tab) => {
-        return (
-          tab.panelLayout._tag === 'LeafNode' &&
-          tab.panelLayout.paneType === 'devServerTerminal'
-        )
-      })
-
-      if (existingDevTab) {
-        // Toggle OFF — remove the dev server panel tab and kill its terminal
-        const terminalIds = collectTerminalIdsFromPanelTree(
-          existingDevTab.panelLayout
-        )
-        for (const terminalId of terminalIds) {
-          removeTerminalOptimistically(terminalId, '[dev-server-toggle-off]')
-        }
-        const newLayout = updateWorkspaceTileLeaf(
-          persistedWindowLayout,
-          wsId,
-          (leaf) => removePanelTab(leaf, existingDevTab.id)
-        )
-        persistWindowLayout('dev-server-toggle-off', newLayout)
-        return false
-      }
-
-      // Toggle ON — spawn a local terminal dedicated to the dev server.
-      const result = await spawnTerminal({
-        payload: { workspaceId: wsId },
-      })
-
-      // Re-read the layout to avoid overwriting concurrent changes.
-      const currentWindowLayout = getCurrentWindowLayout()
-      if (!currentWindowLayout) {
-        return false
-      }
-
-      // Add a new dev server panel tab to the workspace
-      const newLayout = updateWorkspaceTileLeaf(
-        currentWindowLayout,
-        wsId,
-        (leaf) =>
-          addPanelTab(leaf, 'devServerTerminal', { terminalId: result.id })
-      )
-      persistWindowLayout('dev-server-toggle-on', newLayout)
-      return true
-    },
-    [
-      persistedWindowLayout,
-      getCurrentWindowLayout,
-      persistWindowLayout,
-      spawnTerminal,
-      removeTerminalOptimistically,
-    ]
-  )
 
   /**
    * Close a terminal and its associated pane (ungated — no confirmation).
@@ -2901,7 +2805,6 @@ export function usePanelLayout() {
       forceCloseWorkspace: handleCloseWorkspace,
       setActivePaneId: handleSetActivePaneId,
       toggleDiffPane: handleToggleDiffPane,
-      toggleDevServerPane: handleToggleDevServerPane,
       toggleFilesPane: handleToggleFilesPane,
       resizePane: handleResizePane,
       closeTerminalPane: handleCloseTerminalPane,
@@ -2937,7 +2840,6 @@ export function usePanelLayout() {
       handleFocusWorkspace,
       handleSetActivePaneId,
       handleToggleDiffPane,
-      handleToggleDevServerPane,
       handleToggleFilesPane,
       handleResizePane,
       handleCloseTerminalPane,

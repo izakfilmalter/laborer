@@ -1,6 +1,5 @@
 import type { WindowLayout, WindowTab } from '@laborer/shared/types'
 import { useCallback, useMemo, useState } from 'react'
-import { WorkspaceRightPanel } from '@/components/right-panel/workspace-right-panel'
 import {
   FullscreenPortalContext,
   usePendingCloseWindowTab,
@@ -27,7 +26,7 @@ function FullscreenWorkspaceHeader({
 }) {
   const activeRightPanelKind = useRightPanelStore(
     useCallback(
-      (store) => selectActiveRightPanel(store.byWorkspaceId, workspaceId),
+      (store) => selectActiveRightPanel(store, workspaceId),
       [workspaceId]
     )
   )
@@ -50,19 +49,16 @@ function FullscreenWorkspaceHeader({
 }
 
 interface FullscreenWorkspaceOverlayProps {
-  readonly fullscreenWorkspaceId: string
   readonly portalRef: (element: HTMLDivElement | null) => void
 }
 
 /**
- * The fullscreen overlay keeps the fullscreened workspace's right panel in
- * reach on the right edge (it owns its own width and renders nothing while
- * closed) — the file explorer is one of its surfaces. The inline frame's
- * right panel is suppressed while this overlay owns the workspace, so the
- * surfaces are not mounted twice.
+ * The target a fullscreened pane portals into: it covers the workspace
+ * frames, and only them. The window's right panel is a flex sibling of this
+ * whole column, so it stays beside the fullscreened pane rather than under
+ * it — the file explorer and the other surfaces remain in reach.
  */
 function FullscreenWorkspaceOverlay({
-  fullscreenWorkspaceId,
   portalRef,
 }: FullscreenWorkspaceOverlayProps) {
   return (
@@ -70,10 +66,6 @@ function FullscreenWorkspaceOverlay({
       <div className="h-full min-w-0 flex-1">
         <div className="h-full w-full" ref={portalRef} />
       </div>
-      <WorkspaceRightPanel
-        isFullscreenOverlay
-        workspaceId={fullscreenWorkspaceId}
-      />
     </div>
   )
 }
@@ -102,12 +94,10 @@ function WindowTabContent({
   tab,
   isActive,
   activePaneId,
-  suppressedRightPanelWorkspaceId,
 }: {
   readonly tab: WindowTab
   readonly isActive: boolean
   readonly activePaneId: string | null
-  readonly suppressedRightPanelWorkspaceId: string | null
 }) {
   const layout = tab.workspaceLayout
   const pendingCloseWindowTab = usePendingCloseWindowTab()
@@ -130,7 +120,6 @@ function WindowTabContent({
     >
       <WorkspaceFrames
         activePaneId={isActive ? activePaneId : null}
-        suppressedRightPanelWorkspaceId={suppressedRightPanelWorkspaceId}
         workspaceTileLayout={layout}
       />
       {isClosingTab && (
@@ -160,9 +149,9 @@ interface PanelContentProps {
  * Renders the main panel area content, handling the reconciling/loading,
  * workspace frames, empty window tab state, or empty state.
  *
- * Each workspace frame renders its own right panel (diff, files, pull
- * request) on its right edge, spanning the full height of that workspace
- * rather than sitting outside all workspaces.
+ * The right panel (diff, files, pull request) is not rendered here: the
+ * window mounts one `GlobalRightPanel` as a flex sibling of this whole
+ * column, so it spans the full content height beside every workspace.
  *
  * Provides a fullscreen portal target: when a pane is fullscreened, it
  * portals its content into an absolutely-positioned overlay rendered here.
@@ -247,7 +236,6 @@ export function PanelContent({
                 activePaneId={activePaneId}
                 isActive={tab.id === activeTabId}
                 key={tab.id}
-                suppressedRightPanelWorkspaceId={fullscreenWorkspaceId ?? null}
                 tab={tab}
               />
             ))}
@@ -258,10 +246,7 @@ export function PanelContent({
                 WindowTabContent being an isolated stacking context so
                 background pane overlays cannot paint above it. */}
             {fullscreenPaneId && fullscreenWorkspaceId ? (
-              <FullscreenWorkspaceOverlay
-                fullscreenWorkspaceId={fullscreenWorkspaceId}
-                portalRef={handlePortalRef}
-              />
+              <FullscreenWorkspaceOverlay portalRef={handlePortalRef} />
             ) : null}
           </div>
         </div>

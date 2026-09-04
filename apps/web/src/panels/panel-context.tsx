@@ -54,6 +54,16 @@ type PickerMode =
     }
   | { readonly kind: 'new-tab'; readonly workspaceId: string }
 
+/** Options controlling how a newly split pane is populated. */
+interface SplitPaneOptions {
+  /**
+   * Whether to start a terminal in the new pane. Defaults to true; pass
+   * false for panes that are created empty on purpose, such as the panel
+   * type picker's placeholder.
+   */
+  readonly autoSpawn?: boolean | undefined
+}
+
 interface PanelActions {
   /**
    * Add a new panel tab of the given type to the focused workspace.
@@ -332,12 +342,15 @@ interface PanelActions {
    * @param paneId - The ID of the LeafNode to split
    * @param direction - "horizontal" (side-by-side) or "vertical" (stacked)
    * @param newPaneContent - Optional content for the new pane
+   * @param options - `autoSpawn: false` creates the pane without starting a
+   *   terminal in it, used for the panel type picker's placeholder pane
    * @returns The ID of the newly created pane, or undefined if split failed
    */
   readonly splitPane: (
     paneId: string,
     direction: SplitDirection,
-    newPaneContent?: Partial<LeafNode>
+    newPaneContent?: Partial<LeafNode>,
+    options?: SplitPaneOptions
   ) => string | undefined
 
   /**
@@ -415,20 +428,6 @@ interface PanelActions {
    * @returns Whether the comments panel is now visible (true = toggled on)
    */
   readonly toggleCommentsPane?: (paneId: string) => boolean
-  /**
-   * Toggle the dev server terminal alongside a terminal pane.
-   *
-   * When toggled ON: the dev server terminal pane is rendered to the right of
-   * the main terminal in a horizontal split. If no dev server terminal session
-   * exists yet, one local shell is spawned for the user to run it in.
-   * When toggled OFF: hides the dev server terminal pane but keeps the
-   * terminal session alive for later reconnection.
-   *
-   * @param paneId - The ID of the terminal LeafNode to toggle dev server for
-   * @returns A promise that resolves to whether the dev server pane is now
-   *   visible (true = toggled on)
-   */
-  readonly toggleDevServerPane: (paneId: string) => Promise<boolean>
   /**
    * Toggle a diff viewer alongside a terminal pane.
    *
@@ -578,6 +577,13 @@ interface PendingDestroyOnCloseWorkspaceState {
  * split or tab creation action is performed.
  */
 interface PendingPickerState {
+  /**
+   * Whether the anchored pane was created solely to host this picker. Split
+   * actions create the new pane up front so the picker appears on it; that
+   * pane has no content yet, so its own rendering is suppressed until a type
+   * is chosen (or the pane is removed on cancel).
+   */
+  readonly isPlaceholderPane: boolean
   /** Cancel the picker — dismisses without creating anything. */
   readonly onCancel: () => void
   /** Called when a panel type is selected — performs the action. */
@@ -626,6 +632,7 @@ const defaultPendingDestroyOnCloseWorkspace: PendingDestroyOnCloseWorkspaceState
 
 const defaultPendingPicker: PendingPickerState = {
   paneId: null,
+  isPlaceholderPane: false,
   onSelect: noop,
   onCancel: noop,
 }
@@ -861,4 +868,5 @@ export type {
   PendingDestroyOnCloseWorkspaceState,
   PendingPickerState,
   PickerMode,
+  SplitPaneOptions,
 }

@@ -653,7 +653,7 @@ export function PreviewPanel(props: {
                 usePreviewMiniPlayerStore
                   .getState()
                   .open(props.workspaceId, props.tabId)
-                useRightPanelStore.getState().close(props.workspaceId)
+                useRightPanelStore.getState().close()
               }}
             >
               <PictureInPicture2 />

@@ -1,3 +1,4 @@
+import { ResizeGrip } from '@laborer/ui/components/resizable'
 import { cn } from '@laborer/ui/lib/utils'
 import type { ResizableWidthHandlers } from '@/hooks/use-resizable-width'
 
@@ -12,10 +13,11 @@ interface Props {
 /**
  * Hit target for resizing a right-anchored panel via its left edge.
  *
- * - Sits on top of the panel's border with a 4px overlap on each side so the
- *   user can grab a few pixels off the edge without aiming.
- * - Visual indicator is a 1px line that lights up on hover/active to mirror
- *   VS Code / Cursor.
+ * - Sits just outside the panel's `border-l`, so the always-visible 1px line
+ *   plus that border read as the same 2px edge the project sidebar draws, with
+ *   the same centred grip.
+ * - The hit target is 8px wide, straddling the edge, so the user can grab a
+ *   few pixels off it without aiming.
  * - Exposed as a separator so keyboard and assistive-technology users can
  *   resize with ArrowLeft/ArrowRight/Home/End.
  */
@@ -27,18 +29,22 @@ export function RightPanelResizeHandle({
   value,
 }: Props) {
   return (
-    <hr
+    // biome-ignore lint/a11y/useSemanticElements: <hr> cannot hold the grip; the separator role with aria-value* is the resize contract.
+    <div
       aria-label="Resize right panel"
       aria-orientation="vertical"
       aria-valuemax={max}
       aria-valuemin={min}
       aria-valuenow={value}
       className={cn(
-        'absolute inset-y-0 -left-1 z-20 m-0 h-auto w-2 cursor-col-resize select-none border-0 outline-none after:pointer-events-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 hover:after:bg-border focus-visible:ring-2 focus-visible:ring-primary/60 active:after:bg-primary/60',
+        'group absolute inset-y-0 -left-[5px] z-20 flex w-2 cursor-col-resize select-none items-center justify-center outline-none ring-offset-background after:pointer-events-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border focus-visible:ring-1 focus-visible:ring-ring',
         className
       )}
+      role="separator"
       tabIndex={0}
       {...handlers}
-    />
+    >
+      <ResizeGrip className="relative" />
+    </div>
   )
 }

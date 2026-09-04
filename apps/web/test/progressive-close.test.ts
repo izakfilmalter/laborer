@@ -657,14 +657,14 @@ describe('computeProgressiveCloseAction', () => {
     })
   })
 
-  describe('diff pane type', () => {
-    it('closes pane for diff pane in split', () => {
+  describe('agent pane type', () => {
+    it('closes pane for agent pane in split', () => {
       const splitLayout = makeSplitLayout('split-1', [
         makeLeaf('pane-1', 'term-1', 'ws-1'),
         {
           _tag: 'LeafNode' as const,
-          id: 'pane-diff',
-          paneType: 'diff' as const,
+          id: 'pane-agent',
+          paneType: 'agent' as const,
           workspaceId: 'ws-1',
         },
       ])
@@ -673,7 +673,7 @@ describe('computeProgressiveCloseAction', () => {
         workspaceLayout: makeWorkspaceTile(
           'tile-1',
           'ws-1',
-          [makePanelTab('pt-1', splitLayout, 'pane-diff')],
+          [makePanelTab('pt-1', splitLayout, 'pane-agent')],
           'pt-1'
         ),
       }
@@ -681,8 +681,8 @@ describe('computeProgressiveCloseAction', () => {
         tabs: [tab],
         activeTabId: 'tab-1',
       }
-      const result = computeProgressiveCloseAction(layout, 'pane-diff', 'ws-1')
-      expect(result).toEqual({ kind: 'close-pane', paneId: 'pane-diff' })
+      const result = computeProgressiveCloseAction(layout, 'pane-agent', 'ws-1')
+      expect(result).toEqual({ kind: 'close-pane', paneId: 'pane-agent' })
     })
   })
 })

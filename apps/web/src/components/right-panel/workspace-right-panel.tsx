@@ -17,8 +17,10 @@
  *   (terminals live in the main panel tabs/splits) and no Agents surface
  *   (Laborer skips it).
  *
- * The component renders nothing while the panel is hidden (`isOpen` false);
- * tab state survives in the store, so reopening restores the same tabs.
+ * This renders one workspace's surfaces inside the window's single panel;
+ * `GlobalRightPanel` owns the shell, resolves whose surfaces to show, and
+ * mounts this only while the panel is open. Tab state survives in the store,
+ * so reopening restores the same tabs.
  */
 
 import { useAtomSet, useAtomValue } from '@effect/atom-react/Hooks'
@@ -36,7 +38,6 @@ import {
   workspaceViewsFromRows,
 } from '@/db/shared-state'
 import { toast } from '@/lib/toast'
-import { useFullscreenPaneId } from '@/panels/panel-context'
 import { DiffPane } from '@/panes/diff-pane'
 import { usePreviewStateStore } from '@/preview-state-store'
 import {
@@ -45,7 +46,6 @@ import {
   useRightPanelStore,
 } from '@/right-panel-store'
 import { closePreviewResources } from './close-right-panel-surfaces'
-import { rightPanelWidthStorageKey } from './right-panel-shell'
 import { type PullRequestTabStatus, RightPanelTabs } from './right-panel-tabs'
 
 /** The workspace's project name, for the file surface's breadcrumbs. */
@@ -122,16 +122,8 @@ const projectConfigAtom = Atom.family((projectId: string) =>
 )
 
 export function WorkspaceRightPanel({
-  isFullscreenOverlay = false,
   workspaceId,
 }: {
-  /**
-   * True for the instance the fullscreen overlay renders. Every other
-   * instance sits behind that overlay while a pane is fullscreened, so its
-   * browser surface — an Electron `<webview>` that paints above the DOM
-   * regardless of z-index — must be hidden.
-   */
-  readonly isFullscreenOverlay?: boolean
   readonly workspaceId: string
 }) {
   const project = useWorkspaceProject(workspaceId)
@@ -150,11 +142,6 @@ export function WorkspaceRightPanel({
   const pullRequestStatus = useWorkspacePullRequestStatus(workspaceId)
   const projectName = project.name
   const closePreview = useAtomSet(closePreviewMutation, { mode: 'promise' })
-  // A fullscreened pane covers every inline panel. The browser surface is a
-  // native `<webview>` layer that ignores that stacking, so hide it unless
-  // this panel is the one the fullscreen overlay owns.
-  const fullscreenPaneId = useFullscreenPaneId()
-  const browserSurfaceVisible = fullscreenPaneId === null || isFullscreenOverlay
   const [pendingFileSurfaceIds, setPendingFileSurfaceIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
@@ -255,10 +242,6 @@ export function WorkspaceRightPanel({
     store().open(workspaceId, 'files')
   }, [workspaceId])
 
-  if (!state.isOpen) {
-    return null
-  }
-
   return (
     <RightPanelTabs
       activeSurfaceId={state.activeSurfaceId}
@@ -285,12 +268,10 @@ export function WorkspaceRightPanel({
       pullRequestNumber={pullRequestNumber}
       pullRequestStatus={pullRequestStatus}
       surfaces={state.surfaces}
-      widthStorageKey={rightPanelWidthStorageKey(workspaceId)}
       workspaceId={workspaceId}
     >
       {activeSurface ? (
         <ActiveSurfaceContent
-          browserSurfaceVisible={browserSurfaceVisible}
           configuredUrls={configuredUrls}
           onPendingChange={handlePendingChange}
           projectName={projectName}
@@ -304,14 +285,12 @@ export function WorkspaceRightPanel({
 
 /** The surface registry: maps the active descriptor to its content. */
 function ActiveSurfaceContent({
-  browserSurfaceVisible,
   configuredUrls,
   projectName,
   onPendingChange,
   surface,
   workspaceId,
 }: {
-  readonly browserSurfaceVisible: boolean
   readonly projectName: string
   readonly configuredUrls: readonly string[]
   readonly onPendingChange: (relativePath: string, pending: boolean) => void
@@ -334,7 +313,9 @@ function ActiveSurfaceContent({
         <PreviewPanel
           configuredUrls={configuredUrls}
           tabId={surface.resourceId}
-          visible={browserSurfaceVisible}
+          // One panel per window, mounted beside the fullscreen overlay
+          // rather than under it, so the `<webview>` layer never has to hide.
+          visible={true}
           workspaceId={workspaceId}
         />
       )

@@ -37,7 +37,6 @@ const mockActions: PanelActions = {
   showPanelTypePicker: vi.fn(),
   splitPane: vi.fn(),
   updatePaneType: vi.fn(),
-  toggleDevServerPane: vi.fn(async () => false),
   toggleDiffPane: vi.fn(() => false),
   toggleFullscreenPane: vi.fn(),
   toggleFilesPane: vi.fn(() => false),
@@ -178,9 +177,9 @@ describe('EmptyWorkspaceState', () => {
     expect(shortcutKeys[1]?.textContent).toBe('T')
   })
 
-  it('embeds the PanelTypePicker with 4 options', () => {
+  it('embeds the PanelTypePicker with 2 options', () => {
     render(<EmptyWorkspaceState workspaceId="ws-1" />)
-    expect(getPickerOptions()).toHaveLength(4)
+    expect(getPickerOptions()).toHaveLength(2)
   })
 
   it('calls addPanelTab when agent is selected from the picker', () => {
@@ -195,21 +194,6 @@ describe('EmptyWorkspaceState', () => {
     expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'terminal')
   })
 
-  it('calls addPanelTab with diff when option 3 is clicked', () => {
-    render(<EmptyWorkspaceState workspaceId="ws-1" />)
-    fireEvent.click(getOptionAt(2))
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'diff')
-  })
-
-  it('calls addPanelTab with devServerTerminal when option 4 is clicked', () => {
-    render(<EmptyWorkspaceState workspaceId="ws-1" />)
-    fireEvent.click(getOptionAt(3))
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith(
-      'ws-1',
-      'devServerTerminal'
-    )
-  })
-
   it('does not call addPanelTab when workspaceId is undefined', () => {
     render(<EmptyWorkspaceState workspaceId={undefined} />)
     fireEvent.click(getOptionAt(0))
@@ -219,8 +203,8 @@ describe('EmptyWorkspaceState', () => {
   it('supports keyboard selection via number keys', () => {
     render(<EmptyWorkspaceState workspaceId="ws-1" />)
     const picker = screen.getByTestId('panel-type-picker')
-    fireEvent.keyDown(picker, { key: '3' })
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'diff')
+    fireEvent.keyDown(picker, { key: '2' })
+    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'terminal')
   })
 
   it('supports keyboard selection via Enter key', () => {
@@ -262,9 +246,9 @@ describe('EmptyPanelTabState', () => {
     expect(shortcutKeys[1]?.textContent).toBe('D')
   })
 
-  it('embeds the PanelTypePicker with 4 options', () => {
+  it('embeds the PanelTypePicker with 2 options', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
-    expect(getPickerOptions()).toHaveLength(4)
+    expect(getPickerOptions()).toHaveLength(2)
   })
 
   it('calls addPanelTab when agent is selected from the picker', () => {
@@ -273,13 +257,10 @@ describe('EmptyPanelTabState', () => {
     expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'agent')
   })
 
-  it('calls addPanelTab with devServerTerminal when option 4 is clicked', () => {
+  it('calls addPanelTab with terminal when option 2 is clicked', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
-    fireEvent.click(getOptionAt(3))
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith(
-      'ws-1',
-      'devServerTerminal'
-    )
+    fireEvent.click(getOptionAt(1))
+    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'terminal')
   })
 
   it('does not call addPanelTab when workspaceId is undefined', () => {
@@ -296,11 +277,8 @@ describe('EmptyPanelTabState', () => {
   it('supports keyboard selection via number keys', () => {
     render(<EmptyPanelTabState workspaceId="ws-1" />)
     const picker = screen.getByTestId('panel-type-picker')
-    fireEvent.keyDown(picker, { key: '4' })
-    expect(mockActions.addPanelTab).toHaveBeenCalledWith(
-      'ws-1',
-      'devServerTerminal'
-    )
+    fireEvent.keyDown(picker, { key: '2' })
+    expect(mockActions.addPanelTab).toHaveBeenCalledWith('ws-1', 'terminal')
   })
 })
 

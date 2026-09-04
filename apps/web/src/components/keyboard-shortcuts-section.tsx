@@ -83,9 +83,10 @@ const SHORTCUT_GROUPS: readonly {
       },
       { label: 'Zoom active pane', hint: sequence(['⌃', 'B'], ['Z']) },
       {
-        label: 'New agent / diff / dev server pane',
-        hint: sequence(['⌃', 'B'], ['A / D / S']),
+        label: 'New agent pane',
+        hint: sequence(['⌃', 'B'], ['A']),
       },
+      { label: 'Toggle diff panel', hint: sequence(['⌃', 'B'], ['D']) },
       { label: 'Toggle file explorer', hint: sequence(['⌃', 'B'], ['T']) },
     ],
   },

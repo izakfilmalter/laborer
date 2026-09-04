@@ -17,7 +17,7 @@ import { CommandPalette } from '@/components/command-palette/command-palette'
 import { TaskBoard } from '@/components/kanban/task-board'
 import { ProjectGroup } from '@/components/project-group'
 import { useProjectReorderMonitor } from '@/components/project-reorder'
-import { rightPanelWidthStorageKey } from '@/components/right-panel/right-panel-shell'
+import { GlobalRightPanel } from '@/components/right-panel/global-right-panel'
 import { SidebarFooter } from '@/components/sidebar-footer'
 import { SidebarSearch } from '@/components/sidebar-search'
 import { destroyWorkspace as destroyWorkspaceOptimistically } from '@/db/shared-mutations'
@@ -127,6 +127,23 @@ function HomeComponent() {
   }, [panelActions.windowLayout])
 
   const workspaceTileLayout = activeWindowTab?.workspaceLayout
+
+  const rightPanelOpen = useRightPanelStore((store) => store.isOpen)
+  const toggleRightPanel = useCallback(() => {
+    useRightPanelStore.getState().toggleVisibility()
+  }, [])
+
+  // Workspaces tiled in the active window tab, in layout order: the set the
+  // window's one right panel can point at.
+  const openWorkspaceIds = useMemo(
+    () =>
+      workspaceTileLayout
+        ? getWorkspaceTileLeaves(workspaceTileLayout).map(
+            (leaf) => leaf.workspaceId
+          )
+        : [],
+    [workspaceTileLayout]
+  )
 
   // Detect when the active window tab exists but has no workspaces,
   // or when the window layout exists but all tabs have been closed.
@@ -248,10 +265,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'diff')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'diff'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'diff'
       )
     },
     [resolvePaneWorkspaceId]
@@ -273,10 +288,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'files')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'files'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'files'
       )
     },
     [resolvePaneWorkspaceId]
@@ -298,10 +311,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'preview')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'preview'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'preview'
       )
     },
     [resolvePaneWorkspaceId]
@@ -323,10 +334,8 @@ function HomeComponent() {
       }
       useRightPanelStore.getState().toggle(workspaceId, 'pull-request')
       return (
-        selectActiveRightPanel(
-          useRightPanelStore.getState().byWorkspaceId,
-          workspaceId
-        ) === 'pull-request'
+        selectActiveRightPanel(useRightPanelStore.getState(), workspaceId) ===
+        'pull-request'
       )
     },
     [resolvePaneWorkspaceId]
@@ -349,8 +358,9 @@ function HomeComponent() {
     [panelActions]
   )
 
-  // Prune right-panel state (and persisted widths) for workspaces that
-  // have been destroyed, so removed workspaces do not leave entries behind.
+  // Prune right-panel state for workspaces that have been destroyed, so
+  // removed workspaces do not leave tab strips behind. The panel's width is
+  // a window-level preference under a single key, so nothing to clean there.
   const destroyedWorkspaceKey = useMemo(
     () =>
       workspaceList
@@ -373,9 +383,6 @@ function HomeComponent() {
       usePreviewMiniPlayerStore.getState().removeWorkspace(workspaceId)
     }
     useRightPanelStore.getState().removeWorkspaces(destroyedIds)
-    for (const workspaceId of destroyedIds) {
-      window.localStorage.removeItem(rightPanelWidthStorageKey(workspaceId))
-    }
   }, [closeWorkspacePreviews, destroyedWorkspaceKey])
 
   // Close-terminal confirmation dialog state — the pane ID is stored in
@@ -684,8 +691,8 @@ function HomeComponent() {
   // specified pane. On type selection, the pending action (split/new tab)
   // is performed. Follows the same pattern as pendingClosePaneId.
   //
-  // For split actions, the split is created immediately with a placeholder
-  // type ('diff') so the picker appears on the NEW pane rather than the
+  // For split actions, the split is created immediately as an empty
+  // placeholder pane so the picker appears on the NEW pane rather than the
   // current one. On selection, the pane type is updated. On cancel, the
   // new pane is removed.
   const [pickerMode, setPickerMode] = useState<PickerMode | null>(null)
@@ -701,15 +708,20 @@ function HomeComponent() {
   const showPanelTypePicker = useCallback(
     (mode: PickerMode) => {
       if (mode.kind === 'split-right' || mode.kind === 'split-down') {
-        // Create the split immediately with 'diff' as a non-spawning placeholder.
-        // PanelManager suppresses placeholder diff rendering while the picker is
-        // open, so expensive diff fetching only starts if Diff is selected.
+        // Create the split immediately, but without spawning anything into
+        // it. PanelManager suppresses the placeholder's own rendering while
+        // the picker is open, so no terminal starts until a type is chosen.
         const direction =
           mode.kind === 'split-right' ? 'horizontal' : 'vertical'
-        const newPaneId = panelActions.splitPane(mode.paneId, direction, {
-          paneType: 'diff',
-          workspaceId: mode.workspaceId,
-        } as Partial<LeafNode>)
+        const newPaneId = panelActions.splitPane(
+          mode.paneId,
+          direction,
+          {
+            paneType: 'terminal',
+            workspaceId: mode.workspaceId,
+          } as Partial<LeafNode>,
+          { autoSpawn: false }
+        )
         if (newPaneId) {
           setSplitNewPaneId(newPaneId)
           setPickerMode(mode)
@@ -772,10 +784,12 @@ function HomeComponent() {
   const pendingPickerState: PendingPickerState = useMemo(
     () => ({
       paneId: pickerPaneId,
+      isPlaceholderPane:
+        pickerPaneId !== null && pickerPaneId === splitNewPaneId,
       onSelect: handlePickerSelect,
       onCancel: handlePickerCancel,
     }),
-    [pickerPaneId, handlePickerSelect, handlePickerCancel]
+    [pickerPaneId, splitNewPaneId, handlePickerSelect, handlePickerCancel]
   )
 
   // Override panelActions.closePane with the gated version and add fullscreen toggle.
@@ -1248,11 +1262,13 @@ function HomeComponent() {
                   onReorderWindowTabs={panelActions.reorderWindowTabsDnd}
                   onSelectWindowTab={panelActions.switchWindowTab}
                   onToggleBoard={toggleBoardOverlay}
+                  onToggleRightPanel={toggleRightPanel}
                   onToggleSidebar={
                     responsiveSizes.canCollapseSidebar
                       ? toggleSidebar
                       : undefined
                   }
+                  rightPanelOpen={rightPanelOpen}
                   sidebarCollapsed={sidebarCollapsed}
                   windowLayout={panelActions.windowLayout}
                 />
@@ -1275,10 +1291,10 @@ function HomeComponent() {
                     windowTabs={windowLayout?.tabs}
                   />
                   {/* Kanban board overlay — semi-transparent so the panel
-                      sessions remain visible underneath; cards stay solid
-                      (bg-card). Appears/disappears instantly, no animation.
-                      Stays mounted while dismissed (hidden via CSS) so board
-                      state such as search text survives closing. */}
+                        sessions remain visible underneath; cards stay solid
+                        (bg-card). Appears/disappears instantly, no animation.
+                        Stays mounted while dismissed (hidden via CSS) so
+                        board state such as search text survives closing. */}
                   <section
                     aria-label="Task board"
                     className={cn(
@@ -1313,6 +1329,16 @@ function HomeComponent() {
               </div>
             )}
           </main>
+
+          {/* The window's one right panel sits beside <main>, level with the
+              project sidebar, so it spans the full window height rather than
+              tucking under the header bar. */}
+          {hasProjects && (
+            <GlobalRightPanel
+              activeWorkspaceId={activeWorkspaceId}
+              openWorkspaceIds={openWorkspaceIds}
+            />
+          )}
         </div>
       </PanelActionsProvider>
     </DiffScrollProvider>

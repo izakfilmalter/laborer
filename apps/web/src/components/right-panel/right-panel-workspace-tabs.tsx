@@ -123,7 +123,7 @@ export function RightPanelWorkspaceTabs({
       >
         <div
           aria-label="Open workspaces"
-          className="flex h-full w-max min-w-full items-center gap-1"
+          className="flex h-full w-max min-w-full items-center gap-1 pt-[3px] pb-[5px]"
           onKeyDown={handleKeyDown}
           ref={tabListRef}
           role="tablist"

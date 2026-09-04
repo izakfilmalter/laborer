@@ -56,10 +56,10 @@ const terminalLeaf: LeafNode = {
   workspaceId: 'ws-1',
 }
 
-const diffLeaf: LeafNode = {
+const emptyTerminalLeaf: LeafNode = {
   _tag: 'LeafNode',
   id: 'pane-2',
-  paneType: 'diff',
+  paneType: 'terminal',
   workspaceId: 'ws-1',
 }
 
@@ -69,11 +69,11 @@ const agentLeaf: LeafNode = {
   paneType: 'agent',
 }
 
-const devServerLeaf: LeafNode = {
+const secondTerminalLeaf: LeafNode = {
   _tag: 'LeafNode',
   id: 'pane-4',
-  paneType: 'devServerTerminal',
-  terminalId: 'dev-term-1',
+  paneType: 'terminal',
+  terminalId: 'term-2',
   workspaceId: 'ws-1',
 }
 
@@ -81,7 +81,7 @@ const panelSplit: SplitNode = {
   _tag: 'SplitNode',
   id: 'panel-split-1',
   direction: 'horizontal',
-  children: [terminalLeaf, diffLeaf],
+  children: [terminalLeaf, emptyTerminalLeaf],
   sizes: [60, 40],
 }
 
@@ -95,7 +95,7 @@ const nestedPanelSplit: SplitNode = {
       _tag: 'SplitNode',
       id: 'panel-split-inner',
       direction: 'vertical',
-      children: [diffLeaf, agentLeaf],
+      children: [emptyTerminalLeaf, agentLeaf],
       sizes: [50, 50],
     },
   ],
@@ -130,7 +130,7 @@ const workspaceTileLeaf2: WorkspaceTileLeaf = {
   panelTabs: [
     {
       id: 'tab-3',
-      panelLayout: devServerLeaf,
+      panelLayout: secondTerminalLeaf,
       focusedPaneId: 'pane-4',
     },
   ],
@@ -166,12 +166,7 @@ describe('LeafNodeSchema', () => {
   })
 
   it('round-trips all pane types', () => {
-    for (const paneType of [
-      'agent',
-      'terminal',
-      'diff',
-      'devServerTerminal',
-    ] as const) {
+    for (const paneType of ['agent', 'terminal'] as const) {
       const leaf: LeafNode = {
         _tag: 'LeafNode',
         id: `pane-${paneType}`,
@@ -255,7 +250,7 @@ describe('PanelNodeSchema', () => {
                     {
                       _tag: 'LeafNode',
                       id: 'l5-b',
-                      paneType: 'diff',
+                      paneType: 'agent',
                     },
                   ],
                   sizes: [50, 50],
@@ -271,7 +266,7 @@ describe('PanelNodeSchema', () => {
             {
               _tag: 'LeafNode',
               id: 'l2-b',
-              paneType: 'devServerTerminal',
+              paneType: 'terminal',
             },
           ],
           sizes: [70, 30],
@@ -486,9 +481,9 @@ describe('WindowLayoutSchema', () => {
      *       └─ WorkspaceTileSplit (horizontal)
      *           ├─ WorkspaceTileLeaf ws-1
      *           │   ├─ PanelTab "Terminal" (single leaf)
-     *           │   └─ PanelTab "Split" (horizontal split: terminal + diff)
+     *           │   └─ PanelTab "Split" (horizontal split: two terminals)
      *           └─ WorkspaceTileSplit (vertical)
-     *               ├─ WorkspaceTileLeaf ws-2 (devServer tab)
+     *               ├─ WorkspaceTileLeaf ws-2 (terminal tab)
      *               └─ WorkspaceTileLeaf ws-3 (agent tab)
      */
     const layout: WindowLayout = {

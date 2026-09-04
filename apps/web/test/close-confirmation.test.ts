@@ -32,7 +32,7 @@ function makeLeaf(
   id: string,
   terminalId?: string,
   workspaceId?: string,
-  paneType: 'agent' | 'terminal' | 'diff' | 'devServerTerminal' = 'terminal'
+  paneType: 'agent' | 'terminal' = 'terminal'
 ): LeafNode {
   return {
     _tag: 'LeafNode',
@@ -173,7 +173,7 @@ describe('shouldConfirmClosePanelTab', () => {
   it('returns false for non-terminal pane types', () => {
     const tab = makePanelTab(
       'tab-1',
-      makeLeaf('pane-1', undefined, 'ws-1', 'diff')
+      makeLeaf('pane-1', undefined, 'ws-1', 'agent')
     )
     expect(shouldConfirmClosePanelTab(tab, [])).toBe(false)
   })
@@ -326,7 +326,7 @@ describe('shouldConfirmCloseWindowTab', () => {
 
   it('ignores non-terminal pane types', () => {
     const workspace = makeWorkspaceTile('tile-1', 'ws-1', [
-      makePanelTab('pt-1', makeLeaf('pane-1', undefined, 'ws-1', 'diff')),
+      makePanelTab('pt-1', makeLeaf('pane-1', undefined, 'ws-1', 'agent')),
       makePanelTab('pt-2', makeLeaf('pane-2', undefined, 'ws-1', 'agent')),
     ])
     const tab = makeWindowTab('tab-1', workspace)

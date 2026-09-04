@@ -30,7 +30,7 @@ import {
 /** A panel leaf node for use in fixtures. */
 function makeLeaf(
   id: string,
-  paneType: 'agent' | 'terminal' | 'diff' | 'devServerTerminal' = 'terminal',
+  paneType: 'agent' | 'terminal' = 'terminal',
   terminalId?: string
 ): LeafNode {
   return {
@@ -124,20 +124,20 @@ describe('addPanelTab', () => {
 
   it('appends a tab to existing tabs and makes it active', () => {
     const ws = makeWorkspaceWithTabs('ws-1', 2)
-    const result = addPanelTab(ws, 'diff')
+    const result = addPanelTab(ws, 'agent')
 
     expect(result.panelTabs).toHaveLength(3)
     expect(result.activePanelTabId).toBe(result.panelTabs[2]?.id)
 
     const newTab = result.panelTabs[2]
     const leaf = newTab?.panelLayout as LeafNode
-    expect(leaf.paneType).toBe('diff')
+    expect(leaf.paneType).toBe('agent')
   })
 
   it('creates tab with correct panelType for each type', () => {
     const ws = makeEmptyWorkspace('ws-tile-1', 'ws-1')
 
-    for (const paneType of ['terminal', 'diff', 'devServerTerminal'] as const) {
+    for (const paneType of ['terminal', 'agent'] as const) {
       const result = addPanelTab(ws, paneType)
       const leaf = result.panelTabs[0]?.panelLayout as LeafNode
       expect(leaf.paneType).toBe(paneType)
@@ -148,7 +148,7 @@ describe('addPanelTab', () => {
     const ws = makeEmptyWorkspace('ws-tile-1', 'ws-1')
     const customTab: PanelTab = {
       id: 'custom-tab',
-      panelLayout: makeLeaf('custom-pane', 'diff'),
+      panelLayout: makeLeaf('custom-pane', 'agent'),
       focusedPaneId: 'custom-pane',
     }
 
@@ -179,7 +179,7 @@ describe('addPanelTab', () => {
     const originalTabs = ws.panelTabs
     const originalActiveId = ws.activePanelTabId
 
-    addPanelTab(ws, 'diff')
+    addPanelTab(ws, 'agent')
 
     expect(ws.panelTabs).toBe(originalTabs)
     expect(ws.panelTabs).toHaveLength(1)
@@ -599,7 +599,7 @@ describe('getActivePanelTab', () => {
 describe('combined operations', () => {
   it('add + remove round-trip leaves workspace with original tabs', () => {
     const ws = makeWorkspaceWithTabs('ws-1', 2, 0)
-    const added = addPanelTab(ws, 'diff')
+    const added = addPanelTab(ws, 'agent')
     const newTabId = added.panelTabs[2]?.id ?? ''
 
     const removed = removePanelTab(added, newTabId)
@@ -613,17 +613,17 @@ describe('combined operations', () => {
   it('add + switch + remove: active state consistent throughout', () => {
     const ws = makeWorkspaceWithTabs('ws-1', 1, 0)
 
-    // Add a diff tab
-    const added = addPanelTab(ws, 'diff')
+    // Add an agent tab
+    const added = addPanelTab(ws, 'agent')
     expect(added.activePanelTabId).toBe(added.panelTabs[1]?.id)
 
     // Switch back to first tab
     const switched = switchPanelTab(added, 'tab-1')
     expect(switched.activePanelTabId).toBe('tab-1')
 
-    // Remove the diff tab (non-active)
-    const diffTabId = added.panelTabs[1]?.id ?? ''
-    const removed = removePanelTab(switched, diffTabId)
+    // Remove the agent tab (non-active)
+    const agentTabId = added.panelTabs[1]?.id ?? ''
+    const removed = removePanelTab(switched, agentTabId)
     expect(removed.panelTabs).toHaveLength(1)
     expect(removed.activePanelTabId).toBe('tab-1')
   })
@@ -647,11 +647,11 @@ describe('combined operations', () => {
   it('add multiple tabs + cycle through all of them', () => {
     let ws = makeEmptyWorkspace('ws-tile-1', 'ws-1')
 
-    // Add 4 tabs of different types
+    // Add 4 tabs
     ws = addPanelTab(ws, 'terminal')
-    ws = addPanelTab(ws, 'diff')
     ws = addPanelTab(ws, 'agent')
-    ws = addPanelTab(ws, 'devServerTerminal')
+    ws = addPanelTab(ws, 'terminal')
+    ws = addPanelTab(ws, 'agent')
 
     expect(ws.panelTabs).toHaveLength(4)
 
@@ -675,7 +675,7 @@ describe('combined operations', () => {
   it('panel tab operations do not affect workspace-level properties', () => {
     const ws = makeWorkspaceWithTabs('ws-1', 2, 0)
 
-    const added = addPanelTab(ws, 'diff')
+    const added = addPanelTab(ws, 'agent')
     expect(added._tag).toBe('WorkspaceTileLeaf')
     expect(added.id).toBe(ws.id)
     expect(added.workspaceId).toBe(ws.workspaceId)

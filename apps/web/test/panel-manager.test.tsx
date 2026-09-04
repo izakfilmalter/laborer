@@ -2,17 +2,12 @@ import type { LeafNode, SplitNode } from '@laborer/shared/types'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const {
-  activePaneIdRef,
-  diffPaneRenderMock,
-  pendingPickerPaneIdRef,
-  setActivePaneIdMock,
-} = vi.hoisted(() => ({
-  activePaneIdRef: { current: null as string | null },
-  diffPaneRenderMock: vi.fn(),
-  pendingPickerPaneIdRef: { current: null as string | null },
-  setActivePaneIdMock: vi.fn(),
-}))
+const { activePaneIdRef, pendingPickerPaneIdRef, setActivePaneIdMock } =
+  vi.hoisted(() => ({
+    activePaneIdRef: { current: null as string | null },
+    pendingPickerPaneIdRef: { current: null as string | null },
+    setActivePaneIdMock: vi.fn(),
+  }))
 
 vi.mock('@laborer/ui/components/resizable', () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
@@ -49,19 +44,6 @@ vi.mock('@/panes/terminal-pane', () => ({
   ),
 }))
 
-vi.mock('@/panes/diff-pane', () => ({
-  DiffPane: ({ workspaceId }: { workspaceId: string }) => {
-    diffPaneRenderMock(workspaceId)
-    return <div data-pane-text-selectable>diff:{workspaceId}</div>
-  },
-}))
-
-vi.mock('@/panes/dev-server-terminal-pane', () => ({
-  DevServerTerminalPane: ({ terminalId }: { terminalId: string }) => (
-    <div>dev-server:{terminalId}</div>
-  ),
-}))
-
 vi.mock('@/panels/panel-context', () => ({
   useActivePaneId: () => activePaneIdRef.current,
   useFullscreenPaneId: () => null,
@@ -76,6 +58,7 @@ vi.mock('@/panels/panel-context', () => ({
   }),
   usePendingPicker: () => ({
     paneId: pendingPickerPaneIdRef.current,
+    isPlaceholderPane: pendingPickerPaneIdRef.current !== null,
     onSelect: () => undefined,
     onCancel: () => undefined,
   }),
@@ -144,7 +127,6 @@ afterEach(() => {
   cleanup()
   activePaneIdRef.current = null
   pendingPickerPaneIdRef.current = null
-  diffPaneRenderMock.mockReset()
   setActivePaneIdMock.mockReset()
 })
 
@@ -300,50 +282,25 @@ describe('PanelRenderer', () => {
     expect(screen.getByText('terminal:tb')).toBeTruthy()
   })
 
-  it('renders dev server terminal pane type', () => {
+  it('does not mount pane content while the picker is open on its placeholder pane', () => {
+    pendingPickerPaneIdRef.current = 'placeholder-pane'
     const leaf = createTerminalLeaf({
-      paneType: 'devServerTerminal',
-      terminalId: 'dev-term-1',
+      id: 'placeholder-pane',
+      terminalId: 'term-placeholder',
     })
-    render(<PanelRenderer node={leaf} />)
-    expect(screen.getByText('dev-server:dev-term-1')).toBeTruthy()
-  })
-
-  it('renders diff pane type', () => {
-    const leaf: LeafNode = {
-      _tag: 'LeafNode',
-      id: 'diff-pane',
-      paneType: 'diff',
-      workspaceId: 'ws-1',
-    }
-    render(<PanelRenderer node={leaf} />)
-    expect(screen.getByText('diff:ws-1')).toBeTruthy()
-  })
-
-  it('does not mount diff content while picker is open on a placeholder pane', () => {
-    pendingPickerPaneIdRef.current = 'diff-pane'
-    const leaf: LeafNode = {
-      _tag: 'LeafNode',
-      id: 'diff-pane',
-      paneType: 'diff',
-      workspaceId: 'ws-1',
-    }
 
     render(<PanelRenderer node={leaf} />)
 
-    expect(screen.queryByText('diff:ws-1')).toBeNull()
+    expect(screen.queryByText('terminal:term-placeholder')).toBeNull()
     expect(screen.getByTestId('panel-type-picker')).toBeTruthy()
-    expect(diffPaneRenderMock).not.toHaveBeenCalled()
   })
 
   it('refocuses the panel type picker when clicking its pane', () => {
-    pendingPickerPaneIdRef.current = 'diff-pane'
-    const leaf: LeafNode = {
-      _tag: 'LeafNode',
-      id: 'diff-pane',
-      paneType: 'diff',
-      workspaceId: 'ws-1',
-    }
+    pendingPickerPaneIdRef.current = 'placeholder-pane'
+    const leaf = createTerminalLeaf({
+      id: 'placeholder-pane',
+      terminalId: undefined,
+    })
 
     render(
       <>
@@ -361,33 +318,13 @@ describe('PanelRenderer', () => {
     expect(document.activeElement).toBe(screen.getByTestId('panel-type-picker'))
   })
 
-  it('does not activate the pane on mouse down inside text-selectable diff content', () => {
-    const leaf: LeafNode = {
-      _tag: 'LeafNode',
-      id: 'diff-pane',
-      paneType: 'diff',
-      workspaceId: 'ws-1',
-    }
+  it('activates the pane on mouse down inside its content', () => {
+    const leaf = createTerminalLeaf({ id: 'pane-1', terminalId: 'term-1' })
 
     render(<PanelRenderer node={leaf} />)
 
-    fireEvent.mouseDown(screen.getByText('diff:ws-1'))
+    fireEvent.mouseDown(screen.getByText('terminal:term-1'))
 
-    expect(setActivePaneIdMock).not.toHaveBeenCalled()
-  })
-
-  it('activates the pane on click inside text-selectable diff content', () => {
-    const leaf: LeafNode = {
-      _tag: 'LeafNode',
-      id: 'diff-pane',
-      paneType: 'diff',
-      workspaceId: 'ws-1',
-    }
-
-    render(<PanelRenderer node={leaf} />)
-
-    fireEvent.click(screen.getByText('diff:ws-1'))
-
-    expect(setActivePaneIdMock).toHaveBeenCalledWith('diff-pane')
+    expect(setActivePaneIdMock).toHaveBeenCalledWith('pane-1')
   })
 })

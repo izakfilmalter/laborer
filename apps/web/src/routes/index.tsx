@@ -691,8 +691,8 @@ function HomeComponent() {
   // specified pane. On type selection, the pending action (split/new tab)
   // is performed. Follows the same pattern as pendingClosePaneId.
   //
-  // For split actions, the split is created immediately with a placeholder
-  // type ('diff') so the picker appears on the NEW pane rather than the
+  // For split actions, the split is created immediately as an empty
+  // placeholder pane so the picker appears on the NEW pane rather than the
   // current one. On selection, the pane type is updated. On cancel, the
   // new pane is removed.
   const [pickerMode, setPickerMode] = useState<PickerMode | null>(null)
@@ -708,15 +708,20 @@ function HomeComponent() {
   const showPanelTypePicker = useCallback(
     (mode: PickerMode) => {
       if (mode.kind === 'split-right' || mode.kind === 'split-down') {
-        // Create the split immediately with 'diff' as a non-spawning placeholder.
-        // PanelManager suppresses placeholder diff rendering while the picker is
-        // open, so expensive diff fetching only starts if Diff is selected.
+        // Create the split immediately, but without spawning anything into
+        // it. PanelManager suppresses the placeholder's own rendering while
+        // the picker is open, so no terminal starts until a type is chosen.
         const direction =
           mode.kind === 'split-right' ? 'horizontal' : 'vertical'
-        const newPaneId = panelActions.splitPane(mode.paneId, direction, {
-          paneType: 'diff',
-          workspaceId: mode.workspaceId,
-        } as Partial<LeafNode>)
+        const newPaneId = panelActions.splitPane(
+          mode.paneId,
+          direction,
+          {
+            paneType: 'terminal',
+            workspaceId: mode.workspaceId,
+          } as Partial<LeafNode>,
+          { autoSpawn: false }
+        )
         if (newPaneId) {
           setSplitNewPaneId(newPaneId)
           setPickerMode(mode)
@@ -779,10 +784,12 @@ function HomeComponent() {
   const pendingPickerState: PendingPickerState = useMemo(
     () => ({
       paneId: pickerPaneId,
+      isPlaceholderPane:
+        pickerPaneId !== null && pickerPaneId === splitNewPaneId,
       onSelect: handlePickerSelect,
       onCancel: handlePickerCancel,
     }),
-    [pickerPaneId, handlePickerSelect, handlePickerCancel]
+    [pickerPaneId, splitNewPaneId, handlePickerSelect, handlePickerCancel]
   )
 
   // Override panelActions.closePane with the gated version and add fullscreen toggle.

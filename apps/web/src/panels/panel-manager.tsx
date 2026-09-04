@@ -1,5 +1,5 @@
 /**
- * PanelManager — tmux-style panel system for rendering terminal and diff panes.
+ * PanelManager — tmux-style panel system for rendering terminal panes.
  *
  * Renders a panel layout based on a `PanelNode` tree structure. Supports:
  * - Single pane rendering (LeafNode)
@@ -11,7 +11,10 @@
  * The PanelManager fills its parent container and renders pane content
  * based on the pane type:
  * - "terminal" → renders a TerminalPane on the Ghostty surface
- * - "diff" → renders a DiffPane with @pierre/diffs
+ * - "agent" → a terminal running the workspace's configured agent command
+ *
+ * The diff viewer is not a main-panel pane type; it lives in the workspace
+ * right panel (`RightPanelSurface` kind "diff").
  *
  * Empty terminal panes show a guided empty state with a CTA to spawn a
  * terminal directly in the pane. If the pane has a workspaceId or there's
@@ -72,8 +75,8 @@ import {
 } from '@laborer/ui/components/select'
 import { Spinner } from '@laborer/ui/components/spinner'
 import { useLiveQuery } from '@tanstack/react-db'
-import { Layers, Plus, Server, Terminal as TerminalIcon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Layers, Plus, Terminal as TerminalIcon } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupImperativeHandle } from 'react-resizable-panels'
 import { PanelTypePicker } from '@/components/panel-type-picker'
@@ -96,8 +99,6 @@ import {
   usePendingPicker,
 } from '@/panels/panel-context'
 import { usePanelGroupRegistry } from '@/panels/panel-group-registry'
-import { DevServerTerminalPane } from '@/panes/dev-server-terminal-pane'
-import { DiffPane } from '@/panes/diff-pane'
 import { TerminalPane } from '@/panes/terminal-pane'
 import { PaneCloseConfirmDialog } from '@/routes/-components/close-dialogs'
 
@@ -351,114 +352,11 @@ function EmptyTerminalPane({ paneId, workspaceId }: EmptyTerminalPaneProps) {
   )
 }
 
-interface EmptyDevServerPaneProps {
-  /** The pane ID, used to assign the spawned dev server terminal to this pane. */
-  readonly paneId: string
-  /** Pre-assigned workspace ID from the pane node. */
-  readonly workspaceId: string
-}
-
-/**
- * Empty state for dev server terminal panes with no terminal assigned.
- *
- * Automatically spawns a local shell for the dev server on mount.
- * While spawning, shows a loading indicator. If the spawn fails, shows an
- * error with a retry button.
- */
-function EmptyDevServerPane({ paneId, workspaceId }: EmptyDevServerPaneProps) {
-  const panelActions = usePanelActions()
-  const spawnTerminal = useSpawnTerminal()
-  const [isSpawning, setIsSpawning] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const hasSpawned = useRef(false)
-
-  const description = isSpawning
-    ? 'Spawning a terminal for the dev server.'
-    : (error ?? 'Start the dev server in this terminal.')
-
-  const handleSpawn = useCallback(async () => {
-    setIsSpawning(true)
-    setError(null)
-    try {
-      const result = await spawnTerminal({
-        payload: { workspaceId },
-      })
-      if (panelActions) {
-        panelActions.assignTerminalToPane(result.id, workspaceId, paneId)
-      }
-    } catch (spawnError) {
-      setError(extractErrorMessage(spawnError))
-      toast.error(
-        `Failed to spawn dev server: ${extractErrorMessage(spawnError)}`
-      )
-    } finally {
-      setIsSpawning(false)
-    }
-  }, [spawnTerminal, workspaceId, panelActions, paneId])
-
-  // Auto-spawn on mount
-  useEffect(() => {
-    if (hasSpawned.current) {
-      return
-    }
-    hasSpawned.current = true
-    handleSpawn()
-  }, [handleSpawn])
-
-  return (
-    <div className="flex h-full w-full items-center justify-center bg-background">
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Server />
-          </EmptyMedia>
-          <EmptyTitle>
-            {isSpawning ? 'Starting dev server...' : 'Dev server'}
-          </EmptyTitle>
-          <EmptyDescription>{description}</EmptyDescription>
-        </EmptyHeader>
-        {error && (
-          <EmptyContent>
-            <Button
-              disabled={isSpawning}
-              onClick={handleSpawn}
-              size="sm"
-              variant="outline"
-            >
-              <Plus className="size-3.5" />
-              Retry
-            </Button>
-          </EmptyContent>
-        )}
-      </Empty>
-    </div>
-  )
-}
-
 interface PaneContentProps {
   /** The leaf node describing this pane's content. */
   readonly node: LeafNode
   /** Callback invoked when the terminal process exits. */
   readonly onTerminalExit?: (() => void) | undefined
-}
-
-function isTextSelectablePaneEvent(
-  event: React.MouseEvent<HTMLDivElement>
-): boolean {
-  const path = event.nativeEvent.composedPath?.() ?? []
-  for (const target of path) {
-    if (
-      target instanceof HTMLElement &&
-      target.hasAttribute('data-pane-text-selectable')
-    ) {
-      return true
-    }
-  }
-
-  return (
-    event.target instanceof HTMLElement &&
-    event.target.closest('[data-pane-text-selectable]') !== null
-  )
 }
 
 /**
@@ -474,18 +372,6 @@ function PaneContent({ node, onTerminalExit }: PaneContentProps) {
     )
   }
 
-  // Dev server terminal rendered as a standalone pane
-  if (node.paneType === 'devServerTerminal' && node.terminalId) {
-    return <DevServerTerminalPane terminalId={node.terminalId} />
-  }
-
-  // Dev server pane without terminal — auto-spawn dev server
-  if (node.paneType === 'devServerTerminal' && node.workspaceId) {
-    return (
-      <EmptyDevServerPane paneId={node.id} workspaceId={node.workspaceId} />
-    )
-  }
-
   // Agent pane — agent is a terminal running the configured agent command.
   // This branch handles the edge case where an 'agent' pane type is
   // persisted directly (normally, 'agent' is converted to 'terminal'
@@ -497,11 +383,6 @@ function PaneContent({ node, onTerminalExit }: PaneContentProps) {
   // Empty pane — use guided empty state with CTA for terminal panes
   if (node.paneType === 'terminal') {
     return <EmptyTerminalPane paneId={node.id} workspaceId={node.workspaceId} />
-  }
-
-  // Diff pane — displays workspace diffs as a standalone panel
-  if (node.paneType === 'diff' && node.workspaceId) {
-    return <DiffPane workspaceId={node.workspaceId} />
   }
 
   // Generic empty pane (non-terminal)
@@ -696,7 +577,7 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
   const isActive = activePaneId === node.id
   const isLiveTerminalPane = node.paneType === 'terminal' && !!node.terminalId
   const isPickerPlaceholderPane =
-    pendingPicker.paneId === node.id && node.paneType === 'diff'
+    pendingPicker.paneId === node.id && pendingPicker.isPlaceholderPane
 
   // When this pane becomes active (via keyboard navigation, tab switch, or
   // split), transfer DOM focus to it. This ensures terminal panes receive
@@ -822,28 +703,12 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
     borderClass = 'ring-1 ring-primary/50'
   }
 
-  const handleMouseDownCapture = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (isTextSelectablePaneEvent(event)) {
-        return
-      }
-      actions?.setActivePaneId(node.id)
-      if (pendingPicker.paneId === node.id) {
-        paneContainer?.querySelector<HTMLElement>('[role="listbox"]')?.focus()
-      }
-    },
-    [actions, node.id, paneContainer, pendingPicker.paneId]
-  )
-
-  const handleClickCapture = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!isTextSelectablePaneEvent(event)) {
-        return
-      }
-      actions?.setActivePaneId(node.id)
-    },
-    [actions, node.id]
-  )
+  const handleMouseDownCapture = useCallback(() => {
+    actions?.setActivePaneId(node.id)
+    if (pendingPicker.paneId === node.id) {
+      paneContainer?.querySelector<HTMLElement>('[role="listbox"]')?.focus()
+    }
+  }, [actions, node.id, paneContainer, pendingPicker.paneId])
 
   const paneContent = (
     // biome-ignore lint/a11y/useSemanticElements: Panel pane container requires drag-and-drop target behavior
@@ -854,7 +719,6 @@ function LeafPaneRenderer({ node }: { readonly node: LeafNode }) {
       data-pane-type={node.paneType}
       data-terminal-id={node.terminalId}
       data-testid="panel-pane"
-      onClickCapture={handleClickCapture}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}

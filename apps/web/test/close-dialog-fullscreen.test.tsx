@@ -55,7 +55,6 @@ function makeActions(): PanelActions {
     switchWindowTab: vi.fn(),
     switchWindowTabByIndex: vi.fn(),
     switchWindowTabRelative: vi.fn(),
-    toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
     toggleFilesPane: vi.fn(() => false),

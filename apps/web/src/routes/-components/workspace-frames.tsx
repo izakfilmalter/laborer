@@ -922,10 +922,6 @@ function getPanelTabLabel(layout: PanelNode): string {
         return 'Agent'
       case 'terminal':
         return 'Terminal'
-      case 'diff':
-        return 'Diff'
-      case 'devServerTerminal':
-        return 'Dev Server'
       default:
         return 'Panel'
     }

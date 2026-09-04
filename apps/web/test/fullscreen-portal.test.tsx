@@ -67,10 +67,6 @@ vi.mock('@/panes/terminal-pane', () => ({
   ),
 }))
 
-vi.mock('@/panes/dev-server-terminal-pane', () => ({
-  DevServerTerminalPane: () => <div data-testid="dev-server-terminal" />,
-}))
-
 vi.mock('@/panes/diff-pane', () => ({
   DiffPane: () => <div data-testid="diff-pane" />,
 }))
@@ -118,7 +114,6 @@ function mockActions() {
     showPanelTypePicker: vi.fn(),
     splitPane: vi.fn(),
     updatePaneType: vi.fn(),
-    toggleDevServerPane: vi.fn(async () => false),
     toggleDiffPane: vi.fn(() => false),
     toggleFullscreenPane: vi.fn(),
     toggleFilesPane: vi.fn(() => false),

@@ -1699,12 +1699,10 @@ function lenientDecodeLeafNode(
     return undefined
   }
 
-  const validPaneTypes = new Set([
-    'agent',
-    'terminal',
-    'diff',
-    'devServerTerminal',
-  ])
+  // Retired pane types ('review', 'diff', 'devServerTerminal') are absent
+  // here on purpose: persisted leaves carrying them are dropped on load, and
+  // the surrounding split/tab repair collapses whatever they leave behind.
+  const validPaneTypes = new Set(['agent', 'terminal'])
   if (!validPaneTypes.has(raw.paneType)) {
     return undefined
   }

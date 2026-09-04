@@ -274,7 +274,58 @@ describe('OpenCode v2 session client', () => {
       })
   )
 
-  it.effect("does not use a later prompt's terminal assistant", () =>
+  it.effect('re-issues the idle wait when fetch times out on headers', () =>
+    Effect.gen(function* () {
+      let waits = 0
+      const api: OpenCodeV2SessionApi = {
+        create: (input) => Promise.resolve({ id: input.id }),
+        get: (input) =>
+          Promise.resolve({
+            id: input.sessionId,
+            workingDirectory: '/repo/worktree',
+          }),
+        interrupt: () => Promise.resolve(),
+        messages: () =>
+          Promise.resolve([
+            {
+              finish: 'stop',
+              id: 'assistant-final',
+              role: 'assistant' as const,
+              status: 'completed' as const,
+              text: 'done after a long turn',
+            },
+            { id: 'prompt-1', role: 'user' as const, text: 'input' },
+          ]),
+        prompt: (input) => Promise.resolve({ id: input.promptId }),
+        wait: () => {
+          waits += 1
+          if (waits < 3) {
+            // Node fetch surfaces undici's headers timeout as the cause.
+            return Promise.reject(
+              new TypeError('fetch failed', {
+                cause: Object.assign(new Error('Headers Timeout Error'), {
+                  code: 'UND_ERR_HEADERS_TIMEOUT',
+                  name: 'HeadersTimeoutError',
+                }),
+              })
+            )
+          }
+          return Promise.resolve()
+        },
+      }
+      const client = makeOpenCodeSessionClientFromV2Api(api)
+
+      yield* client.wait({
+        promptId: 'prompt-1',
+        sessionId: 'session-1',
+        workingDirectory: '/repo/worktree',
+      })
+
+      assert.strictEqual(waits, 3)
+    })
+  )
+
+  it.effect('completes a prompt through the turn a later steer extended', () =>
     Effect.gen(function* () {
       const api: OpenCodeV2SessionApi = {
         create: (input) => Promise.resolve({ id: input.id }),
@@ -316,13 +367,9 @@ describe('OpenCode v2 session client', () => {
         })
       )
 
-      assert.strictEqual(result._tag, 'Failure')
-      if (result._tag === 'Failure') {
-        assert.strictEqual(
-          result.failure.safeDetail,
-          'OpenCode prompt response did not complete'
-        )
-      }
+      // prompt-2 was promoted into prompt-1's running turn as a steer, so the
+      // turn ends at the first terminal assistant after prompt-1.
+      assert.strictEqual(result._tag, 'Success')
     })
   )
 

@@ -164,7 +164,7 @@ const promptExecutionDefinition: ProductionExecutionControlDefinition<'prompt-ex
         onExcessProperty: 'error',
       })(result).pipe(Effect.mapError(() => validationError('result'))),
     description:
-      'Send one durable follow-up prompt to an owned running or completed Execution. The same Execution, implementation session, and worktree are reused.',
+      'Steer an owned running Execution with one durable follow-up prompt. The same Execution, implementation session, and worktree are reused; the prompt is delivered into the work already in progress. Returns as soon as the follow-up is accepted, and the Execution keeps reporting back to the thread.',
     encodeResult: (result) =>
       Schema.decodeUnknownEffect(PromptExecutionControlResult, {
         onExcessProperty: 'error',

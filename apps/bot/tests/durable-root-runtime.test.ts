@@ -352,6 +352,163 @@ describe('root durable runtime', () => {
   )
 
   it.live(
+    'delivers Execution events when participant turns bypass the durable runtime',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            'laborer-durable-live-delivery-'
+          )
+          const action = defineAction({
+            annotations: { idempotentHint: true },
+            description: 'Report one fixture update',
+            input: Schema.Struct({ value: Schema.String }),
+            name: 'fixture/report-update',
+            recoveryPolicy: 'idempotent-retry',
+            result: Schema.Struct({ value: Schema.String }),
+            revision: 'fixture-v1',
+            run: (input, context) =>
+              context
+                .reportProgress('reported', { phase: 'reported' })
+                .pipe(Effect.as(input)),
+          })
+          const catalog = defineApplication({ actions: [action] })
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, 'runtime.sqlite') }),
+            catalog.actions,
+            'root-live-delivery-fixture'
+          )
+          yield* Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime
+            const handledKinds: string[] = []
+            const posted: string[] = []
+            const application: ApplicationShape = {
+              handle: (event, publish) => {
+                if (event._tag === 'ParticipantInput') {
+                  return Effect.void
+                }
+                return Effect.gen(function* () {
+                  const executionEvent = yield* Schema.decodeUnknownEffect(
+                    ExecutionEvent
+                  )(event.payload).pipe(Effect.orDie)
+                  handledKinds.push(executionEvent.kind)
+                  yield* publish(
+                    ApplicationConversationMessageChunk.make({
+                      messageId: `message:${event.eventId}`,
+                      text: `observed ${executionEvent.kind}`,
+                    })
+                  )
+                })
+              },
+            }
+            // The live Chat composition handles participant turns itself and
+            // never calls runConversation, so the participant turn must still
+            // make the Conversation routable for the Execution it starts.
+            const durableApplication =
+              yield* applicationThroughRootConversationRuntime({
+                actionCatalogFingerprint: catalog.actions.fingerprint,
+                application,
+                publishExternalOutput: (_conversationId, output) =>
+                  Effect.sync(() => {
+                    posted.push(output.text)
+                  }),
+                rootIdentity: 'root-live-delivery-fixture',
+                routeParticipantTurnsThroughDurableRuntime: false,
+                runtime,
+                workspaceId: 'T-LIVE',
+              })
+            const conversationId = ThreadId.make(
+              'workspace:T-LIVE:thread:C1:1.0'
+            )
+            const participantTurn = (turn: string) =>
+              durableApplication.handle(
+                ParticipantInputEvent.make({
+                  attemptNumber: 1,
+                  channelId: 'C1',
+                  context: [],
+                  conversationId,
+                  initializationStatus: 'not_applicable',
+                  messages: [
+                    NormalizedMessage.make({
+                      authorKind: 'human',
+                      authorSlackId: 'U1',
+                      classification: 'input',
+                      id: MessageId.make(`message-${turn}`),
+                      isActivation: true,
+                      slackTs: '1.0',
+                      text: turn,
+                    }),
+                  ],
+                  rootTs: '1.0',
+                  source: 'slack',
+                  turnId: TurnId.make(`turn-${turn}`),
+                  workingDirectory: null,
+                }),
+                () => Effect.void,
+                () =>
+                  Effect.succeed({
+                    decision: { _tag: 'Accepted' as const, eventId: 'unused' },
+                    scheduling: 'AlreadyDurable' as const,
+                  })
+              )
+            const awaitPosted = (count: number) =>
+              Effect.gen(function* () {
+                for (let attempt = 0; attempt < 500; attempt += 1) {
+                  if (posted.length >= count) {
+                    return
+                  }
+                  yield* Effect.sleep('10 millis')
+                }
+              })
+            const startExecution = (invocationId: string) =>
+              runtime.startExecution({
+                actionName: action.name,
+                conversationId,
+                input: { value: invocationId },
+                invocationId,
+                rootIdentity: 'root-live-delivery-fixture',
+                workspaceId: 'T-LIVE',
+              })
+
+            // An Execution that settles before any turn registered the
+            // Conversation is stranded until the first turn drains it.
+            const strandedExecution = yield* startExecution('stranded')
+            yield* waitForTerminal(
+              strandedExecution.executionId,
+              conversationId,
+              'T-LIVE'
+            )
+            yield* Effect.sleep('50 millis')
+            assert.deepStrictEqual(posted, [])
+
+            yield* participantTurn('first')
+            yield* awaitPosted(2)
+            assert.deepStrictEqual(posted, [
+              'observed progress',
+              'observed completed',
+            ])
+
+            const live = yield* startExecution('live')
+            yield* waitForTerminal(live.executionId, conversationId, 'T-LIVE')
+            yield* awaitPosted(4)
+            assert.deepStrictEqual(handledKinds, [
+              'progress',
+              'completed',
+              'progress',
+              'completed',
+            ])
+            const stranded = yield* runtime.pendingEvents(
+              conversationId,
+              'T-LIVE'
+            )
+            assert.deepStrictEqual(stranded, [])
+          }).pipe(Effect.provide(layer))
+        })
+      ),
+    20_000
+  )
+
+  it.live(
     'hands durable Action events back to the Conversation application before publishing output',
     () =>
       Effect.scoped(

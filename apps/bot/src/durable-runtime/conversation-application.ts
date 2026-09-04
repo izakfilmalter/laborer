@@ -174,7 +174,17 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
         )
       }
       if (options.routeParticipantTurnsThroughDurableRuntime === false) {
-        return options.application.handle(event, publish, acceptEvent)
+        // The turn itself stays with the Conversation application, but the
+        // root runtime must still know the Conversation exists or Execution
+        // events started from this turn have nowhere to be delivered.
+        return options.runtime
+          .registerConversation(event.conversationId, options.workspaceId)
+          .pipe(
+            Effect.mapError(runtimeFailure),
+            Effect.andThen(
+              options.application.handle(event, publish, acceptEvent)
+            )
+          )
       }
       return Effect.acquireUseRelease(
         Effect.gen(function* () {

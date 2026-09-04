@@ -254,6 +254,114 @@ describe('OpenCode ImplementationAgent', () => {
       })
   )
 
+  it.effect('steers a follow-up into the running turn without waiting', () =>
+    Effect.gen(function* () {
+      const promptTerminal = yield* Deferred.make<void>()
+      const accepted: string[] = []
+      const submitted: string[] = []
+      let messages: readonly {
+        readonly finish?: string
+        readonly id: string
+        readonly role: 'assistant' | 'user'
+        readonly status?: 'completed' | 'error' | 'in-progress'
+        readonly text: string
+      }[] = []
+      const client: OpenCodeSessionClient = {
+        createSession: () => Effect.void,
+        interrupt: () => Effect.void,
+        prepareSessionForReuse: () => Effect.void,
+        readMessages: () => Effect.succeed(messages),
+        sessionExists: () => Effect.succeed(true),
+        submitPrompt: (input) =>
+          Effect.sync(() => {
+            submitted.push(input.promptId)
+            // OpenCode admits the follow-up as a steer and promotes it into
+            // the running turn; the assistant keeps calling tools afterwards.
+            messages = [
+              ...messages,
+              { id: input.promptId, role: 'user', text: input.text },
+              {
+                finish: 'tool-calls',
+                id: `after:${input.promptId}`,
+                role: 'assistant',
+                status: 'completed',
+                text: `Working on ${input.promptId}.`,
+              },
+            ]
+          }),
+        wait: () =>
+          Deferred.await(promptTerminal).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                messages = [
+                  ...messages,
+                  {
+                    finish: 'stop',
+                    id: 'assistant-final',
+                    role: 'assistant',
+                    status: 'completed',
+                    text: 'Finished both requests.',
+                  },
+                ]
+              })
+            )
+          ),
+      }
+      const agent = makeOpenCodeImplementationAgent({
+        client,
+        observationPollIntervalMs: 1,
+      })
+      const accept = (response: { readonly responseId: string }) =>
+        Effect.sync(() => {
+          if (!accepted.includes(response.responseId)) {
+            accepted.push(response.responseId)
+          }
+        })
+      const session = yield* agent.start(
+        {
+          actionName: 'create-feature',
+          conversationId: 'conversation-1',
+          executionId: 'execution-1',
+          implementationSessionId: 'session-1',
+          prompt: 'Build',
+          promptId: 'prompt-1',
+          workingDirectory: '/repo/worktree',
+        },
+        accept
+      )
+      const completion = yield* Effect.forkChild(session.completion, {
+        startImmediately: true,
+      })
+      const followUp = yield* Effect.forkChild(
+        session.resume(
+          {
+            conversationId: 'conversation-1',
+            executionId: 'execution-1',
+            implementationSessionId: 'session-1',
+            prompt: 'Also add a button',
+            promptId: 'prompt-2',
+            workingDirectory: '/repo/worktree',
+          },
+          accept
+        ),
+        { startImmediately: true }
+      )
+
+      yield* Effect.yieldNow
+      // The steer was submitted while the initial turn was still running.
+      assert.deepStrictEqual(submitted, ['prompt-1', 'prompt-2'])
+      assert.strictEqual(yield* Deferred.isDone(promptTerminal), false)
+      yield* Deferred.succeed(promptTerminal, undefined)
+      yield* Fiber.join(completion)
+      yield* Fiber.join(followUp)
+      assert.deepStrictEqual(accepted, [
+        'after:prompt-1',
+        'after:prompt-2',
+        'assistant-final',
+      ])
+    })
+  )
+
   it.effect('forwards responses only for the exact durable prompt', () =>
     Effect.gen(function* () {
       const accepted: string[] = []
@@ -265,6 +373,7 @@ describe('OpenCode ImplementationAgent', () => {
           Effect.succeed([
             { id: 'prompt-1', role: 'user', text: 'Build' },
             {
+              finish: 'stop',
               id: 'assistant-for-prompt-1',
               role: 'assistant',
               status: 'completed',

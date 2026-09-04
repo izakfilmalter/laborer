@@ -752,6 +752,75 @@ describe('Chat plane walking skeleton', () => {
     )
   )
 
+  it.effect('never opens a Slack stream for a silent reply', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let mentionHandler: ChatSdkMentionHandler | undefined
+        const posts: string[][] = []
+        const activation = message('50.000', '@laborer hi', {
+          isMention: true,
+        })
+        const thread: ChatSdkThreadLike = {
+          allMessages: asMessages([activation]),
+          channelId: 'C1',
+          channelMessages: asMessages([]),
+          id: 'slack:C1:50.000',
+          isDM: false,
+          post: async (reply) => {
+            const chunks: string[] = []
+            for await (const chunk of reply) {
+              chunks.push(chunk)
+            }
+            posts.push(chunks)
+          },
+          rootMessageId: activation.id,
+          subscribe: () => Promise.resolve(),
+          workspaceId: 'TFIRST',
+        }
+        const sdk: ChatSdkLike = {
+          initialize: () => Promise.resolve(),
+          onNewMention: (handler) => {
+            mentionHandler = handler
+          },
+          onSubscribedMessage: () => undefined,
+          shutdown: () => Promise.resolve(),
+        }
+        let drained = false
+        const silentReply = (async function* () {
+          await Promise.resolve()
+          yield ''
+          drained = true
+        })()
+        const spokenReply = (async function* () {
+          await Promise.resolve()
+          yield ''
+          yield 'hello'
+          yield ' there'
+        })()
+        const replies: AsyncIterable<string>[] = [silentReply, spokenReply]
+
+        yield* Effect.provide(
+          Effect.promise(async () => {
+            assert.ok(mentionHandler)
+            await mentionHandler(thread, activation)
+            await mentionHandler(thread, activation)
+          }),
+          makeChatPlaneLayer({
+            handler: makeConversationHandler(() => {
+              const publicReply = replies.shift()
+              assert.ok(publicReply)
+              return Effect.succeed({ publicReply })
+            }),
+            makeSdk: () => sdk,
+          })
+        )
+
+        assert.ok(drained)
+        assert.deepStrictEqual(posts, [['hello', ' there']])
+      })
+    )
+  )
+
   it.effect('keeps edited history as context for reply activation', () =>
     Effect.scoped(
       Effect.gen(function* () {

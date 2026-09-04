@@ -68,6 +68,40 @@ const isEligibleInput = (message: ChatSdkMessageLike): boolean =>
   !message.edited &&
   message.text.trim().length > 0
 
+// Chat SDK opens a Slack stream as soon as it is handed an iterable and
+// finalizes it even when nothing was appended, which posts an empty message.
+// Drain the reply until the first nonblank chunk so a silent turn (NO_REPLY,
+// diagnostics-only output) never reaches Slack at all.
+const withFirstChunk = (
+  chunks: AsyncIterable<string>
+): Effect.Effect<AsyncIterable<string> | undefined, 'work-handler'> =>
+  Effect.tryPromise({
+    try: async () => {
+      const iterator = chunks[Symbol.asyncIterator]()
+      let first = await iterator.next()
+      while (!first.done && first.value.length === 0) {
+        first = await iterator.next()
+      }
+      if (first.done) {
+        return undefined
+      }
+      const head = first.value
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield head
+          while (true) {
+            const next = await iterator.next()
+            if (next.done) {
+              return
+            }
+            yield next.value
+          }
+        },
+      }
+    },
+    catch: () => 'work-handler' as const,
+  })
+
 export const makeConversationHandler = (
   workHandler: ChatPlaneWorkHandler
 ): ChatPlaneMessageHandler =>
@@ -108,9 +142,12 @@ export const makeConversationHandler = (
           workspaceId: thread.workspaceId,
         }).pipe(Effect.catchCause(() => Effect.fail('work-handler' as const)))
         if (result.publicReply !== undefined) {
-          yield* chatPlane
-            .streamReply(thread, result.publicReply)
-            .pipe(Effect.mapError(() => 'chat-operation' as const))
+          const reply = yield* withFirstChunk(result.publicReply)
+          if (reply !== undefined) {
+            yield* chatPlane
+              .streamReply(thread, reply)
+              .pipe(Effect.mapError(() => 'chat-operation' as const))
+          }
         }
       })
 

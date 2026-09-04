@@ -1928,6 +1928,16 @@ export interface RootDurableRuntimeShape {
     workspaceId: string,
     limit?: number
   ) => Effect.Effect<readonly ExecutionEvent[], DurableRuntimeError>
+  /**
+   * Makes a Conversation routable for Execution events without running a
+   * turn through the durable runtime. Compositions that handle participant
+   * turns themselves call this once per turn; `runConversation` registers
+   * implicitly.
+   */
+  readonly registerConversation: (
+    conversationId: string,
+    workspaceId: string
+  ) => Effect.Effect<void, DurableRuntimeError>
   readonly runConversation: (
     request: RunConversationRequest
   ) => Effect.Effect<ConversationReceipt, DurableRuntimeError>
@@ -1973,6 +1983,7 @@ const makeRuntimeService = Effect.gen(function* () {
   const executionControlGate = yield* ExecutionControlGate
   const taskEmission = yield* ExecutionTaskEmission
   const workflowEngine = yield* WorkflowEngine.WorkflowEngine
+  const runtimeScope = yield* Effect.scope
 
   const deliverPendingExecutionEvents = Effect.fn(
     'RootDurableRuntime.deliverPendingExecutionEvents'
@@ -2041,6 +2052,53 @@ const makeRuntimeService = Effect.gen(function* () {
     }
   })
 
+  // Execution events are routable only to a registered Conversation. A
+  // composition that handles participant turns itself must register the
+  // Conversation explicitly, or every Execution event for it is stranded in
+  // the outbox with no Conversation to deliver to.
+  const conversationSessionId = (
+    conversationId: string,
+    workspaceId: string
+  ): string =>
+    `conversation:${createHash('sha256')
+      .update('laborer-conversation-session-v1\0', 'utf8')
+      .update(rootIdentity, 'utf8')
+      .update('\0', 'utf8')
+      .update(workspaceId, 'utf8')
+      .update('\0', 'utf8')
+      .update(conversationId, 'utf8')
+      .digest('base64url')}`
+  const registerConversation = (conversationId: string, workspaceId: string) =>
+    sql`
+      INSERT OR IGNORE INTO laborer_conversations (
+        conversation_id, workspace_id, session_id
+      ) VALUES (
+        ${conversationId}, ${workspaceId},
+        ${conversationSessionId(conversationId, workspaceId)}
+      )
+    `
+
+  const registerConversationPublicly = Effect.fn(
+    'RootDurableRuntime.registerConversation'
+  )(function* (conversationId: string, workspaceId: string) {
+    const validatedConversationId = yield* Schema.decodeUnknownEffect(
+      RuntimeConversationId
+    )(conversationId).pipe(
+      Effect.mapError(() => runtimeError('invalid-payload'))
+    )
+    const validatedWorkspaceId = yield* Schema.decodeUnknownEffect(
+      RuntimeWorkspaceId
+    )(workspaceId).pipe(Effect.mapError(() => runtimeError('invalid-payload')))
+    yield* registerConversation(
+      validatedConversationId,
+      validatedWorkspaceId
+    ).pipe(Effect.mapError(() => runtimeError('storage-failure')))
+    yield* deliverPendingExecutionEvents(
+      validatedWorkspaceId,
+      validatedConversationId
+    ).pipe(Effect.mapError(() => runtimeError('storage-failure')))
+  })
+
   const runConversation = Effect.fn('RootDurableRuntime.runConversation')(
     function* (request: RunConversationRequest) {
       const validatedRequest = yield* Schema.decodeUnknownEffect(
@@ -2056,25 +2114,17 @@ const makeRuntimeService = Effect.gen(function* () {
         .update('laborer-conversation-request-v1\0', 'utf8')
         .update(eventJson, 'utf8')
         .digest('base64url')
-      const sessionId = `conversation:${createHash('sha256')
-        .update('laborer-conversation-session-v1\0', 'utf8')
-        .update(rootIdentity, 'utf8')
-        .update('\0', 'utf8')
-        .update(validatedRequest.workspaceId, 'utf8')
-        .update('\0', 'utf8')
-        .update(validatedRequest.event.conversationId, 'utf8')
-        .digest('base64url')}`
+      const sessionId = conversationSessionId(
+        validatedRequest.event.conversationId,
+        validatedRequest.workspaceId
+      )
       const accepted = yield* sql
         .withTransaction(
           Effect.gen(function* () {
-            yield* sql`
-              INSERT OR IGNORE INTO laborer_conversations (
-                conversation_id, workspace_id, session_id
-              ) VALUES (
-                ${validatedRequest.event.conversationId},
-                ${validatedRequest.workspaceId}, ${sessionId}
-              )
-            `
+            yield* registerConversation(
+              validatedRequest.event.conversationId,
+              validatedRequest.workspaceId
+            )
             // Acquire the Conversation's SQLite write lock before allocating
             // its next durable event sequence.
             yield* sql`
@@ -2393,6 +2443,75 @@ const makeRuntimeService = Effect.gen(function* () {
     }
   )
 
+  interface ControlIdentity {
+    readonly controlId: string
+    readonly conversationId: string
+    readonly executionId: string
+    readonly workspaceId: string
+  }
+
+  const completeControl = Effect.fn('RootDurableRuntime.completeControl')(
+    function* (request: ControlIdentity) {
+      const finalRow = yield* ownedExecutionRow(
+        request.executionId,
+        request.conversationId,
+        request.workspaceId
+      )
+      const receipt = ExecutionControlReceipt.make({
+        controlId: request.controlId,
+        deduplicated: false,
+        execution: yield* controlSnapshot(finalRow),
+      })
+      const resultJson = yield* boundedPayloadJson(receipt)
+      yield* sql`
+        UPDATE laborer_execution_controls
+        SET status = 'completed', result_json = ${resultJson}
+         WHERE control_id = ${request.controlId}
+           AND workspace_id = ${request.workspaceId}
+           AND status = 'accepted'
+      `
+      return receipt
+    }
+  )
+
+  const deliverFollowUpInBackground = Effect.fn(
+    'RootDurableRuntime.deliverFollowUpInBackground'
+  )(function* (
+    request: ControlIdentity,
+    row: StoredExecutionRow,
+    delivery: Effect.Effect<void, unknown>
+  ) {
+    const reportFailure = Effect.gen(function* () {
+      yield* sql`
+        UPDATE laborer_execution_controls SET status = 'failed'
+         WHERE control_id = ${request.controlId}
+           AND workspace_id = ${request.workspaceId}
+      `
+      const event = yield* persistEvent({
+        conversationId: request.conversationId,
+        executionId: request.executionId,
+        kind: 'progress',
+        payload: {
+          actionName: row.actionName,
+          controlId: request.controlId,
+          kind: 'follow-up-failed',
+          text: 'The follow-up could not be delivered to the implementation session.',
+        },
+        progressId: `follow-up-failed:${request.controlId}`,
+        workspaceId: request.workspaceId,
+      }).pipe(Effect.provideService(SqlClient, sql))
+      yield* acceptExecutionEventIntoConversation(
+        event,
+        rootIdentity,
+        workflowEngine
+      ).pipe(Effect.provideService(SqlClient, sql))
+    })
+    yield* delivery.pipe(
+      Effect.catchCause(() => reportFailure.pipe(Effect.ignore)),
+      Effect.forkIn(runtimeScope, { startImmediately: true })
+    )
+  })
+
   const mutateExecution = Effect.fn('RootDurableRuntime.mutateExecution')(
     function* (
       kind: 'follow-up' | 'cancel',
@@ -2531,6 +2650,15 @@ const makeRuntimeService = Effect.gen(function* () {
             if (controlEffect === undefined) {
               return yield* runtimeError('storage-failure')
             }
+            if (kind === 'follow-up') {
+              // A follow-up is complete once it is durably accepted, the same
+              // way starting an Action is. Delivery to the implementation
+              // session happens in the background so the caller is free
+              // immediately; a delivery failure surfaces as an execution event.
+              const receipt = yield* completeControl(request)
+              yield* deliverFollowUpInBackground(request, row, controlEffect)
+              return receipt
+            }
             const outcome = yield* Effect.exit(controlEffect)
             if (Exit.isFailure(outcome)) {
               yield* sql.withTransaction(
@@ -2588,24 +2716,7 @@ const makeRuntimeService = Effect.gen(function* () {
                 })
               )
             }
-            const finalRow = yield* ownedExecutionRow(
-              request.executionId,
-              request.conversationId,
-              request.workspaceId
-            )
-            const receipt = ExecutionControlReceipt.make({
-              controlId: request.controlId,
-              deduplicated: false,
-              execution: yield* controlSnapshot(finalRow),
-            })
-            const resultJson = yield* boundedPayloadJson(receipt)
-            yield* sql`
-              UPDATE laborer_execution_controls
-              SET status = 'completed', result_json = ${resultJson}
-               WHERE control_id = ${request.controlId}
-                 AND workspace_id = ${request.workspaceId}
-                 AND status = 'accepted'
-            `
+            const receipt = yield* completeControl(request)
             if (cancelledEvent !== undefined) {
               yield* taskEmission.emit({
                 acceptedAtUnixMs: row.acceptedAtUnixMs ?? 0,
@@ -3203,6 +3314,7 @@ const makeRuntimeService = Effect.gen(function* () {
             )
           )
       }),
+    registerConversation: registerConversationPublicly,
     runConversation,
     startExecution,
     workThreadActivity,

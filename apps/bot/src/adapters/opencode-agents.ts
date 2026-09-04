@@ -2,14 +2,7 @@ import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import type { Scope } from 'effect'
-import {
-  Effect,
-  Array as EffectArray,
-  Fiber,
-  Option,
-  pipe,
-  Semaphore,
-} from 'effect'
+import { Effect, Array as EffectArray, Fiber, Option } from 'effect'
 import { OPEN_CODE_COMMAND } from '../acp-runtime/open-code-acp-process.ts'
 import { HandlerFailure } from '../core/errors.ts'
 import type {
@@ -253,6 +246,27 @@ const isSessionWaitUnavailable = (error: unknown): boolean => {
   )
 }
 
+// `POST /session/:id/wait` holds the response open until the session is
+// idle. Node's fetch (undici) gives up on a headerless response after its
+// default 300 s headers timeout, so a turn longer than five minutes surfaces
+// as a transport error although the session is simply still working. The
+// wait is idempotent, so re-issuing it is the correct recovery.
+const isSessionWaitTransportTimeout = (error: unknown): boolean => {
+  const candidates = [error, error instanceof Error ? error.cause : undefined]
+  return candidates.some(
+    (candidate) =>
+      isRecord(candidate) &&
+      (candidate.code === 'UND_ERR_HEADERS_TIMEOUT' ||
+        candidate.code === 'UND_ERR_BODY_TIMEOUT' ||
+        candidate.name === 'HeadersTimeoutError' ||
+        candidate.name === 'BodyTimeoutError')
+  )
+}
+
+const MAX_SESSION_WAIT_TRANSPORT_RETRIES = Math.ceil(
+  MAX_IMPLEMENTATION_OBSERVATION_DURATION_MILLIS / (60 * 1000)
+)
+
 const apiEffect = <A>(
   operation: string,
   evaluate: () => Promise<A>
@@ -272,22 +286,41 @@ const isTerminalAssistant = (message: OpenCodeSessionMessage): boolean =>
   message.finish !== 'tool-calls' &&
   message.finish !== 'unknown'
 
-const promptWaitState = (
+// OpenCode admits a prompt sent to a busy session as a steer and promotes it
+// into the running execution between steps, so a follow-up user message can
+// appear inside the turn that an earlier prompt started. The turn a prompt
+// owns therefore runs until the first terminal assistant message after it,
+// across any steered user messages, rather than stopping at the next user
+// message.
+const turnAfterPrompt = (
   messages: readonly OpenCodeSessionMessage[],
   promptId: string
-): PromptWaitState => {
+): readonly OpenCodeSessionMessage[] | null => {
   const promptIndex = EffectArray.findFirstIndex(
     messages,
     (message) => message.role === 'user' && message.id === promptId
   )
   if (Option.isNone(promptIndex)) {
+    return null
+  }
+  const rest = EffectArray.drop(messages, promptIndex.value + 1)
+  const terminalIndex = EffectArray.findFirstIndex(rest, isTerminalAssistant)
+  return Option.isSome(terminalIndex)
+    ? EffectArray.take(rest, terminalIndex.value + 1)
+    : rest
+}
+
+const promptWaitState = (
+  messages: readonly OpenCodeSessionMessage[],
+  promptId: string
+): PromptWaitState => {
+  const turn = turnAfterPrompt(messages, promptId)
+  if (turn === null) {
     return 'missing-prompt'
   }
-  const assistants = pipe(
-    messages,
-    EffectArray.drop(promptIndex.value + 1),
-    EffectArray.takeWhile((message) => message.role !== 'user'),
-    EffectArray.filter((message) => message.role === 'assistant')
+  const assistants = EffectArray.filter(
+    turn,
+    (message) => message.role === 'assistant'
   )
   if (EffectArray.some(assistants, (message) => message.status === 'error')) {
     return 'error'
@@ -859,10 +892,19 @@ export const makeOpenCodeSessionClientFromV2Api = (
         ...sessionIdentity,
         promptId: input.promptId,
       }
-      return Effect.tryPromise({
+      const awaitIdle = Effect.tryPromise({
         try: () => api.wait({ sessionId: sessionIdentity.sessionId }),
-        catch: (error) => ({ unavailable: isSessionWaitUnavailable(error) }),
+        catch: (error) => ({
+          transportTimeout: isSessionWaitTransportTimeout(error),
+          unavailable: isSessionWaitUnavailable(error),
+        }),
       }).pipe(
+        Effect.retry({
+          times: MAX_SESSION_WAIT_TRANSPORT_RETRIES,
+          while: (error) => error.transportTimeout,
+        })
+      )
+      return awaitIdle.pipe(
         Effect.matchEffect({
           onFailure: (error) =>
             error.unavailable
@@ -1056,29 +1098,12 @@ const implementationFollowUpWorkflow = (
   request: ImplementationAgentResumeRequest
 ): string =>
   [
-    'Continue an existing coding execution in the current working directory.',
+    'Continue an existing coding execution in the current working directory. This follow-up may arrive while you are still working on the original request; if so, fold it into the work in progress rather than starting over.',
     'Continue from the prior messages, tool activity, and work already completed in this OpenCode session. Inspect the current worktree and git diff when needed to confirm the latest state.',
-    'Execute the new user request fully, preserve repository conventions, add or update focused tests when appropriate, and validate the resulting worktree.',
+    'Execute the new user request fully alongside the original one, preserve repository conventions, add or update focused tests when appropriate, and validate the resulting worktree.',
     `Execution: ${request.executionId}`,
     `New user request:\n${request.prompt}`,
   ].join('\n\n')
-
-const messagesAfterPrompt = (
-  messages: readonly OpenCodeSessionMessage[],
-  promptId: string
-): readonly OpenCodeSessionMessage[] | null => {
-  const promptIndex = EffectArray.findFirstIndex(
-    messages,
-    (message) => message.role === 'user' && message.id === promptId
-  )
-  return Option.isSome(promptIndex)
-    ? pipe(
-        messages,
-        EffectArray.drop(promptIndex.value + 1),
-        EffectArray.takeWhile((message) => message.role !== 'user')
-      )
-    : null
-}
 
 const acceptImplementationMessages = (
   messages: readonly OpenCodeSessionMessage[],
@@ -1087,7 +1112,7 @@ const acceptImplementationMessages = (
   requirePersistedPrompt: boolean,
   acceptedResponses: Map<string, string>
 ): Effect.Effect<void, HandlerFailure> => {
-  const messagesAfterPersistedPrompt = messagesAfterPrompt(messages, promptId)
+  const messagesAfterPersistedPrompt = turnAfterPrompt(messages, promptId)
   if (messagesAfterPersistedPrompt === null && requirePersistedPrompt) {
     return Effect.fail(
       protocolFailure('OpenCode Implementation prompt is unavailable')
@@ -1239,13 +1264,12 @@ const implementationSession = (
   initialPromptId: string,
   completion: Effect.Effect<void, HandlerFailure>
 ): ImplementationAgentSession => {
-  const serial = Semaphore.makeUnsafe(1)
   const pollIntervalMs =
     options.observationPollIntervalMs ??
     DEFAULT_IMPLEMENTATION_OBSERVATION_POLL_INTERVAL_MILLIS
   let activePromptId = initialPromptId
   return {
-    completion: serial.withPermit(completion),
+    completion,
     control: (controlRequest) => {
       if (
         controlRequest.conversationId !== conversationId ||
@@ -1275,25 +1299,27 @@ const implementationSession = (
         )
       }
       const promptId = resumeRequest.promptId
-      return serial.withPermit(
-        Effect.gen(function* () {
-          activePromptId = promptId
-          if (options.client.prepareSessionForReuse === undefined) {
-            return yield* protocolFailure(
-              'OpenCode legacy permission inspection is unavailable'
-            )
-          }
-          yield* options.client.prepareSessionForReuse(identity)
-          yield* runImplementationPrompt(
-            options.client,
-            identity,
-            promptId,
-            implementationFollowUpWorkflow(resumeRequest),
-            resumeAcceptResponse,
-            pollIntervalMs
+      // A follow-up is submitted immediately, exactly like typing into a busy
+      // OpenCode session: the server admits it as a steer and promotes it into
+      // the running turn between steps. Nothing waits for the initial prompt
+      // to finish first; observation of the steered turn runs alongside it.
+      return Effect.gen(function* () {
+        activePromptId = promptId
+        if (options.client.prepareSessionForReuse === undefined) {
+          return yield* protocolFailure(
+            'OpenCode legacy permission inspection is unavailable'
           )
-        })
-      )
+        }
+        yield* options.client.prepareSessionForReuse(identity)
+        yield* runImplementationPrompt(
+          options.client,
+          identity,
+          promptId,
+          implementationFollowUpWorkflow(resumeRequest),
+          resumeAcceptResponse,
+          pollIntervalMs
+        )
+      })
     },
     sessionId: identity.sessionId,
   }

@@ -824,10 +824,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         <ScrollArea
           className="min-w-0 flex-1 rounded-none"
           data-right-panel-tab-list
+          fill
           scrollFade
         >
           <div
-            className="flex h-full w-max min-w-full items-center gap-1 pt-[3px] pb-[5px]"
+            className="flex h-full w-max min-w-full items-center gap-1"
             ref={tabListRef}
           >
             {props.surfaces.map((surface, surfaceIndex) => {

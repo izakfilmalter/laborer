@@ -119,11 +119,12 @@ export function RightPanelWorkspaceTabs({
       <ScrollArea
         className="min-w-0 flex-1 rounded-none"
         data-right-panel-workspace-tab-list
+        fill
         scrollFade
       >
         <div
           aria-label="Open workspaces"
-          className="flex h-full w-max min-w-full items-center gap-1 pt-[3px] pb-[5px]"
+          className="flex h-full w-max min-w-full items-center gap-1"
           onKeyDown={handleKeyDown}
           ref={tabListRef}
           role="tablist"

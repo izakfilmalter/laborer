@@ -48,6 +48,7 @@ import { GitActionsControl } from '@/components/git-actions-control'
 import { GitHubConversationHoverCard } from '@/components/github-conversation-hover-card'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
+import { OpenSlackThreadButton } from '@/components/open-slack-thread-button'
 import { ProjectIcon } from '@/components/project-icon'
 import { TaskIdentifier } from '@/components/task-identifier'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
@@ -403,6 +404,10 @@ function ExpandedFrameActions({
           />
           <EditTaskCardButton
             branchName={branchName}
+            size="icon-sm"
+            workspaceId={taskBackedWorkspaceId}
+          />
+          <OpenSlackThreadButton
             size="icon-sm"
             workspaceId={taskBackedWorkspaceId}
           />

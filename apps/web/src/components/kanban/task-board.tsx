@@ -44,7 +44,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  ExternalLink,
   FolderGit2,
   GitBranch,
   Pencil,
@@ -92,6 +91,7 @@ import {
   WorktreeChip,
 } from '@/components/kanban/worktree-affordance'
 import { TaskLabelsBadge } from '@/components/labels/label-chips'
+import { SlackThreadButton } from '@/components/open-slack-thread-button'
 import {
   ProjectDragHandle,
   ProjectDropIndicator,
@@ -119,7 +119,6 @@ import {
 import type { CollapseState } from '@/hooks/use-project-collapse-state'
 import { useProjectShortName } from '@/hooks/use-project-short-name'
 import { extractErrorCode, extractErrorMessage } from '@/lib/errors'
-import { localApi } from '@/lib/local-api'
 import { usePanelActions } from '@/panels/panel-context'
 import { TerminalPane } from '@/panes/terminal-pane'
 
@@ -370,13 +369,6 @@ function TaskBoardCard({
   /** The workspace this card's work already runs in, if any. */
   readonly workspace?: BoardCardWorkspace | undefined
 }) {
-  const openSlack = (event: React.MouseEvent) => {
-    event.stopPropagation()
-    if (task.slackPermalink) {
-      localApi.openExternal(task.slackPermalink)
-    }
-  }
-
   const analysis = slackAnalysisState(task)
   const labels = labelsForIds(task.labelIds, labelRows)
   const title = boardTaskTitle(task)
@@ -386,23 +378,7 @@ function TaskBoardCard({
   // thread, the form that names it, and the cancel that takes it off the board.
   const boardActions = (
     <>
-      {task.slackPermalink && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="Open Slack thread"
-                onClick={openSlack}
-                size="icon-xs"
-                variant="ghost"
-              />
-            }
-          >
-            <ExternalLink className="size-3.5 text-muted-foreground" />
-          </TooltipTrigger>
-          <TooltipContent>Open Slack thread</TooltipContent>
-        </Tooltip>
-      )}
+      <SlackThreadButton slackPermalink={task.slackPermalink} />
       {!isOverlay && onOpen && (
         <Tooltip>
           <TooltipTrigger
@@ -522,6 +498,7 @@ function TaskBoardCard({
         // Destroying a workspace belongs where the workspace lives. The
         // board's destructive act is cancelling the card.
         showEditAction={false}
+        showSlackThreadAction={false}
         subtitle={
           <p className="line-clamp-2 text-muted-foreground text-xs">
             {title.text}

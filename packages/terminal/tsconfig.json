@@ -5,5 +5,5 @@
     "declaration": true,
     "types": ["node"]
   },
-  "include": ["src", "test"]
+  "include": ["diagnostics", "src", "test"]
 }

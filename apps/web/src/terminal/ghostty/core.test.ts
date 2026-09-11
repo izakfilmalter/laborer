@@ -40,6 +40,10 @@ describe('ghosttyCellText', () => {
     expect([...text]).toEqual(['\u{1F642}', '\u{20E3}'])
   })
 
+  it('converts a single astral codepoint', () => {
+    expect(ghosttyCellText(codepointView([0x1_f6_42]), 1)).toBe('🙂')
+  })
+
   it('returns an empty string for empty cells', () => {
     expect(ghosttyCellText(codepointView([]), 0)).toBe('')
   })

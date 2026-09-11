@@ -4,8 +4,9 @@
  * Tests the createCoalescingDataHandler function that rate-limits raw PTY
  * output to ~16ms windows so downstream consumers (journal, headless
  * terminal, attach subscribers, renderer IPC) see at most ~60 emits/sec
- * instead of one per raw PTY chunk — while the first chunk after idle
- * still goes out immediately, so a keystroke echo is never delayed.
+ * instead of one per raw PTY chunk. The first chunk after idle goes out
+ * immediately; input also expedites output when continuous TUI redraws
+ * prevent the terminal from ever becoming idle.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,6 +33,75 @@ describe('createCoalescingDataHandler', () => {
 
     expect(onFlush).toHaveBeenCalledOnce()
     expect(onFlush).toHaveBeenCalledWith('j')
+  })
+
+  it('expedites a fragmented input response during continuous TUI output', () => {
+    const emitted: string[] = []
+    const handler = createCoalescingDataHandler((data) => emitted.push(data))
+    handler.write('background frame')
+    vi.advanceTimersByTime(2)
+    handler.write('pending background')
+    // The PTY input write arrives while the background window is still open.
+    handler.onInput()
+    handler.write('response header')
+    handler.write('typed character')
+    vi.advanceTimersByTime(1)
+    expect(emitted).toEqual([
+      'background frame',
+      'pending backgroundresponse headertyped character',
+    ])
+    handler.write('next character')
+    vi.advanceTimersByTime(1)
+    expect(emitted.at(-1)).toBe('next character')
+    handler.flush()
+  })
+
+  it('does not postpone an expedited response when more input arrives', () => {
+    const onFlush = vi.fn()
+    const handler = createCoalescingDataHandler(onFlush)
+    handler.write('background')
+    handler.onInput()
+    handler.write('response')
+    vi.advanceTimersByTime(0.5)
+    handler.onInput()
+    vi.advanceTimersByTime(0.5)
+    expect(onFlush).toHaveBeenLastCalledWith('response')
+    handler.flush()
+  })
+
+  it('resumes the configured flood rate after input has stopped', () => {
+    const onFlush = vi.fn()
+    const handler = createCoalescingDataHandler(onFlush, { windowMs: 32 })
+    handler.onInput()
+    for (let index = 0; index < 100; index += 1) {
+      handler.write('interactive output')
+      vi.advanceTimersByTime(1)
+    }
+    onFlush.mockClear()
+    for (let index = 0; index < 31; index += 1) {
+      handler.write('background output')
+      vi.advanceTimersByTime(1)
+    }
+    expect(onFlush).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(1)
+    expect(onFlush).toHaveBeenCalledTimes(2)
+    handler.flush()
+  })
+
+  it('allows an explicit fixed window to opt out of input priority', () => {
+    const onFlush = vi.fn()
+    const handler = createCoalescingDataHandler(onFlush, {
+      windowMs: 16,
+      prioritizeInput: false,
+    })
+    handler.write('background')
+    handler.onInput()
+    handler.write('response')
+    vi.advanceTimersByTime(1)
+    expect(onFlush).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(15)
+    expect(onFlush).toHaveBeenLastCalledWith('response')
+    handler.flush()
   })
 
   it('concatenates chunks arriving within the window into one trailing emit', () => {

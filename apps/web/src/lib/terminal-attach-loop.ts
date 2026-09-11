@@ -7,8 +7,10 @@
  * maintained — one cursor for what the write queue had taken, another for what
  * the emulator had reported parsed — has no subject here: there is one cursor,
  * and it is both.
- * For the same reason replay is settled by the daemon's `ReplayComplete` alone;
- * there is no render still owed when that frame arrives.
+ * For the same reason parsing is settled by the daemon's `ReplayComplete`
+ * alone. Live output submits canvas drawing synchronously; replay can still
+ * schedule a redraw. Browser presentation is separate, so acknowledgements and
+ * replay progress do not measure physical display paint.
  *
  * The loop is a plain object rather than a hook so the frame ordering can be
  * tested without a daemon, a canvas, or a WASM module. It owns no identity: the

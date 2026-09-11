@@ -332,6 +332,30 @@ describe('isTerminalCopyShortcut', () => {
       isTerminalCopyShortcut(event({ key: 'j', metaKey: true }), 'MacIntel')
     ).toBe(false)
   })
+
+  it('supports the conventional Ctrl+Insert copy shortcut', () => {
+    expect(
+      isTerminalCopyShortcut(
+        event({ key: 'Insert', ctrlKey: true }),
+        'Linux x86_64'
+      )
+    ).toBe(true)
+    expect(
+      isTerminalCopyShortcut(event({ key: 'Insert' }), 'Linux x86_64')
+    ).toBe(false)
+    expect(
+      isTerminalCopyShortcut(
+        event({ key: 'Insert', ctrlKey: true, shiftKey: true }),
+        'Linux x86_64'
+      )
+    ).toBe(false)
+    expect(
+      isTerminalCopyShortcut(
+        event({ key: 'Insert', ctrlKey: true }),
+        'MacIntel'
+      )
+    ).toBe(false)
+  })
 })
 
 describe('applyTerminalCopyEvent', () => {

@@ -665,9 +665,10 @@ function TerminalPaneRenderer({
       {/* Loading overlay — shown while the PTY is spawning and no output has
           arrived yet, and again while a reconnect replays history. Covers the
           terminal canvas with a spinner and message, lifting once the daemon
-          reports the replay complete — which, with a synchronous renderer, is
-          also the moment it is on screen. A stopped terminal skips startup but
-          still replays, so it is covered while its final screen is restored. */}
+          reports the replay complete and its output has been parsed. The
+          browser presents the canvas separately. A stopped terminal skips
+          startup but still replays, so it is covered while its final screen is
+          restored. */}
       {loadingMessage !== undefined && (
         <TerminalLoadingOverlay message={loadingMessage} />
       )}

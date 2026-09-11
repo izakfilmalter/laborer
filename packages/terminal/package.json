@@ -6,6 +6,8 @@
   "scripts": {
     "with-env": "dotenv -e ../../.env.local --",
     "dev": "tsdown --watch",
+    "diagnostic:test": "vitest run --config diagnostics/vitest.config.ts",
+    "diagnostic:transport": "tsx diagnostics/cli.ts",
     "build": "tsdown && tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

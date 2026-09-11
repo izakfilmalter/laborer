@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghostty terminal latency diagnostic</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Isolated browser diagnostic</p>
+          <h1>Ghostty terminal latency</h1>
+          <p class="description">
+            Measure local echo, PTY transport, or a running TUI.
+          </p>
+        </div>
+        <div id="status" role="status">Starting…</div>
+      </header>
+
+      <section class="controls" aria-label="Diagnostic controls">
+        <label>
+          Sequence
+          <input id="sequence" value="abcdefghijklmnopqrstuvwxyz0123456789">
+        </label>
+        <label>
+          Interval (ms)
+          <input id="interval" type="number" min="0" max="1000" value="8">
+        </label>
+        <label>
+          Repeats
+          <input id="repeats" type="number" min="1" max="100" value="5">
+        </label>
+        <label>
+          Optional RPC WebSocket URL
+          <input id="rpc-url" placeholder="ws://127.0.0.1:2210/ws">
+        </label>
+        <label>
+          Attach to terminal ID (optional)
+          <input
+            id="terminal-id"
+            placeholder="leave empty to launch a new process"
+          >
+        </label>
+        <label>
+          Command to launch (blank = echo only)
+          <input id="rpc-command" placeholder="opencode2 /path/to/project">
+        </label>
+        <label>
+          Output drawing (A/B)
+          <select id="render-output">
+            <option value="immediate">Immediate output (current)</option>
+            <option value="frame">Next animation frame (previous)</option>
+          </select>
+        </label>
+        <button id="connect-rpc" type="button">Connect RPC</button>
+        <button id="disconnect-rpc" type="button">Disconnect RPC</button>
+        <button id="run" type="button">Run automatic input</button>
+        <button id="run-scrollback" type="button">
+          Run scrolled-back case
+        </button>
+        <button id="run-lifecycle" type="button">Run lifecycle cases</button>
+        <button id="clear" type="button">Clear measurements</button>
+        <button id="export" type="button">Export JSON</button>
+        <p id="mode-help" class="mode-help" role="status">
+          Local echo only — this is not a shell. To run OpenCode, enter its
+          command in “Command to launch”, leave Terminal ID empty, and connect
+          RPC.
+        </p>
+      </section>
+
+      <section class="terminal-shell">
+        <div id="terminal" aria-label="Ghostty terminal diagnostic"></div>
+      </section>
+
+      <section class="results" aria-live="polite">
+        <h2>Current run</h2>
+        <pre id="summary">No measurements yet.</pre>
+        <p>
+          “Canvas submission” is a 2D drawing call. “Echo glyph submission”
+          requires a matching fillText call. Neither is a physical display-paint
+          timestamp.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

@@ -205,11 +205,14 @@ const directLayer = Layer.effect(
     // -------------------------------------------------------------------
     // Data coalescing helpers
     //
-    // PTY output is batched per terminal into ~16ms (one frame) windows
-    // before it reaches the data callback, so every downstream consumer
+    // Background PTY output is batched into ~16ms (one frame) windows.
+    // Input temporarily expedites the window so an active TUI's echo does
+    // not wait behind its continuous background redraws.
+    // Coalescing happens before the data callback, so every downstream consumer
     // (journal, headless terminal, attach subscribers, persistence) and
     // the per-chunk IPC hop toward the renderer pay the RPC + parse +
-    // draw cost at most ~60 times/sec instead of once per raw PTY chunk.
+    // draw cost at most ~60 times/sec while not interacting, instead of
+    // once per raw PTY chunk.
     // -------------------------------------------------------------------
 
     /**
@@ -252,6 +255,10 @@ const directLayer = Layer.effect(
           },
           {
             maxBufferBytes: coalesceMaxBufferBytes,
+            prioritizeInput: !(
+              Number.isInteger(envCoalesceWindowValue) &&
+              envCoalesceWindowValue > 0
+            ),
             windowMs: coalesceWindow.get,
           }
         )
@@ -408,6 +415,9 @@ const directLayer = Layer.effect(
         }
 
         try {
+          if (data.length > 0) {
+            coalescerFor(id).onInput()
+          }
           pty.write(data)
         } catch (error) {
           console.error(

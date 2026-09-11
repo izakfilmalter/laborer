@@ -450,7 +450,11 @@ export function isTerminalCopyShortcut(
   event: Pick<KeyboardEvent, 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>,
   platform = navigator.platform
 ) {
-  if (event.key.toLowerCase() !== 'c') {
+  const key = event.key.toLowerCase()
+  if (key === 'insert' && !isMacPlatform(platform)) {
+    return event.ctrlKey && !event.shiftKey && !event.metaKey
+  }
+  if (key !== 'c') {
     return false
   }
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey
@@ -518,6 +522,11 @@ export function isTerminalPasteShortcut(
   return isMacPlatform(platform)
     ? event.metaKey
     : event.ctrlKey && event.shiftKey
+}
+
+/** Middle-click paste is an X11/Wayland convention, not a macOS/Windows one. */
+function isMiddleClickPastePlatform(): boolean {
+  return /linux|bsd/i.test(navigator.platform)
 }
 
 /**
@@ -764,6 +773,8 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onSearchChange?: (state: TerminalSearchState) => void
   readonly onSelectionChange: () => void
   readonly theme: GhosttyTheme
+  /** Read after font and WASM loading; hosts may supply a getter. */
+  readonly visible?: boolean
 }
 
 export class GhosttyTerminalSurface {
@@ -777,6 +788,8 @@ export class GhosttyTerminalSurface {
   private readonly context: CanvasRenderingContext2D
   private readonly core: GhosttyTerminalCore
   private readonly options: GhosttyTerminalSurfaceOptions
+  private visible: boolean
+  private hasSize = false
   private metrics: GhosttyCellMetrics
   private fontFamily: string
   private requestedFontFamily: string | undefined
@@ -873,6 +886,7 @@ export class GhosttyTerminalSurface {
     this.mouseAnyEventTracking = core.isMouseAnyEventTracking()
     this.metrics = metrics
     this.options = options
+    this.visible = options.visible ?? true
     this.theme = options.theme
     this.fontFamily = fontFamily
     this.requestedFontFamily = options.font?.family
@@ -968,8 +982,24 @@ export class GhosttyTerminalSurface {
       options
     )
     surface.fit()
-    surface.requestRender()
     return surface
+  }
+
+  /** Pause canvas work without interrupting output parsing or terminal replies. */
+  setVisible(visible: boolean): void {
+    if (this.disposed || this.visible === visible) {
+      return
+    }
+    this.visible = visible
+    this.cursorOn = true
+    this.forceFullRender = true
+    this.scrollbarDirty = true
+    if (!visible) {
+      this.cancelRender()
+      this.setSelectionAutoscroll(0)
+      return
+    }
+    this.fit()
   }
 
   write(data: string): void {
@@ -983,7 +1013,17 @@ export class GhosttyTerminalSurface {
     this.cursorOn = true
     this.scrollbarDirty = true
     this.refreshSearchAfterOutput()
-    this.requestRender()
+    this.renderOutput()
+  }
+
+  /** Laborer addition: output is already coalesced at the PTY boundary. */
+  private renderOutput(): void {
+    // Waiting for another animation frame added ~15ms to interactive echo and
+    // grouped separately arriving keystrokes together. Submit the parsed rows
+    // now; renderFrame also consumes any pending cursor/selection redraw.
+    if (this.visible && this.hasSize) {
+      this.renderFrame()
+    }
   }
 
   resetAndWrite(data: string): void {
@@ -1098,14 +1138,18 @@ export class GhosttyTerminalSurface {
   }
 
   fit(): boolean {
-    if (this.disposed) {
+    if (this.disposed || !this.visible) {
       return false
     }
     const width = this.mount.clientWidth
     const height = this.mount.clientHeight
     if (width <= 0 || height <= 0) {
+      this.hasSize = false
+      this.forceFullRender = true
+      this.cancelRender()
       return false
     }
+    this.hasSize = true
     const ratio = window.devicePixelRatio || 1
     const pixelWidth = Math.max(1, Math.round(width * ratio))
     const pixelHeight = Math.max(1, Math.round(height * ratio))
@@ -1151,7 +1195,7 @@ export class GhosttyTerminalSurface {
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
     // composites the old backing store stretched into the new element box.
-    if (shouldRender) {
+    if (shouldRender || this.forceFullRender) {
       this.renderFrame()
     }
     return true
@@ -1176,6 +1220,9 @@ export class GhosttyTerminalSurface {
   }
 
   focus(): void {
+    if (this.disposed || !this.visible) {
+      return
+    }
     this.input.focus({ preventScroll: true })
   }
 
@@ -1205,6 +1252,15 @@ export class GhosttyTerminalSurface {
     if (encoded.length > 0) {
       this.options.onData(encoded)
     }
+  }
+
+  /** Paste the browser-accessible equivalent of the Linux primary selection. */
+  private pasteTerminalSelection(): void {
+    const selection = this.getSelection()
+    if (selection.length === 0) {
+      return
+    }
+    void this.pasteFromClipboard(() => Promise.resolve(selection))
   }
 
   hasSelection(): boolean {
@@ -1482,12 +1538,7 @@ export class GhosttyTerminalSurface {
       // the surface unmounts inside the debounce window.
       this.options.onResize(this.cols, this.rows)
     }
-    if (this.frame !== 0) {
-      window.cancelAnimationFrame(this.frame)
-    }
-    if (this.cursorTimer !== null) {
-      window.clearTimeout(this.cursorTimer)
-    }
+    this.cancelRender()
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer)
     }
@@ -1518,12 +1569,12 @@ export class GhosttyTerminalSurface {
       // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
       // onCopyEvent; not preventing the default keeps that path alive. WebKit
       // omits the keyboard copy event without a DOM selection, so race the
-      // clipboard write against it the same way paste races its read. The
-      // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
-      // inspect), so synthesize one with execCommand("copy").
+      // clipboard write against it the same way paste races its read.
+      // Ctrl+Shift+C and Ctrl+Insert have no native copy event, so synthesize
+      // one with execCommand("copy").
       const selection = this.getSelection()
       this.primeCopy(selection)
-      if (event.shiftKey) {
+      if (event.shiftKey || event.key.toLowerCase() === 'insert') {
         event.preventDefault()
         document.execCommand('copy')
       } else {
@@ -1802,6 +1853,11 @@ export class GhosttyTerminalSurface {
       this.mouseReportingButton = button
       this.sendMouse('press', button, event)
       this.canvas.setPointerCapture(event.pointerId)
+      return
+    }
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      // Keep pointerdown uncancelled so pane activation can still observe it.
+      this.pasteTerminalSelection()
       return
     }
     if (event.button !== 0) {
@@ -2117,10 +2173,19 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onMouseDown = (event: MouseEvent) => {
-    if (event.button === 0) {
+    if (
+      event.button === 0 ||
+      (event.button === 1 && isMiddleClickPastePlatform())
+    ) {
       event.preventDefault()
     }
     this.focus()
+  }
+
+  private readonly onMouseUp = (event: MouseEvent) => {
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      event.preventDefault()
+    }
   }
 
   private readonly onContextMenu = (event: MouseEvent) => {
@@ -2230,6 +2295,7 @@ export class GhosttyTerminalSurface {
     this.canvas.addEventListener('pointercancel', this.onPointerUp)
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false })
     this.canvas.addEventListener('mousedown', this.onMouseDown)
+    this.canvas.addEventListener('mouseup', this.onMouseUp)
     this.canvas.addEventListener('contextmenu', this.onContextMenu)
     this.scrollbar.addEventListener('pointerdown', this.onScrollbarPointerDown)
     this.scrollbar.addEventListener('pointermove', this.onScrollbarPointerMove)
@@ -2255,6 +2321,7 @@ export class GhosttyTerminalSurface {
     this.canvas.removeEventListener('pointercancel', this.onPointerUp)
     this.canvas.removeEventListener('wheel', this.onWheel)
     this.canvas.removeEventListener('mousedown', this.onMouseDown)
+    this.canvas.removeEventListener('mouseup', this.onMouseUp)
     this.canvas.removeEventListener('contextmenu', this.onContextMenu)
     this.scrollbar.removeEventListener(
       'pointerdown',
@@ -2334,7 +2401,7 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
-    if (this.disposed || this.frame !== 0) {
+    if (this.disposed || !this.visible || !this.hasSize || this.frame !== 0) {
       return
     }
     this.frame = window.requestAnimationFrame(() => {
@@ -2343,13 +2410,30 @@ export class GhosttyTerminalSurface {
     })
   }
 
+  private cancelRender(): void {
+    if (this.frame !== 0) {
+      window.cancelAnimationFrame(this.frame)
+      this.frame = 0
+    }
+    if (this.cursorTimer !== null) {
+      window.clearTimeout(this.cursorTimer)
+      this.cursorTimer = null
+    }
+  }
+
   private renderFrame(): void {
-    if (this.disposed) {
+    if (this.disposed || !this.visible) {
       return
     }
     if (this.frame !== 0) {
       window.cancelAnimationFrame(this.frame)
       this.frame = 0
+    }
+    if (this.mount.clientWidth === 0 || this.mount.clientHeight === 0) {
+      this.hasSize = false
+      this.forceFullRender = true
+      this.cancelRender()
+      return
     }
     this.snapshot = this.core.snapshot()
     // A cursor that is not blinking right now must be drawn, never caught in an
@@ -2426,7 +2510,7 @@ export class GhosttyTerminalSurface {
 
   private blinkEnabled(): boolean {
     const snapshot = this.snapshot
-    if (!snapshot) {
+    if (!(snapshot && this.visible && this.hasSize)) {
       return false
     }
     return shouldBlinkTerminalCursor({

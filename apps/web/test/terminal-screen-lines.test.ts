@@ -16,6 +16,7 @@ import {
   GhosttyTerminalCore,
   type GhosttyTheme,
 } from '../src/terminal/ghostty/core'
+import { loadGhosttyRuntime } from '../src/terminal/ghostty/runtime'
 
 const THEME: GhosttyTheme = {
   background: { r: 0, g: 0, b: 0 },
@@ -100,5 +101,34 @@ describe('GhosttyTerminalCore.screenLines', () => {
     terminal.setSelection({ x: 0, y: 0, tag: 2 }, { x: 4, y: 0, tag: 2 })
     terminal.screenLines()
     expect(terminal.selectionText()).toBe('alpha')
+  })
+})
+
+describe('Ghostty snapshot allocation reuse', () => {
+  it('keeps styled graphemes correct after shared WASM memory grows', async () => {
+    const terminal = await writtenTerminal('\x1b[1;3mA')
+    expect(terminal.snapshot().rowData[0]?.cells[0]).toMatchObject({
+      text: 'A',
+      bold: true,
+      italic: true,
+    })
+
+    // All panes share this memory. Another pane allocating scrollback can
+    // detach cached DataViews between snapshots of this otherwise idle pane.
+    const runtime = await loadGhosttyRuntime()
+    runtime.memory.grow(1)
+    terminal.write('e\u0301\x1b[0mZ')
+    const snapshot = terminal.snapshot()
+    expect(snapshot.rowData[0]?.text.trimEnd()).toBe('Ae\u0301Z')
+    expect(snapshot.rowData[0]?.cells[1]).toMatchObject({
+      text: 'e\u0301',
+      bold: true,
+      italic: true,
+    })
+    expect(snapshot.rowData[0]?.cells[2]).toMatchObject({
+      text: 'Z',
+      bold: false,
+      italic: false,
+    })
   })
 })

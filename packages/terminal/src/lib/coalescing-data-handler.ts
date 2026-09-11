@@ -3,7 +3,7 @@
  *
  * Agent TUIs emit continuous small writes; forwarding each one costs a
  * full IPC hop, RPC parse, and renderer draw (~170 renders/sec measured).
- * This module rate-limits raw PTY output per terminal to at most one emit
+ * This module rate-limits background PTY output per terminal to one emit
  * per ~16ms window (one frame), collapsing the render rate to ≤60/sec.
  * VS Code's pty host performs the same batching.
  *
@@ -13,6 +13,8 @@
  * buffered and emitted together when it closes, which re-arms the window
  * so a sustained flood stays at one emit per window. A max-buffer-size
  * safety valve flushes immediately during output floods to bound memory.
+ * Input temporarily shortens this window to 1ms: an active TUI is never
+ * idle, so leading-edge delivery alone still delays its keystroke echoes.
  *
  * Ordering is preserved exactly: data is emitted in arrival order, valve
  * flushes are synchronous, and callers must invoke `flush()` before
@@ -23,6 +25,8 @@ import { utf8Bytes } from '../services/terminal-transport.js'
 
 /** Coalescing window — one frame at 60fps. */
 const COALESCE_WINDOW_MS_DEFAULT = 16
+const INPUT_COALESCE_WINDOW_MS = 1
+const INPUT_PRIORITY_DURATION_MS = 100
 
 /** Safety valve — flush immediately once this many bytes are buffered. */
 const COALESCE_MAX_BUFFER_BYTES_DEFAULT = 256 * 1024
@@ -35,12 +39,16 @@ interface CoalescingDataHandler {
    * output ordering relative to lifecycle events is preserved).
    */
   readonly flush: () => void
+  /** Prioritize output briefly after a PTY input write, including pending output. */
+  readonly onInput: () => void
   /** Append a chunk. Schedules a flush or triggers the size valve. */
   readonly write: (data: string) => void
 }
 
 interface CoalescingOptions {
   readonly maxBufferBytes?: number
+  /** Disable input priority when an operator explicitly pins the output window. */
+  readonly prioritizeInput?: boolean
   /**
    * Coalescing window in milliseconds, or a getter re-read every time a
    * flush timer is armed. A getter makes the window runtime-switchable
@@ -94,8 +102,13 @@ const createCoalescingDataHandler = (
   options?: CoalescingOptions
 ): CoalescingDataHandler => {
   const windowOption = options?.windowMs ?? COALESCE_WINDOW_MS_DEFAULT
-  const currentWindowMs =
+  const configuredWindowMs =
     typeof windowOption === 'function' ? windowOption : () => windowOption
+  let inputPriorityUntil = 0
+  const currentWindowMs = (): number =>
+    performance.now() < inputPriorityUntil
+      ? Math.min(INPUT_COALESCE_WINDOW_MS, configuredWindowMs())
+      : configuredWindowMs()
   const maxBufferBytes =
     options?.maxBufferBytes ?? COALESCE_MAX_BUFFER_BYTES_DEFAULT
 
@@ -103,6 +116,7 @@ const createCoalescingDataHandler = (
   let bufferedBytes = 0
   /** Armed while a window is open; `undefined` means the terminal is idle. */
   let timer: ReturnType<typeof setTimeout> | undefined
+  let flushAt = 0
 
   const emit = (): void => {
     if (chunks.length === 0) {
@@ -115,6 +129,8 @@ const createCoalescingDataHandler = (
   }
 
   const openWindow = (): void => {
+    const windowMs = currentWindowMs()
+    flushAt = performance.now() + windowMs
     timer = setTimeout(() => {
       timer = undefined
       // Output that arrived inside the window goes out now, and starts
@@ -124,7 +140,21 @@ const createCoalescingDataHandler = (
         emit()
         openWindow()
       }
-    }, currentWindowMs())
+    }, windowMs)
+  }
+
+  const onInput = (): void => {
+    if (options?.prioritizeInput === false) {
+      return
+    }
+    const now = performance.now()
+    inputPriorityUntil = now + INPUT_PRIORITY_DURATION_MS
+    // Shorten an existing background window, but never debounce an earlier
+    // deadline when several input writes arrive together.
+    if (timer !== undefined && now + currentWindowMs() < flushAt) {
+      clearTimeout(timer)
+      openWindow()
+    }
   }
 
   const flush = (): void => {
@@ -155,7 +185,7 @@ const createCoalescingDataHandler = (
     }
   }
 
-  return { flush, write }
+  return { flush, onInput, write }
 }
 
 export {

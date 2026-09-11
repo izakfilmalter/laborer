@@ -6,6 +6,8 @@
   "scripts": {
     "with-env": "dotenv -e ../../.env.local --",
     "dev": "vite",
+    "dev:terminal-diagnostic": "vite --config diagnostics/vite.config.ts",
+    "diagnose:terminal": "bun scripts/terminal-latency.mjs",
     "build": "vite build",
     "build:ghostty-wasm": "bash ./scripts/build-libghostty-wasm.sh",
     "serve": "vite preview",

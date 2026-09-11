@@ -60,6 +60,7 @@ import { GitActionsControl } from '@/components/git-actions-control'
 import { GitHubMergeConflictMark } from '@/components/github-merge-conflict-mark'
 import { GitHubPrStatusBadge } from '@/components/github-pr-status-badge'
 import { LifecyclePhase } from '@/components/lifecycle-phase-context'
+import { OpenSlackThreadButton } from '@/components/open-slack-thread-button'
 import { TaskIdentifier } from '@/components/task-identifier'
 import { TerminalList, TerminalSpawnControls } from '@/components/terminal-list'
 import { WorkspaceSyncStatus } from '@/components/workspace-sync-status'
@@ -397,6 +398,12 @@ interface WorkspaceCardProps {
    * growing two.
    */
   readonly showEditAction?: boolean | undefined
+  /**
+   * Whether the card offers to reopen the Slack thread its work came from.
+   * The board hangs its own Slack button off `actions`, so it opts out rather
+   * than growing two.
+   */
+  readonly showSlackThreadAction?: boolean | undefined
   /** Extra line under the branch — the board names the card's task there. */
   readonly subtitle?: ReactNode | undefined
   readonly workspace: WorkspaceCardWorkspace
@@ -675,6 +682,7 @@ function WorkspaceCard({
   showCreateSubWorkspaceAction = true,
   showDestroyAction = true,
   showEditAction = true,
+  showSlackThreadAction = true,
   subtitle,
   workspace,
 }: WorkspaceCardProps) {
@@ -753,6 +761,9 @@ function WorkspaceCard({
                 </Tooltip>
               }
             />
+          )}
+          {!isRootWorkspace && showSlackThreadAction && (
+            <OpenSlackThreadButton workspaceId={workspace.id} />
           )}
           {!isRootWorkspace && showEditAction && (
             <EditTaskCardButton

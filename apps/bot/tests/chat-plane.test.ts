@@ -296,9 +296,12 @@ describe('Chat plane walking skeleton', () => {
           initialize: () => Promise.resolve(),
           onNewMention: () => undefined,
           onSubscribedMessage: () => undefined,
-          postToThread: (workspaceId, channelId, rootTs, output) => {
-            publications.push([workspaceId, channelId, rootTs, output])
-            return Promise.resolve()
+          streamToThread: async (workspaceId, channelId, rootTs, chunks) => {
+            let text = ''
+            for await (const chunk of chunks) {
+              text += chunk
+            }
+            publications.push([workspaceId, channelId, rootTs, text])
           },
           shutdown: () => Promise.resolve(),
         }
@@ -306,11 +309,15 @@ describe('Chat plane walking skeleton', () => {
         yield* Effect.provide(
           Effect.gen(function* () {
             const service = yield* ChatPlane
-            yield* service.postToThread(
+            yield* service.streamToThread(
               'TSECOND',
               'CSHARED',
               '123.456',
-              'execution complete'
+              (async function* () {
+                yield 'execution '
+                await Promise.resolve()
+                yield 'complete'
+              })()
             )
           }),
           makeChatPlaneLayer({

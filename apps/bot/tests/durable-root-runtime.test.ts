@@ -1,12 +1,12 @@
 import { join } from 'node:path'
 import { layer as makeSqliteLayer } from '@effect/sql-sqlite-node/SqliteClient'
 import { assert, describe, it } from '@effect/vitest'
-import { Deferred, Effect, Ref, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Ref, Schema } from 'effect'
 import {
   ApplicationConversationMessageChunk,
   ApplicationPublicReply,
   type ApplicationShape,
-  type ExternalInputEvent,
+  ExternalInputEvent,
   ParticipantInputEvent,
 } from '../src/application.ts'
 import {
@@ -15,6 +15,7 @@ import {
   ThreadId,
   TurnId,
 } from '../src/core/domain.ts'
+import { HandlerFailure } from '../src/core/errors.ts'
 import {
   defineAction,
   defineApplication,
@@ -22,9 +23,11 @@ import {
 import { applicationThroughRootConversationRuntime } from '../src/durable-runtime/conversation-application.ts'
 import type { ExecutionTaskProjection } from '../src/durable-runtime/execution-task-emitter.ts'
 import {
+  type ConversationHandler,
   ExecutionEvent,
   makeRootDurableRuntimeLayer,
   RootDurableRuntime,
+  type RootDurableRuntimeShape,
   RUNTIME_MAX_CONCURRENT_EXECUTIONS,
   RUNTIME_PAYLOAD_MAX_BYTES,
 } from '../src/durable-runtime/root-runtime.ts'
@@ -382,6 +385,14 @@ describe('root durable runtime', () => {
             const runtime = yield* RootDurableRuntime
             const handledKinds: string[] = []
             const posted: string[] = []
+            const releaseSecondChunk = yield* Deferred.make<void>()
+            const firstChunkObserved = yield* Deferred.make<void>()
+            const progressiveEventCompleted = yield* Deferred.make<void>()
+            const publications: Array<{
+              readonly chunks: string[]
+              readonly messageId: string
+            }> = []
+            let splitNextOutput = true
             const application: ApplicationShape = {
               handle: (event, publish) => {
                 if (event._tag === 'ParticipantInput') {
@@ -392,9 +403,33 @@ describe('root durable runtime', () => {
                     ExecutionEvent
                   )(event.payload).pipe(Effect.orDie)
                   handledKinds.push(executionEvent.kind)
+                  const messageId = `message:${event.eventId}`
+                  if (splitNextOutput) {
+                    splitNextOutput = false
+                    yield* publish(
+                      ApplicationConversationMessageChunk.make({
+                        messageId,
+                        sequence: 0,
+                        text: 'observed ',
+                      })
+                    )
+                    yield* Deferred.await(releaseSecondChunk)
+                    yield* publish(
+                      ApplicationConversationMessageChunk.make({
+                        messageId,
+                        sequence: 1,
+                        text: executionEvent.kind,
+                      })
+                    )
+                    yield* Deferred.succeed(
+                      progressiveEventCompleted,
+                      undefined
+                    )
+                    return
+                  }
                   yield* publish(
                     ApplicationConversationMessageChunk.make({
-                      messageId: `message:${event.eventId}`,
+                      messageId,
                       text: `observed ${executionEvent.kind}`,
                     })
                   )
@@ -408,10 +443,37 @@ describe('root durable runtime', () => {
               yield* applicationThroughRootConversationRuntime({
                 actionCatalogFingerprint: catalog.actions.fingerprint,
                 application,
-                publishExternalOutput: (_conversationId, output) =>
-                  Effect.sync(() => {
-                    posted.push(output.text)
-                  }),
+                publishExternalOutput: (_conversationId, publication) => {
+                  const observed: {
+                    readonly chunks: string[]
+                    readonly messageId: string
+                  } = {
+                    chunks: [],
+                    messageId: publication.messageId,
+                  }
+                  publications.push(observed)
+                  const iterator = publication.chunks[Symbol.asyncIterator]()
+                  const consume = (): Effect.Effect<void> =>
+                    Effect.promise(() => iterator.next()).pipe(
+                      Effect.orDie,
+                      Effect.flatMap((next) => {
+                        if (next.done) {
+                          return Effect.sync(() => {
+                            posted.push(observed.chunks.join(''))
+                          })
+                        }
+                        return Effect.sync(() => {
+                          observed.chunks.push(next.value)
+                        }).pipe(
+                          Effect.andThen(
+                            Deferred.succeed(firstChunkObserved, undefined)
+                          ),
+                          Effect.andThen(consume())
+                        )
+                      })
+                    )
+                  return consume()
+                },
                 rootIdentity: 'root-live-delivery-fixture',
                 routeParticipantTurnsThroughDurableRuntime: false,
                 runtime,
@@ -481,12 +543,32 @@ describe('root durable runtime', () => {
             yield* Effect.sleep('50 millis')
             assert.deepStrictEqual(posted, [])
 
-            yield* participantTurn('first')
+            const deliveryFiber = yield* participantTurn('first').pipe(
+              Effect.forkChild
+            )
+            yield* Deferred.await(firstChunkObserved)
+            assert.strictEqual(publications.length, 1)
+            assert.deepStrictEqual(publications[0]?.chunks, ['observed '])
+            assert.deepStrictEqual(handledKinds, ['progress'])
+            assert.isFalse(yield* Deferred.isDone(progressiveEventCompleted))
+            yield* Deferred.succeed(releaseSecondChunk, undefined)
+            yield* Fiber.join(deliveryFiber)
             yield* awaitPosted(2)
+            // Before message-scoped streaming, the delayed second chunk opened
+            // a second logical publication instead of extending the first.
             assert.deepStrictEqual(posted, [
               'observed progress',
               'observed completed',
             ])
+            const progressiveMessageId = publications[0]?.messageId
+            assert.isDefined(progressiveMessageId)
+            assert.strictEqual(
+              publications.filter(
+                (publication) => publication.messageId === progressiveMessageId
+              ).length,
+              1
+            )
+            assert.strictEqual(publications[0]?.chunks.join(''), posted[0])
 
             const live = yield* startExecution('live')
             yield* waitForTerminal(live.executionId, conversationId, 'T-LIVE')
@@ -497,11 +579,125 @@ describe('root durable runtime', () => {
               'progress',
               'completed',
             ])
+            assert.strictEqual(publications.length, 4)
             const stranded = yield* runtime.pendingEvents(
               conversationId,
               'T-LIVE'
             )
             assert.deepStrictEqual(stranded, [])
+          }).pipe(Effect.provide(layer))
+        })
+      ),
+    20_000
+  )
+
+  it.live(
+    'does not block later external events when publication fails before consuming chunks',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const directory = yield* makeTempDirectoryScoped(
+            'laborer-durable-publication-failure-'
+          )
+          const catalog = defineApplication({ actions: [] })
+          const layer = makeRootDurableRuntimeLayer(
+            makeSqliteLayer({ filename: join(directory, 'runtime.sqlite') }),
+            catalog.actions,
+            'root-publication-failure-fixture'
+          )
+          yield* Effect.gen(function* () {
+            const runtime = yield* RootDurableRuntime
+            const handled: string[] = []
+            const delivered: string[] = []
+            let attachedHandler: ConversationHandler | undefined
+            let publicationAttempt = 0
+            const application: ApplicationShape = {
+              handle: (event, publish) => {
+                if (event._tag === 'ParticipantInput') {
+                  return Effect.void
+                }
+                handled.push(event.eventId)
+                return publish(
+                  ApplicationConversationMessageChunk.make({
+                    messageId: `message:${event.eventId}`,
+                    text: event.eventId,
+                  })
+                )
+              },
+            }
+            const capturingRuntime: RootDurableRuntimeShape = {
+              ...runtime,
+              attachConversationClient: (compatibility, workspaceId, handler) =>
+                Effect.sync(() => {
+                  attachedHandler = handler
+                }).pipe(
+                  Effect.andThen(
+                    runtime.attachConversationClient(
+                      compatibility,
+                      workspaceId,
+                      handler
+                    )
+                  )
+                ),
+            }
+            yield* applicationThroughRootConversationRuntime({
+              actionCatalogFingerprint: catalog.actions.fingerprint,
+              application,
+              publishExternalOutput: (_conversationId, publication) =>
+                Effect.suspend(() => {
+                  publicationAttempt += 1
+                  if (publicationAttempt === 1) {
+                    return HandlerFailure.make({
+                      category: 'protocol',
+                      safeDetail: 'fixture publication rejected',
+                    })
+                  }
+                  return Effect.promise(async () => {
+                    let text = ''
+                    for await (const chunk of publication.chunks) {
+                      text += chunk
+                    }
+                    delivered.push(text)
+                  })
+                }),
+              rootIdentity: 'root-publication-failure-fixture',
+              routeParticipantTurnsThroughDurableRuntime: false,
+              runtime: capturingRuntime,
+              workspaceId: 'T-PUBLICATION-FAILURE',
+            })
+            const conversationId = ThreadId.make(
+              'workspace:T-PUBLICATION-FAILURE:thread:C1:1.0'
+            )
+            const externalEvent = (eventId: string) =>
+              ExternalInputEvent.make({
+                conversationId,
+                eventId,
+                payload: { eventId },
+                source: 'fixture',
+              })
+            assert.isDefined(attachedHandler)
+
+            const failed = yield* attachedHandler
+              .handle(externalEvent('external-first'))
+              .pipe(Effect.flip, Effect.timeout('2 seconds'))
+            const later = yield* attachedHandler
+              .handle(externalEvent('external-second'))
+              .pipe(Effect.timeout('2 seconds'))
+
+            assert.instanceOf(failed, HandlerFailure)
+            assert.strictEqual(
+              failed.safeDetail,
+              'fixture publication rejected'
+            )
+            assert.deepStrictEqual(
+              later.map((output) => output.text),
+              ['external-second']
+            )
+            assert.deepStrictEqual(handled, [
+              'external-first',
+              'external-second',
+            ])
+            assert.deepStrictEqual(delivered, ['external-second'])
           }).pipe(Effect.provide(layer))
         })
       ),

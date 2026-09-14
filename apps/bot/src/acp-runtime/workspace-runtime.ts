@@ -146,7 +146,7 @@ export interface ProductionAcpWorkspaceApplicationDependencies
   readonly processSupervisorTestHooks?: AcpProcessSupervisorTestHooks
   readonly publishExternalOutput?: (
     conversationId: string,
-    output: import('../application.ts').ApplicationPublicOutput
+    publication: import('../application.ts').ApplicationExternalOutputPublication
   ) => Effect.Effect<void, HandlerFailure | StoreError>
 }
 

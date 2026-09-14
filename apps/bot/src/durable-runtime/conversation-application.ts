@@ -1,12 +1,14 @@
-import { Deferred, Effect, Schema } from 'effect'
+import { Deferred, Effect, type Exit, Fiber, Schema, type Scope } from 'effect'
 import { canonicalActionInput } from '../action-catalog.ts'
 import type {
   AcceptApplicationEvent,
+  ApplicationExternalOutputPublication,
   ApplicationPublicOutput,
   ApplicationShape,
   ConversationBlocked,
   PublishApplicationOutput,
 } from '../application.ts'
+import { makeAsyncOutputQueue } from '../async-output-queue.ts'
 import type { StoreError } from '../core/errors.ts'
 import { HandlerFailure } from '../core/errors.ts'
 import {
@@ -42,6 +44,63 @@ const unavailableEventAcceptance: AcceptApplicationEvent = () =>
     safeDetail: 'durable external-event acceptance unavailable',
   })
 
+const makeExternalOutputStreams = (
+  conversationId: string,
+  scope: Scope.Scope,
+  publishExternalOutput:
+    | ((
+        conversationId: string,
+        publication: ApplicationExternalOutputPublication
+      ) => Effect.Effect<void, HandlerFailure | StoreError>)
+    | undefined
+) => {
+  const streams = new Map<string, ReturnType<typeof makeAsyncOutputQueue>>()
+  const publications: Fiber.Fiber<void, HandlerFailure | StoreError>[] = []
+
+  return {
+    awaitPublications: () =>
+      Effect.forEach(publications, Fiber.await, { concurrency: 'unbounded' }),
+    publish: (output: ApplicationPublicOutput) =>
+      Effect.gen(function* () {
+        if (publishExternalOutput === undefined || output.text.length === 0) {
+          return
+        }
+        const messageId =
+          output._tag === 'ConversationMessageChunk'
+            ? output.messageId
+            : output.replyId
+        const activeStream = streams.get(messageId)
+        if (activeStream !== undefined) {
+          activeStream.offer(output.text)
+          return
+        }
+        const openedStream = makeAsyncOutputQueue()
+        streams.set(messageId, openedStream)
+        openedStream.offer(output.text)
+        publications.push(
+          yield* Effect.forkIn(
+            publishExternalOutput(conversationId, {
+              chunks: openedStream.iterable,
+              messageId,
+            }),
+            scope,
+            { startImmediately: true }
+          )
+        )
+      }),
+    settle: (exit: Exit.Exit<unknown, unknown>) =>
+      Effect.sync(() => {
+        for (const stream of streams.values()) {
+          if (exit._tag === 'Success') {
+            stream.end()
+          } else {
+            stream.fail(exit.cause)
+          }
+        }
+      }),
+  }
+}
+
 /**
  * Routes participant turns through the root owner while retaining the existing
  * Conversation application as the only publisher. The same registered handler receives durable
@@ -55,7 +114,7 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
   readonly rootIdentity: string
   readonly publishExternalOutput?: (
     conversationId: string,
-    output: ApplicationPublicOutput
+    publication: ApplicationExternalOutputPublication
   ) => Effect.Effect<void, HandlerFailure | StoreError>
   readonly routeParticipantTurnsThroughDurableRuntime?: boolean
   readonly runtime: RootDurableRuntimeShape
@@ -85,25 +144,48 @@ export const applicationThroughRootConversationRuntime = Effect.fn(
         Effect.gen(function* () {
           if (event._tag === 'ExternalInput') {
             if (options.routeParticipantTurnsThroughDurableRuntime === false) {
-              const outputs: ApplicationPublicOutput[] = []
-              yield* options.application.handle(
-                event,
-                (output) =>
-                  Effect.sync(() => outputs.push(output)).pipe(
-                    Effect.andThen(
-                      options.publishExternalOutput?.(
-                        event.conversationId,
-                        output
-                      ) ?? Effect.void
+              return yield* Effect.scoped(
+                Effect.uninterruptibleMask((restore) =>
+                  Effect.gen(function* () {
+                    const scope = yield* Effect.scope
+                    const outputs: ApplicationPublicOutput[] = []
+                    const externalOutputs = makeExternalOutputStreams(
+                      event.conversationId,
+                      scope,
+                      options.publishExternalOutput
                     )
-                  ),
-                () =>
-                  Effect.succeed({
-                    decision: { _tag: 'Accepted', eventId: event.eventId },
-                    scheduling: 'AlreadyDurable',
+                    const applicationExit = yield* Effect.exit(
+                      restore(
+                        options.application.handle(
+                          event,
+                          (output) =>
+                            Effect.sync(() => outputs.push(output)).pipe(
+                              Effect.andThen(externalOutputs.publish(output))
+                            ),
+                          () =>
+                            Effect.succeed({
+                              decision: {
+                                _tag: 'Accepted',
+                                eventId: event.eventId,
+                              },
+                              scheduling: 'AlreadyDurable',
+                            })
+                        )
+                      )
+                    )
+                    yield* externalOutputs.settle(applicationExit)
+                    const publicationExits =
+                      yield* externalOutputs.awaitPublications()
+                    yield* applicationExit
+                    yield* Effect.forEach(
+                      publicationExits,
+                      (publicationExit) => publicationExit,
+                      { discard: true }
+                    )
+                    return outputs
                   })
+                )
               )
-              return outputs
             }
             // The root owner makes the Action event durable before handing it
             // back to the Conversation application, which remains responsible for ordering

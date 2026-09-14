@@ -61,6 +61,17 @@ const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
   })
 })
 
+const discardExternalOutput = (
+  chunks: AsyncIterable<string>
+): Effect.Effect<void> =>
+  Effect.promise(async () => {
+    const iterator = chunks[Symbol.asyncIterator]()
+    let next = await iterator.next()
+    while (!next.done) {
+      next = await iterator.next()
+    }
+  })
+
 /** The one production composition: Chat owns Slack; ACP owns agent runtime. */
 export const runAcpChatComposition = Effect.fn('AcpRuntime.runChatComposition')(
   function* (
@@ -161,13 +172,13 @@ export const runAcpChatComposition = Effect.fn('AcpRuntime.runChatComposition')(
             },
             settle: (request) => chat?.settlePermission(request) ?? Effect.void,
           }),
-          publishExternalOutput: (conversationId, output) => {
+          publishExternalOutput: (conversationId, publication) => {
             if (chat === undefined) {
-              return Effect.void
+              return discardExternalOutput(publication.chunks)
             }
             const prefix = `workspace:${workspaceId}:`
             if (!conversationId.startsWith(prefix)) {
-              return Effect.void
+              return discardExternalOutput(publication.chunks)
             }
             const [channelId, rootTs, ...remainder] = conversationId
               .slice(prefix.length)
@@ -177,10 +188,15 @@ export const runAcpChatComposition = Effect.fn('AcpRuntime.runChatComposition')(
               rootTs === undefined ||
               remainder.length > 0
             ) {
-              return Effect.void
+              return discardExternalOutput(publication.chunks)
             }
             return chat
-              .postToThread(workspaceId, channelId, rootTs, output.text)
+              .streamToThread(
+                workspaceId,
+                channelId,
+                rootTs,
+                publication.chunks
+              )
               .pipe(Effect.ignore)
           },
         }

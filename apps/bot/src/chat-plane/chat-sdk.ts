@@ -72,12 +72,6 @@ export interface ChatSdkLike {
   readonly postPermission?: (
     request: ChatPermissionPresentation
   ) => Promise<{ readonly messageTs: string }>
-  readonly postToThread?: (
-    workspaceId: string,
-    channelId: string,
-    rootTs: string,
-    output: string
-  ) => Promise<void>
   readonly removeReaction?: (
     workspaceId: string,
     channelId: string,
@@ -89,6 +83,12 @@ export interface ChatSdkLike {
     request: ChatPermissionSettlement
   ) => Promise<void>
   readonly shutdown: () => Promise<void>
+  readonly streamToThread?: (
+    workspaceId: string,
+    channelId: string,
+    rootTs: string,
+    chunks: AsyncIterable<string>
+  ) => Promise<void>
 }
 
 export interface ChatSdkActionLike {
@@ -152,12 +152,6 @@ export interface ChatPlaneShape {
   readonly postPermission: (
     request: ChatPermissionPresentation
   ) => Effect.Effect<{ readonly messageTs: string }, ChatPlaneOperationError>
-  readonly postToThread: (
-    workspaceId: string,
-    channelId: string,
-    rootTs: string,
-    output: string
-  ) => Effect.Effect<void, ChatPlaneOperationError>
   readonly readActivationHistory: (
     thread: ChatSdkThreadLike,
     activation: ChatSdkMessageLike
@@ -172,6 +166,12 @@ export interface ChatPlaneShape {
   ) => Effect.Effect<void, ChatPlaneOperationError>
   readonly streamReply: (
     thread: ChatSdkThreadLike,
+    chunks: AsyncIterable<string>
+  ) => Effect.Effect<void, ChatPlaneOperationError>
+  readonly streamToThread: (
+    workspaceId: string,
+    channelId: string,
+    rootTs: string,
     chunks: AsyncIterable<string>
   ) => Effect.Effect<void, ChatPlaneOperationError>
   readonly subscribe: (
@@ -374,16 +374,6 @@ const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
       },
       catch: () => operationFailure('thread.post-permission'),
     }),
-  postToThread: (workspaceId, channelId, rootTs, output) =>
-    Effect.tryPromise({
-      try: () => {
-        if (sdk.postToThread === undefined) {
-          throw new Error('Chat thread publication unavailable')
-        }
-        return sdk.postToThread(workspaceId, channelId, rootTs, output)
-      },
-      catch: () => operationFailure('thread.post-external-output'),
-    }),
   postNotice: (thread, notice) =>
     Effect.tryPromise({
       try: () => thread.post(notice),
@@ -415,6 +405,16 @@ const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
       try: () => thread.post(chunks),
       catch: () => operationFailure('thread.post'),
     }).pipe(Effect.asVoid),
+  streamToThread: (workspaceId, channelId, rootTs, chunks) =>
+    Effect.tryPromise({
+      try: () => {
+        if (sdk.streamToThread === undefined) {
+          throw new Error('Chat thread streaming unavailable')
+        }
+        return sdk.streamToThread(workspaceId, channelId, rootTs, chunks)
+      },
+      catch: () => operationFailure('thread.stream-external-output'),
+    }),
   subscribe: (thread) =>
     Effect.tryPromise({
       try: () => thread.subscribe(),
@@ -912,9 +912,9 @@ export const makeLiveChatPlaneLayer = (
           permissionMessages.set(request.presentationMarker, sent)
           return { messageTs: sent.id }
         },
-        postToThread: async (workspaceId, channelId, rootTs, output) => {
+        streamToThread: async (workspaceId, channelId, rootTs, chunks) => {
           await withWorkspaceToken(workspaceId, () =>
-            bot.thread(`slack:${channelId}:${rootTs}`).post(output)
+            bot.thread(`slack:${channelId}:${rootTs}`).post(chunks)
           )
         },
         removeReaction: async (

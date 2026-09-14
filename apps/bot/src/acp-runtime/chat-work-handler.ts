@@ -5,6 +5,7 @@ import {
   type ApplicationShape,
   ParticipantInputEvent,
 } from '../application.ts'
+import { makeAsyncOutputQueue } from '../async-output-queue.ts'
 import type {
   ChatPlaneTurn,
   ChatPlaneWorkHandler,
@@ -33,81 +34,6 @@ export interface AcpChatRuntimeDirectory {
   ) => Effect.Effect<AcpChatWorkspaceRuntime, HandlerFailure>
 }
 
-interface OutputQueue {
-  readonly end: () => void
-  readonly fail: (cause: unknown) => void
-  readonly iterable: AsyncIterable<string>
-  readonly offer: (output: ApplicationPublicOutput) => void
-}
-
-const makeOutputQueue = (): OutputQueue => {
-  const values: string[] = []
-  const waiters: Array<{
-    readonly reject: (cause: unknown) => void
-    readonly resolve: (result: IteratorResult<string>) => void
-  }> = []
-  let ended = false
-  let failure: unknown
-
-  const settle = (): void => {
-    while (waiters.length > 0 && values.length > 0) {
-      waiters.shift()?.resolve({ done: false, value: values.shift() ?? '' })
-    }
-    if (failure !== undefined) {
-      while (waiters.length > 0) {
-        waiters.shift()?.reject(failure)
-      }
-    } else if (ended) {
-      while (waiters.length > 0) {
-        waiters.shift()?.resolve({ done: true, value: undefined })
-      }
-    }
-  }
-
-  return {
-    end: () => {
-      ended = true
-      settle()
-    },
-    fail: (cause) => {
-      failure = cause
-      settle()
-    },
-    iterable: {
-      [Symbol.asyncIterator]() {
-        return {
-          next: () => {
-            if (values.length > 0) {
-              return Promise.resolve({
-                done: false as const,
-                value: values.shift() ?? '',
-              })
-            }
-            if (failure !== undefined) {
-              return Promise.reject(failure)
-            }
-            if (ended) {
-              return Promise.resolve({
-                done: true as const,
-                value: undefined,
-              })
-            }
-            return new Promise<IteratorResult<string>>((resolve, reject) => {
-              waiters.push({ reject, resolve })
-            })
-          },
-        }
-      },
-    },
-    offer: (output) => {
-      // ACP has already enforced NO_REPLY, current-prompt authority, message
-      // count and byte bounds before output reaches this public boundary.
-      values.push(output.text)
-      settle()
-    },
-  }
-}
-
 const normalizedMessage = (
   turn: ChatPlaneTurn,
   message: ChatPlaneTurn['messages'][number]
@@ -134,7 +60,7 @@ export const makeAcpChatWorkHandler = (
 ): ChatPlaneWorkHandler =>
   Effect.fn('AcpRuntime.chatWorkHandler')(function* (turn) {
     const runtime = yield* directory.forWorkspace(turn.workspaceId)
-    const queue = makeOutputQueue()
+    const queue = makeAsyncOutputQueue()
     const messages = turn.messages.map((message) =>
       normalizedMessage(turn, message)
     )
@@ -173,7 +99,12 @@ export const makeAcpChatWorkHandler = (
       const run = Effect.runPromiseExit(
         runtime.application.handle(
           event,
-          (output) => Effect.sync(() => queue.offer(output)),
+          (output: ApplicationPublicOutput) =>
+            Effect.sync(() => {
+              // ACP has already enforced NO_REPLY, current-prompt authority,
+              // message count and byte bounds at this public boundary.
+              queue.offer(output.text)
+            }),
           runtime.acceptEvent
         )
       ).then((exit) => {

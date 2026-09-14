@@ -74,6 +74,11 @@ export type ApplicationPublicOutput =
   | ApplicationConversationMessageChunk
   | ApplicationPublicReply
 
+export interface ApplicationExternalOutputPublication {
+  readonly chunks: AsyncIterable<string>
+  readonly messageId: string
+}
+
 /**
  * A prompt crossed the ACP admission boundary but no terminal result can be
  * proved. This is a domain outcome, not a HandlerFailure: the application must keep

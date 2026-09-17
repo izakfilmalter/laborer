@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect'
+import { Effect, Exit, Schema } from 'effect'
 import { NormalizedImage } from '../core/domain.ts'
 import {
   ChatPlane,
@@ -108,11 +108,13 @@ export const makeConversationHandler = (
   Effect.fn('ChatPlane.conversationHandler')(
     function* (thread, message, context, isActivation) {
       const chatPlane = yield* ChatPlane
+      let subscribedByActivation = false
       const runTurn = Effect.gen(function* () {
         if (isActivation) {
           yield* chatPlane
             .subscribe(thread)
             .pipe(Effect.mapError(() => 'chat-operation' as const))
+          subscribedByActivation = true
           // Reactions are best-effort presentation state on an at-most-once
           // chat plane: never fail or retry a turn because of them.
           yield* chatPlane
@@ -152,6 +154,11 @@ export const makeConversationHandler = (
       })
 
       yield* runTurn.pipe(
+        Effect.onExit((exit) =>
+          subscribedByActivation && Exit.isFailure(exit)
+            ? chatPlane.unsubscribe(thread).pipe(Effect.ignore)
+            : Effect.void
+        ),
         Effect.tap(() =>
           chatPlane
             .addReaction(thread, thread.rootMessageId, COMPLETED_REACTION)

@@ -179,6 +179,7 @@ describe('Chat plane walking skeleton', () => {
             lifecycle.push('subscribe')
             return Promise.resolve()
           },
+          unsubscribe: () => Promise.resolve(),
           workspaceId: 'TFIRST',
         }
         const sdk: ChatSdkLike = {
@@ -232,6 +233,7 @@ describe('Chat plane walking skeleton', () => {
           post: () => Promise.reject(new Error('private SDK failure')),
           rootMessageId: 'failure',
           subscribe: () => Promise.reject(new Error('private SDK failure')),
+          unsubscribe: () => Promise.reject(new Error('private SDK failure')),
           workspaceId: 'TFIRST',
         }
         const sdk: ChatSdkLike = {
@@ -245,6 +247,7 @@ describe('Chat plane walking skeleton', () => {
           Effect.gen(function* () {
             const service = yield* ChatPlane
             const subscribe = yield* Effect.flip(service.subscribe(thread))
+            const unsubscribe = yield* Effect.flip(service.unsubscribe(thread))
             const history = yield* Effect.flip(
               service.readActivationHistory(
                 thread,
@@ -263,7 +266,7 @@ describe('Chat plane walking skeleton', () => {
                 })()
               )
             )
-            return { history, postNotice, streamReply, subscribe }
+            return { history, postNotice, streamReply, subscribe, unsubscribe }
           }),
           makeChatPlaneLayer({
             handler: placeholderMentionHandler,
@@ -274,6 +277,9 @@ describe('Chat plane walking skeleton', () => {
         assert.instanceOf(failures.subscribe, ChatPlaneOperationError)
         assert.equal(failures.subscribe.operation, 'thread.subscribe')
         assert.equal(failures.subscribe.reason, 'Chat SDK operation failed')
+        assert.instanceOf(failures.unsubscribe, ChatPlaneOperationError)
+        assert.equal(failures.unsubscribe.operation, 'thread.unsubscribe')
+        assert.equal(failures.unsubscribe.reason, 'Chat SDK operation failed')
         assert.instanceOf(failures.history, ChatPlaneOperationError)
         assert.equal(
           failures.history.operation,
@@ -430,6 +436,7 @@ describe('Chat plane walking skeleton', () => {
                     post: () => Promise.resolve(),
                     rootMessageId: activation.id,
                     subscribe: () => Promise.resolve(),
+                    unsubscribe: () => Promise.resolve(),
                     workspaceId,
                   },
                   activation
@@ -550,6 +557,7 @@ describe('Chat plane walking skeleton', () => {
               subscriptions += 1
               return Promise.resolve()
             },
+            unsubscribe: () => Promise.resolve(),
             workspaceId: 'TFIRST',
           }
           const sdk: ChatSdkLike = {
@@ -624,6 +632,7 @@ describe('Chat plane walking skeleton', () => {
             post: () => Promise.resolve(),
             rootMessageId: activation.id,
             subscribe: () => Promise.resolve(),
+            unsubscribe: () => Promise.resolve(),
             workspaceId: 'TFIRST',
           }
           const sdk: ChatSdkLike = {
@@ -719,6 +728,7 @@ describe('Chat plane walking skeleton', () => {
           post: () => Promise.resolve(),
           rootMessageId: root.id,
           subscribe: () => Promise.resolve(),
+          unsubscribe: () => Promise.resolve(),
           workspaceId: 'TFIRST',
         }
         const sdk: ChatSdkLike = {
@@ -782,6 +792,7 @@ describe('Chat plane walking skeleton', () => {
           },
           rootMessageId: activation.id,
           subscribe: () => Promise.resolve(),
+          unsubscribe: () => Promise.resolve(),
           workspaceId: 'TFIRST',
         }
         const sdk: ChatSdkLike = {
@@ -847,6 +858,7 @@ describe('Chat plane walking skeleton', () => {
           post: () => Promise.resolve(),
           rootMessageId: root.id,
           subscribe: () => Promise.resolve(),
+          unsubscribe: () => Promise.resolve(),
           workspaceId: 'TFIRST',
         }
         const sdk: ChatSdkLike = {
@@ -901,6 +913,7 @@ describe('Chat plane walking skeleton', () => {
           post: () => Promise.resolve(),
           rootMessageId: '40.000',
           subscribe: () => Promise.resolve(),
+          unsubscribe: () => Promise.resolve(),
           workspaceId: 'TFIRST',
         }
         const sdk: ChatSdkLike = {
@@ -941,22 +954,28 @@ describe('Chat plane walking skeleton', () => {
   )
 
   it.effect(
-    'posts one sanitized failure notice and accepts a later mention',
+    'rolls back a failed activation subscription so a retry receives thread history',
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           let mentionHandler: ChatSdkMentionHandler | undefined
           let subscribedHandler: ChatSdkMentionHandler | undefined
+          const root = message('49.000', 'CI failure details', { isBot: true })
           const activation = message('50.000', '@laborer fail safely', {
             isMention: true,
           })
+          const retry = message('51.000', '@laborer retry', {
+            isMention: true,
+          })
           const posts: string[] = []
+          const turns: ChatPlaneTurn[] = []
           let shouldFail = true
+          let subscribed = false
           const thread: ChatSdkThreadLike = {
-            allMessages: asMessages([activation]),
+            allMessages: asMessages([root, activation, retry]),
             channelId: 'C1',
-            channelMessages: asMessages([activation]),
-            id: 'slack:C1:50.000',
+            channelMessages: asMessages([]),
+            id: 'slack:C1:49.000',
             isDM: false,
             post: async (reply) => {
               if (typeof reply === 'string') {
@@ -969,8 +988,15 @@ describe('Chat plane walking skeleton', () => {
               }
               posts.push(text)
             },
-            rootMessageId: activation.id,
-            subscribe: () => Promise.resolve(),
+            rootMessageId: root.id,
+            subscribe: () => {
+              subscribed = true
+              return Promise.resolve()
+            },
+            unsubscribe: () => {
+              subscribed = false
+              return Promise.resolve()
+            },
             workspaceId: 'TFIRST',
           }
           const sdk: ChatSdkLike = {
@@ -983,7 +1009,8 @@ describe('Chat plane walking skeleton', () => {
             },
             shutdown: () => Promise.resolve(),
           }
-          const handler = makeConversationHandler(() => {
+          const handler = makeConversationHandler((turn) => {
+            turns.push(turn)
             if (shouldFail) {
               return Effect.die(new Error('secret /private/path TOKEN=value'))
             }
@@ -1001,9 +1028,9 @@ describe('Chat plane walking skeleton', () => {
               assert.ok(subscribedHandler)
               await mentionHandler(thread, activation)
               shouldFail = false
-              await subscribedHandler(
+              await (subscribed ? subscribedHandler : mentionHandler)(
                 thread,
-                message('51.000', '@laborer retry', { isMention: true })
+                retry
               )
             }),
             makeChatPlaneLayer({ handler, makeSdk: () => sdk })
@@ -1014,6 +1041,17 @@ describe('Chat plane walking skeleton', () => {
             'recovered',
           ])
           assert.notMatch(posts[0] ?? '', PRIVATE_FAILURE_DETAIL)
+          assert.deepStrictEqual(
+            turns[1]?.messages.map(({ classification, text }) => ({
+              classification,
+              text,
+            })),
+            [
+              { classification: 'context', text: 'CI failure details' },
+              { classification: 'context', text: '@laborer fail safely' },
+              { classification: 'input', text: '@laborer retry' },
+            ]
+          )
         })
       )
   )
@@ -1038,6 +1076,7 @@ describe('Chat plane walking skeleton', () => {
             post: () => Promise.resolve(),
             rootMessageId: activation.id,
             subscribe: () => Promise.resolve(),
+            unsubscribe: () => Promise.resolve(),
             workspaceId: 'TFIRST',
           }
           const sdk: ChatSdkLike = {
@@ -1145,6 +1184,7 @@ describe('Chat plane walking skeleton', () => {
             },
             rootMessageId: activation.id,
             subscribe: () => Promise.resolve(),
+            unsubscribe: () => Promise.resolve(),
             workspaceId: 'TFIRST',
           }
           const sdk: ChatSdkLike = {
@@ -1230,6 +1270,7 @@ describe('Chat plane walking skeleton', () => {
           },
           rootMessageId: activation.id,
           subscribe: () => Promise.resolve(),
+          unsubscribe: () => Promise.resolve(),
           workspaceId: 'TFIRST',
         }
         const sdk: ChatSdkLike = {

@@ -37,6 +37,7 @@ export interface ChatSdkThreadLike {
   readonly post: (reply: string | AsyncIterable<string>) => Promise<unknown>
   readonly rootMessageId: string
   readonly subscribe: () => Promise<void>
+  readonly unsubscribe: () => Promise<void>
   readonly workspaceId: string
 }
 
@@ -175,6 +176,9 @@ export interface ChatPlaneShape {
     chunks: AsyncIterable<string>
   ) => Effect.Effect<void, ChatPlaneOperationError>
   readonly subscribe: (
+    thread: ChatSdkThreadLike
+  ) => Effect.Effect<void, ChatPlaneOperationError>
+  readonly unsubscribe: (
     thread: ChatSdkThreadLike
   ) => Effect.Effect<void, ChatPlaneOperationError>
 }
@@ -420,6 +424,11 @@ const makeService = (sdk: ChatSdkLike): ChatPlaneShape => ({
       try: () => thread.subscribe(),
       catch: () => operationFailure('thread.subscribe'),
     }),
+  unsubscribe: (thread) =>
+    Effect.tryPromise({
+      try: () => thread.unsubscribe(),
+      catch: () => operationFailure('thread.unsubscribe'),
+    }),
   settlePermission: (request) =>
     Effect.tryPromise({
       try: () => sdk.settlePermission?.(request) ?? Promise.resolve(),
@@ -659,6 +668,7 @@ interface LiveThreadLike {
   readonly isDM: boolean
   readonly post: (reply: string | AsyncIterable<string>) => Promise<unknown>
   readonly subscribe: () => Promise<void>
+  readonly unsubscribe: () => Promise<void>
 }
 
 const toChatSdkThread = (
@@ -685,6 +695,7 @@ const toChatSdkThread = (
   post: (reply) => thread.post(reply),
   rootMessageId: thread.id.slice(thread.id.lastIndexOf(':') + 1),
   subscribe: () => thread.subscribe(),
+  unsubscribe: () => thread.unsubscribe(),
   workspaceId,
 })
 

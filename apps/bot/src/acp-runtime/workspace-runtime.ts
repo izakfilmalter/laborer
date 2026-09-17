@@ -93,6 +93,11 @@ const processStatusForSupervisorHealth = (
   return 'starting'
 }
 
+export const canComposeWorkspaceWithSupervisorHealth = (
+  health: AcpWorkspaceSupervisorHealthSnapshot['health']
+): boolean =>
+  health === 'ready' || health === 'circuit_open' || health === 'quarantined'
+
 export interface ProductionAcpWorkspaceApplicationOptions {
   readonly applicationConfig: import('../slack/laborer-config.ts').ReferenceCodingApplicationConfig
   readonly environment: NodeJS.ProcessEnv
@@ -362,8 +367,7 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
   })
   const initialSupervisorHealth = yield* supervisor.health
   if (
-    initialSupervisorHealth.health !== 'ready' &&
-    initialSupervisorHealth.health !== 'circuit_open'
+    !canComposeWorkspaceWithSupervisorHealth(initialSupervisorHealth.health)
   ) {
     return yield* AcpWorkspaceStartupError.make({
       reason: 'acp-child-incompatible-or-unavailable',

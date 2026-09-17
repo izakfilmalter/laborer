@@ -25,6 +25,7 @@ import type {
 } from '../../node_modules/@opencode-ai/client/dist/promise/generated/types.js'
 import { openCodeMcpConfig } from './action-mcp-timeouts.ts'
 import { OPEN_CODE_COMMAND } from './open-code-acp-process.ts'
+import { openPromptEpochEventStream } from './prompt-epoch-admission.ts'
 
 const OPEN_CODE_VERSION = '0.0.0-next-17074'
 const STARTUP_TIMEOUT_MILLIS = 30_000
@@ -314,7 +315,6 @@ const run = async (): Promise<void> => {
       }) => Promise<{ outcome: { optionId?: string; outcome: string } }>
       sessionUpdate: (input: SessionNotification) => Promise<unknown>
     }
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this coordinates one bounded turn lifecycle around the event dispatcher
   ) => {
     const control: TurnControl = {
       admission: new AbortController(),
@@ -325,34 +325,37 @@ const run = async (): Promise<void> => {
     }
     active.set(session.id, control)
     const streamController = new AbortController()
-    const stream = server.client.event
-      .subscribe({ signal: streamController.signal })
-      [Symbol.asyncIterator]()
+    let stream: ReturnType<
+      ReturnType<
+        typeof server.client.event.subscribe
+      >[typeof Symbol.asyncIterator]
+    >
+    const promptId = messageId()
+    const epoch = meta?.['laborer.dev/prompt-epoch']
     try {
-      const connected = await stream.next()
-      if (connected.done) {
-        throw new Error(
-          'OpenCode event stream disconnected before prompt admission'
-        )
-      }
+      stream = await openPromptEpochEventStream({
+        publishEpoch: async () => {
+          if (typeof epoch === 'string') {
+            await peer.sessionUpdate({
+              sessionId: session.id,
+              update: {
+                _meta: { 'laborer.dev/prompt-epoch': epoch },
+                content: { text: '', type: 'text' },
+                messageId: promptId,
+                sessionUpdate: 'user_message_chunk',
+              },
+            })
+          }
+        },
+        subscribe: () =>
+          server.client.event
+            .subscribe({ signal: streamController.signal })
+            [Symbol.asyncIterator](),
+      })
     } catch (cause) {
       active.delete(session.id)
       streamController.abort()
-      await stream.return?.(undefined).catch(() => undefined)
       throw cause
-    }
-    const promptId = messageId()
-    const epoch = meta?.['laborer.dev/prompt-epoch']
-    if (typeof epoch === 'string') {
-      await peer.sessionUpdate({
-        sessionId: session.id,
-        update: {
-          _meta: { 'laborer.dev/prompt-epoch': epoch },
-          content: { text: '', type: 'text' },
-          messageId: promptId,
-          sessionUpdate: 'user_message_chunk',
-        },
-      })
     }
     let started = false
     let finish: SessionMessageAssistant['finish']

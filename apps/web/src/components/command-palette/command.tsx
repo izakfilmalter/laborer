@@ -46,7 +46,7 @@ function CommandDialogPopup({
       />
       <DialogPrimitive.Viewport
         className={cn(
-          'pointer-events-none inset-0 z-50 flex flex-col items-center px-4 py-[max(--spacing(4),4vh)] sm:py-[10vh]',
+          'pointer-events-none inset-0 z-50 flex flex-col items-center justify-center px-4 py-3',
           positionClass
         )}
         data-slot="command-dialog-viewport"
@@ -54,7 +54,7 @@ function CommandDialogPopup({
         <DialogPrimitive.Popup
           className={cn(
             DIALOG_POPUP_CLASS,
-            'pointer-events-auto max-h-105 max-w-xl overflow-hidden p-0 text-foreground',
+            'pointer-events-auto my-auto max-h-[min(26.25rem,100%)] max-w-xl overflow-hidden p-0 text-foreground',
             className
           )}
           data-slot="command-dialog-popup"
@@ -91,7 +91,7 @@ function CommandInput({
   startAddon?: React.ReactNode
 }) {
   return (
-    <div className="px-[var(--command-shell-inset)] py-1.5">
+    <div className="shrink-0 px-[var(--command-shell-inset)] py-1.5">
       <div className="relative w-full text-foreground">
         <div
           aria-hidden="true"
@@ -214,7 +214,7 @@ function CommandFooter({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       className={cn(
-        'relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-2xl)-1px)] bg-foreground/[0.025] px-[var(--command-content-inset)] py-2.5 font-medium text-muted-foreground text-sm [&_[data-slot=kbd-group]]:font-sans [&_[data-slot=kbd]]:bg-foreground/[0.08] [&_[data-slot=kbd]]:text-foreground',
+        'relative flex shrink-0 items-center justify-between gap-2 rounded-b-[calc(var(--radius-2xl)-1px)] bg-foreground/[0.025] px-[var(--command-content-inset)] py-2.5 font-medium text-muted-foreground text-sm [&_[data-slot=kbd-group]]:font-sans [&_[data-slot=kbd]]:bg-foreground/[0.08] [&_[data-slot=kbd]]:text-foreground',
         className
       )}
       data-slot="command-footer"

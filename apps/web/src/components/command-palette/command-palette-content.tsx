@@ -26,7 +26,7 @@ export function CommandPaletteContent({
   return (
     <Command {...commandProps}>
       <CommandInput {...inputProps} />
-      <CommandPanel className="max-h-[min(28rem,70vh)]">
+      <CommandPanel className="min-h-0 flex-1">
         {children}
       </CommandPanel>
       <CommandFooter>

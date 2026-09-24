@@ -160,6 +160,11 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
     context: AcpGenerationContext
   ) => Effect.Effect<ConversationAgentShape, HandlerFailure, Scope.Scope>
   readonly repository: AcpProcessStateRepository
+  /**
+   * Reports a host shutdown that began before this supervisor's scope closes.
+   * Generations lost after it are expected stops, not restartable failures.
+   */
+  readonly shutdownRequested?: () => boolean
   readonly testHooks?: AcpProcessSupervisorTestHooks
   readonly workspaceId: string
 }): Effect.fn.Return<AcpConversationProcessSupervisor, never, Scope.Scope> {
@@ -217,6 +222,8 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
   const queuedConversationCounts = new Map<string, number>()
   const observedConversations = new Set<string>()
   let expectedShutdown = false
+  const shuttingDown = (): boolean =>
+    expectedShutdown || options.shutdownRequested?.() === true
   let activeGenerationScope: Scope.Closeable | undefined
   let activeCleanupOutcome: AcpProcessCleanupOutcome = 'not_attempted'
 
@@ -370,7 +377,7 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
         durableState.circuitCooldownMillis - elapsed
       )
       yield* Effect.sleep(`${remainingCooldown} millis`)
-      if (expectedShutdown) {
+      if (shuttingDown()) {
         return
       }
       yield* stateGate.withPermit(rotateReadyGate())
@@ -415,7 +422,7 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
       })
     }
 
-    while (!expectedShutdown) {
+    while (!shuttingDown()) {
       const now = yield* Clock.currentTimeMillis
       const episodeStarted = durableState.restartEpisodeStartedAt
       const episodeExpired =
@@ -514,6 +521,7 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
       }
 
       const stoppedAt = yield* Clock.currentTimeMillis
+      const stoppedForShutdown = shuttingDown()
       yield* stateGate.withPermit(
         Effect.gen(function* () {
           available.current = false
@@ -540,13 +548,13 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
       yield* options.repository
         .recordStop(
           AcpProcessStopRecord.make({
-            cause: expectedShutdown ? 'expected_shutdown' : stopCause,
+            cause: stoppedForShutdown ? 'expected_shutdown' : stopCause,
             cleanupOutcome: cleanupOutcomeFor(
               cleanup._tag === 'Failure',
               cleanupOutcome
             ),
             code: exit.code,
-            expected: expectedShutdown,
+            expected: stoppedForShutdown,
             generation,
             phase:
               observedStopPhase ?? stopPhaseFor(becameReady, activePrompts),
@@ -555,7 +563,7 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
           })
         )
         .pipe(Effect.orDie)
-      if (expectedShutdown) {
+      if (stoppedForShutdown) {
         break
       }
 
@@ -622,7 +630,7 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
         yield* closeReadyGate('circuit_open')
         yield* Deferred.succeed(initialOutcome, 'unavailable')
         yield* Effect.sleep(`${cooldown} millis`)
-        if (expectedShutdown) {
+        if (shuttingDown()) {
           break
         }
         yield* stateGate.withPermit(rotateReadyGate())

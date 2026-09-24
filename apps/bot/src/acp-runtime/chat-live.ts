@@ -51,15 +51,21 @@ const stateRoot = (): string => {
   )
 }
 
-const waitForShutdownSignal: Effect.Effect<void> = Effect.callback((resume) => {
-  const stop = () => resume(Effect.void)
-  process.once('SIGINT', stop)
-  process.once('SIGTERM', stop)
-  return Effect.sync(() => {
-    process.off('SIGINT', stop)
-    process.off('SIGTERM', stop)
+// Scope finalizers run only after Chat shutdown begins, so a signal that also
+// reaches supervised children must be visible to their supervisors at once.
+const waitForShutdownSignal = (onSignal: () => void): Effect.Effect<void> =>
+  Effect.callback((resume) => {
+    const stop = () => {
+      onSignal()
+      resume(Effect.void)
+    }
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+    return Effect.sync(() => {
+      process.off('SIGINT', stop)
+      process.off('SIGTERM', stop)
+    })
   })
-})
 
 const discardExternalOutput = (
   chunks: AsyncIterable<string>
@@ -91,6 +97,7 @@ export const runAcpChatComposition = Effect.fn('AcpRuntime.runChatComposition')(
     )
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>())
     let chat: ChatPlaneShape | undefined
+    let shutdownRequested = false
 
     for (const installation of config.installations) {
       if (!installation.tokenIsValid || installation.root === undefined) {
@@ -160,6 +167,7 @@ export const runAcpChatComposition = Effect.fn('AcpRuntime.runChatComposition')(
           workspaceId,
         },
         {
+          shutdownRequested: () => shutdownRequested,
           participantLookup: makeBoundedSlackParticipantLookup({
             token: Redacted.value(installation.botToken),
           }),
@@ -309,7 +317,9 @@ export const runAcpChatComposition = Effect.fn('AcpRuntime.runChatComposition')(
       yield* Console.log(
         'LIVE SLACK LABORER — Chat plane with ACP Conversations enabled.'
       )
-      yield* waitForShutdownSignal
+      yield* waitForShutdownSignal(() => {
+        shutdownRequested = true
+      })
     }).pipe(Effect.provide(layer), Effect.scoped)
     yield* Console.log('Slack Laborer stopped cleanly.')
   }

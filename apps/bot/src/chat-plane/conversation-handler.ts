@@ -133,8 +133,16 @@ const withFirstChunk = (
         },
       }
     },
-    catch: () => 'work-handler' as const,
-  })
+    catch: (error) => error,
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning('Laborer turn failed', {
+        failure: summarizeTurnFailure(
+          Cause.isCause(error) ? error : Cause.fail(error)
+        ),
+      }).pipe(Effect.andThen(Effect.fail('work-handler' as const)))
+    )
+  )
 
 export const makeConversationHandler = (
   workHandler: ChatPlaneWorkHandler

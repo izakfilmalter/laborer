@@ -153,6 +153,7 @@ export interface ProductionAcpWorkspaceApplicationDependencies
     conversationId: string,
     publication: import('../application.ts').ApplicationExternalOutputPublication
   ) => Effect.Effect<void, HandlerFailure | StoreError>
+  readonly shutdownRequested?: () => boolean
 }
 
 export interface ProductionAcpWorkspaceApplication {
@@ -360,6 +361,9 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
         })
       }),
     repository: processStateRepository,
+    ...(dependencies.shutdownRequested === undefined
+      ? {}
+      : { shutdownRequested: dependencies.shutdownRequested }),
     ...(dependencies.processSupervisorTestHooks === undefined
       ? {}
       : { testHooks: dependencies.processSupervisorTestHooks }),

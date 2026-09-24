@@ -142,6 +142,56 @@ describe('issue #252 ACP process supervisor', () => {
   )
 
   it.effect(
+    'records a generation lost after host shutdown began as expected without restarting',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped('acp-supervisor-')
+          const repository = yield* makeAcpProcessStateRepository({
+            path: join(root, 'acp-process-state.json'),
+            trustedRoot: root,
+          })
+          const generations: AcpGenerationContext[] = []
+          let shutdownRequested = false
+          yield* makeAcpConversationProcessSupervisor({
+            jitter: () => 0,
+            makeGeneration: (context) =>
+              Effect.sync(() => {
+                generations.push(context)
+                context.observeHealth({
+                  generation: context.generation,
+                  status: 'ready',
+                })
+                return idleAgent
+              }),
+            repository,
+            shutdownRequested: () => shutdownRequested,
+            workspaceId: 'workspace-a',
+          })
+          yield* waitFor(() => generations.length === 1)
+
+          shutdownRequested = true
+          generations[0]?.observeExit({ code: null, signal: 'SIGTERM' })
+          generations[0]?.observeHealth({ generation: 1, status: 'closed' })
+          yield* waitFor(() => generations.length === 1)
+          for (let turn = 0; turn < 20; turn += 1) {
+            yield* TestClock.adjust('1 second')
+            yield* Effect.promise(
+              () => new Promise<void>((resolve) => setTimeout(resolve, 2))
+            )
+          }
+
+          assert.strictEqual(generations.length, 1)
+          const state = yield* repository.load
+          assert.strictEqual(state.lastStop?.cause, 'expected_shutdown')
+          assert.strictEqual(state.lastStop?.expected, true)
+          assert.deepStrictEqual(state.failures, [])
+          assert.notStrictEqual(state.health, 'circuit_open')
+        })
+      )
+  )
+
+  it.effect(
     'resolves a queued prompt only after admission to the replacement generation',
     () =>
       Effect.scoped(

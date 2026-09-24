@@ -1,3 +1,5 @@
+import { isSupportedOpenCodeVersion } from '../acp-runtime/installed-opencode.ts'
+
 export const SUPPORTED_ACP_RUNTIME_MATRIX = {
   acpProtocol: 1,
   acpSdk: '1.3.0',
@@ -5,7 +7,6 @@ export const SUPPORTED_ACP_RUNTIME_MATRIX = {
   chat: '4.37.0',
   chatSlackAdapter: '4.37.0',
   node: '24.11.1',
-  openCodeCli: '0.0.0-next-17074',
   openCodeClient: '0.0.0-next-17074',
   slackWebApi: '8.0.0',
 } as const
@@ -38,9 +39,10 @@ const requirements: readonly Requirement[] = [
     satisfiedBy: equals('OpenCode'),
   },
   {
-    expected: `"${SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli}"`,
+    expected: 'an OpenCode 2 version',
     path: ['agentInfo', 'version'],
-    satisfiedBy: equals(SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli),
+    satisfiedBy: (value) =>
+      typeof value === 'string' && isSupportedOpenCodeVersion(value),
   },
   {
     expected: 'false',
@@ -118,9 +120,9 @@ export const assertSupportedOpenCodeInitialization = (input: unknown): void => {
     return
   }
   const diagnostic = [
-    `OpenCode ACP compatibility check failed for @opencode-ai/cli@${SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli}.`,
+    'OpenCode ACP compatibility check failed for the installed OpenCode.',
     ...failures.map((failure) => `- ${failure}`),
-    'Reinstall with `bun install --frozen-lockfile`; if the failure remains, update apps/bot/docs/acp-runtime-matrix.md and its compatibility contract deliberately.',
+    'Check the OpenCode 2 on PATH (or LABORER_OPENCODE_COMMAND); if it changed its API, update the adapter and apps/bot/docs/acp-runtime-matrix.md deliberately.',
   ].join('\n')
   throw new Error(
     diagnostic.slice(0, ACP_COMPATIBILITY_DIAGNOSTIC_MAX_CHARACTERS)

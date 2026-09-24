@@ -43,8 +43,8 @@ import {
   makeLaborerMemoryMcpServerConfiguration,
 } from './memory-mcp.ts'
 import {
-  OPEN_CODE_COMMAND,
   openCodeAcpProcessOptions,
+  openCodeCommand,
 } from './open-code-acp-process.ts'
 import { preflightEffectiveOpenCodeMcpNames } from './opencode-config-preflight.ts'
 import type { SlackParticipantLookupShape } from './slack-participant-lookup.ts'
@@ -253,7 +253,7 @@ export const makeProductionAcpWorkspaceApplication = Effect.fn(
     Effect.tapError(() => Effect.sync(observePreflightQuarantine))
   )
   yield* preflightEffectiveOpenCodeMcpNames({
-    command: dependencies.process?.command ?? OPEN_CODE_COMMAND,
+    command: dependencies.process?.command ?? openCodeCommand(childEnvironment),
     cwd: options.root,
     environment: childEnvironment,
     reservedNames: reservedMcpNames,

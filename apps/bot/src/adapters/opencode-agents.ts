@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import type { Scope } from 'effect'
 import { Effect, Array as EffectArray, Fiber, Option } from 'effect'
-import { OPEN_CODE_COMMAND } from '../acp-runtime/open-code-acp-process.ts'
+import { openCodeCommand } from '../acp-runtime/open-code-acp-process.ts'
 import { HandlerFailure } from '../core/errors.ts'
 import type {
   AcceptImplementationAgentResponse,
@@ -524,7 +524,7 @@ export const launchOpenCodeServer = async (options: {
   const username = 'opencode'
   const password = randomBytes(32).toString('base64url')
   const child = spawn(
-    options.command ?? OPEN_CODE_COMMAND,
+    options.command ?? openCodeCommand(options.environment),
     ['serve', `--hostname=${options.hostname}`, `--port=${options.port}`],
     {
       detached,

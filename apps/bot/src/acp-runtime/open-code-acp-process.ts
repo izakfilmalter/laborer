@@ -1,16 +1,13 @@
 import { accessSync, constants } from 'node:fs'
-import { createRequire } from 'node:module'
-import { delimiter, dirname, resolve } from 'node:path'
+import { delimiter, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AcpConversationAgentOptions } from './acp-conversation-agent.ts'
+import { resolveInstalledOpenCode } from './installed-opencode.ts'
 
-const require = createRequire(import.meta.url)
-
-export const OPEN_CODE_COMMAND = resolve(
-  dirname(require.resolve('@opencode-ai/cli/package.json')),
-  'bin',
-  'opencode2.exe'
-)
+/** The machine's installed OpenCode 2 executable, resolved on first use. */
+export const openCodeCommand = (
+  environment: NodeJS.ProcessEnv = process.env
+): string => resolveInstalledOpenCode(environment).command
 export const OPEN_CODE_ACP_ADAPTER = fileURLToPath(
   new URL('./opencode-v2-acp-adapter.ts', import.meta.url)
 )

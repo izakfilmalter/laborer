@@ -54,6 +54,7 @@ import {
   renderAcpPrompt,
   renderAcpPromptWithinByteLimit,
 } from './agent-context.ts'
+import { isSupportedOpenCodeVersion } from './installed-opencode.ts'
 import {
   awaitLaborerMemoryMcpReadiness,
   clearLaborerMemoryPermissionRegistration,
@@ -98,7 +99,6 @@ const PROMPT_EPOCH_CAPABILITY_KEY = 'laborer.dev/prompt-epoch/v1'
 const OPEN_CODE_ORDER_BOUNDARY_META_KEY = 'laborer.dev/opencode-order-boundary'
 const OPEN_CODE_MESSAGE_ID_PATTERN = /^msg_([\dA-Fa-f]{12})[\dA-Za-z]{14}$/
 const OPEN_CODE_ORDER_MODULUS = 281_474_976_710_656n
-const OPEN_CODE_SUPPORTED_VERSIONS = new Set(['0.0.0-next-17074'])
 const OPEN_CODE_BOUNDARY_WAIT_MILLIS = 25
 const OPEN_CODE_SESSION_LIST_MAX_PAGES = 100
 const PROMPT_EPOCH_MARKER_TIMEOUT_MILLIS = 5000
@@ -1774,7 +1774,7 @@ export const makeAcpConversationAgent = Effect.fn('makeAcpConversationAgent')(
         ) === true
       const reportsSupportedOpenCode =
         initialized.agentInfo?.name === 'OpenCode' &&
-        OPEN_CODE_SUPPORTED_VERSIONS.has(initialized.agentInfo.version)
+        isSupportedOpenCodeVersion(initialized.agentInfo.version)
       if (commandRequiresOpenCodeContract && !reportsSupportedOpenCode) {
         observeProcessFailure(options, 'deterministic', 'protocol_incompatible')
         yield* Effect.logWarning('OpenCode ACP contract is incompatible', {
@@ -2651,7 +2651,7 @@ export const makeAcpConversationAgent = Effect.fn('makeAcpConversationAgent')(
           permission: registration.permission,
           pinnedOpenCodeVersion:
             commandIsOpenCode && reportsSupportedOpenCode
-              ? (initialized.agentInfo?.version as '0.0.0-next-17074')
+              ? (initialized.agentInfo?.version ?? null)
               : null,
           rejectedToolCallIds: new Set<string>(),
           rejectUncorrelatedPermissions: false,

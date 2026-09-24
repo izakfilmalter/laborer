@@ -60,7 +60,6 @@
     "@biomejs/biome": "2.4.0",
     "@effect/language-service": "0.87.2",
     "@effect/vitest": "catalog:",
-    "@opencode-ai/cli": "0.0.0-next-17074",
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/router-plugin": "1.168.23",
     "@testing-library/react": "16.3.2",
@@ -79,8 +78,5 @@
     "ultracite": "7.2.4",
     "vite": "7.3.6",
     "vitest": "^4.0.17"
-  },
-  "trustedDependencies": [
-    "@opencode-ai/cli"
-  ]
+  }
 }

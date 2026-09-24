@@ -43,6 +43,11 @@ if [[ "${1:-}" == "serve" && "${2:-}" == "--stdio" ]]; then
           for (const name of Object.keys(parsed.mcp || {})) names.add(name);
         }
         const server = http.createServer((request, response) => {
+          if (request.url?.startsWith("/api/agent")) {
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify({ data: [{ id: "build", mode: "primary" }], location: { directory: process.cwd() } }));
+            return;
+          }
           if (request.url?.startsWith("/api/mcp")) {
             response.writeHead(200, { "content-type": "application/json" });
             response.end(JSON.stringify({ data: [...names].map((name) => ({ name, status: { status: "disabled" } })), location: { directory: process.cwd(), project: { id: "fake", directory: process.cwd(), canonical: process.cwd() } } }));

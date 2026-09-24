@@ -41,6 +41,7 @@ import {
 import {
   OPEN_CODE_ACP_ARGS,
   OPEN_CODE_ACP_COMMAND,
+  openCodeCommand,
 } from '../src/acp-runtime/open-code-acp-process.ts'
 import { productionActionCatalog } from '../src/action-catalog.ts'
 import { ParticipantInputEvent } from '../src/application.ts'
@@ -60,16 +61,13 @@ import { startFakeOpenAiProvider } from './support/fake-openai-provider.ts'
 
 const execFilePromise = promisify(execFile)
 const PROJECT_ROOT = process.cwd()
-const OPEN_CODE_EXECUTABLE = resolve(
-  PROJECT_ROOT,
-  'node_modules/@opencode-ai/cli/bin/opencode2.exe'
-)
+const OPEN_CODE_EXECUTABLE = openCodeCommand()
 const MCP_FIXTURE = resolve(
   PROJECT_ROOT,
   'tests/fixtures/acp-permission-policy-mcp.ts'
 )
 const REQUEST_TIMEOUT_MILLIS = 30_000
-const OPEN_CODE_2_VERSION_PREFIX = /^opencode2 v/
+const OPEN_CODE_2_VERSION_PREFIX = /^opencode2? v/
 
 const pinnedRecoveryEvent = (turn: number): ParticipantInputEvent =>
   ParticipantInputEvent.make({
@@ -121,6 +119,7 @@ const isolatedEnvironment = (home: string): NodeJS.ProcessEnv => {
   const temporaryDirectory = join(home, 'tmp')
   return {
     HOME: home,
+    LABORER_OPENCODE_COMMAND: OPEN_CODE_EXECUTABLE,
     LANG: 'C.UTF-8',
     OPENCODE_AUTH_CONTENT: '{}',
     OPENCODE_DISABLE_AUTOCOMPACT: '1',

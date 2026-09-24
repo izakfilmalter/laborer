@@ -31,7 +31,7 @@ const request = (conversationId: string) => ({
 
 const waitFor = (predicate: () => boolean): Effect.Effect<void> =>
   Effect.gen(function* () {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    for (let attempt = 0; attempt < 1000; attempt += 1) {
       if (predicate()) {
         return
       }

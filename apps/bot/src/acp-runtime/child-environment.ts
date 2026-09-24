@@ -3,6 +3,7 @@ import { isSensitiveCredentialEnvironmentName } from '../adapters/sensitive-envi
 
 const REQUIRED_RUNTIME_VARIABLES = [
   'HOME',
+  'LABORER_OPENCODE_COMMAND',
   'LANG',
   'LC_ALL',
   'LOGNAME',

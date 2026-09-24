@@ -12,7 +12,8 @@ import {
 
 const COMPATIBILITY_FAILURE_PATTERN = /OpenCode ACP compatibility check failed/
 const LOAD_SESSION_PATTERN = /agentCapabilities\.loadSession/
-const FROZEN_INSTALL_PATTERN = /bun install --frozen-lockfile/
+const OPEN_CODE_GUIDANCE_PATTERN =
+  /OpenCode 2 on PATH \(or LABORER_OPENCODE_COMMAND\)/
 
 const supportedInitialization = {
   agentCapabilities: {
@@ -23,7 +24,7 @@ const supportedInitialization = {
   },
   agentInfo: {
     name: 'OpenCode',
-    version: SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli,
+    version: '2.0.16',
   },
   protocolVersion: 1,
 }
@@ -61,10 +62,7 @@ describe('issue #243 ACP runtime matrix', () => {
       packageJson.dependencies['@opencode-ai/client'],
       SUPPORTED_ACP_RUNTIME_MATRIX.openCodeClient
     )
-    assert.strictEqual(
-      packageJson.devDependencies['@opencode-ai/cli'],
-      SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli
-    )
+    assert.notProperty(packageJson.devDependencies, '@opencode-ai/cli')
     assert.strictEqual(
       packageJson.dependencies.chat,
       SUPPORTED_ACP_RUNTIME_MATRIX.chat
@@ -122,6 +120,6 @@ describe('issue #243 ACP runtime matrix', () => {
       cause.message.length <= ACP_COMPATIBILITY_DIAGNOSTIC_MAX_CHARACTERS
     )
     assert.ok(!cause.message.includes('DO_NOT_RENDER_DO_NOT_RENDER'))
-    assert.match(cause.message, FROZEN_INSTALL_PATTERN)
+    assert.match(cause.message, OPEN_CODE_GUIDANCE_PATTERN)
   })
 })

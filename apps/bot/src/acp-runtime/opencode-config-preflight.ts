@@ -205,6 +205,39 @@ const readBoundedResponse = async (
   }
 }
 
+const PROJECT_LOAD_POLL_MILLIS = 250
+
+// OpenCode 2 loads a project lazily and reports empty configuration until it
+// has; an empty MCP list read too early would hide real name collisions.
+const awaitProjectLoaded = async (
+  url: string,
+  directory: string,
+  headers: Readonly<Record<string, string>>,
+  signal: AbortSignal
+): Promise<void> => {
+  const endpoint = new URL('/api/agent', url)
+  endpoint.searchParams.set('location[directory]', directory)
+  while (true) {
+    const response = await fetch(endpoint, { headers, signal })
+    if (!response.ok) {
+      throw new Error('OpenCode project load probe failed')
+    }
+    const body: unknown = await response.json()
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      Array.isArray((body as { data?: unknown }).data) &&
+      (body as { data: unknown[] }).data.length > 0
+    ) {
+      return
+    }
+    await new Promise((resolveWait) =>
+      setTimeout(resolveWait, PROJECT_LOAD_POLL_MILLIS)
+    )
+    signal.throwIfAborted()
+  }
+}
+
 const collectEffectiveMcpNames = async (options: {
   readonly command: string
   readonly cwd: string
@@ -228,14 +261,14 @@ const collectEffectiveMcpNames = async (options: {
     const url = await startupUrl(child, options.limits)
     child.stdout.resume()
     child.stderr.resume()
+    const headers = {
+      authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`,
+    }
+    const signal = AbortSignal.timeout(options.limits.runtimeTimeoutMillis)
+    await awaitProjectLoaded(url, options.cwd, headers, signal)
     const endpoint = new URL('/api/mcp', url)
     endpoint.searchParams.set('location[directory]', options.cwd)
-    const response = await fetch(endpoint, {
-      headers: {
-        authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`,
-      },
-      signal: AbortSignal.timeout(options.limits.runtimeTimeoutMillis),
-    })
+    const response = await fetch(endpoint, { headers, signal })
     if (!response.ok) {
       throw new Error('OpenCode MCP probe request failed')
     }

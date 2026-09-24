@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PROTOCOL_VERSION, type StopReason } from '@agentclientprotocol/sdk'
 import { assert, describe, it } from '@effect/vitest'
-import { SUPPORTED_ACP_RUNTIME_MATRIX } from '../src/acp-compatibility/runtime-matrix.ts'
+import { isSupportedOpenCodeVersion } from '../src/acp-runtime/installed-opencode.ts'
 import { startFakeOpenAiProvider } from './support/fake-openai-provider.ts'
 import {
   readLocalOpenCodeVersion,
@@ -95,9 +95,10 @@ describe('issue #243 real OpenCode ACP compatibility', () => {
         home,
         providerBaseUrl: provider.baseUrl,
       }
-      assert.strictEqual(
-        await readLocalOpenCodeVersion(harnessOptions),
-        SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli
+      assert.isTrue(
+        isSupportedOpenCodeVersion(
+          await readLocalOpenCodeVersion(harnessOptions)
+        )
       )
       const observedStopReasons = new Set<StopReason>()
       let durableSessionId = ''
@@ -190,7 +191,7 @@ describe('issue #243 real OpenCode ACP compatibility', () => {
           (await firstProcess.prompt(durableSessionId, 'emit max_tokens'))
             .stopReason,
           'end_turn',
-          'OpenCode 0.0.0-next-17074 changed finish_reason:length behavior'
+          'The installed OpenCode changed finish_reason:length behavior'
         )
 
         provider.enqueue({ finishReason: 'content_filter', kind: 'text' })

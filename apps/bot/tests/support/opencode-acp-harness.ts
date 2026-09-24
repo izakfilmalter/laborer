@@ -14,25 +14,19 @@ import {
   type RequestPermissionRequest,
   type SessionNotification,
 } from '@agentclientprotocol/sdk'
-import {
-  assertSupportedOpenCodeInitialization,
-  SUPPORTED_ACP_RUNTIME_MATRIX,
-} from '../../src/acp-compatibility/runtime-matrix.ts'
+import { assertSupportedOpenCodeInitialization } from '../../src/acp-compatibility/runtime-matrix.ts'
 import {
   OPEN_CODE_ACP_ARGS,
   OPEN_CODE_ACP_COMMAND,
+  openCodeCommand,
 } from '../../src/acp-runtime/open-code-acp-process.ts'
 import { superviseSubprocess } from './subprocess-supervisor.ts'
 
-const PROJECT_ROOT = process.cwd()
-const OPEN_CODE_EXECUTABLE = resolve(
-  PROJECT_ROOT,
-  'node_modules/@opencode-ai/cli/bin/opencode2.exe'
-)
+const OPEN_CODE_EXECUTABLE = openCodeCommand()
 const REQUEST_TIMEOUT_MILLIS = 30_000
 const STDERR_TAIL_CHARACTERS = 8000
 const DUMMY_PROVIDER_KEY = 'laborer-acp-compatibility-dummy-key'
-const OPEN_CODE_2_VERSION_PREFIX = /^opencode2 v/
+const OPEN_CODE_2_VERSION_PREFIX = /^opencode2? v/
 
 export const OPEN_CODE_COMPATIBILITY_PERMISSION_POLICY = {
   '*': 'deny',
@@ -140,6 +134,7 @@ const isolatedEnvironment = (
   const temporaryDirectory = join(options.home, 'tmp')
   const environment: NodeJS.ProcessEnv = {
     HOME: options.home,
+    LABORER_OPENCODE_COMMAND: OPEN_CODE_EXECUTABLE,
     LANG: 'C.UTF-8',
     OPENCODE_AUTH_CONTENT: '{}',
     OPENCODE_CONFIG_CONTENT: JSON.stringify(
@@ -271,7 +266,7 @@ export const startOpenCodeAcpHarness = async (
   }
   connection.closed.catch(() => undefined)
   const diagnostic = (): string =>
-    `command=${OPEN_CODE_EXECUTABLE} expectedVersion=${SUPPORTED_ACP_RUNTIME_MATRIX.openCodeCli}\nstderr tail:\n${stderrTail}`
+    `command=${OPEN_CODE_EXECUTABLE}\nstderr tail:\n${stderrTail}`
   const request = async <Value>(
     operation: Promise<Value>,
     label: string

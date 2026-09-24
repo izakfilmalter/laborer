@@ -24,11 +24,16 @@ import type {
   SessionMessageAssistant,
 } from '../../node_modules/@opencode-ai/client/dist/promise/generated/types.js'
 import { openCodeMcpConfig } from './action-mcp-timeouts.ts'
-import { OPEN_CODE_COMMAND } from './open-code-acp-process.ts'
+import {
+  type InstalledOpenCode,
+  resolveInstalledOpenCode,
+} from './installed-opencode.ts'
 import { openPromptEpochEventStream } from './prompt-epoch-admission.ts'
 
-const OPEN_CODE_VERSION = '0.0.0-next-17074'
 const STARTUP_TIMEOUT_MILLIS = 30_000
+// OpenCode 2 loads a project lazily; until then it answers with no agents.
+const PROJECT_LOAD_TIMEOUT_MILLIS = 30_000
+const PROJECT_LOAD_POLL_MILLIS = 250
 const SHUTDOWN_TIMEOUT_MILLIS = 3000
 const MAX_STARTUP_LINE_BYTES = 64 * 1024
 
@@ -117,9 +122,11 @@ const readReadinessUrl = async (
   throw new Error('OpenCode exited before reporting readiness')
 }
 
-const startServer = async (): Promise<RunningServer> => {
+const startServer = async (
+  installed: InstalledOpenCode
+): Promise<RunningServer> => {
   const password = randomBytes(32).toString('base64url')
-  const child = spawn(OPEN_CODE_COMMAND, ['serve', '--stdio', '--port', '0'], {
+  const child = spawn(installed.command, ['serve', '--stdio', '--port', '0'], {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -257,6 +264,29 @@ const responseFor = (
   finish: SessionMessageAssistant['finish']
 ) => ({ _meta: {}, stopReason: stopReasonFor(terminal, cancelled, finish) })
 
+const settleTurn = (
+  terminal: 'failed' | 'interrupted' | 'succeeded',
+  cancelled: boolean,
+  finish: SessionMessageAssistant['finish'],
+  executionError: { readonly type: string } | undefined
+) => {
+  if (terminal === 'failed') {
+    if (executionError?.type === 'provider.auth') {
+      throw RequestError.authRequired()
+    }
+    if (executionError?.type === 'provider.content-filter') {
+      return responseFor(terminal, cancelled, 'content-filter')
+    }
+    throw executionFailed()
+  }
+  // OpenCode can settle the execution after a provider stream broke off
+  // mid-reply; the step's error finish is the only signal of that.
+  if (terminal === 'succeeded' && finish === 'error' && !cancelled) {
+    throw executionFailed()
+  }
+  return responseFor(terminal, cancelled, finish)
+}
+
 const assertMatchingCwd = async (
   requested: string,
   persisted: string,
@@ -274,7 +304,8 @@ const assertMatchingCwd = async (
 }
 
 const run = async (): Promise<void> => {
-  const server = await startServer()
+  const installed = resolveInstalledOpenCode()
+  const server = await startServer(installed)
   const sessions = new Map<string, AttachedSession>()
   const active = new Map<string, TurnControl>()
   const ownedMcpNames = new Set<string>()
@@ -306,6 +337,22 @@ const run = async (): Promise<void> => {
   }
 
   let connection: ReturnType<ReturnType<typeof agent>['connect']> | undefined
+
+  const awaitProjectLoaded = async (location: {
+    readonly directory: string
+  }) => {
+    const deadline = Date.now() + PROJECT_LOAD_TIMEOUT_MILLIS
+    while (true) {
+      const agents = await server.client.agent.list({ location })
+      if (agents.data.length > 0) {
+        return agents
+      }
+      if (Date.now() >= deadline) {
+        throw new Error('OpenCode did not load the project in time')
+      }
+      await sleep(PROJECT_LOAD_POLL_MILLIS)
+    }
+  }
 
   const streamTurn = async (
     session: AttachedSession,
@@ -558,26 +605,12 @@ const run = async (): Promise<void> => {
           return responseFor('interrupted', true, undefined)
         }
       }
-      const terminal = await completed
-      if (terminal === 'failed') {
-        if (executionError?.type === 'provider.auth') {
-          throw RequestError.authRequired()
-        }
-        if (executionError?.type === 'provider.content-filter') {
-          return responseFor(terminal, control.cancelled, 'content-filter')
-        }
-        throw executionFailed()
-      }
-      // OpenCode can settle the execution after a provider stream broke off
-      // mid-reply; the step's error finish is the only signal of that.
-      if (
-        terminal === 'succeeded' &&
-        finish === 'error' &&
-        !control.cancelled
-      ) {
-        throw executionFailed()
-      }
-      return responseFor(terminal, control.cancelled, finish)
+      return settleTurn(
+        await completed,
+        control.cancelled,
+        finish,
+        executionError
+      )
     } finally {
       active.delete(session.id)
       streamController.abort()
@@ -607,16 +640,14 @@ const run = async (): Promise<void> => {
             resume: {},
           },
         },
-        agentInfo: { name: 'OpenCode', version: OPEN_CODE_VERSION },
+        agentInfo: { name: 'OpenCode', version: installed.version },
         protocolVersion: PROTOCOL_VERSION,
       }
     })
     .onRequest(methods.agent.session.new, async ({ params }) => {
       const location = { directory: params.cwd }
-      const [defaultModel, agents] = await Promise.all([
-        server.client.model.default({ location }),
-        server.client.agent.list({ location }),
-      ])
+      const agents = await awaitProjectLoaded(location)
+      const defaultModel = await server.client.model.default({ location })
       const primary = agents.data.find(
         (candidate: AgentInfo) =>
           candidate.mode === 'primary' && !candidate.hidden
@@ -642,6 +673,7 @@ const run = async (): Promise<void> => {
       }
       const session = { cwd: restored.location.directory, id: restored.id }
       await assertMatchingCwd(params.cwd, session.cwd, params.sessionId)
+      await awaitProjectLoaded({ directory: session.cwd })
       await registerMcpServers(session, params.mcpServers ?? [])
       sessions.set(session.id, session)
       return {}

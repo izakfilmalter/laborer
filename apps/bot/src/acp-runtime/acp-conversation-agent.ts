@@ -78,7 +78,7 @@ const MAX_PUBLIC_OUTPUT_BYTES = 1024 * 1024
 const MAX_PUBLIC_MESSAGES = 32
 const CHILD_EXIT_GRACE_MILLIS = 2000
 const MEMORY_MCP_ACTIVE_CALL_DRAIN_TIMEOUT_MILLIS = 5000
-const MEMORY_MCP_BOOTSTRAP_SESSION_TIMEOUT_MILLIS = 5000
+const MEMORY_MCP_BOOTSTRAP_SESSION_TIMEOUT_MILLIS = 15_000
 const MEMORY_MCP_ACTIVE_CALL_POLL_MILLIS = 10
 const MAX_ACP_NDJSON_LINE_BYTES = 2 * 1024 * 1024
 const MAX_ACP_INBOUND_PROCESS_BYTES = 256 * 1024 * 1024
@@ -2091,9 +2091,13 @@ export const makeAcpConversationAgent = Effect.fn('makeAcpConversationAgent')(
         'AcpConversationAgent.recordMemoryRegistrationDiagnostic'
       )(function* (
         code: LaborerMemoryDiagnosticCode,
-        authority: { readonly root: string; readonly workspaceId: string }
+        authority: { readonly root: string; readonly workspaceId: string },
+        phase?: 'readiness' | 'session-open'
       ) {
-        yield* Effect.logWarning('Memory MCP registration failed', { code })
+        yield* Effect.logWarning('Memory MCP registration failed', {
+          code,
+          ...(phase === undefined ? {} : { phase }),
+        })
         if (
           options.agentContext !== undefined &&
           options.agentContext.root === authority.root &&
@@ -2341,7 +2345,8 @@ export const makeAcpConversationAgent = Effect.fn('makeAcpConversationAgent')(
             readiness.failure.reason === 'collision'
               ? 'registration-collision'
               : 'registration-missing',
-            registration.authority
+            registration.authority,
+            'readiness'
           )
           return yield* toHandlerFailure()
         }
@@ -2522,7 +2527,8 @@ export const makeAcpConversationAgent = Effect.fn('makeAcpConversationAgent')(
                 Effect.tapError(() =>
                   recordMemoryRegistrationDiagnostic(
                     'registration-missing',
-                    registration.authority
+                    registration.authority,
+                    'session-open'
                   )
                 ),
                 Effect.mapError(toHandlerFailure)

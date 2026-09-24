@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
-import { Effect, Redacted } from 'effect'
+import { Cause, Effect, Redacted } from 'effect'
 import {
   ChatPlane,
   ChatPlaneOperationError,
@@ -17,6 +17,7 @@ import {
 import {
   type ChatPlaneTurn,
   makeConversationHandler,
+  summarizeTurnFailure,
   TURN_FAILED_OPERATIONAL_NOTICE,
 } from '../src/chat-plane/conversation-handler.ts'
 import { placeholderMentionHandler } from '../src/chat-plane/placeholder-handler.ts'
@@ -76,6 +77,31 @@ const message = (
 })
 
 describe('Chat plane walking skeleton', () => {
+  it('summarizes turn failures with only allowlisted fields', () => {
+    assert.deepStrictEqual(
+      summarizeTurnFailure(
+        Cause.fail({
+          _tag: 'HandlerFailure',
+          category: 'protocol',
+          privateDetail: 'secret /private/path TOKEN=value',
+          safeDetail: 'ACP Conversation agent failed',
+        })
+      ),
+      {
+        _tag: 'HandlerFailure',
+        category: 'protocol',
+        kind: 'failure',
+        safeDetail: 'ACP Conversation agent failed',
+      }
+    )
+    assert.deepStrictEqual(
+      summarizeTurnFailure(
+        Cause.die(new Error('secret /private/path TOKEN=value'))
+      ),
+      { kind: 'defect' }
+    )
+  })
+
   it.effect('requires valid credentials dedicated to the Chat SDK canary', () =>
     Effect.gen(function* () {
       const appToken = ['x', 'app', '-chat-canary-fixture'].join('')

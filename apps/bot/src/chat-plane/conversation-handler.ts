@@ -1,4 +1,4 @@
-import { Effect, Exit, Schema } from 'effect'
+import { Cause, Effect, Exit, Schema } from 'effect'
 import { NormalizedImage } from '../core/domain.ts'
 import {
   ChatPlane,
@@ -45,6 +45,40 @@ type TurnFailureCategory = 'chat-operation' | 'internal' | 'work-handler'
 
 const operationalNotice = (category: TurnFailureCategory): string =>
   `Laborer turn failed (category: ${category}). Mention Laborer again to continue.`
+
+const SAFE_FAILURE_FIELDS = [
+  '_tag',
+  'category',
+  'operation',
+  'reason',
+  'safeDetail',
+] as const
+
+// Handler failures can carry arbitrary payloads, so only log allowlisted,
+// structured fields that explain why a turn failed.
+export const summarizeTurnFailure = (
+  cause: Cause.Cause<unknown>
+): Record<string, unknown> => {
+  if (Cause.hasInterruptsOnly(cause)) {
+    return { kind: 'interrupted' }
+  }
+  const found = Cause.findError(cause)
+  if (found._tag === 'Failure') {
+    return { kind: 'defect' }
+  }
+  const error = found.success
+  if (typeof error !== 'object' || error === null) {
+    return { kind: 'failure', value: typeof error }
+  }
+  const summary: Record<string, unknown> = { kind: 'failure' }
+  for (const field of SAFE_FAILURE_FIELDS) {
+    const value = (error as Record<string, unknown>)[field]
+    if (typeof value === 'string' || value === null) {
+      summary[field] = value
+    }
+  }
+  return summary
+}
 
 const normalizeMessage = (
   message: ChatSdkMessageLike,
@@ -142,7 +176,13 @@ export const makeConversationHandler = (
           rootTs: thread.rootMessageId,
           threadId: thread.id,
           workspaceId: thread.workspaceId,
-        }).pipe(Effect.catchCause(() => Effect.fail('work-handler' as const)))
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning('Laborer turn failed', {
+              failure: summarizeTurnFailure(cause),
+            }).pipe(Effect.andThen(Effect.fail('work-handler' as const)))
+          )
+        )
         if (result.publicReply !== undefined) {
           const reply = yield* withFirstChunk(result.publicReply)
           if (reply !== undefined) {

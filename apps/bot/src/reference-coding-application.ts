@@ -312,6 +312,7 @@ export type ConversationPromptAttemptOutcome =
   | 'cancelled_agent'
   | 'cancelled_local'
   | 'end_turn'
+  | 'execution_failed'
   | 'max_tokens'
   | 'max_turn_requests'
   | 'protocol_failed'
@@ -717,6 +718,7 @@ const PersistedConversationPromptAttemptOutcome = Schema.Literals([
   'cancelled_agent',
   'cancelled_local',
   'end_turn',
+  'execution_failed',
   'max_tokens',
   'max_turn_requests',
   'protocol_failed',

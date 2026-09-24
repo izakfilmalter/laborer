@@ -113,6 +113,8 @@ const scriptedStopReasonFor = (
 const textlessStopReason = scriptedStopReasonFor(
   process.env.SCRIPTED_ACP_TEXTLESS_STOP_REASON
 )
+const failFirstPromptExecution =
+  process.env.SCRIPTED_ACP_FAIL_FIRST_PROMPT_EXECUTION === '1'
 const publicOutputStopReason =
   scriptedStopReasonFor(process.env.SCRIPTED_ACP_PUBLIC_OUTPUT_STOP_REASON) ??
   'end_turn'
@@ -1690,6 +1692,12 @@ const app = agent({ name: 'laborer-scripted-acp-peer' })
               peer.request(methods.client.session.requestPermission, request),
             sessionId: params.sessionId,
           })
+        }
+        if (failFirstPromptExecution && promptCount === 1) {
+          throw RequestError.internalError(
+            { execution: 'failed' },
+            'OpenCode execution failed'
+          )
         }
         if (textlessStopReason !== null) {
           return {

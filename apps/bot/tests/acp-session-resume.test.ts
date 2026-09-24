@@ -2315,6 +2315,67 @@ describe.concurrent('issue #241 durable ACP session bindings', () => {
     )
   }
 
+  it.live(
+    'settles a definite agent execution failure without blocking the next turn',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped(
+            'laborer-execution-failed-'
+          )
+          const controls = yield* makeTempDirectoryScoped(
+            'laborer-execution-failed-controls-'
+          )
+          yield* Effect.promise(() =>
+            writeFile(join(controls, 'release'), 'ok')
+          )
+          const repository = yield* makeFileApplicationRepository(
+            join(controls, 'application.json'),
+            controls
+          )
+          const stack = yield* makeStack({
+            controls,
+            environment: { SCRIPTED_ACP_FAIL_FIRST_PROMPT_EXECUTION: '1' },
+            repository,
+            root,
+            visibleNames: {},
+            workspaceId: 'TEXECUTIONFAILED',
+          })
+          const conversationId = 'C:execution-failed'
+          const first = yield* Effect.result(
+            runTurn({
+              application: stack.application,
+              event: participantEvent({
+                conversationId,
+                participantIds: [],
+                turn: 1,
+              }),
+              published: [],
+            })
+          )
+          assert.strictEqual(first._tag, 'Failure')
+          const failed = (yield* repository.load).conversations[0]?.prompts[0]
+            ?.attempts[0]
+          assert.strictEqual(failed?.outcome, 'execution_failed')
+          assert.strictEqual(failed?.recoveryClass, 'terminal')
+
+          const second = yield* Effect.result(
+            runTurn({
+              application: stack.application,
+              event: participantEvent({
+                conversationId,
+                participantIds: [],
+                turn: 2,
+              }),
+              published: [],
+            })
+          )
+          assert.strictEqual(second._tag, 'Success')
+        })
+      ),
+    30_000
+  )
+
   for (const priorChunks of [false, true] as const) {
     it.live(
       `keeps a cancelled prompt running without replay${priorChunks ? ' after publishing current chunks' : ' when textless'}`,

@@ -130,14 +130,21 @@ class AcpUnknownPromptStop extends Schema.TaggedError<AcpUnknownPromptStop>()(
   {}
 ) {}
 
+class AcpPromptExecutionFailed extends Schema.TaggedError<AcpPromptExecutionFailed>()(
+  'AcpPromptExecutionFailed',
+  {}
+) {}
+
 const promptUpdateFailure = (
   cause: unknown
 ):
   | AcpUnknownPromptStop
+  | AcpPromptExecutionFailed
   | AcpPromptProtocolRejected
   | AcpConversationFailure => {
   if (
     cause instanceof AcpUnknownPromptStop ||
+    cause instanceof AcpPromptExecutionFailed ||
     cause instanceof AcpPromptProtocolRejected
   ) {
     return cause
@@ -153,6 +160,9 @@ const promptCompletionFailure = (
 ): unknown => {
   if (runtimeIncompatibilityObserved) {
     return AcpPromptProtocolRejected.make()
+  }
+  if (isPinnedOpenCodeExecutionFailure(cause)) {
+    return AcpPromptExecutionFailed.make()
   }
   return cause instanceof RequestError ? AcpUnknownPromptStop.make() : cause
 }
@@ -390,6 +400,16 @@ const isPinnedOpenCodeSessionServiceFailure = (cause: unknown): boolean =>
   cause.message === 'Internal error: OpenCode service failure' &&
   isRecord(cause.data) &&
   cause.data.service === 'session' &&
+  Object.keys(cause.data).length === 1
+
+// The pinned adapter reports a turn OpenCode definitely ended without success
+// (for example a model provider failure) with this exact shape.
+const isPinnedOpenCodeExecutionFailure = (cause: unknown): boolean =>
+  cause instanceof RequestError &&
+  cause.code === JSON_RPC_INTERNAL_ERROR &&
+  cause.message === 'Internal error: OpenCode execution failed' &&
+  isRecord(cause.data) &&
+  cause.data.execution === 'failed' &&
   Object.keys(cause.data).length === 1
 
 interface AcpInboundLimits {
@@ -1216,6 +1236,15 @@ const settlePromptStop = Effect.fn('AcpConversationAgent.settlePromptStop')(
   }
 )
 
+const settlePromptExecutionFailure = Effect.fn(
+  'AcpConversationAgent.settlePromptExecutionFailure'
+)(function* (prompt: ActivePrompt) {
+  yield* prompt.closePermissions
+  yield* prompt.completeTerminal('execution_failed')
+  prompt.terminal.current = true
+  return yield* terminalStopFailure('execution_failed')
+})
+
 const settlePromptProtocolFailure = Effect.fn(
   'AcpConversationAgent.settlePromptProtocolFailure'
 )(function* (prompt: ActivePrompt) {
@@ -1485,6 +1514,8 @@ const runPrompt = Effect.fn('AcpConversationAgent.runPrompt')(function* (
           return yield* consumeMessages
         }).pipe(
           Effect.catchTags({
+            AcpPromptExecutionFailed: () =>
+              settlePromptExecutionFailure(prompt),
             AcpPromptProtocolRejected: () =>
               settlePromptProtocolFailure(prompt),
             AcpUnknownPromptStop: () =>

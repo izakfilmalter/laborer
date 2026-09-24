@@ -243,6 +243,14 @@ const stopReasonFor = (
   return 'end_turn' as const
 }
 
+// A turn OpenCode definitely finished without success. The client matches this
+// exact shape to settle the prompt as failed instead of ambiguous.
+const executionFailed = (): RequestError =>
+  RequestError.internalError(
+    { execution: 'failed' },
+    'OpenCode execution failed'
+  )
+
 const responseFor = (
   terminal: 'failed' | 'interrupted' | 'succeeded',
   cancelled: boolean,
@@ -558,7 +566,16 @@ const run = async (): Promise<void> => {
         if (executionError?.type === 'provider.content-filter') {
           return responseFor(terminal, control.cancelled, 'content-filter')
         }
-        throw new Error(executionError?.message || 'OpenCode prompt failed')
+        throw executionFailed()
+      }
+      // OpenCode can settle the execution after a provider stream broke off
+      // mid-reply; the step's error finish is the only signal of that.
+      if (
+        terminal === 'succeeded' &&
+        finish === 'error' &&
+        !control.cancelled
+      ) {
+        throw executionFailed()
       }
       return responseFor(terminal, control.cancelled, finish)
     } finally {

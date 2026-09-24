@@ -206,28 +206,56 @@ const readBoundedResponse = async (
 }
 
 const PROJECT_LOAD_POLL_MILLIS = 250
+const PROJECT_LOAD_STABLE_MILLIS = 1000
 
-// OpenCode 2 loads a project lazily and reports empty configuration until it
-// has; an empty MCP list read too early would hide real name collisions.
+// OpenCode 2 loads a project in stages and reports partial configuration
+// until it settles; an MCP list read too early would hide real collisions.
+// It exposes no completion signal, so wait until the loaded agents and MCP
+// servers stop changing.
 const awaitProjectLoaded = async (
   url: string,
   directory: string,
   headers: Readonly<Record<string, string>>,
   signal: AbortSignal
 ): Promise<void> => {
-  const endpoint = new URL('/api/agent', url)
-  endpoint.searchParams.set('location[directory]', directory)
-  while (true) {
+  const read = async (path: string): Promise<unknown> => {
+    const endpoint = new URL(path, url)
+    endpoint.searchParams.set('location[directory]', directory)
     const response = await fetch(endpoint, { headers, signal })
     if (!response.ok) {
       throw new Error('OpenCode project load probe failed')
     }
     const body: unknown = await response.json()
-    if (
-      typeof body === 'object' &&
-      body !== null &&
-      Array.isArray((body as { data?: unknown }).data) &&
-      (body as { data: unknown[] }).data.length > 0
+    return typeof body === 'object' && body !== null
+      ? (body as { data?: unknown }).data
+      : undefined
+  }
+  let previous: string | undefined
+  let stableSince = Date.now()
+  while (true) {
+    const [agents, mcp] = await Promise.all([
+      read('/api/agent'),
+      read('/api/mcp'),
+    ])
+    // Compare names only: connection status keeps changing as servers start.
+    const snapshot = JSON.stringify([
+      agents,
+      Array.isArray(mcp)
+        ? mcp.map((server: unknown) =>
+            typeof server === 'object' && server !== null
+              ? (server as { name?: unknown }).name
+              : server
+          )
+        : mcp,
+    ])
+    const now = Date.now()
+    if (snapshot !== previous) {
+      previous = snapshot
+      stableSince = now
+    } else if (
+      Array.isArray(agents) &&
+      agents.length > 0 &&
+      now - stableSince >= PROJECT_LOAD_STABLE_MILLIS
     ) {
       return
     }

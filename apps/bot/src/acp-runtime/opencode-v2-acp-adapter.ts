@@ -31,9 +31,9 @@ import {
 import { openPromptEpochEventStream } from './prompt-epoch-admission.ts'
 
 const STARTUP_TIMEOUT_MILLIS = 30_000
-// OpenCode 2 loads a project lazily; until then it answers with no agents.
 const PROJECT_LOAD_TIMEOUT_MILLIS = 30_000
 const PROJECT_LOAD_POLL_MILLIS = 250
+const PROJECT_LOAD_STABLE_MILLIS = 1000
 const MCP_CONNECT_TIMEOUT_MILLIS = 30_000
 // OpenCode 2 reloads its tool registry after an MCP change behind a 100ms
 // debounce (packages/core/src/tool/mcp.ts) and exposes no event for it.
@@ -373,16 +373,46 @@ const run = async (): Promise<void> => {
 
   let connection: ReturnType<ReturnType<typeof agent>['connect']> | undefined
 
+  // OpenCode 2 loads a project in stages: built-in agents first, then the
+  // operator's agents, then providers (which change the default model). It
+  // exposes no completion signal, so wait until agents and the default model
+  // stop changing.
   const awaitProjectLoaded = async (location: {
     readonly directory: string
   }) => {
     const deadline = Date.now() + PROJECT_LOAD_TIMEOUT_MILLIS
+    let previous: string | undefined
+    let stableSince = Date.now()
     while (true) {
-      const agents = await server.client.agent.list({ location })
-      if (agents.data.length > 0) {
+      const [agents, defaultModel] = await Promise.all([
+        server.client.agent.list({ location }),
+        server.client.model.default({ location }),
+      ])
+      const snapshot = JSON.stringify([
+        agents.data.map((candidate: AgentInfo) => [
+          candidate.id,
+          candidate.mode,
+          candidate.hidden,
+          candidate.model ?? null,
+        ]),
+        defaultModel.data
+          ? [defaultModel.data.providerID, defaultModel.data.id]
+          : null,
+      ])
+      const now = Date.now()
+      if (snapshot !== previous) {
+        previous = snapshot
+        stableSince = now
+      } else if (
+        agents.data.length > 0 &&
+        now - stableSince >= PROJECT_LOAD_STABLE_MILLIS
+      ) {
         return agents
       }
-      if (Date.now() >= deadline) {
+      if (now >= deadline) {
+        if (agents.data.length > 0) {
+          return agents
+        }
         throw new Error('OpenCode did not load the project in time')
       }
       await sleep(PROJECT_LOAD_POLL_MILLIS)

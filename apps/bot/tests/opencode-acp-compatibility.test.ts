@@ -4,7 +4,10 @@ import { join, resolve } from 'node:path'
 import { PROTOCOL_VERSION, type StopReason } from '@agentclientprotocol/sdk'
 import { assert, describe, it } from '@effect/vitest'
 import { isSupportedOpenCodeVersion } from '../src/acp-runtime/installed-opencode.ts'
-import { startFakeOpenAiProvider } from './support/fake-openai-provider.ts'
+import {
+  isToolResultRequest,
+  startFakeOpenAiProvider,
+} from './support/fake-openai-provider.ts'
 import {
   readLocalOpenCodeVersion,
   startOpenCodeAcpHarness,
@@ -81,7 +84,7 @@ describe('issue #243 real OpenCode ACP compatibility', () => {
     const mcpObservationPath = join(root, 'mcp-invocations.jsonl')
     const provider = await startFakeOpenAiProvider({
       selectReply: (request) =>
-        JSON.stringify(request).includes('"tool_call_id"')
+        isToolResultRequest(request)
           ? { kind: 'text', text: 'MCP complete' }
           : undefined,
     })
@@ -190,7 +193,7 @@ describe('issue #243 real OpenCode ACP compatibility', () => {
         assert.strictEqual(
           (await firstProcess.prompt(durableSessionId, 'emit max_tokens'))
             .stopReason,
-          'end_turn',
+          'max_tokens',
           'The installed OpenCode changed finish_reason:length behavior'
         )
 
@@ -202,8 +205,8 @@ describe('issue #243 real OpenCode ACP compatibility', () => {
         observedStopReasons.add(refused.stopReason)
         assert.strictEqual(
           refused.stopReason,
-          'end_turn',
-          'OpenCode 2 maps provider content filtering to end_turn'
+          'refusal',
+          'OpenCode 2 maps provider content filtering to refusal'
         )
 
         provider.enqueue({ kind: 'hang', textChunks: ['cancellable chunk'] })
@@ -274,6 +277,7 @@ describe('issue #243 real OpenCode ACP compatibility', () => {
       assert.deepStrictEqual([...observedStopReasons].sort(), [
         'cancelled',
         'end_turn',
+        'refusal',
       ])
       for (const request of provider.requests) {
         assert.strictEqual(

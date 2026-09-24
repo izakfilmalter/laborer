@@ -54,10 +54,10 @@ isolated owner-only home and workspace, a loopback fake model provider with a
 dummy key, and a local MCP fixture. It has no Slack or model credentials and
 proves initialization capabilities, `agent_message_chunk` updates, direct MCP
 permission selection, cancellation, and durable resume in a fresh process.
-The pinned beta maps provider content filtering to `end_turn`. Scripted ACP
-coverage retains stable refusal, `max_tokens`, and
-`max_turn_requests` behavior that the pinned OpenCode 2 beta cannot deterministically emit
-through this fixture.
+OpenCode 2.0.16 maps provider content filtering to `refusal` and
+`finish_reason: length` to `max_tokens` (the earlier preview reported both as
+`end_turn`). Scripted ACP coverage retains `max_turn_requests`, which OpenCode
+cannot deterministically emit through this fixture.
 
 ## Deliberate upgrade procedure
 

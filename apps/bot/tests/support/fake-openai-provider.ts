@@ -89,8 +89,23 @@ const isTitleRequest = (body: unknown): boolean => {
   )
 }
 
-const isToolResultRequest = (body: unknown): boolean =>
-  JSON.stringify(body).includes('"tool_call_id"')
+// A request answers a tool call only when its latest message is the tool
+// result; earlier tool results stay in the history of every later request.
+export const isToolResultRequest = (body: unknown): boolean => {
+  const messages =
+    typeof body === 'object' && body !== null && 'messages' in body
+      ? (body as { readonly messages?: unknown }).messages
+      : undefined
+  if (!Array.isArray(messages)) {
+    return false
+  }
+  const latest: unknown = messages.at(-1)
+  return (
+    typeof latest === 'object' &&
+    latest !== null &&
+    (latest as { readonly role?: unknown }).role === 'tool'
+  )
+}
 
 const writeReply = (response: ServerResponse, reply: FakeOpenAiReply): void => {
   response.writeHead(200, {

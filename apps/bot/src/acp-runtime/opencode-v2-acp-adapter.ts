@@ -683,14 +683,17 @@ const run = async (): Promise<void> => {
     .onRequest(methods.agent.session.new, async ({ params }) => {
       const location = { directory: params.cwd }
       const agents = await awaitProjectLoaded(location)
-      const defaultModel = await server.client.model.default({ location })
       const primary = agents.data.find(
         (candidate: AgentInfo) =>
           candidate.mode === 'primary' && !candidate.hidden
       )
+      // Pin the agent's configured model like OpenCode's own clients do.
+      // Without one, leave it unset so OpenCode resolves its default when the
+      // turn runs: providers load asynchronously, and the default read at
+      // startup can be a fallback model rather than the configured one.
       const created = await server.client.session.create({
         ...(primary ? { agent: primary.id } : {}),
-        ...(defaultModel.data ? { model: defaultModel.data } : {}),
+        ...(primary?.model ? { model: primary.model } : {}),
         location,
       })
       const session = { cwd: params.cwd, id: created.id }

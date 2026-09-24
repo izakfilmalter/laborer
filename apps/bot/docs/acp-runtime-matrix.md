@@ -14,7 +14,7 @@ supported matrix rather than describing separate production receivers.
 | ACP wire protocol | stable v1 (`1`) | initialization validator and compatibility suite |
 | `@agentclientprotocol/sdk` | `1.3.0` | exact dependency and lockfile |
 | OpenCode CLI (`opencode` / `opencode2`) | installed OpenCode 2 (2.x or a `0.0.0-*` preview) | `installed-opencode.ts` resolution and the ACP version check |
-| `@opencode-ai/client` | `0.0.0-next-17074` | exact dependency and lockfile |
+| `@opencode/client` | `2.0.16` | exact dependency and lockfile; the adapter's HTTP API contract |
 
 ## Installed OpenCode
 
@@ -27,7 +27,8 @@ Resolution: `LABORER_OPENCODE_COMMAND` if set, otherwise the first `opencode`
 or `opencode2` on `PATH` whose `--version` is OpenCode 2. OpenCode 1 builds are
 skipped. With none found, the workspace fails to start with an actionable
 error. The trade-off is that OpenCode upgrades reach Laborer without review;
-the typed client and adapter still target one HTTP API, so an incompatible
+the typed client and adapter still target one HTTP API (`@opencode/client`,
+kept at the installed OpenCode's release), so an incompatible
 OpenCode release surfaces as ACP initialization or prompt failures, which the
 real compatibility suite (`test:process-backed`) detects against the installed
 build.

@@ -1012,7 +1012,7 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
     getPermission: async () => [],
     interrupt: async (input) => {
       await request({
-        expectedStatus: 204,
+        expectedStatus: 200,
         method: 'POST',
         path: `/api/session/${encodeURIComponent(input.sessionId)}/interrupt`,
       })
@@ -1054,7 +1054,7 @@ export const makeOpenCodeWorkspaceSessionClient = Effect.fn(
       await request({
         expectedStatus: 204,
         method: 'POST',
-        path: `/api/session/${encodeURIComponent(input.sessionId)}/wait`,
+        path: `/api/experimental/session/${encodeURIComponent(input.sessionId)}/wait`,
       })
     },
   }

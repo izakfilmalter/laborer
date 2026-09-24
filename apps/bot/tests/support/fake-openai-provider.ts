@@ -81,8 +81,13 @@ const readBody = async (request: IncomingMessage): Promise<unknown> => {
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
 }
 
-const isTitleRequest = (body: unknown): boolean =>
-  JSON.stringify(body).includes('Generate a title for this conversation')
+const isTitleRequest = (body: unknown): boolean => {
+  const serialized = JSON.stringify(body)
+  return (
+    serialized.includes('Generate a title for this conversation') ||
+    serialized.includes('You are a title generator')
+  )
+}
 
 const isToolResultRequest = (body: unknown): boolean =>
   JSON.stringify(body).includes('"tool_call_id"')

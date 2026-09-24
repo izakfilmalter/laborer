@@ -59,7 +59,7 @@ describe('issue #243 ACP runtime matrix', () => {
       SUPPORTED_ACP_RUNTIME_MATRIX.acpSdk
     )
     assert.strictEqual(
-      packageJson.dependencies['@opencode-ai/client'],
+      packageJson.dependencies['@opencode/client'],
       SUPPORTED_ACP_RUNTIME_MATRIX.openCodeClient
     )
     assert.notProperty(packageJson.devDependencies, '@opencode-ai/cli')

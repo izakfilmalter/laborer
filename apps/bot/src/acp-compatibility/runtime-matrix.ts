@@ -7,7 +7,7 @@ export const SUPPORTED_ACP_RUNTIME_MATRIX = {
   chat: '4.37.0',
   chatSlackAdapter: '4.37.0',
   node: '24.11.1',
-  openCodeClient: '0.0.0-next-17074',
+  openCodeClient: '2.0.16',
   slackWebApi: '8.0.0',
 } as const
 

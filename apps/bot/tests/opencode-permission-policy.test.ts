@@ -29,6 +29,7 @@ import { makeAcpProcessStateRepository } from '../src/acp-runtime/acp-process-st
 import { makeAcpConversationProcessSupervisor } from '../src/acp-runtime/acp-process-supervisor.ts'
 import { makeLaborerActionMcpBridge } from '../src/acp-runtime/action-mcp.ts'
 import { prepareAcpAgentContextSources } from '../src/acp-runtime/agent-context.ts'
+import { resolveInstalledOpenCode } from '../src/acp-runtime/installed-opencode.ts'
 import { laborerMcpServerLauncherArgs } from '../src/acp-runtime/mcp-server-launcher-config.ts'
 import {
   awaitLaborerMemoryMcpReadiness,
@@ -62,6 +63,7 @@ import { startFakeOpenAiProvider } from './support/fake-openai-provider.ts'
 const execFilePromise = promisify(execFile)
 const PROJECT_ROOT = process.cwd()
 const OPEN_CODE_EXECUTABLE = openCodeCommand()
+const INSTALLED_OPEN_CODE_VERSION = resolveInstalledOpenCode().version
 const MCP_FIXTURE = resolve(
   PROJECT_ROOT,
   'tests/fixtures/acp-permission-policy-mcp.ts'
@@ -548,7 +550,10 @@ describe('issue #245 real pinned OpenCode permission policy', () => {
           }),
           `initialize Action ${policy}`
         )
-        assert.strictEqual(initialized.agentInfo?.version, '0.0.0-next-17074')
+        assert.strictEqual(
+          initialized.agentInfo?.version,
+          INSTALLED_OPEN_CODE_VERSION
+        )
 
         const sessionIds: string[] = []
         for (const { actionName, attempt } of [
@@ -908,7 +913,7 @@ describe('issue #245 real pinned OpenCode permission policy', () => {
     })
     assert.strictEqual(
       version.stdout.trim().replace(OPEN_CODE_2_VERSION_PREFIX, ''),
-      '0.0.0-next-17074'
+      INSTALLED_OPEN_CODE_VERSION
     )
 
     for (const action of ['allow', 'deny'] as const) {
@@ -977,7 +982,10 @@ describe('issue #245 real pinned OpenCode permission policy', () => {
           }),
           `initialize ${action}`
         )
-        assert.strictEqual(initialized.agentInfo?.version, '0.0.0-next-17074')
+        assert.strictEqual(
+          initialized.agentInfo?.version,
+          INSTALLED_OPEN_CODE_VERSION
+        )
         const session = await withTimeout(
           connection.agent.request(methods.agent.session.new, {
             cwd: workspace,
@@ -1152,7 +1160,10 @@ describe('issue #245 real pinned OpenCode permission policy', () => {
         'initialize memory'
       )
       assert.strictEqual(initialized.agentInfo?.name, 'OpenCode')
-      assert.strictEqual(initialized.agentInfo?.version, '0.0.0-next-17074')
+      assert.strictEqual(
+        initialized.agentInfo?.version,
+        INSTALLED_OPEN_CODE_VERSION
+      )
       const session = await withTimeout(
         connection.agent.request(methods.agent.session.new, {
           cwd: workspace,
@@ -1171,7 +1182,7 @@ describe('issue #245 real pinned OpenCode permission policy', () => {
         observedFingerprints: new Map(),
         observedToolCallIds: new Set(),
         permission: memoryPermission,
-        pinnedOpenCodeVersion: '0.0.0-next-17074',
+        pinnedOpenCodeVersion: INSTALLED_OPEN_CODE_VERSION,
         rejectedToolCallIds: new Set(),
         rejectUncorrelatedPermissions: false,
       })
@@ -1235,7 +1246,7 @@ describe('issue #245 real pinned OpenCode permission policy', () => {
     }
   }, 120_000)
 
-  it('restarts real pinned OpenCode 0.0.0-next-17074 and resumes with Memory and Action registrations', async () => {
+  it('restarts the real installed OpenCode and resumes with Memory and Action registrations', async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {

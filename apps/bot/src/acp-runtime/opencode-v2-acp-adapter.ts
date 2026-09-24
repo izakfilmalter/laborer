@@ -15,14 +15,14 @@ import {
   type SessionNotification,
   type ToolCall,
 } from '@agentclientprotocol/sdk'
-import { make as makeOpenCodeClient } from '../../node_modules/@opencode-ai/client/dist/promise/generated/client.js'
-import type {
-  AgentInfo,
-  EventSubscribeOutput,
-  McpServer as OpenCodeMcpServer,
-  SessionInfo,
-  SessionMessageAssistant,
-} from '../../node_modules/@opencode-ai/client/dist/promise/generated/types.js'
+import {
+  type AgentInfo,
+  type EventSubscribeOutput,
+  OpenCode,
+  type McpServer as OpenCodeMcpServer,
+  type SessionInfo,
+  type SessionMessageAssistant,
+} from '@opencode/client'
 import { openCodeMcpConfig } from './action-mcp-timeouts.ts'
 import {
   type InstalledOpenCode,
@@ -34,6 +34,10 @@ const STARTUP_TIMEOUT_MILLIS = 30_000
 // OpenCode 2 loads a project lazily; until then it answers with no agents.
 const PROJECT_LOAD_TIMEOUT_MILLIS = 30_000
 const PROJECT_LOAD_POLL_MILLIS = 250
+const MCP_CONNECT_TIMEOUT_MILLIS = 30_000
+// OpenCode 2 reloads its tool registry after an MCP change behind a 100ms
+// debounce (packages/core/src/tool/mcp.ts) and exposes no event for it.
+const MCP_TOOL_REGISTRY_SETTLE_MILLIS = 1000
 const SHUTDOWN_TIMEOUT_MILLIS = 3000
 const MAX_STARTUP_LINE_BYTES = 64 * 1024
 
@@ -54,7 +58,7 @@ interface ToolState {
 
 interface RunningServer {
   readonly child: ChildProcessWithoutNullStreams
-  readonly client: ReturnType<typeof makeOpenCodeClient>
+  readonly client: ReturnType<typeof OpenCode.make>
   readonly close: () => Promise<void>
   readonly closed: Promise<void>
 }
@@ -156,7 +160,7 @@ const startServer = async (
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`
   return {
     child,
-    client: makeOpenCodeClient({ baseUrl: url, headers: { authorization } }),
+    client: OpenCode.make({ baseUrl: url, headers: { authorization } }),
     close: () => stopChild(child),
     closed,
   }
@@ -334,6 +338,37 @@ const run = async (): Promise<void> => {
       })
       ownedMcpNames.add(registration.name)
     }
+    await awaitMcpServersSettled(
+      location,
+      servers.map((registration) => registration.name)
+    )
+  }
+
+  // OpenCode 2 connects added MCP servers asynchronously and then reloads its
+  // tool registry; a prompt sent before both finish runs without the tools.
+  const awaitMcpServersSettled = async (
+    location: { readonly directory: string },
+    names: readonly string[]
+  ): Promise<void> => {
+    if (names.length === 0) {
+      return
+    }
+    const deadline = Date.now() + MCP_CONNECT_TIMEOUT_MILLIS
+    while (Date.now() < deadline) {
+      const listed = await server.client.mcp.list({ location })
+      const pending = names.some((name) => {
+        const status = listed.data.find(
+          (candidate: OpenCodeMcpServer) => candidate.name === name
+        )?.status.status
+        return status === undefined || status === 'pending'
+      })
+      if (!pending) {
+        await sleep(MCP_TOOL_REGISTRY_SETTLE_MILLIS)
+        return
+      }
+      await sleep(PROJECT_LOAD_POLL_MILLIS)
+    }
+    throw new Error('OpenCode did not connect the registered MCP servers')
   }
 
   let connection: ReturnType<ReturnType<typeof agent>['connect']> | undefined
@@ -461,7 +496,8 @@ const run = async (): Promise<void> => {
               ? result.outcome.optionId
               : undefined
           await server.client.permission.reply({
-            reply: option === 'once' || option === 'always' ? option : 'reject',
+            decision:
+              option === 'once' || option === 'always' ? option : 'reject',
             requestID: event.data.id,
             sessionID: session.id,
           })
@@ -471,7 +507,7 @@ const run = async (): Promise<void> => {
           event.type === 'form.created' &&
           event.data.form.sessionID === session.id
         ) {
-          await server.client.form
+          await server.client.session.form
             .cancel({ formID: event.data.form.id, sessionID: session.id })
             .catch(() =>
               server.client.session
@@ -487,8 +523,8 @@ const run = async (): Promise<void> => {
           continue
         }
         if (
-          event.type === 'session.input.promoted' &&
-          event.data.inputID === promptId
+          event.type === 'session.inbox.delivered' &&
+          event.data.inboxID === promptId
         ) {
           started = true
           continue

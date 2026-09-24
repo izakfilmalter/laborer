@@ -57,6 +57,23 @@ describe('installed OpenCode resolution', () => {
     })
   })
 
+  it('ignores project node_modules binaries that package runners put on PATH', () => {
+    const project = fakeOpenCode('placeholder', '')
+    const bundledBin = join(project, 'node_modules', '.bin')
+    mkdirSync(bundledBin, { recursive: true })
+    writeFileSync(
+      join(bundledBin, 'opencode2'),
+      "#!/bin/sh\necho 'opencode2 v0.0.0-next-17074'\n"
+    )
+    chmodSync(join(bundledBin, 'opencode2'), 0o755)
+    const machine = fakeOpenCode('opencode', 'opencode v2.0.16')
+    assert.strictEqual(
+      resolveInstalledOpenCode({ PATH: [bundledBin, machine].join(delimiter) })
+        .command,
+      join(machine, 'opencode')
+    )
+  })
+
   it('finds an opencode2 executable', () => {
     const directory = fakeOpenCode('opencode2', 'opencode2 v0.0.0-beta-19271')
     assert.strictEqual(

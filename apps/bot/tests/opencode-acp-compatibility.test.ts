@@ -206,13 +206,27 @@ describe('issue #243 real OpenCode ACP compatibility', () => {
           'OpenCode 2 maps provider content filtering to end_turn'
         )
 
-        const expectedRequestCount = provider.requests.length + 1
         provider.enqueue({ kind: 'hang', textChunks: ['cancellable chunk'] })
         const pending = firstProcess.prompt(
           durableSessionId,
           'cancel this prompt'
         )
-        await provider.waitForRequestCount(expectedRequestCount)
+        // OpenCode may also request a title concurrently; wait for the turn's
+        // own model request so the cancellation lands mid-stream.
+        const deadline = Date.now() + 30_000
+        while (
+          !provider.requests.some((request) => {
+            const body = JSON.stringify(request.body)
+            return (
+              body.includes('cancel this prompt') &&
+              !body.includes('You are a title generator') &&
+              !body.includes('Generate a title for this conversation')
+            )
+          }) &&
+          Date.now() < deadline
+        ) {
+          await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+        }
         await firstProcess.cancelSession(durableSessionId)
         const cancelled = await pending
         observedStopReasons.add(cancelled.stopReason)

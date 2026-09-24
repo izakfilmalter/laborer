@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
-import { delimiter, isAbsolute, resolve } from 'node:path'
+import { delimiter, isAbsolute, resolve, sep } from 'node:path'
 
 /** Overrides PATH discovery with an explicit OpenCode 2 executable. */
 export const OPEN_CODE_COMMAND_VARIABLE = 'LABORER_OPENCODE_COMMAND'
@@ -71,7 +71,13 @@ export const resolveInstalledOpenCode = (
       ? [override]
       : searchPath
           .split(delimiter)
-          .filter((directory) => isAbsolute(directory))
+          // Package runners prepend project `node_modules/.bin`; a package's
+          // bundled OpenCode is not the machine's installation.
+          .filter(
+            (directory) =>
+              isAbsolute(directory) &&
+              !`${directory}${sep}`.includes(`${sep}node_modules${sep}`)
+          )
           .flatMap((directory) =>
             CANDIDATE_NAMES.map((name) => resolve(directory, name))
           )

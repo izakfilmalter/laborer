@@ -16,6 +16,8 @@ export class HandlerFailure extends Schema.TaggedError<HandlerFailure>()(
       'timeout',
     ]),
     noticeStyle: Schema.optional(Schema.Literal('generic')),
+    /** Set when the failure is a temporary outage expected to clear on its own. */
+    retryAfterMillis: Schema.optional(Schema.Number),
     safeDetail: Schema.NullOr(Schema.String),
   }
 ) {}

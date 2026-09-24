@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Cause, Effect } from 'effect'
 import {
   type AcceptApplicationEvent,
   type ApplicationPublicOutput,
@@ -6,10 +6,11 @@ import {
   ParticipantInputEvent,
 } from '../application.ts'
 import { makeAsyncOutputQueue } from '../async-output-queue.ts'
-import type {
-  ChatPlaneTurn,
-  ChatPlaneWorkHandler,
-  ChatPlaneWorkResult,
+import {
+  type ChatPlaneTurn,
+  ChatPlaneTurnUnavailable,
+  type ChatPlaneWorkHandler,
+  type ChatPlaneWorkResult,
 } from '../chat-plane/conversation-handler.ts'
 import {
   canonicalThreadId,
@@ -32,6 +33,24 @@ export interface AcpChatRuntimeDirectory {
   readonly forWorkspace: (
     workspaceId: string
   ) => Effect.Effect<AcpChatWorkspaceRuntime, HandlerFailure>
+}
+
+// Temporary ACP outages cross into the chat plane as a typed, retryable
+// failure; every other cause stays opaque to Chat.
+const chatFailureFor = (cause: Cause.Cause<unknown>): unknown => {
+  const found = Cause.findError(cause)
+  if (
+    found._tag === 'Success' &&
+    found.success instanceof HandlerFailure &&
+    found.success.retryAfterMillis !== undefined
+  ) {
+    return Cause.fail(
+      ChatPlaneTurnUnavailable.make({
+        retryAfterMillis: found.success.retryAfterMillis,
+      })
+    )
+  }
+  return cause
 }
 
 const normalizedMessage = (
@@ -111,7 +130,7 @@ export const makeAcpChatWorkHandler = (
         if (exit._tag === 'Success') {
           queue.end()
         } else {
-          queue.fail(exit.cause)
+          queue.fail(chatFailureFor(exit.cause))
         }
       })
       try {

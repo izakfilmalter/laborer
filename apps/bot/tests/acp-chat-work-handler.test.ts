@@ -1,5 +1,5 @@
 import { assert, describe, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Cause, Effect } from 'effect'
 import { makeAcpChatWorkHandler } from '../src/acp-runtime/chat-work-handler.ts'
 import {
   ApplicationConversationMessageChunk,
@@ -7,7 +7,53 @@ import {
   type ApplicationShape,
   type ParticipantInputEvent,
 } from '../src/application.ts'
-import { ChatPlaneNormalizedMessage } from '../src/chat-plane/conversation-handler.ts'
+import {
+  ChatPlaneNormalizedMessage,
+  ChatPlaneTurnUnavailable,
+} from '../src/chat-plane/conversation-handler.ts'
+import { HandlerFailure } from '../src/core/errors.ts'
+
+const failingReply = (failure: HandlerFailure) =>
+  Effect.gen(function* () {
+    const handler = makeAcpChatWorkHandler({
+      forWorkspace: () =>
+        Effect.succeed({
+          acceptEvent: (event) =>
+            Effect.succeed({
+              decision: { _tag: 'Accepted', eventId: event.eventId },
+              scheduling: 'AlreadyDurable',
+            }),
+          application: { handle: () => Effect.fail(failure) },
+        }),
+    })
+    const result = yield* handler({
+      channelId: 'C312',
+      messages: [
+        ChatPlaneNormalizedMessage.make({
+          authorKind: 'human',
+          authorSlackId: 'U312',
+          classification: 'input',
+          id: 'input-312',
+          isActivation: true,
+          slackTs: '312.0',
+          text: '<@U312BOT> work',
+        }),
+      ],
+      rootTs: '312.0',
+      threadId: 'slack:C312:312.0',
+      workspaceId: 'T312',
+    })
+    return yield* Effect.promise(async () => {
+      try {
+        for await (const _ of result.publicReply ?? []) {
+          // drain
+        }
+        return undefined
+      } catch (error) {
+        return error
+      }
+    })
+  })
 
 describe('promoted ACP Chat runtime', () => {
   it.effect(
@@ -103,5 +149,39 @@ describe('promoted ACP Chat runtime', () => {
           ['<@U311BOT> work']
         )
       })
+  )
+
+  it.effect(
+    'surfaces a temporary ACP outage to Chat as a retryable failure',
+    () =>
+      Effect.gen(function* () {
+        const rejected = yield* failingReply(
+          HandlerFailure.make({
+            category: 'protocol',
+            noticeStyle: 'generic',
+            retryAfterMillis: 90_000,
+            safeDetail: 'ACP workspace is temporarily unavailable',
+          })
+        )
+        assert.isTrue(Cause.isCause(rejected))
+        const found = Cause.findError(rejected as Cause.Cause<unknown>)
+        assert.strictEqual(found._tag, 'Success')
+        assert.deepStrictEqual(
+          found._tag === 'Success' ? found.success : undefined,
+          ChatPlaneTurnUnavailable.make({ retryAfterMillis: 90_000 })
+        )
+      })
+  )
+
+  it.effect('keeps other ACP failures opaque to Chat', () =>
+    Effect.gen(function* () {
+      const failure = HandlerFailure.make({
+        category: 'protocol',
+        safeDetail: 'ACP workspace is unavailable',
+      })
+      const rejected = yield* failingReply(failure)
+      const found = Cause.findError(rejected as Cause.Cause<unknown>)
+      assert.strictEqual(found._tag === 'Success' && found.success, failure)
+    })
   )
 })

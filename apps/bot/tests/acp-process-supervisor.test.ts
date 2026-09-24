@@ -552,53 +552,103 @@ describe('issue #252 ACP process supervisor', () => {
     )
   )
 
-  it.effect('resumes a persisted circuit with one half-open generation', () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const root = yield* makeTempDirectoryScoped('acp-supervisor-circuit-')
-        const repository = yield* makeAcpProcessStateRepository({
-          path: join(root, 'acp-process-state.json'),
-          trustedRoot: root,
-        })
-        yield* repository.transition({
-          activeGeneration: null,
-          circuitCooldownMillis: 1000,
-          circuitOpenedAt: 0,
-          health: 'circuit_open',
-          timestamp: 0,
-        })
-        let attempts = 0
-        const supervisor = yield* makeAcpConversationProcessSupervisor({
-          makeGeneration: (context) =>
-            Effect.sync(() => {
-              attempts += 1
-              context.observeHealth({
-                generation: context.generation,
-                status: 'ready',
-              })
-              return idleAgent
-            }),
-          repository,
-          workspaceId: 'workspace-a',
-        })
+  it.effect(
+    'admits one half-open generation at once when resuming a persisted circuit',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped('acp-supervisor-circuit-')
+          const repository = yield* makeAcpProcessStateRepository({
+            path: join(root, 'acp-process-state.json'),
+            trustedRoot: root,
+          })
+          yield* repository.transition({
+            activeGeneration: null,
+            circuitCooldownMillis: 1000,
+            circuitOpenedAt: 0,
+            health: 'circuit_open',
+            timestamp: 0,
+          })
+          let attempts = 0
+          const supervisor = yield* makeAcpConversationProcessSupervisor({
+            makeGeneration: (context) =>
+              Effect.sync(() => {
+                attempts += 1
+                context.observeHealth({
+                  generation: context.generation,
+                  status: 'ready',
+                })
+                return idleAgent
+              }),
+            repository,
+            workspaceId: 'workspace-a',
+          })
 
-        assert.strictEqual((yield* supervisor.health).health, 'circuit_open')
-        assert.strictEqual(attempts, 0)
-        yield* TestClock.adjust('999 millis')
-        assert.strictEqual(attempts, 0)
-        yield* TestClock.adjust('1 millis')
-        yield* waitFor(() => attempts === 1)
-        for (let turn = 0; turn < 100; turn += 1) {
-          if ((yield* supervisor.health).health === 'ready') {
-            break
+          yield* waitFor(() => attempts === 1)
+          for (let turn = 0; turn < 100; turn += 1) {
+            if ((yield* supervisor.health).health === 'ready') {
+              break
+            }
+            yield* Effect.promise(
+              () => new Promise<void>((resolve) => setTimeout(resolve, 2))
+            )
           }
-          yield* Effect.promise(
-            () => new Promise<void>((resolve) => setTimeout(resolve, 2))
-          )
-        }
-        assert.strictEqual((yield* supervisor.health).health, 'ready')
-      })
-    )
+          assert.strictEqual((yield* supervisor.health).health, 'ready')
+        })
+      )
+  )
+
+  it.effect(
+    'keeps retrying through a burst of fast failures without opening the circuit',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* makeTempDirectoryScoped('acp-circuit-burst-')
+          const repository = yield* makeAcpProcessStateRepository({
+            path: join(root, 'acp-process-state.json'),
+            trustedRoot: root,
+          })
+          let attempts = 0
+          let sawCircuitOpen = false
+          const supervisor = yield* makeAcpConversationProcessSupervisor({
+            jitter: () => 0,
+            makeGeneration: (context) =>
+              Effect.gen(function* () {
+                attempts += 1
+                if (attempts <= 5) {
+                  return yield* HandlerFailure.make({
+                    category: 'protocol',
+                    safeDetail: 'temporary',
+                  })
+                }
+                context.observeHealth({
+                  generation: context.generation,
+                  status: 'ready',
+                })
+                return idleAgent
+              }),
+            repository,
+            testHooks: {
+              circuitFailureCount: 3,
+              maxEpisodeAttempts: 3,
+            },
+            workspaceId: 'workspace-a',
+          })
+          for (let turn = 0; turn < 200; turn += 1) {
+            const health = (yield* supervisor.health).health
+            sawCircuitOpen ||= health === 'circuit_open'
+            if (health === 'ready') {
+              break
+            }
+            yield* Effect.promise(
+              () => new Promise<void>((resolve) => setTimeout(resolve, 2))
+            )
+          }
+          assert.isFalse(sawCircuitOpen)
+          assert.strictEqual(attempts, 6)
+          assert.strictEqual((yield* supervisor.health).health, 'ready')
+        })
+      )
   )
 
   it.effect('quarantines a deterministic incompatibility without retry', () =>
@@ -668,6 +718,7 @@ describe('issue #252 ACP process supervisor', () => {
             circuitFailureCount: 3,
             failureWindowMillis: 1,
             maxEpisodeAttempts: 3,
+            minimumCircuitEpisodeMillis: 0,
           },
           workspaceId: 'workspace-a',
         })

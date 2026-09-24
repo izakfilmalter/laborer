@@ -29,6 +29,9 @@ const DEFAULT_EPISODE_MILLIS = 90_000
 const DEFAULT_FAILURE_WINDOW_MILLIS = 5 * 60 * 1000
 const DEFAULT_CIRCUIT_FAILURES = 5
 const DEFAULT_CIRCUIT_COOLDOWN_MILLIS = 5 * 60 * 1000
+// A burst of fast failures (for example while dependencies are torn down)
+// must not lock a workspace out; the circuit opens only for sustained failure.
+const DEFAULT_MIN_CIRCUIT_EPISODE_MILLIS = 30_000
 const MAX_CIRCUIT_COOLDOWN_MILLIS = 60 * 60 * 1000
 const READY_RESET_MILLIS = 60_000
 const BASE_BACKOFF_MILLIS = 250
@@ -85,13 +88,20 @@ export interface AcpProcessSupervisorTestHooks {
   readonly episodeMillis?: number
   readonly failureWindowMillis?: number
   readonly maxEpisodeAttempts?: number
+  readonly minimumCircuitEpisodeMillis?: number
   readonly supervisorDefectSettlementMillis?: number
 }
 
-const unavailable = (health: AcpWorkspaceProcessHealth): HandlerFailure =>
+const unavailable = (
+  health: AcpWorkspaceProcessHealth,
+  retryAfterMillis?: number
+): HandlerFailure =>
   HandlerFailure.make({
     category: 'protocol',
     noticeStyle: 'generic',
+    ...(health === 'circuit_open' && retryAfterMillis !== undefined
+      ? { retryAfterMillis }
+      : {}),
     safeDetail:
       health === 'circuit_open'
         ? 'ACP workspace is temporarily unavailable'
@@ -186,6 +196,9 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
     options.testHooks?.circuitFailureCount ?? DEFAULT_CIRCUIT_FAILURES
   const initialCircuitCooldown =
     options.testHooks?.circuitCooldownMillis ?? DEFAULT_CIRCUIT_COOLDOWN_MILLIS
+  const minimumCircuitEpisodeMillis =
+    options.testHooks?.minimumCircuitEpisodeMillis ??
+    DEFAULT_MIN_CIRCUIT_EPISODE_MILLIS
   const supervisorDefectSettlementMillis =
     options.testHooks?.supervisorDefectSettlementMillis ??
     SUPERVISOR_DEFECT_SETTLEMENT_MILLIS
@@ -244,8 +257,24 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
     readyGate = yield* Deferred.make<ActiveGeneration, HandlerFailure>()
   })
 
+  const circuitRetryAfterMillis = (now: number): number | undefined =>
+    durableState.circuitOpenedAt === null
+      ? undefined
+      : Math.max(
+          0,
+          durableState.circuitOpenedAt +
+            durableState.circuitCooldownMillis -
+            now
+        )
+
   const closeReadyGate = (health: AcpWorkspaceProcessHealth) =>
-    Deferred.fail(readyGate, unavailable(health)).pipe(Effect.asVoid)
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis
+      yield* Deferred.fail(
+        readyGate,
+        unavailable(health, circuitRetryAfterMillis(now))
+      )
+    })
 
   const awaitReady = Effect.fn('AcpProcessSupervisor.awaitReady')(
     function* (): Effect.fn.Return<ActiveGeneration, HandlerFailure> {
@@ -268,7 +297,8 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
         selected.health === 'quarantined' ||
         selected.health === 'stopped'
       ) {
-        return yield* unavailable(selected.health)
+        const now = yield* Clock.currentTimeMillis
+        return yield* unavailable(selected.health, circuitRetryAfterMillis(now))
       }
       return yield* Deferred.await(selected.gate)
     }
@@ -365,22 +395,9 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
       return
     }
     if (durableState.health === 'circuit_open') {
-      yield* closeReadyGate('circuit_open')
-      yield* Deferred.succeed(initialOutcome, 'unavailable')
-      const now = yield* Clock.currentTimeMillis
-      const elapsed =
-        durableState.circuitOpenedAt === null
-          ? 0
-          : Math.max(0, now - durableState.circuitOpenedAt)
-      const remainingCooldown = Math.max(
-        0,
-        durableState.circuitCooldownMillis - elapsed
-      )
-      yield* Effect.sleep(`${remainingCooldown} millis`)
-      if (shuttingDown()) {
-        return
-      }
-      yield* stateGate.withPermit(rotateReadyGate())
+      // A circuit persisted by an earlier host is not waited out: a restart is
+      // an operator retry, so admit one half-open generation now. If it fails,
+      // the circuit reopens with a doubled cooldown.
       const halfOpenAt = yield* Clock.currentTimeMillis
       yield* publishHealth({
         activeGeneration: null,
@@ -606,10 +623,13 @@ export const makeAcpConversationProcessSupervisor = Effect.fn(
         (failure) => stoppedAt - failure.timestamp <= failureWindowMillis
       ).length
       const episodeFailures = durableState.consecutiveFailures
+      const episodeElapsed =
+        stoppedAt - (durableState.restartEpisodeStartedAt ?? stoppedAt)
       if (
         durableState.halfOpen ||
-        recentFailures >= circuitFailureCount ||
-        episodeFailures >= maxEpisodeAttempts
+        ((recentFailures >= circuitFailureCount ||
+          episodeFailures >= maxEpisodeAttempts) &&
+          episodeElapsed >= minimumCircuitEpisodeMillis)
       ) {
         const configuredCooldown =
           options.testHooks?.circuitCooldownMillis ??

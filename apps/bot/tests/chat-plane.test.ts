@@ -16,9 +16,11 @@ import {
 } from '../src/chat-plane/chat-sdk.ts'
 import {
   type ChatPlaneTurn,
+  ChatPlaneTurnUnavailable,
   makeConversationHandler,
   summarizeTurnFailure,
   TURN_FAILED_OPERATIONAL_NOTICE,
+  temporarilyUnavailableNotice,
 } from '../src/chat-plane/conversation-handler.ts'
 import { placeholderMentionHandler } from '../src/chat-plane/placeholder-handler.ts'
 import {
@@ -1175,6 +1177,77 @@ describe('Chat plane walking skeleton', () => {
             ],
             ['add', 'TFIRST', 'C1', '60.000', '60.000', 'white_check_mark'],
           ])
+        })
+      )
+  )
+
+  it.effect(
+    'tells the thread when to retry a temporarily unavailable workspace',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let mentionHandler: ChatSdkMentionHandler | undefined
+          const activation = message('80.000', '@laborer work', {
+            isMention: true,
+          })
+          const posts: string[] = []
+          const thread: ChatSdkThreadLike = {
+            allMessages: asMessages([activation]),
+            channelId: 'C1',
+            channelMessages: asMessages([activation]),
+            id: 'slack:C1:80.000',
+            isDM: false,
+            post: async (reply) => {
+              if (typeof reply === 'string') {
+                posts.push(reply)
+                return
+              }
+              let text = ''
+              for await (const chunk of reply) {
+                text += chunk
+              }
+              posts.push(text)
+            },
+            rootMessageId: activation.id,
+            subscribe: () => Promise.resolve(),
+            unsubscribe: () => Promise.resolve(),
+            workspaceId: 'TFIRST',
+          }
+          const sdk: ChatSdkLike = {
+            initialize: () => Promise.resolve(),
+            onNewMention: (handler) => {
+              mentionHandler = handler
+            },
+            onSubscribedMessage: () => undefined,
+            shutdown: () => Promise.resolve(),
+          }
+          const handler = makeConversationHandler(() =>
+            Effect.succeed({
+              publicReply: {
+                [Symbol.asyncIterator]: () => ({
+                  next: () =>
+                    Promise.reject(
+                      Cause.fail(
+                        ChatPlaneTurnUnavailable.make({
+                          retryAfterMillis: 150_000,
+                        })
+                      )
+                    ),
+                }),
+              },
+            })
+          )
+
+          yield* Effect.provide(
+            Effect.promise(async () => {
+              assert.ok(mentionHandler)
+              await mentionHandler(thread, activation)
+            }),
+            makeChatPlaneLayer({ handler, makeSdk: () => sdk })
+          )
+
+          assert.deepStrictEqual(posts, [temporarilyUnavailableNotice(150_000)])
+          assert.include(posts[0] ?? '', 'about 3 minutes')
         })
       )
   )

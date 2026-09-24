@@ -41,10 +41,33 @@ export const TURN_FAILED_OPERATIONAL_NOTICE =
 export const WORKING_REACTION = 'hourglass_flowing_sand'
 export const COMPLETED_REACTION = 'white_check_mark'
 
+/**
+ * A work failure the adapter knows is a temporary outage that clears on its
+ * own, so the thread can be told when to retry instead of a generic failure.
+ */
+export class ChatPlaneTurnUnavailable extends Schema.TaggedError<ChatPlaneTurnUnavailable>()(
+  'ChatPlaneTurnUnavailable',
+  { retryAfterMillis: Schema.Number }
+) {}
+
 type TurnFailureCategory = 'chat-operation' | 'internal' | 'work-handler'
+
+type TurnFailure = TurnFailureCategory | ChatPlaneTurnUnavailable
 
 const operationalNotice = (category: TurnFailureCategory): string =>
   `Laborer turn failed (category: ${category}). Mention Laborer again to continue.`
+
+export const temporarilyUnavailableNotice = (
+  retryAfterMillis: number
+): string => {
+  const minutes = Math.max(1, Math.ceil(retryAfterMillis / 60_000))
+  return `Laborer is temporarily unavailable in this workspace while its agent process recovers. Mention Laborer again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`
+}
+
+const noticeFor = (failure: TurnFailure): string =>
+  typeof failure === 'string'
+    ? operationalNotice(failure)
+    : temporarilyUnavailableNotice(failure.retryAfterMillis)
 
 const SAFE_FAILURE_FIELDS = [
   '_tag',
@@ -80,6 +103,20 @@ export const summarizeTurnFailure = (
   return summary
 }
 
+const failTurn = (
+  cause: Cause.Cause<unknown>
+): Effect.Effect<never, TurnFailure> => {
+  const found = Cause.findError(cause)
+  const unavailable =
+    found._tag === 'Success' &&
+    found.success instanceof ChatPlaneTurnUnavailable
+      ? found.success
+      : undefined
+  return Effect.logWarning('Laborer turn failed', {
+    failure: summarizeTurnFailure(cause),
+  }).pipe(Effect.andThen(Effect.fail(unavailable ?? ('work-handler' as const))))
+}
+
 const normalizeMessage = (
   message: ChatSdkMessageLike,
   classification: 'context' | 'input',
@@ -108,7 +145,7 @@ const isEligibleInput = (message: ChatSdkMessageLike): boolean =>
 // diagnostics-only output) never reaches Slack at all.
 const withFirstChunk = (
   chunks: AsyncIterable<string>
-): Effect.Effect<AsyncIterable<string> | undefined, 'work-handler'> =>
+): Effect.Effect<AsyncIterable<string> | undefined, TurnFailure> =>
   Effect.tryPromise({
     try: async () => {
       const iterator = chunks[Symbol.asyncIterator]()
@@ -136,11 +173,7 @@ const withFirstChunk = (
     catch: (error) => error,
   }).pipe(
     Effect.catch((error) =>
-      Effect.logWarning('Laborer turn failed', {
-        failure: summarizeTurnFailure(
-          Cause.isCause(error) ? error : Cause.fail(error)
-        ),
-      }).pipe(Effect.andThen(Effect.fail('work-handler' as const)))
+      failTurn(Cause.isCause(error) ? error : Cause.fail(error))
     )
   )
 
@@ -184,13 +217,7 @@ export const makeConversationHandler = (
           rootTs: thread.rootMessageId,
           threadId: thread.id,
           workspaceId: thread.workspaceId,
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning('Laborer turn failed', {
-              failure: summarizeTurnFailure(cause),
-            }).pipe(Effect.andThen(Effect.fail('work-handler' as const)))
-          )
-        )
+        }).pipe(Effect.catchCause(failTurn))
         if (result.publicReply !== undefined) {
           const reply = yield* withFirstChunk(result.publicReply)
           if (reply !== undefined) {
@@ -212,10 +239,8 @@ export const makeConversationHandler = (
             .addReaction(thread, thread.rootMessageId, COMPLETED_REACTION)
             .pipe(Effect.ignore)
         ),
-        Effect.catch((category) =>
-          chatPlane
-            .postNotice(thread, operationalNotice(category))
-            .pipe(Effect.ignore)
+        Effect.catch((failure) =>
+          chatPlane.postNotice(thread, noticeFor(failure)).pipe(Effect.ignore)
         ),
         Effect.catchCause(() =>
           chatPlane
